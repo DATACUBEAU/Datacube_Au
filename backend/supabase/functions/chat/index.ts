@@ -1,0 +1,140 @@
+// @ts-ignore: Deno modules
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
+import { getCorsHeaders, callAU, validateAuth } from "../_shared/au.ts";
+import { getApiKey } from "../_shared/getApiKey.ts";
+
+Deno.serve(async (req: Request) => {
+  const requestId = crypto.randomUUID();
+  const corsHeaders = getCorsHeaders(req);
+
+  // 1. Handle OPTIONS -> return 204
+  if (req.method === "OPTIONS") {
+    return new Response(null, { 
+      status: 204,
+      headers: corsHeaders 
+    });
+  }
+
+  try {
+    const body = await req.json().catch(() => ({}));
+    
+    // 2. Validate Auth (need userId and ownershipFilter)
+    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await validateAuth(req, body);
+
+    if (authError || !userId || !ownershipFilter) {
+      return new Response(JSON.stringify({ 
+        error: authError || "Unauthorized",
+        details: "Authentication failed",
+        requestId
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 401,
+      });
+    }
+
+    const { question } = body;
+    if (!question) {
+      return new Response(JSON.stringify({ 
+        error: "Missing required field: question",
+        details: "A question must be provided",
+        requestId 
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400,
+      });
+    }
+    
+    // NOTE: For RAG, we still ideally need OpenAI embeddings or a compatible alternative.
+    // However, since we are moving to OpenRouter + Free models, we'll try to use the same logic
+    // but replace the generation step with callAI (OpenRouter).
+    // For embeddings, if you don't have an OpenAI key, this part will fail unless we switch to a free embedding provider
+    // or if the chunks were already embedded with OpenAI.
+    // Assuming we still need OpenAI for embeddings for now as it's hard to switch embeddings on the fly without re-indexing.
+    // If we want to fully remove OpenAI, we'd need a TEI endpoint or similar.
+    // For this refactor, I will keep the embedding part as is (assuming the user might provide an OpenAI key for embeddings only),
+    // OR we can try to use a free embedding model if available via OpenRouter (OpenRouter doesn't standardly support embeddings API yet in the same way).
+    
+    // Let's assume for this specific step (Chat RAG), we stick to the existing embedding logic but use OpenRouter for the chat completion.
+    
+    const openAiKey = await getApiKey(supabaseAdmin, "openai");
+
+    // 2. Embed Question
+    const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAiKey}`,
+      },
+      body: JSON.stringify({
+        input: question,
+        model: "text-embedding-ada-002",
+      }),
+    });
+    
+    if (!embeddingResponse.ok) {
+        const errorData = await embeddingResponse.json().catch(() => ({}));
+        return new Response(JSON.stringify({ 
+          error: "Failed to generate embedding",
+          details: errorData.error?.message || "Check OpenAI key.",
+          requestId
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+          status: 500,
+        });
+    }
+
+    const embeddingData = await embeddingResponse.json();
+    const embedding = embeddingData.data[0].embedding;
+
+    // 3. Match Documents with manual ownership enforcement
+    const { data: documents, error: matchError } = await supabaseAdmin.rpc("au_vector_search", {
+      query_embedding: embedding,
+      match_threshold: 0.7,
+      match_count: 5,
+      p_user_id: ownershipFilter.user_id || null,
+      p_guest_session_id: ownershipFilter.guest_session_id || null
+    });
+
+    if (matchError) {
+      return new Response(JSON.stringify({ 
+        error: "Database search failed",
+        details: matchError.message,
+        requestId
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+      });
+    }
+
+    // 4. Generate Answer using OpenRouter (Free Model)
+    const context = documents?.map((d: any) => d.text).join("\n\n");
+    
+    const systemPrompt = "You are a helpful study assistant. Use the following context to answer the user's question. If the answer isn't in the context, say so.";
+    const userPrompt = `Context: ${context}\n\nQuestion: ${question}`;
+
+    const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.5, false, undefined, {
+      userId: userId ?? undefined,
+      ownershipFilter: ownershipFilter,
+      feature: "chat-rag",
+    });
+
+    return new Response(JSON.stringify({ 
+      ok: true,
+      answer: aiResponse,
+      requestId
+    }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
+  } catch (error: any) {
+    console.error(`[chat] Error [${requestId}]:`, error);
+    return new Response(JSON.stringify({ 
+      error: error.message || "Internal server error",
+      details: error.stack || String(error),
+      requestId
+    }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: error.status || 500,
+    });
+  }
+});

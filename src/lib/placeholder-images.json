@@ -1,0 +1,28 @@
+{
+  "placeholderImages": [
+    {
+      "id": "login-hero",
+      "description": "Abstract network of data points and connections on a dark blue background.",
+      "imageUrl": "https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMG5ldHdvcmt8ZW58MHx8fHwxNzY0ODU1ODk0fDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "abstract network"
+    },
+    {
+      "id": "concept-map-background",
+      "description": "A dark background with glowing lines and Webflow and GSAP logos.",
+      "imageUrl": "https://storage.googleapis.com/static.pro-webapp.com/misc/webflow-gsap.jpg",
+      "imageHint": "glowing lines"
+    },
+    {
+      "id": "app-showcase",
+      "description": "A stylized illustration of a mobile app interface with charts and graphs, on a dark background.",
+      "imageUrl": "https://images.unsplash.com/photo-1674683685332-894bed153f19?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw4fHxhcHAlMjBpbnRlcmZhY2UlMjBkYXNoYm9hcmR8ZW58MHx8fHwxNzY0ODk1NDAzfDA&ixlib=rb-4.1.0&q=80&w=1080",
+      "imageHint": "app interface dashboard"
+    },
+    {
+      "id": "founder-photo",
+      "description": "A mysterious hooded figure representing the founder of Datacube AU.",
+      "imageUrl": "https://images.unsplash.com/photo-1563242084-25471a937965?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3NDE5ODJ8MHwxfHNlYXJjaHw1fHxtYW4lMjBpbiUyMGhvb2RpZSUyMGNvZGluZ3xlbnwwfHx8fDE3MjE4MTMxMjd8MA&ixlib=rb-4.0.3&q=80&w=1080",
+      "imageHint": "mysterious person"
+    }
+  ]
+}
