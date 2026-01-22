@@ -1,0 +1,12 @@
+# Ignore backend code for Vercel frontend deployment
+backend/
+docs/
+shared/
+tests/
+*.sql
+*.cjs
+*.ts
+!next.config.ts
+!tailwind.config.ts
+!src/**/*.ts
+!src/**/*.tsx
