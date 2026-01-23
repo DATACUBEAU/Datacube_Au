@@ -17,7 +17,7 @@ import {
   getEffectiveOwnershipConditions,
   applyOwnershipFilter
 } from '@/lib/supabase/client';
-import { uploadDocument } from '@/lib/api/documents';
+import { uploadDocument, deleteDocument } from '@/lib/api/documents';
 import { safeFetch } from '@/lib/api/safe-fetch';
 import type { UploadJobRow, CreateUploadJobInput, UploadJobStatus } from '@/lib/upload/types';
 import { deleteJobFile, getJobFile, putJobFile } from '@/lib/upload/idb';
@@ -111,13 +111,65 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       }
     }, []);
 
+  // Helper to merge remote jobs with local state to prevent flickering
+  const mergeJobs = useCallback((remoteJobs: UploadJobRow[]) => {
+    setJobs(currentJobs => {
+      const remoteMap = new Map(remoteJobs.map(j => [j.id, j]));
+      const merged: UploadJobRow[] = [];
+      const processedIds = new Set<string>();
+
+      // 1. Preserve local jobs that are actively uploading/queued and not yet in remote
+      // OR merge if they exist in remote but local has better progress info
+      currentJobs.forEach(localJob => {
+        if (processedIds.has(localJob.id)) return;
+
+        const remoteJob = remoteMap.get(localJob.id);
+        
+        if (!remoteJob) {
+          // If local job is active but missing from remote, keep it (optimistic)
+          // UNLESS it's very old (stale)
+          if (isActiveStatus(localJob.status) || localJob.status === 'failed') {
+            merged.push(localJob);
+            processedIds.add(localJob.id);
+          }
+        } else {
+          // Job exists in both. Decide which version to keep.
+          if (localJob.status === 'uploading' && remoteJob.status === 'queued') {
+            merged.push(localJob);
+          } else if (localJob.status === 'uploading' && remoteJob.status === 'uploading') {
+             // Trust local progress if higher
+             if (localJob.progress > (remoteJob.progress || 0)) {
+               merged.push({ ...remoteJob, progress: localJob.progress });
+             } else {
+               merged.push(remoteJob);
+             }
+          } else {
+            // Otherwise trust remote
+            merged.push(remoteJob);
+          }
+          processedIds.add(localJob.id);
+        }
+      });
+
+      // 2. Add remaining remote jobs
+      remoteJobs.forEach(remoteJob => {
+        if (!processedIds.has(remoteJob.id)) {
+          merged.push(remoteJob);
+          processedIds.add(remoteJob.id);
+        }
+      });
+
+      return merged.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    });
+  }, []);
+
   const refreshJobs = useCallback(async () => {
     try {
       const fullConditions = await getEffectiveOwnershipConditions(user);
       
-      if (process.env.NODE_ENV === 'development') {
-        console.log(`[upload-jobs] Refreshing jobs (safe=${useSafeSelection}) with conditions:`, fullConditions);
-      }
+      // if (process.env.NODE_ENV === 'development') {
+      //   console.log(`[upload-jobs] Refreshing jobs (safe=${useSafeSelection}) with conditions:`, fullConditions);
+      // }
 
       const safeColumns = [
         'id', 'user_id', 'document_id', 'label', 'file_name', 'mime_type', 
@@ -142,7 +194,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         const { data, error } = await query;
 
         if (!error && data) {
-          setJobs(data.map((j: any) => ({ 
+          mergeJobs(data.map((j: any) => ({ 
             ...j, 
             error: j.error || null,
             guest_session_id: j.guest_session_id || null 
@@ -184,7 +236,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           const { data: data2, error: error2 } = await query2;
           
           if (!error2 && data2) {
-            setJobs(data2.map((j: any) => ({ 
+            mergeJobs(data2.map((j: any) => ({ 
               ...j, 
               error: null,
               guest_session_id: null 
@@ -195,12 +247,12 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           console.error('[upload-jobs] Error fetching jobs:', errorMsg);
         }
       } else if (data) {
-        setJobs(data as UploadJobRow[]);
+        mergeJobs(data as UploadJobRow[]);
       }
     } catch (err) {
       console.error('[upload-jobs] Unexpected error in refreshJobs:', err);
     }
-  }, [user, useSafeSelection]);
+  }, [user?.id, useSafeSelection, mergeJobs]);
 
   useEffect(() => {
     refreshJobs();
@@ -367,7 +419,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           .from('au_documents')
           .select('expires_at, parent_id')
           .eq('id', job.document_id)
-          .single();
+          .maybeSingle();
         
         const effectiveParentId = (job as any).parent_id || docData?.parent_id;
         
@@ -607,56 +659,40 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const removeJob = useCallback(
     async (jobId: string) => {
       const job = jobs.find((j) => j.id === jobId);
-      if (!job) {
-        // Even if not in current jobs state, try to filter it out anyway
-        setJobs((prev) => prev.filter((j) => j.id !== jobId));
-        return;
-      }
+      if (!job) return;
+
+      // 1. Mark as deleting immediately (Optimistic UI)
+      // This prevents freezing by updating state without waiting for the API
+      updateJobLocal(jobId, { status: 'deleting' });
 
       // Stop any running upload
       const controller = controllersRef.current.get(jobId);
       if (controller) controller.abort();
 
-      // Best-effort cleanup
       try {
-        await deleteJobFile(job.id);
-      } catch {}
-
-      // If the document was not completed, remove it so it doesn't linger in the library.
-      try {
-        const conditions = await getEffectiveOwnershipConditions(user);
-        const docQuery = supabase
-          .from('au_documents')
-          .select('status')
-          .eq('id', job.document_id);
+        // 2. Call the Edge Function for robust cleanup
+        // This handles storage, DB, and all relations (chunks, embeddings, jobs)
+        // using the server-side logic we verified.
+        await deleteDocument(user, job.document_id);
         
-        applyOwnershipFilter(docQuery, conditions);
-        const { data: doc } = await docQuery.maybeSingle();
+        // 3. On success, remove from list completely
+        setJobs((prev) => prev.filter((j) => j.id !== jobId));
         
-        const status = (doc as any)?.status;
-        if (status && status !== 'completed') {
-          const docDeleteQuery = supabase.from('au_documents')
-            .delete()
-            .eq('id', job.document_id);
-          
-          applyOwnershipFilter(docDeleteQuery, conditions);
-          await docDeleteQuery;
-        }
-      } catch {}
-
-      try {
-        const conditions = await getEffectiveOwnershipConditions(user);
-        const jobDeleteQuery = supabase.from('au_upload_jobs')
-          .delete()
-          .eq('id', job.id);
+        // Clean up local IDB
+        try { await deleteJobFile(job.id); } catch {}
         
-        applyOwnershipFilter(jobDeleteQuery, conditions);
-        await jobDeleteQuery;
-      } catch {}
-
-      setJobs((prev) => prev.filter((j) => j.id !== jobId));
+      } catch (err: any) {
+        console.error('[upload-jobs] Delete failed:', err);
+        // On error, revert status to failed so user can try again
+        updateJobLocal(jobId, { status: 'failed', error: 'Deletion failed. Try again.' });
+        toast({
+          title: 'Delete failed',
+          description: err.message || 'Could not delete document.',
+          variant: 'destructive',
+        });
+      }
     },
-    [jobs, user]
+    [jobs, user, updateJobLocal, toast]
   );
 
   const retryJob = useCallback(

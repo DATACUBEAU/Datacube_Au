@@ -46,7 +46,7 @@ export function InactivityPolicyBanner() {
               .from('au_guest_sessions')
               .select('last_active_at')
               .eq('id', guestId)
-              .single();
+              .maybeSingle();
             
             if (data?.last_active_at) {
               const lastActiveDate = new Date(data.last_active_at);

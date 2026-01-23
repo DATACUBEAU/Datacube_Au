@@ -373,6 +373,17 @@ export function AUAssistant() {
     document.querySelectorAll('.tour-highlight').forEach(el => {
       el.classList.remove('tour-highlight');
     });
+    
+    // Persist setting
+    if (user) {
+      localStorage.setItem(`au_assistant_settings_${user.id}`, 'disabled');
+      
+      // Notify other components (like Settings page)
+      window.dispatchEvent(new CustomEvent('au_assistant_settings_updated', { 
+        detail: { enabled: false } 
+      }));
+    }
+    
     setIsVisible(false);
   };
 

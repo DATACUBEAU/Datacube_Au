@@ -121,7 +121,16 @@ Deno.serve(async (req: Request) => {
     let filePath = body.filePath || body.file_path || "";
     if (fileData && fileName) {
       const bucket = Deno.env.get("SUPABASE_BUCKET") || Deno.env.get("NEXT_PUBLIC_SUPABASE_BUCKET") || "documents";
-      filePath = `${effectiveUserId}/${crypto.randomUUID()}-${fileName}`;
+      
+      // Use deterministic path for overwriting support (upsert: true)
+      // Folder structure based on document type
+      let folder = "uploads";
+      if (documentType === "main_textbook") folder = "textbooks";
+      else if (documentType === "supplementary") folder = "supplementary";
+      
+      // Sanitize filename to prevent issues
+      const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
+      filePath = `${effectiveUserId}/${folder}/${safeFileName}`;
       
       const { error: uploadError } = await supabaseAdmin.storage
         .from(bucket)

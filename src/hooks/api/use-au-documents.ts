@@ -25,35 +25,39 @@ export function useAuDocuments(pollInterval = 10000) {
   }, [user]);
 
   const remove = useCallback(async (id: string) => {
-    // 1. Confirm deletion (already handled by component modal, but let's be safe)
+    // 1. Optimistic Update: Immediately remove from UI
+    const docToRemove = documents.find(d => d.id === id);
+    setDocuments(prev => prev.filter(d => d.id !== id));
     setDeletingIds(prev => new Set(prev).add(id));
 
     try {
-      // 2. Atomic deletion via Edge Function
+      // 2. Background deletion via Edge Function
       await deleteDocument(user, id);
-      
-      // 3. Realistic UI update (immediate removal)
-      setDocuments(prev => prev.filter(d => d.id !== id));
       
       toast({ 
         title: 'Document removed', 
         description: 'The document and all its data have been deleted.' 
       });
     } catch (err: any) {
+      // 3. Rollback on failure
+      if (docToRemove) {
+        setDocuments(prev => [...prev, docToRemove]);
+      }
+      
       toast({
         variant: 'destructive',
         title: 'Delete failed',
         description: err.body?.error || err.message || 'An unexpected error occurred'
       });
     } finally {
-      // 4. Re-enable UI
+      // 4. Cleanup deleting state
       setDeletingIds(prev => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
     }
-  }, [user, toast]);
+  }, [user, toast, documents]);
 
   useEffect(() => {
     fetchDocs();

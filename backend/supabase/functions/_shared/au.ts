@@ -215,6 +215,34 @@ export interface AUResponse {
   text: string;
 }
 
+export async function generateEmbedding(
+  supabaseAdmin: any,
+  input: string,
+  model = "text-embedding-ada-002"
+): Promise<number[]> {
+  const openAiKey = await getApiKey(supabaseAdmin, "openai");
+  
+  const response = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${openAiKey}`,
+    },
+    body: JSON.stringify({
+      input,
+      model,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.error?.message || `Failed to generate embedding: ${response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.data[0].embedding;
+}
+
 export async function callAU(
   supabaseAdmin: any,
   systemPrompt: string,

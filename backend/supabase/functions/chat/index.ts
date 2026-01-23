@@ -1,7 +1,6 @@
 // @ts-ignore: Deno modules
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { getCorsHeaders, callAU, validateAuth } from "../_shared/au.ts";
-import { getApiKey } from "../_shared/getApiKey.ts";
+import { getCorsHeaders, callAU, validateAuth, generateEmbedding } from "../_shared/au.ts";
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
@@ -56,35 +55,20 @@ Deno.serve(async (req: Request) => {
     
     // Let's assume for this specific step (Chat RAG), we stick to the existing embedding logic but use OpenRouter for the chat completion.
     
-    const openAiKey = await getApiKey(supabaseAdmin, "openai");
-
     // 2. Embed Question
-    const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openAiKey}`,
-      },
-      body: JSON.stringify({
-        input: question,
-        model: "text-embedding-ada-002",
-      }),
-    });
-    
-    if (!embeddingResponse.ok) {
-        const errorData = await embeddingResponse.json().catch(() => ({}));
-        return new Response(JSON.stringify({ 
+    let embedding;
+    try {
+      embedding = await generateEmbedding(supabaseAdmin, question);
+    } catch (embError: any) {
+       return new Response(JSON.stringify({ 
           error: "Failed to generate embedding",
-          details: errorData.error?.message || "Check OpenAI key.",
+          details: embError.message || "Check OpenAI key configuration.",
           requestId
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
           status: 500,
         });
     }
-
-    const embeddingData = await embeddingResponse.json();
-    const embedding = embeddingData.data[0].embedding;
 
     // 3. Match Documents with manual ownership enforcement
     const { data: documents, error: matchError } = await supabaseAdmin.rpc("au_vector_search", {

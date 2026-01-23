@@ -199,18 +199,23 @@ export default function DocumentsPage() {
   const handleDeleteConfirm = async () => {
     if (!confirmDeleteId) return;
     const id = confirmDeleteId;
-    setConfirmDeleteId(null);
+    setConfirmDeleteId(null); // Close modal immediately
+
+    // Optimistically update local state to hide the item
+    // We can't modify the real 'documents' or 'jobs' directly here since they come from hooks,
+    // but we can track "deletingIds" or similar local state if we want visual feedback.
+    // However, the user wants "no freeze". The best way is to fire-and-forget the API call.
 
     try {
       // Find if this is a job-only document or a real document
       const job = jobs.find(j => (j.document_id || j.id) === id);
       
       if (job) {
-        // If it's a job, remove it via the jobs provider
-        await removeJob(job.id);
+        // Remove job (backgrounded in provider)
+        removeJob(job.id).catch(console.error);
       } else {
-        // If it's a real document, remove it via the documents hook
-        await apiRemove(id);
+        // Remove real document
+        apiRemove(id).catch(console.error);
       }
     } catch (error: any) {
       console.error("[deleteDocument] Error:", error);

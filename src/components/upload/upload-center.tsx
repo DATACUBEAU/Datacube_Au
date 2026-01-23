@@ -396,14 +396,16 @@ export default function UploadCenter() {
             <div className="space-y-4">
               {jobsToDisplay.map((job) => {
               const badge = statusLabel(job.status);
-              const isBusy = job.status === 'uploading' || job.status === 'processing' || job.status === 'queued' || job.status === 'uploaded';
+              const isBusy = job.status === 'uploading' || job.status === 'processing' || job.status === 'queued' || job.status === 'uploaded' || job.status === 'deleting';
               const canRetry = job.status === 'failed';
-                const canRemove = job.status === 'failed' || job.status === 'cancelled';
+              const canRemove = job.status === 'failed' || job.status === 'cancelled';
               const icon =
                 job.status === 'done' ? (
                   <CheckCircle2 className="h-4 w-4 text-green-500" />
                 ) : job.status === 'failed' ? (
                   <AlertTriangle className="h-4 w-4 text-red-500" />
+                ) : job.status === 'deleting' ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-destructive" />
                 ) : (
                   <Loader2 className={`h-4 w-4 ${isBusy ? 'animate-spin text-primary' : 'text-muted-foreground'}`} />
                 );

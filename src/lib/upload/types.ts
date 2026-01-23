@@ -7,7 +7,8 @@ export type UploadJobStatus =
   | 'processing'
   | 'done'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'deleting';
 
 export type UploadJobRow = {
   id: string;

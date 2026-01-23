@@ -78,6 +78,13 @@ export default function SettingsPage() {
     if (user) {
       const stored = localStorage.getItem(`au_assistant_settings_${user.id}`);
       setIsAssistantEnabled(stored !== 'disabled');
+
+      const handleSettingsUpdate = (e: any) => {
+        setIsAssistantEnabled(e.detail.enabled);
+      };
+
+      window.addEventListener('au_assistant_settings_updated', handleSettingsUpdate);
+      return () => window.removeEventListener('au_assistant_settings_updated', handleSettingsUpdate);
     }
   }, [user]);
 

@@ -69,11 +69,7 @@ export default function PolicyPage() {
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6 lg:px-8">
-        <section className="mb-8 rounded-lg border border-primary/20 bg-card p-6">
-          <p className="text-sm text-muted-foreground">
-            By continuing, you agree to our <Link href="#terms" className="text-primary underline underline-offset-4">Terms of Service</Link> and <Link href="#privacy" className="text-primary underline underline-offset-4">Privacy Policy</Link>.
-          </p>
-        </section>
+       
 
         <section id="terms" className="space-y-4">
           <h1 className="font-headline text-3xl font-bold">Terms of Service</h1>
@@ -121,10 +117,9 @@ export default function PolicyPage() {
           </ul>
           <h2 className="font-headline text-xl font-semibold">Retention and Deletion</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
-            <li>Guest sessions and their associated data are deleted after 14 days.</li>
+            <li>Guest sessions and their associated data are deleted after 24 Hours.</li>
             <li>Inactive authenticated accounts and associated data are deleted after 14 days of inactivity.</li>
-            <li>Cached AU responses and temporary processing artifacts are deleted after 14 days of inactivity.</li>
-            <li>You may request deletion sooner via account settings or support.</li>
+            <li>You may request deletion sooner via account settings.</li>
           </ul>
           <h2 className="font-headline text-xl font-semibold">Your Rights</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
@@ -138,7 +133,7 @@ export default function PolicyPage() {
         <section className="mt-12">
           <div className="rounded-lg border border-primary/20 bg-card p-6">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-sm text-muted-foreground">Need help or want to delete your data?</p>
+              <p className="text-sm text-muted-foreground">Need more info?</p>
               <div className="flex gap-2">
                 <Button asChild variant="outline" size="sm">
                   <Link href="/dashboard">Open Dashboard</Link>

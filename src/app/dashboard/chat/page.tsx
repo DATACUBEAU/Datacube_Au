@@ -575,6 +575,11 @@ export default function ChatPage() {
                           {doc.status}...
                         </Badge>
                       )}
+                      {doc.type !== 'main_textbook' && (
+                         <Badge variant="secondary" className="text-[10px] h-4 px-1">
+                           {doc.type?.replace('_', ' ')}
+                         </Badge>
+                      )}
                     </div>
                   </SelectItem>
                 ))}

@@ -7,7 +7,7 @@ import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mj
 import mammoth from "https://esm.sh/mammoth@1.7.1";
 // @ts-ignore - Deno Edge Function (HTTP imports are valid in Deno runtime)
 import JSZip from "https://esm.sh/jszip@3.10.1";
-import { requireAnyAuth, getCorsHeaders } from "../_shared/au.ts";
+import { requireAnyAuth, getCorsHeaders, generateEmbedding } from "../_shared/au.ts";
 import { getApiKey } from "../_shared/getApiKey.ts";
 
 /* ------------------------- Constants ------------------------- */
@@ -236,40 +236,19 @@ Deno.serve(async (req: Request) => {
       .update({ progress: 70 })
       .eq("id", jobId);
 
-    let openaiKey;
-    try {
-      openaiKey = await getApiKey(supabase, "openai");
-    } catch (e) {
-      console.warn("[process-upload-job] OpenAI key not found, trying OpenRouter");
-      openaiKey = await getApiKey(supabase, "openrouter");
-    }
-
     const embeddings: any[] = [];
     for (const row of inserted) {
-      const res = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openaiKey}`,
-        },
-        body: JSON.stringify({
-          model: "text-embedding-ada-002",
-          input: row.text.replace(/\n/g, ' '),
-        }),
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        console.error(`[process-upload-job] Embedding error: ${errText}`);
-        throw new Error(`Embedding failed: ${res.status} ${errText}`);
+      try {
+        const embedding = await generateEmbedding(supabase, row.text.replace(/\n/g, ' '));
+        embeddings.push({
+          chunk_id: row.id,
+          embedding,
+          model_name: "text-embedding-ada-002",
+        });
+      } catch (err: any) {
+        console.error(`[process-upload-job] Embedding error for chunk ${row.id}:`, err);
+        throw new Error(`Embedding failed: ${err.message}`);
       }
-
-      const json = await res.json();
-      embeddings.push({
-        chunk_id: row.id,
-        embedding: json.data[0].embedding,
-        model_name: "text-embedding-ada-002",
-      });
     }
 
     // 9. Store Embeddings
