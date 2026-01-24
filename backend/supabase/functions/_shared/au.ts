@@ -291,74 +291,112 @@ export async function callAU(
 ): Promise<string> {
   const openRouterKey = await getApiKey(supabaseAdmin, "openrouter");
   
-  // 1. Check for Model Override or Default from DB
-  let model = modelOverride;
+  // Define fallback models in order of preference
+  const FALLBACK_MODELS = [
+    "xiaomi/mimo-v2-flash:free",
+    "google/gemini-2.0-flash-exp:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "qwen/qwen-3-235b-a22b:free",
+    "mistralai/mistral-7b-instruct:free"
+  ];
 
-  if (!model) {
-      // Try to fetch default from DB, otherwise fallback to hardcoded approved model
-      const { data: setting } = await supabaseAdmin
-          .from('au_rag_settings')
-          .select('value')
-          .eq('key', 'default_model')
-          .single();
+  // 1. Determine initial model list
+  let modelsToTry: string[] = [];
+  
+  if (modelOverride) {
+    // If override is provided, try it first, then fallbacks
+    modelsToTry = [modelOverride, ...FALLBACK_MODELS.filter(m => m !== modelOverride)];
+  } else {
+    // Try to fetch default from DB
+    const { data: setting } = await supabaseAdmin
+        .from('au_rag_settings')
+        .select('value')
+        .eq('key', 'default_model')
+        .single();
+    
+    let defaultModel = "xiaomi/mimo-v2-flash:free";
+    if (setting && setting.value) {
+        defaultModel = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
+    }
+    
+    // Put default first, then the rest of the fallback list (filtering out duplicates)
+    modelsToTry = [defaultModel, ...FALLBACK_MODELS.filter(m => m !== defaultModel)];
+  }
+
+  let lastError: any = null;
+
+  // 2. Loop through models until one works
+  for (const model of modelsToTry) {
+    try {
+      console.log(`[au.ts] Attempting generation with model: ${model}`);
       
-      if (setting && setting.value) {
-          model = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
-      } else {
-          // Fallback to one of the approved free models
-          model = "allenai/olmo-3.1-32b-think:free"; 
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openRouterKey}`,
+          "HTTP-Referer": "https://datacube-au.vercel.app",
+          "X-Title": "DataCube AU",
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: temperature,
+          response_format: jsonMode ? { type: "json_object" } : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Status ${response.status}: ${errorText}`);
       }
+
+      const data = await response.json();
+      
+      // If we got here, success! Log usage and return.
+      const usage = (data as any)?.usage;
+      const feature = usageContext?.feature;
+      if (usageContext?.ownershipFilter && feature && usage) {
+        // Run async (don't await to speed up response)
+        supabaseAdmin.from('au_model_usage').insert([
+          {
+            ...usageContext.ownershipFilter,
+            feature,
+            model_id: model,
+            prompt_tokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null,
+            completion_tokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null,
+            total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
+            cost: typeof usage.total_cost === 'number' ? usage.total_cost : null,
+            metadata: { sessionId: usageContext?.sessionId ?? null, usage, used_fallback: model !== modelsToTry[0] },
+          },
+        ]).then(({ error }: any) => {
+          if (error) console.error("[au.ts] Failed to log usage:", error);
+        });
+      }
+      
+      return data.choices[0].message.content;
+
+    } catch (err: any) {
+      console.warn(`[au.ts] Model ${model} failed: ${err.message}`);
+      lastError = err;
+      
+      // Log the fallback attempt to DB
+      await supabaseAdmin.from('au_debug_logs').insert({
+        component: 'au_chat_fallback',
+        message: `Falling back from ${model}`,
+        details: { error: err.message, next_model: modelsToTry[modelsToTry.indexOf(model) + 1] || 'NONE' }
+      });
+      
+      // Continue to next model in loop
+    }
   }
 
-  // Ensure model is one of the approved ones (optional strict check, but we allow admin override)
-  // Approved: 
-  // - allenai/olmo-3.1-32b-think:free
-  // - nvidia/nemotron-3-nano-30b-a3b:free
-  // - mistralai/devstral-2512:free
-  // - google/gemini-2.0-flash-exp:free (Previous default, keeping as fallback option if configured)
-
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${openRouterKey}`,
-      "HTTP-Referer": "https://datacube-au.vercel.app",
-      "X-Title": "DataCube AU",
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: temperature,
-      response_format: jsonMode ? { type: "json_object" } : undefined,
-    }),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API Error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  const usage = (data as any)?.usage;
-  const feature = usageContext?.feature;
-  if (usageContext?.ownershipFilter && feature && usage) {
-    await supabaseAdmin.from('au_model_usage').insert([
-      {
-        ...usageContext.ownershipFilter,
-        feature,
-        model_id: model,
-        prompt_tokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null,
-        completion_tokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null,
-        total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
-        cost: typeof usage.total_cost === 'number' ? usage.total_cost : null,
-        metadata: { sessionId: usageContext?.sessionId ?? null, usage },
-      },
-    ]);
-  }
-  return data.choices[0].message.content;
+  // 3. If all fail, throw the last error
+  console.error("[au.ts] All models failed.");
+  throw new Error(`All AI models are currently unavailable. Last error: ${lastError?.message || 'Unknown'}`);
 }
 
 /**

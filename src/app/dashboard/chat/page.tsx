@@ -540,11 +540,15 @@ export default function ChatPage() {
       
       if (error.status === 401) {
         errorMsg = "It looks like your session has timed out for security. Please try refreshing the page or logging back in so we can continue our analysis.";
+      } else if (error.message?.includes("API key")) {
+        errorMsg = "I'm having trouble connecting to my language center (API Key missing). Please check the backend configuration.";
+      } else if (error.message?.includes("Failed to fetch")) {
+        errorMsg = "I can't reach the server right now. Please check your internet connection or try again in a few seconds.";
       }
       
       toast({
         variant: 'destructive',
-        title: 'Chat Error',
+        title: 'AU Chat Issue',
         description: errorMsg,
       });
     }

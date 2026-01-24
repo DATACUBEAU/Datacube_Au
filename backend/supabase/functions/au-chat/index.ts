@@ -80,25 +80,12 @@ Deno.serve(async (req: Request) => {
 
     // 2. RAG Step (if enabled)
     if (useRAG) {
-      const openAiKey = await getApiKey(supabaseAdmin, "openai");
+      try {
+        const embedding = await import("../_shared/au.ts").then(m => m.generateEmbedding(supabaseAdmin, latestMessage));
 
-      // Embed Query
-      const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${openAiKey}`,
-        },
-        body: JSON.stringify({
-          input: latestMessage,
-          model: "text-embedding-ada-002",
-        }),
-      });
-
-      if (embeddingResponse.ok) {
-        const embeddingData = await embeddingResponse.json();
-        const embedding = embeddingData.data[0].embedding;
-
+        // Filter by specific document if selectedDocId is provided
+        const { selectedDocId } = body;
+        
         // Search - using supabaseAdmin with explicit ownership filters
         const { data: chunks, error: searchError } = await supabaseAdmin.rpc("au_vector_search", {
           query_embedding: embedding,
@@ -113,9 +100,16 @@ Deno.serve(async (req: Request) => {
         }
 
         if (chunks && chunks.length > 0) {
-          context = chunks.map((c: any) => c.text).join("\n\n");
-          citations = chunks.map((c: any) => ({ fileName: c.file_name, chunkId: c.chunk_id }));
+          // If selectedDocId is provided, only use chunks from that document
+          const relevantChunks = selectedDocId 
+            ? chunks.filter((c: any) => c.document_id === selectedDocId)
+            : chunks;
+            
+          context = relevantChunks.map((c: any) => c.text).join("\n\n");
+          citations = relevantChunks.map((c: any) => ({ fileName: c.file_name, chunkId: c.chunk_id }));
         }
+      } catch (ragError) {
+        console.warn("[au-chat] RAG step failed (continuing without context):", ragError);
       }
     }
 

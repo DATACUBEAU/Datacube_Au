@@ -3,6 +3,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 import { getCorsHeaders, validateAuth, requireAnyAuth, emitEvent } from "../_shared/au.ts";
 
+const MAX_SIZE = 50 * 1024 * 1024; // 50MB limit
+
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
   // Initialize corsHeaders with default values in case getCorsHeaders fails
@@ -58,6 +60,14 @@ Deno.serve(async (req: Request) => {
       }
 
       if (file) {
+        if (file.size > MAX_SIZE) {
+           return new Response(JSON.stringify({ 
+            error: "Upload failed: File size exceeds 50MB limit"
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+            status: 413,
+          });
+        }
         fileData = new Uint8Array(await file.arrayBuffer());
         fileSize = file.size;
       }

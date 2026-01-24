@@ -141,10 +141,15 @@ export default function UploadCenter() {
       }
 
       if (validationErrors.length > 0) {
+        // Check if any error is about file size to match specific requirement
+        const hasSizeError = validationErrors.some(e => e.includes('File size exceeds 50MB limit'));
+        
         toast({
           variant: 'destructive',
-          title: 'Validation Error',
-          description: validationErrors.join('\n'),
+          title: hasSizeError ? 'Upload failed' : 'Validation Error',
+          description: hasSizeError 
+            ? 'File size exceeds 50MB limit.' 
+            : validationErrors.join('\n'),
         });
       }
 
