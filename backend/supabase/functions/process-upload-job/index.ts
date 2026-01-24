@@ -1,18 +1,21 @@
 /// <reference path="../deno.d.ts" />
-// @ts-ignore - Deno Edge Function (HTTP imports are valid in Deno runtime)
+// @ts-ignore - Deno Edge Function
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-// @ts-ignore - Deno Edge Function (HTTP imports are valid in Deno runtime)
+// @ts-ignore - Deno Edge Function
 import * as pdfjsLib from "https://esm.sh/pdfjs-dist@4.0.379/legacy/build/pdf.mjs";
-// @ts-ignore - Deno Edge Function (HTTP imports are valid in Deno runtime)
+// @ts-ignore - Deno Edge Function
 import mammoth from "https://esm.sh/mammoth@1.7.1";
-// @ts-ignore - Deno Edge Function (HTTP imports are valid in Deno runtime)
+// @ts-ignore - Deno Edge Function
 import JSZip from "https://esm.sh/jszip@3.10.1";
 import { requireAnyAuth, getCorsHeaders, generateEmbedding } from "../_shared/au.ts";
-import { getApiKey } from "../_shared/getApiKey.ts";
 
 /* ------------------------- Constants ------------------------- */
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EMBEDDING_BATCH_SIZE = 5; // Process 5 embeddings at a time
+const INSERT_BATCH_SIZE = 50; // Insert 50 chunks at a time
+const TIMEOUT_BUFFER_MS = 3000; // Stop 3 seconds before timeout
+const FUNCTION_TIMEOUT_MS = 50000; // Assume 50s limit (safe margin for 60s)
 
 /* ------------------------- Helpers ------------------------- */
 
@@ -68,18 +71,34 @@ function validateUUID(id: string): boolean {
   return UUID_REGEX.test(id);
 }
 
+// Helper to update progress and check timeout
+async function updateProgress(
+  supabase: any,
+  jobId: string,
+  progress: number,
+  startTime: number
+): Promise<void> {
+  const elapsed = Date.now() - startTime;
+  if (elapsed > FUNCTION_TIMEOUT_MS - TIMEOUT_BUFFER_MS) {
+    throw new Error("Time limit approaching - stopped safely");
+  }
+  
+  await supabase
+    .from("au_upload_jobs")
+    .update({ progress, updated_at: new Date().toISOString() })
+    .eq("id", jobId);
+}
+
 /* ------------------------- Handler ------------------------- */
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
+  const startTime = Date.now();
   const corsHeaders = getCorsHeaders(req);
 
   // 1. Handle CORS preflight IMMEDIATELY
   if (req.method === "OPTIONS") {
-    return new Response(null, { 
-      status: 204,
-      headers: corsHeaders 
-    });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   let currentJobId: string | null = null;
@@ -87,15 +106,11 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { userId, ownershipFilter, supabaseAdmin: supabase, error: authError } = await requireAnyAuth(req, body);
+    const { userId, ownershipFilter, supabaseAdmin: supabase, error: authError, isAdmin } = await requireAnyAuth(req, body);
     supabaseClient = supabase;
 
     if (authError) {
-      return new Response(JSON.stringify({ 
-        error: authError,
-        details: "Authentication failed",
-        requestId
-      }), {
+      return new Response(JSON.stringify({ error: authError, details: "Authentication failed", requestId }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 401,
       });
@@ -105,211 +120,223 @@ Deno.serve(async (req: Request) => {
     currentJobId = jobId;
 
     if (!jobId || !validateUUID(jobId)) {
-      return new Response(JSON.stringify({ 
-        error: "Invalid jobId format",
-        details: "A valid UUID jobId must be provided",
-        requestId 
-      }), {
+      return new Response(JSON.stringify({ error: "Invalid jobId format", requestId }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 400,
       });
     }
 
-    console.log(`[process-upload-job] Processing job: ${jobId}`, { 
-      userId, 
-      ownershipFilter 
-    });
+    console.log(`[process-upload-job] Processing job: ${jobId}`);
 
-    // 2. Fetch job
-    const { data: job, error: jobErr } = await supabase
-      .from("au_upload_jobs")
-      .select("*")
-      .eq("id", jobId)
-      .match(ownershipFilter)
-      .single();
+    // -------------------------------------------------------------------------
+    // STEP 1: Fetch Job & Validate
+    // -------------------------------------------------------------------------
+    let query = supabase.from("au_upload_jobs").select("*").eq("id", jobId);
+    if (!isAdmin && ownershipFilter) query = query.match(ownershipFilter);
+    const { data: job, error: jobErr } = await query.single();
 
     if (jobErr || !job) {
-      console.error(`[process-upload-job] Job not found or unauthorized`, { jobId, error: jobErr });
       throw new Error(jobErr?.message || "Job not found or unauthorized");
     }
 
     if (job.status === "done") {
-      return new Response(JSON.stringify({ 
-        ok: true, 
-        alreadyDone: true,
-        requestId
-      }), {
+      return new Response(JSON.stringify({ ok: true, alreadyDone: true, requestId }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // 3. Update job status to processing
-    await supabase
-      .from("au_upload_jobs")
-      .update({ status: "processing", progress: 10 })
-      .eq("id", jobId);
+    await updateProgress(supabase, jobId, 10, startTime);
 
-    // 4. Fetch document
-    const { data: doc, error: docErr } = await supabase
-      .from("au_documents")
-      .select("*")
-      .eq("id", job.document_id)
-      .match(ownershipFilter)
-      .single();
+    // -------------------------------------------------------------------------
+    // STEP 2: Fetch Document & File
+    // -------------------------------------------------------------------------
+    let docQuery = supabase.from("au_documents").select("*").eq("id", job.document_id);
+    if (!isAdmin && ownershipFilter) docQuery = docQuery.match(ownershipFilter);
+    const { data: doc, error: docErr } = await docQuery.single();
 
     if (docErr || !doc) {
-      throw new Error(docErr?.message || "Document not found or unauthorized");
+      throw new Error(docErr?.message || "Document not found");
     }
 
-    // 5. Download file
     const bucket = job.bucket || Deno.env.get("SUPABASE_BUCKET") || "documents";
     const storagePath = doc.file_path || job.object_path;
 
-    console.log(`[process-upload-job] Downloading from ${bucket}/${storagePath}`);
-    const { data: file, error: fileErr } = await supabase.storage
-      .from(bucket)
-      .download(storagePath);
+    console.log(`[process-upload-job] Downloading ${bucket}/${storagePath}`);
+    const { data: file, error: fileErr } = await supabase.storage.from(bucket).download(storagePath);
 
     if (fileErr || !file) {
       throw new Error(fileErr?.message || "File download failed");
     }
 
-    // 6. Extract text
-    await supabase
-      .from("au_upload_jobs")
-      .update({ progress: 30 })
-      .eq("id", jobId);
+    await updateProgress(supabase, jobId, 20, startTime);
 
+    // -------------------------------------------------------------------------
+    // STEP 3: Extract Text
+    // -------------------------------------------------------------------------
     const name = job.file_name.toLowerCase();
     let text = "";
-    if (name.endsWith(".txt") || name.endsWith(".md")) {
-      text = await file.text();
-    } else if (name.endsWith(".pdf")) {
-      text = await extractTextFromPdf(await file.arrayBuffer());
-    } else if (name.endsWith(".docx")) {
-      text = await extractTextFromDocx(await file.arrayBuffer());
-    } else if (name.endsWith(".pptx")) {
-      text = await extractTextFromPptx(await file.arrayBuffer());
-    } else {
-      throw new Error(`Unsupported file type: ${name}`);
+    try {
+      if (name.endsWith(".txt") || name.endsWith(".md")) {
+        text = await file.text();
+      } else if (name.endsWith(".pdf")) {
+        text = await extractTextFromPdf(await file.arrayBuffer());
+      } else if (name.endsWith(".docx")) {
+        text = await extractTextFromDocx(await file.arrayBuffer());
+      } else if (name.endsWith(".pptx")) {
+        text = await extractTextFromPptx(await file.arrayBuffer());
+      } else {
+        throw new Error(`Unsupported file type: ${name}`);
+      }
+    } catch (e: any) {
+      throw new Error(`Text extraction failed: ${e.message}`);
     }
 
-    if (!text.trim()) {
+    if (!text || text.trim().length === 0) {
       throw new Error("Document is empty after text extraction");
     }
 
-    // 7. Split and Insert Chunks
+    await updateProgress(supabase, jobId, 40, startTime);
+
+    // -------------------------------------------------------------------------
+    // STEP 4: Chunk Text
+    // -------------------------------------------------------------------------
     const chunks = splitText(text.trim());
-    console.log(`[process-upload-job] Split into ${chunks.length} chunks`);
+    console.log(`[process-upload-job] Generated ${chunks.length} chunks`);
 
-    await supabase
-      .from("au_upload_jobs")
-      .update({ progress: 50 })
-      .eq("id", jobId);
-
-    // Clean up old chunks for this document (idempotency)
-    await supabase
-      .from("au_document_chunks")
-      .delete()
-      .eq("document_id", job.document_id)
-      .match(ownershipFilter);
-
-    const { data: inserted, error: insertErr } = await supabase
-      .from("au_document_chunks")
-      .insert(
-        chunks.map((t, i) => ({
-          document_id: job.document_id,
-          ...ownershipFilter,
-          chunk_index: i,
-          text: t,
-        }))
-      )
-      .select("id, text");
-
-    if (insertErr || !inserted) {
-      throw new Error(insertErr?.message || "Failed to insert chunks");
+    if (chunks.length === 0) {
+      throw new Error("No text chunks generated");
     }
 
-    // 8. Generate Embeddings
-    await supabase
-      .from("au_upload_jobs")
-      .update({ progress: 70 })
-      .eq("id", jobId);
+    await updateProgress(supabase, jobId, 50, startTime);
 
-    const embeddings: any[] = [];
-    for (const row of inserted) {
-      try {
-        const embedding = await generateEmbedding(supabase, row.text.replace(/\n/g, ' '));
-        embeddings.push({
-          chunk_id: row.id,
-          embedding,
-          model_name: "text-embedding-ada-002",
-        });
-      } catch (err: any) {
-        console.error(`[process-upload-job] Embedding error for chunk ${row.id}:`, err);
-        throw new Error(`Embedding failed: ${err.message}`);
+    // -------------------------------------------------------------------------
+    // STEP 5: Clear Old Data (Idempotency)
+    // -------------------------------------------------------------------------
+    let deleteQuery = supabase.from("au_document_chunks").delete().eq("document_id", job.document_id);
+    if (!isAdmin && ownershipFilter) deleteQuery = deleteQuery.match(ownershipFilter);
+    await deleteQuery;
+
+    // -------------------------------------------------------------------------
+    // STEP 6: Insert Chunks (Batched)
+    // -------------------------------------------------------------------------
+    const insertedChunks: any[] = [];
+    
+    for (let i = 0; i < chunks.length; i += INSERT_BATCH_SIZE) {
+      const batch = chunks.slice(i, i + INSERT_BATCH_SIZE);
+      const payload = batch.map((t, idx) => {
+        const row: any = {
+          document_id: job.document_id,
+          chunk_index: i + idx,
+          text: t,
+        };
+        // Apply ownership
+        if (!isAdmin && ownershipFilter) Object.assign(row, ownershipFilter);
+        else {
+          if (job.user_id) row.user_id = job.user_id;
+          if (job.guest_session_id) row.guest_session_id = job.guest_session_id;
+        }
+        return row;
+      });
+
+      const { data: inserted, error: insertErr } = await supabase
+        .from("au_document_chunks")
+        .insert(payload)
+        .select("id, text");
+
+      if (insertErr) throw insertErr;
+      if (inserted) insertedChunks.push(...inserted);
+      
+      // Update progress slightly for large files
+      if (i % (INSERT_BATCH_SIZE * 2) === 0) {
+        await updateProgress(supabase, jobId, 50 + Math.floor((i / chunks.length) * 10), startTime);
       }
     }
 
-    // 9. Store Embeddings
-    const { error: embeddingsErr } = await supabase
-      .from("au_document_embeddings")
-      .insert(embeddings);
+    await updateProgress(supabase, jobId, 60, startTime);
 
-    if (embeddingsErr) {
-      throw new Error(`Failed to store embeddings: ${embeddingsErr.message}`);
+    // -------------------------------------------------------------------------
+    // STEP 7: Generate & Insert Embeddings (Batched)
+    // -------------------------------------------------------------------------
+    if (insertedChunks.length === 0) {
+      throw new Error("Chunks were processed but none returned from DB");
     }
 
-    // 10. Finalize
-    await supabase
-      .from("au_documents")
-      .update({ status: "completed" })
-      .eq("id", job.document_id)
-      .match(ownershipFilter);
+    for (let i = 0; i < insertedChunks.length; i += EMBEDDING_BATCH_SIZE) {
+      const batch = insertedChunks.slice(i, i + EMBEDDING_BATCH_SIZE);
+      const embeddingsToInsert: any[] = [];
 
-    await supabase
-      .from("au_upload_jobs")
-      .update({ status: "done", progress: 100 })
-      .eq("id", jobId);
+      // Parallel embedding generation for this batch
+      await Promise.all(batch.map(async (chunk) => {
+        try {
+          const vector = await generateEmbedding(supabase, chunk.text.replace(/\n/g, ' '));
+          embeddingsToInsert.push({
+            chunk_id: chunk.id,
+            embedding: vector,
+            model_name: "text-embedding-ada-002",
+          });
+        } catch (e: any) {
+          console.error(`Embedding failed for chunk ${chunk.id}:`, e);
+          // We continue even if one chunk fails, to avoid total job failure
+        }
+      }));
 
-    console.log(`[process-upload-job] Success for job: ${jobId}`);
+      if (embeddingsToInsert.length > 0) {
+        const { error: embedErr } = await supabase
+          .from("au_document_embeddings")
+          .insert(embeddingsToInsert);
+        
+        if (embedErr) throw embedErr;
+      }
 
-    return new Response(JSON.stringify({ 
-      ok: true,
-      requestId
-    }), {
+      // Update progress proportional to completion (60% -> 90%)
+      const percentComplete = Math.floor(60 + ((i + batch.length) / insertedChunks.length) * 30);
+      await updateProgress(supabase, jobId, percentComplete, startTime);
+    }
+
+    // -------------------------------------------------------------------------
+    // STEP 8: Finalize
+    // -------------------------------------------------------------------------
+    await supabase.from("au_documents").update({ status: "completed" }).eq("id", job.document_id);
+    await supabase.from("au_upload_jobs").update({ status: "done", progress: 100 }).eq("id", jobId);
+
+    console.log(`[process-upload-job] Job ${jobId} completed successfully`);
+
+    return new Response(JSON.stringify({ ok: true, jobId, requestId }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
   } catch (error: any) {
-    console.error(`[process-upload-job] Fatal error [${requestId}]:`, error);
-    
-    // Attempt to mark job as failed if we have the ID
-    if (currentJobId && supabaseClient) {
-      try {
-        await supabaseClient
-          .from("au_upload_jobs")
-          .update({ 
-            status: "failed", 
-            error_message: error.message || String(error),
-            progress: 100 
-          })
-          .eq("id", currentJobId);
-      } catch (updateErr) {
-        console.error(`[process-upload-job] Failed to update job status to failed [${requestId}]:`, updateErr);
-      }
+    console.error(`[process-upload-job] Failed [${requestId}]:`, error);
+
+    if (supabaseClient && currentJobId) {
+      // 1. Mark Job Failed
+      await supabaseClient.from("au_upload_jobs")
+        .update({ 
+          status: "failed", 
+          error_message: error.message || "Unknown error",
+          progress: 100 
+        })
+        .eq("id", currentJobId);
+
+      // 2. Log Debug Info
+      await supabaseClient.from("au_debug_logs").insert({
+        component: "process-upload-job",
+        message: "Job execution failed",
+        details: { 
+          jobId: currentJobId, 
+          error: error.message, 
+          stack: error.stack,
+          requestId 
+        }
+      });
     }
 
-    return new Response(
-      JSON.stringify({ 
-        error: error.message || "Internal server error",
-        details: error.stack || String(error),
-        requestId
-      }),
-      {
-        status: error.status || 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
-    );
+    return new Response(JSON.stringify({ 
+      error: error.message || "Internal server error", 
+      requestId 
+    }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   }
 });

@@ -5,17 +5,29 @@ import { getCorsHeaders, validateAuth, requireAnyAuth, emitEvent } from "../_sha
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
-  const corsHeaders = getCorsHeaders(req);
-  
-  // 1. Handle OPTIONS -> return 204
-  if (req.method === "OPTIONS") {
-    return new Response(null, { 
-      status: 204,
-      headers: corsHeaders 
-    });
-  }
+  // Initialize corsHeaders with default values in case getCorsHeaders fails
+  let corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-upsert, tus-resumable, upload-length, upload-metadata, upload-offset",
+  };
 
   try {
+    // Try to get proper CORS headers
+    try {
+      corsHeaders = getCorsHeaders(req);
+    } catch (e) {
+      console.warn("Failed to generate CORS headers", e);
+    }
+
+    // 1. Handle OPTIONS -> return 204
+    if (req.method === "OPTIONS") {
+      return new Response(null, { 
+        status: 204,
+        headers: corsHeaders 
+      });
+    }
+
     const contentType = req.headers.get("content-type") || "";
     let fileName: string | null = null;
     let fileData: Uint8Array | null = null;
@@ -74,9 +86,7 @@ Deno.serve(async (req: Request) => {
     // 2. Validate required fields BEFORE DB logic
     if (!fileName && !body.content) {
       return new Response(JSON.stringify({ 
-        error: "Missing required field: fileName",
-        details: "A file name must be provided",
-        requestId 
+        error: "Missing required field: fileName"
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 400,
@@ -84,13 +94,11 @@ Deno.serve(async (req: Request) => {
     }
 
     // 3. Validate Auth
-    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireAnyAuth(req, body);
+    const { userId, ownershipFilter, supabaseAdmin: supabase, error: authError } = await requireAnyAuth(req, body);
 
     if (authError) {
       return new Response(JSON.stringify({ 
-        error: authError,
-        details: "Authentication failed",
-        requestId
+        error: authError || "Authentication failed"
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 401,
@@ -106,7 +114,7 @@ Deno.serve(async (req: Request) => {
 
     // 4. Inheritance Logic
     if (parentId && !expiresAt) {
-      const { data: parentDoc, error: parentError } = await supabaseAdmin
+      const { data: parentDoc, error: parentError } = await supabase
         .from("au_documents")
         .select("expires_at")
         .eq("id", parentId)
@@ -132,7 +140,7 @@ Deno.serve(async (req: Request) => {
       const safeFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_");
       filePath = `${effectiveUserId}/${folder}/${safeFileName}`;
       
-      const { error: uploadError } = await supabaseAdmin.storage
+      const { error: uploadError } = await supabase.storage
         .from(bucket)
         .upload(filePath, fileData, {
           contentType: fileName?.endsWith(".pdf") ? "application/pdf" : 
@@ -146,9 +154,7 @@ Deno.serve(async (req: Request) => {
 
     if (!filePath) {
       return new Response(JSON.stringify({ 
-        error: "Missing file content",
-        details: "No file data or existing file path provided",
-        requestId
+        error: "Missing file content"
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
         status: 400,
@@ -170,7 +176,7 @@ Deno.serve(async (req: Request) => {
     };
 
     console.log(`[document-upload] Registering document ${docId}...`);
-    const { data: doc, error: dbError } = await supabaseAdmin
+    const { data: doc, error: dbError } = await supabase
       .from("au_documents")
       .upsert(docPayload)
       .select()
@@ -199,7 +205,7 @@ Deno.serve(async (req: Request) => {
     if (filter.user_id) jobData.user_id = filter.user_id;
     if (filter.guest_session_id) jobData.guest_session_id = filter.guest_session_id;
 
-    const { data: job, error: jobError } = await supabaseAdmin
+    const { data: job, error: jobError } = await supabase
       .from("au_upload_jobs")
       .insert(jobData)
       .select()
@@ -207,46 +213,77 @@ Deno.serve(async (req: Request) => {
 
     if (jobError) throw jobError;
 
-    // 8. Trigger processing asynchronously (Don't await it to keep it non-blocking)
-    // We use the same service role client (supabaseAdmin) to call the other function
+    // 8. Trigger processing asynchronously
+    // Use EdgeRuntime.waitUntil to ensure the request is sent even after the response is returned
     const procUrl = `${Deno.env.get("SUPABASE_URL")}/functions/v1/process-upload-job`;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     
     if (serviceKey) {
       console.log(`[document-upload] Triggering processing for job ${job.id} asynchronously...`);
-      fetch(procUrl, {
+      const triggerPromise = fetch(procUrl, {
         method: "POST",
         headers: {
           "Authorization": `Bearer ${serviceKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ jobId: job.id }),
-      }).catch(err => console.error(`[document-upload] Async trigger failed for job ${job.id}:`, err));
+      })
+      .then(res => {
+        if (!res.ok) console.error(`[document-upload] Trigger response status: ${res.status}`);
+        else console.log(`[document-upload] Triggered processing for job ${job.id}`);
+      })
+      .catch(err => console.error(`[document-upload] Async trigger failed for job ${job.id}:`, err));
+
+      // @ts-ignore - EdgeRuntime is available in the environment
+      if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+        // @ts-ignore
+        EdgeRuntime.waitUntil(triggerPromise);
+      } else {
+        // Fallback: await it (might delay response slightly but ensures delivery)
+        await triggerPromise;
+      }
     }
 
-    // 9. Success must return { "ok": true, "jobId": "uuid" }
+    // 9. Success Response (Structured JSON as requested)
     return new Response(JSON.stringify({ 
-      ok: true, 
-      jobId: job.id 
+      jobId: job.id,
+      status: job.status
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
+      status: 200
     });
 
   } catch (error: any) {
     console.error(`[document-upload] Error [${requestId}]:`, error);
     
-    // Always return JSON with error, details, requestId
+    // Log detailed error to DB if possible (using a new client since auth might have failed)
+    try {
+      const logClient = createClient(
+        Deno.env.get("SUPABASE_URL") ?? "",
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+      );
+      
+      await logClient.from("au_debug_logs").insert({
+        component: "document-upload",
+        message: "Fatal upload error",
+        details: { 
+          requestId, 
+          error: error.message, 
+          stack: error.stack,
+          headers: Object.fromEntries(req.headers as any)
+        }
+      });
+    } catch (logErr) {
+      console.error("Failed to write to debug log:", logErr);
+    }
+
+    // Always return structured JSON with error message, status 500
     return new Response(JSON.stringify({ 
       error: error.message || "Internal server error",
-      details: error.stack || String(error),
-      debug: {
-        tableName: "au_upload_jobs",
-        url: Deno.env.get("SUPABASE_URL")?.substring(0, 15) + "...",
-      },
-      requestId
+      details: error.stack
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: error.status || 500,
+      status: 500,
     });
   }
 });

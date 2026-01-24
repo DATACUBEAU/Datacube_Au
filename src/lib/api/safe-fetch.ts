@@ -18,10 +18,20 @@ export async function safeFetch(url: string, options: RequestInit) {
       body,
     });
 
-    throw {
-      status: res.status,
-      body,
-    };
+    // Extract meaningful error message
+    let errorMessage = `API Error ${res.status}`;
+    if (body) {
+      if (typeof body === 'string') {
+        errorMessage = body;
+      } else if (typeof body === 'object') {
+        errorMessage = body.error || body.message || body.details || JSON.stringify(body);
+      }
+    }
+
+    const error = new Error(errorMessage);
+    (error as any).status = res.status;
+    (error as any).body = body;
+    throw error;
   }
 
   return body;

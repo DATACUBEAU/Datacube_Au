@@ -48,6 +48,13 @@ export class RAGWorker {
     const currentJob: UploadJob = job[0];
     logger.info('Job claimed', { jobId: currentJob.job_id });
 
+    // Log to DB
+    await this.supabase.from("au_debug_logs").insert({
+      component: "rag-worker",
+      message: "Job claimed",
+      details: { jobId: currentJob.job_id }
+    });
+
     try {
       await this.processJob(currentJob);
       
@@ -58,9 +65,28 @@ export class RAGWorker {
         .eq('id', currentJob.job_id);
       
       logger.info('Job completed', { jobId: currentJob.job_id });
+
+      // Log success to DB
+      await this.supabase.from("au_debug_logs").insert({
+        component: "rag-worker",
+        message: "Job completed",
+        details: { jobId: currentJob.job_id }
+      });
+
     } catch (processErr) {
       logger.error('Job failed', { jobId: currentJob.job_id, error: processErr });
       
+      // Log failure to DB
+      await this.supabase.from("au_debug_logs").insert({
+        component: "rag-worker",
+        message: "Job failed",
+        details: { 
+          jobId: currentJob.job_id, 
+          error: processErr instanceof Error ? processErr.message : String(processErr),
+          stack: processErr instanceof Error ? processErr.stack : null
+        }
+      });
+
       // 3. Mark job as failed
       await this.supabase
         .from('au_upload_jobs')

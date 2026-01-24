@@ -60,7 +60,8 @@ export async function validateAuth(req: Request, body?: any) {
     // 0. Check if it's the Service Role Key directly (often used in local dev or simple scripts)
     if (token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
       isAdmin = true;
-      userId = "service-role";
+      // We use a valid UUID for the service role user to satisfy UUID constraints in DB
+      userId = "00000000-0000-0000-0000-000000000000"; 
       user = { id: userId, role: "service_role" };
     }
 
@@ -220,27 +221,63 @@ export async function generateEmbedding(
   input: string,
   model = "text-embedding-ada-002"
 ): Promise<number[]> {
-  const openAiKey = await getApiKey(supabaseAdmin, "openai");
-  
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${openAiKey}`,
-    },
-    body: JSON.stringify({
-      input,
-      model,
-    }),
-  });
+  // 1. Try OpenAI First
+  try {
+    const openAiKey = await getApiKey(supabaseAdmin, "openai");
+    
+    const response = await fetch("https://api.openai.com/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openAiKey}`,
+      },
+      body: JSON.stringify({
+        input,
+        model,
+      }),
+    });
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Failed to generate embedding: ${response.statusText}`);
+    if (response.ok) {
+      const data = await response.json();
+      return data.data[0].embedding;
+    } else {
+      console.warn(`[au.ts] OpenAI Embedding failed: ${response.status} ${response.statusText}`);
+    }
+  } catch (e) {
+    console.warn(`[au.ts] OpenAI Embedding error:`, e);
   }
 
-  const data = await response.json();
-  return data.data[0].embedding;
+  // 2. Fallback to OpenRouter (if OpenAI fails or key missing)
+  try {
+    console.log("[au.ts] Falling back to OpenRouter for embedding...");
+    const openRouterKey = await getApiKey(supabaseAdmin, "openrouter");
+    
+    // OpenRouter Embedding Endpoint
+    const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${openRouterKey}`,
+        "HTTP-Referer": "https://datacube-au.vercel.app",
+        "X-Title": "DataCube AU",
+      },
+      body: JSON.stringify({
+        input,
+        model: "text-embedding-ada-002", // OpenRouter maps this often, or we could use 'openai/text-embedding-ada-002'
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenRouter Embedding Error: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    return data.data[0].embedding;
+  } catch (e: any) {
+    console.error("[au.ts] All embedding providers failed.");
+    throw new Error(`Embedding generation failed: ${e.message}`);
+  }
 }
 
 export async function callAU(
