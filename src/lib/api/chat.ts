@@ -34,7 +34,8 @@ export async function sendChatMessage(
   request: ChatRequest,
   accessToken?: string
 ): Promise<RagBasedQuestionAnsweringOutput & { thought?: string }> {
-  return safeFetch(`${SUPABASE_URL}/functions/v1/au-chat`, {
+  // Using local API route with multi-model fallback support
+  return safeFetch(`/api/chat/fallback`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -76,4 +77,20 @@ export async function generatePromptStarters(
     }),
   });
   return result.prompts || [];
+}
+
+/**
+ * Fetches chat history for a document.
+ */
+export async function getChatHistory(
+  docId: string,
+  accessToken?: string
+): Promise<ChatMessage[]> {
+  const result = await safeFetch(`/api/chat/history?docId=${docId}`, {
+    method: 'GET',
+    headers: {
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+  });
+  return result.history || [];
 }

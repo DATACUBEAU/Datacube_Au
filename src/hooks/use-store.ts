@@ -106,7 +106,8 @@ export const useStore = create<AppState>()(
         set({ isGeneratingPredictions: true, predictionData: null });
 
         try {
-          const result = await safeFetch(`${SUPABASE_URL}/functions/v1/prediction-engine`, {
+          // Use local API route instead of direct edge function
+          const result = await safeFetch(`/api/predictions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

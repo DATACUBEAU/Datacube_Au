@@ -815,39 +815,15 @@ export default function ChatPage() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className={`h-10 w-10 transition-all duration-300 ${browsingMode ? 'text-blue-500 bg-blue-50 hover:bg-blue-100' : 'text-muted-foreground hover:text-primary'}`}
+                  className="h-10 w-10 text-muted-foreground hover:text-primary transition-all duration-300"
                   disabled={docsLoading || !selectedDocId || !isOnline}
-                  onClick={() => {
-                      const newMode = !browsingMode;
-                      setBrowsingMode(newMode);
-
-                      // Add persistent system message to history
-                      if (selectedDocId) {
-                          const systemMsg: ChatMessage = {
-                              id: nanoid(),
-                              role: 'assistant',
-                              content: newMode 
-                                  ? "🌐 Browser Mode ENABLED: I can now search the web for real-time info." 
-                                  : "🔒 Browser Mode DISABLED: I will strictly use your uploaded documents.",
-                              isSystem: true
-                          };
-                          setCurrentChatHistory(prev => [...prev, systemMsg]);
-                      }
-
-                      toast({
-                          title: newMode ? "Browsing Enabled" : "Browsing Disabled",
-                          description: newMode 
-                              ? "AU can now search the web for real-time info. Sources will be cited." 
-                              : "AU is restricted to your uploaded documents only.",
-                          variant: newMode ? "default" : "secondary" as "default" | "destructive" | null | undefined
-                      });
-                  }}
+                  onClick={() => router.push('/dashboard/global-chat')}
                 >
-                  {browsingMode ? <Globe className="h-5 w-5" /> : <Globe className="h-5 w-5 opacity-50" />}
+                  <Globe className="h-5 w-5" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <p>{browsingMode ? "Disable Internet Browsing" : "Enable Internet Browsing"}</p>
+                <p>Go to Global Chat</p>
               </TooltipContent>
             </Tooltip>
 
@@ -1165,23 +1141,6 @@ export default function ChatPage() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    disabled={isLoading || !selectedDocId || !isOnline}
-                    className="absolute left-12 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 transition-all duration-300 opacity-0 pointer-events-none"
-                  >
-                    <Globe className="h-5 w-5" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {browsingMode ? "Disable Internet Browsing" : "Enable Internet Browsing"}
-                </TooltipContent>
-              </Tooltip>
 
               <Textarea
                 id="message"

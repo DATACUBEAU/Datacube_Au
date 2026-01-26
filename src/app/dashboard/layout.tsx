@@ -16,6 +16,8 @@ import {
   AlertTriangle,
   ShieldAlert,
   Trash2,
+  Globe,
+  BookOpen,
 } from 'lucide-react';
 import {
   Dialog,
@@ -64,6 +66,7 @@ import { AUAssistant } from '@/components/au-assistant';
 import { InactivityPolicyBanner } from '@/components/inactivity-policy-banner';
 import { updateUserActivity } from '@/lib/supabase/client';
 import { AuChatProvider } from '@/providers/au-chat-provider';
+import { SiteManualGuide } from '@/components/site-manual-guide';
 
 type NavItem = {
   href: string;
@@ -114,6 +117,14 @@ const SidebarFooterMenu = ({
 }) => (
   <SidebarFooter className="p-2">
     <SidebarMenu>
+      <SidebarMenuItem>
+        <SiteManualGuide>
+          <SidebarMenuButton tooltip={{ children: 'User Guide & Install' }}>
+            <BookOpen />
+            <span>User Guide</span>
+          </SidebarMenuButton>
+        </SiteManualGuide>
+      </SidebarMenuItem>
       {footerItems.map((item) => (
         <SidebarMenuItem key={item.key}>
           {item.href ? (
@@ -286,6 +297,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { href: '/dashboard/documents', icon: FileTextIcon, label: 'Documents', tourId: 'upload-section' },
     { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
+    { href: '/dashboard/global-chat', icon: Globe, label: 'Global Chat' },
     { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge },
     { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section' },
     { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section' },

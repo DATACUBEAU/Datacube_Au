@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-export function SiteManualGuide() {
+export function SiteManualGuide({ children }: { children?: React.ReactNode }) {
   const [isOpen, setIsOpen] = useState(false);
   const [deviceType, setDeviceType] = useState<'desktop' | 'ios' | 'android' | 'tablet' | 'unknown'>('unknown');
   const [browserType, setBrowserType] = useState<'chrome' | 'safari' | 'firefox' | 'edge' | 'other'>('other');
@@ -151,9 +151,11 @@ export function SiteManualGuide() {
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
+        {children ? children : (
         <Button variant="outline" size="sm" className="gap-2">
           <HelpCircle className="h-4 w-4" /> User Guide & Install
         </Button>
+        )}
       </DialogTrigger>
 
       <DialogContent className="w-[95vw] sm:max-w-[600px] max-h-[90svh] flex flex-col p-4 sm:p-6">

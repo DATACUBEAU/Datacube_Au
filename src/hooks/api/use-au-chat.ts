@@ -17,31 +17,78 @@ export function useAuChat(selectedDocId: string | null) {
   const [promptStarters, setPromptStarters] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // --- PERSISTENCE: Load history on mount or doc change ---
-  useEffect(() => {
-    if (selectedDocId && user?.id) {
-      const savedHistory = localStorage.getItem(`au_chat_history_${user.id}_${selectedDocId}`);
-      if (savedHistory) {
-        try {
-          setHistory(JSON.parse(savedHistory));
-        } catch (e) {
-          console.error('[useAuChat] Failed to parse saved history:', e);
-          setHistory([]);
-        }
-      } else {
-        setHistory([]);
-      }
-    } else if (!selectedDocId) {
-      setHistory([]);
-    }
-  }, [selectedDocId, user?.id]);
+  // Helper for LocalStorage Key
+  const getStorageKey = useCallback(() => {
+    if (!user || !selectedDocId) return null;
+    return `au_chat_history_${user.id}_${selectedDocId}`;
+  }, [user, selectedDocId]);
 
-  // --- PERSISTENCE: Save history on change ---
+  // --- PERSISTENCE: Save to LocalStorage on change ---
   useEffect(() => {
-    if (selectedDocId && user?.id && history.length > 0) {
-      localStorage.setItem(`au_chat_history_${user.id}_${selectedDocId}`, JSON.stringify(history));
+    const key = getStorageKey();
+    if (key && history.length > 0) {
+      localStorage.setItem(key, JSON.stringify(history));
     }
-  }, [history, selectedDocId, user?.id]);
+  }, [history, getStorageKey]);
+
+  // --- PERSISTENCE: Load history on mount or doc change (FROM SUPABASE + FALLBACK) ---
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadHistory() {
+        if (!selectedDocId || !user) {
+            setHistory([]);
+            return;
+        }
+
+        const storageKey = `au_chat_history_${user.id}_${selectedDocId}`;
+        const localData = localStorage.getItem(storageKey);
+        let localMessages: ChatMessage[] = [];
+        if (localData) {
+            try {
+                localMessages = JSON.parse(localData);
+            } catch (e) { console.error('Error parsing local history', e); }
+        }
+
+        // If we have local data, show it immediately for speed
+        if (localMessages.length > 0 && isMounted) {
+            setHistory(localMessages);
+        }
+
+        if (!session?.access_token) return;
+
+        try {
+            const { getChatHistory } = await import('@/lib/api/chat');
+            const messages = await getChatHistory(selectedDocId, session.access_token);
+            
+            if (isMounted) {
+                if (messages && messages.length > 0) {
+                    // Server is authority. Use server data.
+                    const uiMessages = messages.map(m => ({
+                        ...m,
+                        id: m.id || nanoid(),
+                        isLoading: false
+                    }));
+                    setHistory(uiMessages);
+                    // Update local storage to match server
+                    localStorage.setItem(storageKey, JSON.stringify(uiMessages));
+                } else if (localMessages.length > 0) {
+                    // Server empty, but we have local data. Keep local data (sync gap).
+                    // Optionally, we could try to push local to server here, but for now just keep it.
+                    console.log('[useAuChat] Server empty, keeping local history.');
+                }
+            }
+        } catch (e) {
+            console.error('[useAuChat] Failed to load history from server:', e);
+            // On error, if we have local messages, we are good (already set).
+            // If no local messages, we stay empty.
+        }
+    }
+
+    loadHistory();
+
+    return () => { isMounted = false; };
+  }, [selectedDocId, user, session?.access_token]);
 
   const stopGeneration = useCallback(() => {
     if (abortControllerRef.current) {
@@ -75,7 +122,14 @@ export function useAuChat(selectedDocId: string | null) {
     let thinkingInterval: any = null;
     try {
       // Step 1: Simulated "Steps" to mimic Trae's thinking behavior
-      const thinkingSteps = [
+      const isGlobal = selectedDocId === 'global';
+      const thinkingSteps = isGlobal ? [
+        'Connecting to global knowledge grid...',
+        'Analyzing query intent...',
+        'Scanning external sources...',
+        'Cross-referencing verified data...',
+        'Synthesizing comprehensive response...'
+      ] : [
         'Searching document index...',
         'Extracting relevant knowledge chunks...',
         'Synthesizing cross-references...',
@@ -237,6 +291,50 @@ export function useAuChat(selectedDocId: string | null) {
     }
   }, [selectedDocId, session, history]);
 
+  const clearChat = useCallback(async () => {
+    if (!selectedDocId || !session?.access_token) {
+        // Even if no session, try to clear local
+        if (user && selectedDocId) {
+            localStorage.removeItem(`au_chat_history_${user.id}_${selectedDocId}`);
+            setHistory([]);
+            window.location.reload();
+        }
+        return;
+    }
+    
+    try {
+        // Clear local first
+        if (user) {
+            localStorage.removeItem(`au_chat_history_${user.id}_${selectedDocId}`);
+        }
+        
+        const { safeFetch } = await import('@/lib/api/safe-fetch');
+        await safeFetch(`/api/chat/history?docId=${selectedDocId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${session.access_token}` }
+        });
+        setHistory([]);
+        toast({ title: "Chat cleared", description: "History has been wiped. Reloading..." });
+        
+        // Force reload to prevent UI freezing/stale state
+        setTimeout(() => {
+            window.location.reload();
+        }, 500);
+        
+    } catch (e) {
+        console.error("Failed to clear chat:", e);
+        // Even if server fails, clear local and UI
+        if (user) {
+             localStorage.removeItem(`au_chat_history_${user.id}_${selectedDocId}`);
+             setHistory([]);
+        }
+        toast({ title: "Error", description: "Failed to clear server history, but local history cleared.", variant: "default" });
+        setTimeout(() => {
+            window.location.reload();
+        }, 500);
+    }
+  }, [selectedDocId, session?.access_token, toast, user]);
+
   return {
     history,
     setHistory,
@@ -245,6 +343,7 @@ export function useAuChat(selectedDocId: string | null) {
     stopGeneration,
     scanAndGreet,
     promptStarters,
-    fetchPrompts
+    fetchPrompts,
+    clearChat
   };
 }

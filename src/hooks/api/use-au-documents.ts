@@ -74,8 +74,14 @@ export function useAuDocuments(pollInterval = 0) {
       
       toast({ 
         title: 'Document removed', 
-        description: 'The document and all its data have been deleted.' 
+        description: 'The document and all its data have been deleted. Reloading...' 
       });
+      
+      // Force reload to clean up all related state (chat, embeddings, etc) and prevent UI freezing
+      setTimeout(() => {
+          window.location.reload();
+      }, 500);
+
     } catch (err: any) {
       // 3. Rollback on failure
       if (docToRemove) {

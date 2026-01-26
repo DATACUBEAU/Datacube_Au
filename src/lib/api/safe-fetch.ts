@@ -14,13 +14,22 @@ export async function safeFetch(url: string, options: RequestInit) {
   }
 
   const contentType = res.headers.get("content-type") || "";
-  const body = contentType.includes("application/json")
-    ? await res.json().catch(() => null)
-    : await res.text().catch(() => null);
+  let body;
+  try {
+    const text = await res.text();
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = text;
+    }
+  } catch {
+    body = null;
+  }
 
   if (!res.ok) {
     console.error("API error", {
       status: res.status,
+      statusText: res.statusText,
       body,
     });
 

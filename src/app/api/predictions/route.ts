@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-export const runtime = 'edge';
+
+// Use Node.js runtime for better stability with timeouts and broad compatibility
+// export const runtime = 'edge'; 
 
 function requiredEnv(key: string): string {
   const value = process.env[key];
@@ -95,7 +97,7 @@ export async function POST(req: Request) {
     throw lastError || new Error("All prediction models failed.");
 
   } catch (err: any) {
-    console.error('[API /api/generate-exam-predictions] Fatal error:', err);
+    console.error('[API /api/predictions] Fatal error:', err);
     return NextResponse.json(
       { ok: false, error: err.message || 'Unexpected server error.' },
       { status: 500 }
