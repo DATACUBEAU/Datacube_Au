@@ -1,4 +1,4 @@
-export type AuDocumentType = 'main_textbook' | 'past_questions';
+export type AuDocumentType = 'main_textbook' | 'past_questions' | 'exam_questions';
 
 export type AuDocumentStatus = 'uploading' | 'processing' | 'completed' | 'failed';
 

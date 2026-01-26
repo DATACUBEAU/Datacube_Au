@@ -42,18 +42,24 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const systemPrompt = `You are a creative study partner. Your goal is to suggest interesting, thought-provoking questions to help a student explore a document.
+    const systemPrompt = `You are AU, an intelligent Exam Coach and Tutor.
+    Your goal is to suggest 4 smart, high-value study questions for the provided document.
+    
+    Avoid generic questions like "What is this about?".
+    Instead, focus on:
+    1. Key definitions and concepts.
+    2. Exam-style questions (e.g., "Compare X and Y").
+    3. Critical analysis or application.
     
     You must output a valid JSON object with the following structure:
     {
       "prompts": [
         "Question 1?",
         "Question 2?",
-        "Question 3?"
+        "Question 3?",
+        "Question 4?"
       ]
-    }
-    
-    Generate 3-5 distinct questions. They should be engaging and specific to the content.`;
+    }`;
 
     let userPrompt = `Generate chat prompt starters for a document titled "${documentTitle}".\n\nContent Preview:\n${documentContent.substring(0, 5000)}`;
     

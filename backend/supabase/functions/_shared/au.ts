@@ -12,15 +12,24 @@ export const corsHeaders = {
 export function getCorsHeaders(req: Request) {
   const origin = req.headers.get("Origin");
   const allowedOrigin = Deno.env.get("ALLOWED_ORIGIN") || "*";
-  const corsOrigin = (allowedOrigin === "*" || allowedOrigin === origin) 
-    ? (origin || "*") 
-    : allowedOrigin;
+  
+  // If allowedOrigin is *, we MUST echo back the request Origin to allow credentials.
+  // We cannot send "Access-Control-Allow-Origin: *" with "Access-Control-Allow-Credentials: true".
+  const corsOrigin = (allowedOrigin === "*" && origin) 
+    ? origin 
+    : (allowedOrigin === "*" ? "*" : allowedOrigin);
 
-  return {
+  const headers: any = {
     ...corsHeaders,
     "Access-Control-Allow-Origin": corsOrigin,
-    "Access-Control-Allow-Credentials": "true",
   };
+
+  // Only allow credentials if we have a specific origin (not *)
+  if (corsOrigin !== "*") {
+    headers["Access-Control-Allow-Credentials"] = "true";
+  }
+
+  return headers;
 }
 
 /**

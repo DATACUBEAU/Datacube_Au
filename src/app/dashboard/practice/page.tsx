@@ -166,7 +166,7 @@ export default function PracticePage() {
     
     try {
         const attachedPQs = allDocuments
-          .filter(d => d.parent_id === selectedDocId && d.document_type === 'past_questions' && d.status === 'completed')
+          .filter(d => d.parent_id === selectedDocId && (d.document_type === 'past_questions' || d.document_type === 'exam_questions') && d.status === 'completed')
           .map(d => d.id);
         
         await startExamGeneration(attachedPQs);

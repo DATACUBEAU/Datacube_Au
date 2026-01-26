@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Card,
@@ -30,8 +30,8 @@ import type { GenerateKnowledgeOutput } from '@/app/actions';
 import { motion } from 'framer-motion';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
-import type { AuDocumentRow } from '@/lib/au/types';
-import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
+import { useAuDocuments } from '@/hooks/api/use-au-documents';
+import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { TruncatedText } from '@/components/TruncatedText';
 import { Badge } from '@/components/ui/badge';
 
@@ -55,11 +55,17 @@ export default function KnowledgePage() {
   const [session] = useSupabaseSession();
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
+  
+  // Use global hook for documents
+  const { documents: apiDocuments, loading: docsLoading } = useAuDocuments();
 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const [documents, setDocuments] = useState<AuDocumentRow[]>([]);
-  const [allDocuments, setAllDocuments] = useState<AuDocumentRow[]>([]);
-  const [docsLoading, setDocsLoading] = useState(false);
+  
+  // Filter documents for Knowledge Hub (Textbooks only)
+  const documents = useMemo(() => apiDocuments.filter(d => 
+    d.document_type === 'main_textbook' && 
+    (d.expires_at || d.status !== 'failed')
+  ), [apiDocuments]);
 
   // Zustand state
   const {
@@ -69,36 +75,6 @@ export default function KnowledgePage() {
     clearKnowledgeAndPredictions,
     setKnowledgeData,
   } = useStore();
-
-  useEffect(() => {
-    if (!user) {
-      setDocuments([]);
-      setAllDocuments([]);
-      setDocsLoading(false);
-      return;
-    }
-    if (!isOnline) {
-      setDocsLoading(false);
-      return;
-    }
-    setDocsLoading(true);
-    listAuDocumentsForUser(user)
-      .then((docs) => {
-        setAllDocuments(docs);
-        // Only show main textbooks for knowledge generation
-        // Filter out "No expiry" completed documents
-        const textbooks = docs.filter(d => 
-          d.document_type === 'main_textbook' && 
-          (d.expires_at || d.status !== 'completed')
-        );
-        setDocuments(textbooks);
-      })
-      .catch(() => {
-        setDocuments([]);
-        setAllDocuments([]);
-      })
-      .finally(() => setDocsLoading(false));
-  }, [user, isOnline]);
 
   const handleDocSelectionChange = (docId: string) => {
     setSelectedDocId(docId);
@@ -152,7 +128,7 @@ export default function KnowledgePage() {
         const documentContent = await getAuDocumentChunksText(user, selectedDocId);
         
         // Check for attached past questions
-        const attachedPQs = allDocuments.filter(d => d.parent_id === selectedDocId && d.document_type === 'past_questions' && d.status === 'completed');
+        const attachedPQs = apiDocuments.filter(d => d.parent_id === selectedDocId && (d.document_type === 'past_questions' || d.document_type === 'exam_questions') && d.status === 'completed');
         
         let pastQuestionsContent = '';
         if (attachedPQs.length > 0) {

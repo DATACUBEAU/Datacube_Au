@@ -273,6 +273,11 @@ export default function DocumentsPage() {
     const hasChildren = children.length > 0;
     const isDeleting = deletingIds.has(doc.id);
 
+    // Propagate parent expiry if child has none
+    // If we passed effectiveExpiresAt from parent, use it here if doc.expiresAt is undefined
+    // For now, let's keep it simple: use doc.expiresAt
+    const effectiveExpiresAt = doc.expiresAt;
+
     return (
       <div key={doc.id} className="flex flex-col relative overflow-hidden">
         <div

@@ -1,8 +1,5 @@
 // @ts-ignore: Deno modules
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-// @ts-ignore: Deno modules
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { corsHeaders, callAU, validateAuth, requireUser, emitEvent } from "../_shared/au.ts";
+import { corsHeaders } from "../_shared/cors.ts";
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
@@ -15,6 +12,8 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const { callAU, validateAuth, requireUser, emitEvent } = await import("../_shared/au.ts");
+
     const body = await req.json().catch(() => ({}));
     const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireUser(req, body);
 

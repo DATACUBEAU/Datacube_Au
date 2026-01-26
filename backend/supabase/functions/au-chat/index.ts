@@ -1,11 +1,21 @@
 /// <reference path="../deno.d.ts" />
 // @ts-ignore: Deno modules
-import { getCorsHeaders, callAU, requireAnyAuth, emitEvent } from "../_shared/au.ts";
+import { getCorsHeaders, callAU, requireAnyAuth, emitEvent, generateEmbedding } from "../_shared/au.ts";
 import { getApiKey } from "../_shared/getApiKey.ts";
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
-  const corsHeaders = getCorsHeaders(req);
+  let corsHeaders: any = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-upsert, tus-resumable, upload-length, upload-metadata, upload-offset",
+  };
+
+  try {
+    corsHeaders = getCorsHeaders(req);
+  } catch (e) {
+    console.warn("Failed to generate CORS headers", e);
+  }
 
   // 1. Handle OPTIONS -> return 204
   if (req.method === "OPTIONS") {
@@ -81,16 +91,41 @@ Deno.serve(async (req: Request) => {
     // 2. RAG Step (if enabled)
     if (useRAG) {
       try {
-        const embedding = await import("../_shared/au.ts").then(m => m.generateEmbedding(supabaseAdmin, latestMessage));
+        const embedding = await generateEmbedding(supabaseAdmin, latestMessage);
 
         // Filter by specific document if selectedDocId is provided
         const { selectedDocId } = body;
         
+        let docIdsToSearch: string[] = [];
+        if (selectedDocId) {
+          docIdsToSearch.push(selectedDocId);
+          
+          // INTELLIGENT LINKING: Check if this is an exam question or supplement
+          // If so, we must also search the PARENT textbook to answer questions correctly.
+          const { data: docInfo } = await supabaseAdmin
+            .from('au_documents')
+            .select('document_type, parent_id')
+            .eq('id', selectedDocId)
+            .single();
+            
+          if (docInfo && docInfo.parent_id) {
+            console.log(`[au-chat] Linked document detected. Including parent ${docInfo.parent_id} in search.`);
+            docIdsToSearch.push(docInfo.parent_id);
+          }
+        }
+        
         // Search - using supabaseAdmin with explicit ownership filters
+        // Note: The current RPC 'au_vector_search' doesn't support an array of IDs natively in the filter logic 
+        // without modification, OR we can fetch chunks for ALL user docs and filter in code (inefficient),
+        // OR we rely on semantic similarity globally (p_user_id) if we want "Smart Matching".
+        // 
+        // Strategy: If we have specific doc IDs, we'll fetch results globally for the user 
+        // and then filter for those IDs in the application layer to support the "Parent+Child" linking.
+        
         const { data: chunks, error: searchError } = await supabaseAdmin.rpc("au_vector_search", {
           query_embedding: embedding,
-          match_threshold: 0.7,
-          match_count: 5,
+          match_threshold: 0.65, // Lower threshold slightly to catch broader textbook concepts
+          match_count: 10,       // Increase count to get both exam question AND textbook context
           p_user_id: effectiveFilter.user_id || null,
           p_guest_session_id: effectiveFilter.guest_session_id || null
         });
@@ -100,13 +135,27 @@ Deno.serve(async (req: Request) => {
         }
 
         if (chunks && chunks.length > 0) {
-          // If selectedDocId is provided, only use chunks from that document
-          const relevantChunks = selectedDocId 
-            ? chunks.filter((c: any) => c.document_id === selectedDocId)
+          // Filter: If we have specific target docs (exam + textbook), keep only those.
+          // If selectedDocId was null (search all), keep all.
+          const relevantChunks = (docIdsToSearch.length > 0)
+            ? chunks.filter((c: any) => docIdsToSearch.includes(c.document_id))
             : chunks;
             
           context = relevantChunks.map((c: any) => c.text).join("\n\n");
-          citations = relevantChunks.map((c: any) => ({ fileName: c.file_name, chunkId: c.chunk_id }));
+          
+          // Deduplicate citations by fileName
+          const uniqueFiles = new Set();
+          citations = relevantChunks.reduce((acc: any[], c: any) => {
+            if (!uniqueFiles.has(c.file_name)) {
+              uniqueFiles.add(c.file_name);
+              acc.push({ fileName: c.file_name, chunkId: c.chunk_id });
+            }
+            return acc;
+          }, []);
+          
+          console.log(`[au-chat] Retrieved ${relevantChunks.length} chunks. Target Docs: ${docIdsToSearch.join(', ') || 'All'}`);
+        } else {
+          console.log(`[au-chat] No relevant chunks found.`);
         }
       } catch (ragError) {
         console.warn("[au-chat] RAG step failed (continuing without context):", ragError);
@@ -114,49 +163,83 @@ Deno.serve(async (req: Request) => {
     }
 
     // 3. Generate Answer
-    const systemPrompt = `You are AU, an advanced Analytical Unit assistant within the Datacube AU domain. 
-Your goal is to provide highly intelligent, accurate, and analytical answers based on the user's data and current context.
+    const systemPrompt = `You are AU, the Intelligent Study Orchestrator for Datacube AU.
+Your goal is to tutor the student AND guide them to the right study tools (Knowledge Hub, Exam Engine, Practice Exam).
 
 CORE SELF-INFO:
-- Creator: Fabian, the visionary behind Analytical Unit.
-- Domain: Datacube AU (a specialized domain of Analytical Unit).
-- Personality: Professional, analytical, helpful, and concise.
+- Role: Intelligent Study Orchestrator.
+- Capabilities: Tutoring, Cross-Section Navigation, Progress Tracking.
+- Personality: Smart, Proactive, Encouraging, System-Aware.
+
+SYSTEM AWARENESS (Use this to route students):
+1. **Knowledge Hub**: For deep concept mastery, summaries, and mind maps.
+2. **Exam Prediction Engine**: For seeing likely questions and topic weighting.
+3. **Practice Exam**: For testing knowledge, scoring, and feedback.
 
 CURRENT CONTEXT:
 - Current Path: ${currentPath || 'Dashboard'}
 ${logContext}
 
-${guide ? `USER PREFERENCES (Follow these strictly):\n${guide}\n` : ""}
-${summaryMode ? `SUMMARY MODE: You are in ${summaryMode} mode. Adjust your response length accordingly.\n` : ""}
+${summaryMode ? `SUMMARY MODE: You are in ${summaryMode.toUpperCase()} mode.
+   - SHORT: Be extremely concise, use bullet points, max 3 sentences.
+   - MID: Provide a standard explanation with balanced detail (1-2 paragraphs).
+   - DETAILED: Provide a comprehensive deep-dive, including examples, quotes, and step-by-step analysis.` : ""}
 
 DOCUMENT CONTEXT (RAG):
-${context || "No specific document context found for this query."}
+The following text snippets are from the user's uploaded documents. You MUST use this information to answer the question if it is relevant.
+${context ? `"""\n${context}\n"""` : "No specific document context found for this query."}
+
+ORCHESTRATION GUIDELINES (CRITICAL):
+  1. **Smart Navigation**: Proactively recommend the best section based on context.
+     - Learning concepts? -> "To strengthen this, I recommend the **Knowledge Hub**."
+     - Asking about exams? -> "Want me to pull predictions from the **Exam Prediction Engine**?"
+     - Finished a topic? -> "Ready to test this? Try a **Practice Exam** question."
+  2. **Teaching + Action**: Every response must blend:
+     - **Teaching**: Explain the concept clearly (using layered explanation).
+     - **Assessment**: Check if they understand.
+     - **Action**: Suggest a specific next step or section to visit.
+  3. **Cross-Section Reporting**: Reference their activity if available (e.g., "You haven't tried the Practice Exam for this yet").
+  4. **Student Confidence**:
+     - Low confidence? -> Encourage, simplify, suggest **Knowledge Hub** for basics.
+     - High confidence? -> Challenge them, suggest **Practice Exam** or **Prediction Engine**.
+  5. **Exam Difficulty Tagging**: Tag exam discussions as [Easy/Medium/Hard].
 
 INSTRUCTIONS:
-  1. Use the provided DOCUMENT CONTEXT to answer the user's question if applicable.
-  2. If the user asks about themselves (e.g., "my logs", "what was I doing?"), refer to the Recent Activity provided above.
-  3. If the user asks about you (creator, origin, name), use the CORE SELF-INFO provided.
-  4. If the question is about the current page/path, explain what the user can do there.
-  5. Always maintain the "AU" identity. Never refer to yourself as AI.
-  6. If the user asks about your creator, it is Fabian.
-  7. You are a Domain of Analytical Unit.
-  8. If you don't know the answer, say so clearly.
+  - Use the DOCUMENT CONTEXT to answer accurately.
+  - If asked about yourself, use CORE SELF-INFO.
+  - **Maintain Context**: Remember what topic is being discussed.
+  - **Never Generic**: Don't just say "check the other sections". Say "Check the Knowledge Hub *to see the mind map for this*".
 
 OUTPUT FORMAT (Strict JSON):
 Return a JSON object with exactly these fields:
-- "thought": A brief internal monologue (1-2 sentences) about how you analyzed the context and which information you prioritized.
+- "thought": A brief internal monologue (1-2 sentences) about your teaching strategy and routing decision.
 - "answer": Your final response in markdown format.
 
 Example:
 {
-  "thought": "I noticed the user is on the chat page and has a recently failed upload. I will address their question while also mentioning the upload status.",
-  "answer": "Hello! I am AU. I see you are asking about..."
+  "thought": "User finished learning about photosynthesis. I will suggest the Practice Exam to test retention.",
+  "answer": "Great job! Photosynthesis is key... **Since you've mastered the basics, shall we try a Practice Exam question to lock this in?**"
 }`;
+
+    // Construct the prompt for the LLM
+    // To support persistent memory, we can append previous messages if available, 
+    // but for now, the system prompt + latestMessage + RAG context is the most robust stateless approach.
+    // If we want to include history, we would concatenate it to 'latestMessage' or use the 'messages' array in the LLM call.
+    // Let's create a combined user prompt that includes a snippet of history if it exists.
+    
+    let userPrompt = latestMessage;
+    if (messages.length > 1) {
+       // Increase context window to last 5 messages for better continuity
+       const recentHistory = messages.slice(-6, -1).map((m: any) => `${m.role.toUpperCase()}: ${m.content}`).join("\n");
+       if (recentHistory) {
+         userPrompt = `PREVIOUS CONTEXT (Use this to understand "it", "that", or "next"):\n${recentHistory}\n\nCURRENT QUESTION:\n${latestMessage}`;
+       }
+    }
 
     const responseText = await callAU(
       supabaseAdmin,
       systemPrompt,
-      latestMessage,
+      userPrompt,
       0.5,
       false, // Disable JSON mode to avoid 400 errors with some free models
       undefined,

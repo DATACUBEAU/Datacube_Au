@@ -1,7 +1,13 @@
 export async function safeFetch(url: string, options: RequestInit) {
   let res: Response;
   try {
-    res = await fetch(url, options);
+    // If we have a trailing dot or malformed URL, try to sanitize it
+    let sanitizedUrl = url;
+    if (sanitizedUrl.endsWith('.')) {
+        sanitizedUrl = sanitizedUrl.slice(0, -1);
+    }
+
+    res = await fetch(sanitizedUrl, options);
   } catch (e: any) {
     console.error(`[safeFetch] Network error fetching ${url}:`, e);
     throw new Error(`Failed to fetch from ${url}. ${e.message || ''}`);

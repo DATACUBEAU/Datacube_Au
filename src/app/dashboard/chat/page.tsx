@@ -64,11 +64,17 @@ import { validateQuery } from '@/lib/upload/file-types';
 import { TruncatedText } from '@/components/TruncatedText';
 
 // Add TypingAnimation component
-const TypingAnimation = ({ content }: { content: string }) => {
-  const [displayedContent, setDisplayedContent] = useState('');
-  const [isTyping, setIsTyping] = useState(true);
+const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, shouldAnimate?: boolean }) => {
+  const [displayedContent, setDisplayedContent] = useState(shouldAnimate ? '' : content);
+  const [isTyping, setIsTyping] = useState(shouldAnimate);
 
   useEffect(() => {
+    if (!shouldAnimate) {
+        setDisplayedContent(content);
+        setIsTyping(false);
+        return;
+    }
+
     let i = 0;
     const interval = setInterval(() => {
       setDisplayedContent(content.slice(0, i + 1));
@@ -79,7 +85,7 @@ const TypingAnimation = ({ content }: { content: string }) => {
       }
     }, 10);
     return () => clearInterval(interval);
-  }, [content]);
+  }, [content, shouldAnimate]);
 
   return (
     <div className="relative">
@@ -140,8 +146,14 @@ export default function ChatPage() {
   } = useAuChat(selectedDocId);
 
   const documentList = useMemo(() => apiDocuments
-    .filter(d => d.document_type === 'main_textbook')
-    .map(d => ({ id: d.id, fileName: d.file_name, status: d.status })), 
+    .filter(d => d.document_type === 'main_textbook' || d.document_type === 'exam_questions') // Keep exams visible if desired, or strict 'main_textbook'
+    .map(d => ({ 
+      id: d.id, 
+      fileName: d.file_name, 
+      status: d.status,
+      type: d.document_type 
+    }))
+    .filter(d => d.type === 'main_textbook'), // Strict filter: ONLY main textbooks appear in chat selector
     [apiDocuments]
   );
 
@@ -164,6 +176,7 @@ export default function ChatPage() {
   const [expandedThoughts, setExpandedThoughts] = useState<Record<string, boolean>>({});
   const [summaryMode, setSummaryMode] = useState<'short' | 'mid' | 'detailed' | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
+  const [showScrollButton, setShowScrollButton] = useState(false);
 
   const handleCopy = (messageId: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -175,7 +188,7 @@ export default function ChatPage() {
     });
   };
 
-  const handleRegenerate = async (messageId: string) => {
+  const handleRegenerate = async (messageId: string, mode?: 'short' | 'mid' | 'detailed') => {
     const index = currentChatHistory.findIndex(m => m.id === messageId);
     if (index <= 0) return;
     
@@ -185,7 +198,13 @@ export default function ChatPage() {
     const newHistory = currentChatHistory.slice(0, index);
     setCurrentChatHistory(newHistory);
     
-    handleSendMessage({ preventDefault: () => {} } as React.FormEvent, userMessage.content);
+    if (mode) {
+      setSummaryMode(mode);
+      // Small delay to ensure state update if we were relying on it, 
+      // but we will pass it explicitly to handleSendMessage
+    }
+
+    handleSendMessage({ preventDefault: () => {} } as React.FormEvent, userMessage.content, mode);
   };
 
   const toggleThought = (messageId: string) => {
@@ -368,14 +387,64 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentList, docsLoading, user]);
 
-  const scrollToBottom = () => {
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     if (scrollAreaRef.current) {
         const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
-        if (viewport) viewport.scrollTop = viewport.scrollHeight;
+        if (viewport) {
+            viewport.scrollTo({ top: viewport.scrollHeight, behavior });
+        }
     }
   };
 
-  useEffect(() => { requestAnimationFrame(scrollToBottom); }, [currentChatHistory.length]);
+  // Auto-scroll logic:
+  // 1. When a new message is added (length changes), scroll to bottom.
+  // 2. When content updates (streaming), only scroll if user was already at bottom.
+  const lastHistoryLength = useRef(currentChatHistory.length);
+  
+  useEffect(() => {
+    const isNewMessage = currentChatHistory.length > lastHistoryLength.current;
+    lastHistoryLength.current = currentChatHistory.length;
+
+    // If it's a new message, force scroll (usually user sent it or bot started replying)
+    if (isNewMessage) {
+        requestAnimationFrame(() => scrollToBottom('smooth'));
+        return;
+    }
+
+    // If it's just an update (streaming) and we are NOT scrolled up, keep scrolling
+    if (!showScrollButton) {
+        requestAnimationFrame(() => scrollToBottom('smooth'));
+    }
+  }, [currentChatHistory, showScrollButton]);
+
+  const handleScroll = useCallback(() => {
+      if (scrollAreaRef.current) {
+          const viewport = scrollAreaRef.current.querySelector('[data-radix-scroll-area-viewport]');
+          if (viewport) {
+              const { scrollTop, scrollHeight, clientHeight } = viewport;
+              const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+              setShowScrollButton(distanceFromBottom > 100); // Show button if >100px from bottom
+          }
+      }
+  }, []);
+
+  useEffect(() => {
+      const scrollArea = scrollAreaRef.current;
+      if (scrollArea) {
+          const viewport = scrollArea.querySelector('[data-radix-scroll-area-viewport]');
+          if (viewport) {
+              viewport.addEventListener('scroll', handleScroll);
+              return () => viewport.removeEventListener('scroll', handleScroll);
+          } else {
+             // Retry once if viewport isn't ready immediately (e.g. hydration)
+             const timer = setTimeout(() => {
+                 const vp = scrollArea.querySelector('[data-radix-scroll-area-viewport]');
+                 if (vp) vp.addEventListener('scroll', handleScroll);
+             }, 500);
+             return () => clearTimeout(timer);
+          }
+      }
+  }, [handleScroll]);
 
   const fetchPromptStarters = useCallback(async () => {
     if (!selectedDocId || !selectedDocName || !user || !isOnline || fetchingPromptsRef.current) return;
@@ -506,7 +575,7 @@ export default function ChatPage() {
     }
   };
 
-  const handleSendMessage = async (e: React.FormEvent, messageContent?: string) => {
+  const handleSendMessage = async (e: React.FormEvent, messageContent?: string, overrideMode?: 'short' | 'mid' | 'detailed') => {
     e.preventDefault();
     const currentInput = (messageContent || input).trim();
     if (!currentInput || isResponding) return;
@@ -530,7 +599,7 @@ export default function ChatPage() {
     try {
       await sendMessage(currentInput, {
         guide: guideText !== defaultGuideText ? guideText : undefined,
-        summaryMode
+        summaryMode: overrideMode || summaryMode
       });
       setGeneratedPrompts([]);
     } catch (error: any) {
@@ -568,15 +637,15 @@ export default function ChatPage() {
               </SelectTrigger>
               <SelectContent>
                 {documentList.map(doc => (
-                  <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
+                  <SelectItem key={doc.id} value={doc.id} disabled={false}>
                     <div className="flex items-center gap-2">
                       <TruncatedText
                         text={doc.fileName}
                         maxWidthClass="max-w-[180px]"
                       />
                       {doc.status !== 'completed' && (
-                        <Badge variant="outline" className="text-[10px] h-4 px-1 animate-pulse">
-                          {doc.status}...
+                        <Badge variant="outline" className="text-[10px] h-4 px-1 animate-pulse border-yellow-500 text-yellow-600 bg-yellow-50">
+                          {doc.status === 'processing' ? 'Processing...' : doc.status}
                         </Badge>
                       )}
                       {doc.type !== 'main_textbook' && (
@@ -621,7 +690,7 @@ export default function ChatPage() {
       </header>
 
       <TooltipProvider>
-        <div className="flex-1 overflow-hidden">
+        <div className="flex-1 overflow-hidden relative">
           <ScrollArea id="chat-section" className="h-full flex-1" ref={scrollAreaRef}>
             <div className="mx-auto max-w-4xl space-y-8 p-4 md:p-6">
               {/* Summary Mode Banner */}
@@ -747,12 +816,19 @@ export default function ChatPage() {
                               </div>
                             )}
 
-                            <TypingAnimation content={message.content} />
+                            <TypingAnimation 
+                              content={message.content} 
+                              shouldAnimate={idx === currentChatHistory.length - 1 && isResponding}
+                            />
                             
                             {message.citations && message.citations.length > 0 && (
                               <div>
                                 <p className="mb-1 text-xs font-bold text-muted-foreground">SOURCE</p>
-                                {message.citations.map((citation, i) => <Badge key={i} variant="secondary" className="mb-1 mr-1">{citation}</Badge>)}
+                                {message.citations.map((citation: any, i) => (
+                                  <Badge key={i} variant="secondary" className="mb-1 mr-1">
+                                    {typeof citation === 'string' ? citation : citation.fileName || 'Unknown Source'}
+                                  </Badge>
+                                ))}
                               </div>
                             )}
 
@@ -770,15 +846,36 @@ export default function ChatPage() {
                               
                               {/* Regenerate only for the last assistant message */}
                               {idx === currentChatHistory.length - 1 && (
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md" 
-                                  onClick={() => handleRegenerate(message.id)}
-                                  aria-label="Regenerate response"
-                                >
-                                  <RotateCcw className="h-3.5 w-3.5" />
-                                </Button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button 
+                                      variant="ghost" 
+                                      size="icon" 
+                                      className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md" 
+                                      aria-label="Regenerate response"
+                                    >
+                                      <RotateCcw className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuItem onClick={() => handleRegenerate(message.id)}>
+                                      <RotateCcw className="mr-2 h-4 w-4" />
+                                      Regenerate (Default)
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleRegenerate(message.id, 'short')}>
+                                      <Scissors className="mr-2 h-4 w-4" />
+                                      Regenerate (Short)
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleRegenerate(message.id, 'mid')}>
+                                      <AlignLeft className="mr-2 h-4 w-4" />
+                                      Regenerate (Standard)
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem onClick={() => handleRegenerate(message.id, 'detailed')}>
+                                      <FileTextIcon className="mr-2 h-4 w-4" />
+                                      Regenerate (Detailed)
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
                               )}
 
                               <Button 
@@ -803,59 +900,106 @@ export default function ChatPage() {
                 <FeedbackSection sectionName="Chat" />
               )}
             </div>
-          </ScrollArea>
-
-          <div className="border-t bg-background px-4 pb-4 pt-2">
-            <div className="relative mx-auto max-w-4xl">
-              <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="text-xs text-muted-foreground">
-                  {selectedDocName ? `Chatting with: ${selectedDocName}` : 'Select a document to start chatting.'}
-                </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
+        </ScrollArea>
+        <AnimatePresence>
+            {showScrollButton && (
+                <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="absolute bottom-4 right-1/2 translate-x-1/2 z-20"
+                >
                     <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => setIsGuideOpen(true)}
-                      disabled={!user}
-                      className="hover:text-primary transition-all duration-300 hover:scale-110"
+                        size="icon"
+                        variant="outline"
+                        className="rounded-full shadow-lg h-8 w-8 bg-background/80 backdrop-blur-sm border-muted-foreground/20 hover:bg-background"
+                        onClick={() => scrollToBottom('smooth')}
                     >
-                      <Sparkles className="h-4 w-4" />
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
                     </Button>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" align="center">
-                    <p>AU Guide (Intelligent Patterns)</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-              <form onSubmit={(e) => handleSendMessage(e)} className="flex w-full items-end space-x-2">
-                <div className="relative flex-1">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button type="button" variant="ghost" size="icon" onClick={() => { setGeneratedPrompts([]); setPromptStudioInput(''); setIsPromptStudioOpen(true); }} disabled={isLoading || !selectedDocId || !isOnline} className="absolute left-1.5 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 hover:bg-primary/10 hover:text-primary transition-all duration-300 hover:scale-110">
-                        <Wand2 className="h-5 w-5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent side="top" align="center"><p>Enhance Prompt</p></TooltipContent>
-                  </Tooltip>
+                </motion.div>
+            )}
+        </AnimatePresence>
+      </div>
 
-                  <Textarea
-                    id="message"
-                    ref={textareaRef}
-                    placeholder={!isOnline ? "You are offline. AU chat is disabled." : (selectedDocId ? "Message AU..." : "Please select a document to start chatting.")}
-                    className="flex-1 resize-none rounded-full border bg-secondary p-3 pl-14 pr-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
-                    disabled={isLoading || !selectedDocId || !isOnline}
-                  />
-                </div>
-
-                <Button type="submit" size="icon" className="h-12 w-12 shrink-0 rounded-full" disabled={isLoading || !input.trim() || !selectedDocId || !isOnline}>
-                  {isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-5 w-5" />}
+      <div className="border-t bg-background px-4 pb-4 pt-2">
+        <div className="relative mx-auto max-w-4xl">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <div className="text-xs text-muted-foreground">
+              {selectedDocName ? `Chatting with: ${selectedDocName}` : 'Select a document to start chatting.'}
+            </div>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setIsGuideOpen(true)}
+                  disabled={!user}
+                  className="hover:text-primary transition-all duration-300 hover:scale-110"
+                >
+                  <Sparkles className="h-4 w-4" />
                 </Button>
-              </form>
+              </TooltipTrigger>
+              <TooltipContent side="top" align="center">
+                <p>AU Guide (Intelligent Patterns)</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+
+          <form onSubmit={(e) => handleSendMessage(e)} className="flex w-full items-end space-x-2">
+            <div className="relative flex-1">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    disabled={isLoading || !selectedDocId || !isOnline}
+                    className={`absolute left-1.5 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 transition-all duration-300 hover:scale-110 ${summaryMode ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary'}`}
+                  >
+                    {summaryMode === 'short' ? <Scissors className="h-5 w-5" /> :
+                     summaryMode === 'mid' ? <AlignLeft className="h-5 w-5" /> :
+                     summaryMode === 'detailed' ? <FileTextIcon className="h-5 w-5" /> :
+                     <Sparkles className="h-5 w-5" />}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem onClick={() => setSummaryMode(null)}>
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Default (Auto)
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSummaryMode('short')}>
+                    <Scissors className="mr-2 h-4 w-4" />
+                    Short Answer
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSummaryMode('mid')}>
+                    <AlignLeft className="mr-2 h-4 w-4" />
+                    Standard Answer
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setSummaryMode('detailed')}>
+                    <FileTextIcon className="mr-2 h-4 w-4" />
+                    Detailed Answer
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Textarea
+                id="message"
+                ref={textareaRef}
+                placeholder={!isOnline ? "You are offline. AU chat is disabled." : (selectedDocId ? "Message AU..." : "Please select a document to start chatting.")}
+                className="flex-1 resize-none rounded-full border bg-secondary p-3 pl-14 pr-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
+                disabled={isLoading || !selectedDocId || !isOnline}
+              />
+            </div>
+
+            <Button type="submit" size="icon" className="h-12 w-12 shrink-0 rounded-full" disabled={isLoading || !input.trim() || !selectedDocId || !isOnline}>
+              {isResponding ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-5 w-5" />}
+            </Button>
+          </form>
 
               {/* Enhanced Prompt Suggestions directly under chat */}
               {generatedPrompts.length > 0 && (
@@ -898,9 +1042,8 @@ export default function ChatPage() {
                     : "Chat history is stored locally on your device."}
                 </span>
               </div>
-            </div>
-          </div>
         </div>
+      </div>
       </TooltipProvider>
 
       <Dialog open={isPromptStudioOpen} onOpenChange={setIsPromptStudioOpen}>

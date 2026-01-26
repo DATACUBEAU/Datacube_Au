@@ -171,7 +171,7 @@ Deno.serve(async (req: Request) => {
     await updateProgress(supabase, jobId, 20, startTime);
 
     // -------------------------------------------------------------------------
-    // STEP 3: Extract Text
+    // STEP 3: Extract Text & Generate Summary
     // -------------------------------------------------------------------------
     const name = job.file_name.toLowerCase();
     let text = "";
@@ -194,6 +194,46 @@ Deno.serve(async (req: Request) => {
     if (!text || text.trim().length === 0) {
       throw new Error("Document is empty after text extraction");
     }
+
+    // Generate a basic summary from the first 2000 characters
+    // This helps AU answer "what is the goal?" questions without full RAG
+    const summaryText = text.slice(0, 2000).replace(/\s+/g, ' ').trim();
+    
+    // Detect Structure (Chapters/Goals) - Basic Heuristic
+    // Look for "Chapter", "Section", "Goal", "Objective"
+    // Also try to extract actual Chapter Titles using a more robust regex
+    const chapterMatches = [...text.matchAll(/(?:^|\n)(?:Chapter|Unit|Section)\s+(\d+)(?::|\s-|\.)\s*(.+?)(?:\r|\n|$)/gim)];
+    const chapters = chapterMatches.map(m => ({ number: m[1], title: m[2].trim() })).slice(0, 10); // Limit to first 10 for metadata
+
+    const structureHints = {
+      hasChapters: chapters.length > 0 || /chapter\s+\d+/i.test(text),
+      hasGoals: /goal|objective|outcome/i.test(text),
+      hasQuestions: /question|exercise|problem/i.test(text),
+      chapters: chapters.length > 0 ? chapters : undefined
+    };
+    
+    // Determine Document Type Logic
+    // If it has many "questions" or "problems" but few chapters, it might be an exam paper
+    // However, user requested that uploaded exams be synced with textbooks and NOT show as main selection.
+    // We'll use a heuristic: if filename contains "exam", "test", "quiz", or content is question-heavy without chapter structure.
+    
+    let docType = doc.document_type || "main_textbook"; // Default
+    const isExamLike = /exam|test|quiz|midterm|final/i.test(name) || (structureHints.hasQuestions && !structureHints.hasChapters);
+    
+    if (isExamLike && docType === "main_textbook") {
+       docType = "exam_questions"; // Mark as exam/supplementary
+    }
+
+    // Update metadata with preview and structure hints
+    await supabase.from("au_documents").update({ 
+      document_type: docType,
+      metadata: { 
+        ...doc.metadata, 
+        summary_preview: summaryText,
+        structure_hints: structureHints,
+        page_count: text.split('\f').length // Approximate if not PDF
+      } 
+    }).eq("id", job.document_id);
 
     await updateProgress(supabase, jobId, 40, startTime);
 
@@ -221,6 +261,9 @@ Deno.serve(async (req: Request) => {
     // -------------------------------------------------------------------------
     const insertedChunks: any[] = [];
     
+    // Sanitize filename to prevent "demo_note.txtdemo_note.txt" duplication in sources
+    const cleanFileName = job.file_name.replace(/(\.txt|\.pdf|\.docx|\.md)\1+/gi, "$1");
+
     for (let i = 0; i < chunks.length; i += INSERT_BATCH_SIZE) {
       const batch = chunks.slice(i, i + INSERT_BATCH_SIZE);
       const payload = batch.map((t, idx) => {

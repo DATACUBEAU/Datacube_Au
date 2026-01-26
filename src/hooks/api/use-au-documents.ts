@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback } from 'react';
 import { listDocuments, deleteDocument, type AuDocumentRow } from '@/lib/api/documents';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/lib/supabase/client';
 
-export function useAuDocuments(pollInterval = 10000) {
+export function useAuDocuments(pollInterval = 0) {
   const [user] = useSupabaseUser();
   const [documents, setDocuments] = useState<AuDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,6 +24,43 @@ export function useAuDocuments(pollInterval = 10000) {
       setLoading(false);
     }
   }, [user]);
+
+  // Real-time subscription
+  useEffect(() => {
+    if (!user) return;
+
+    // Initial fetch
+    fetchDocs();
+
+    // Set up Realtime Subscription
+    const channel = supabase
+      .channel('au_documents_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'au_documents',
+          // Filter by user_id if possible, but RLS might handle it on the server.
+          // For client-side filter, we can check payload.new.user_id === user.id
+          filter: `user_id=eq.${user.id}`,
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            setDocuments(prev => [payload.new as AuDocumentRow, ...prev]);
+          } else if (payload.eventType === 'UPDATE') {
+            setDocuments(prev => prev.map(d => d.id === payload.new.id ? { ...d, ...payload.new } : d));
+          } else if (payload.eventType === 'DELETE') {
+            setDocuments(prev => prev.filter(d => d.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user, fetchDocs]);
 
   const remove = useCallback(async (id: string) => {
     // 1. Optimistic Update: Immediately remove from UI
@@ -60,7 +98,7 @@ export function useAuDocuments(pollInterval = 10000) {
   }, [user, toast, documents]);
 
   useEffect(() => {
-    fetchDocs();
+    // Only use polling if explicitly requested (e.g., for guest sessions or if realtime fails)
     if (pollInterval > 0) {
       const interval = setInterval(fetchDocs, pollInterval);
       return () => clearInterval(interval);

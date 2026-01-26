@@ -47,6 +47,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
+import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { supabase } from '@/lib/supabase/client';
 import { TruncatedText } from '@/components/TruncatedText';
 
@@ -102,56 +103,13 @@ export default function PredictionsPage() {
   const [selectedPrediction, setSelectedPrediction] = useState<PredictionDetail | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
-  const [textbookDocs, setTextbookDocs] = useState<AuDocumentRow[]>([]);
-  const [pastQuestionsDocs, setPastQuestionsDocs] = useState<AuDocumentRow[]>([]);
-  const [docsLoading, setDocsLoading] = useState(false);
+  // Use global hook
+  const { documents: allDocuments, loading: docsLoading } = useAuDocuments();
+
+  const textbookDocs = useMemo(() => allDocuments.filter(d => d.document_type === 'main_textbook'), [allDocuments]);
+  const pastQuestionsDocs = useMemo(() => allDocuments.filter(d => d.document_type === 'past_questions' || d.document_type === 'exam_questions'), [allDocuments]);
 
   const mainTextbookIds = useMemo(() => textbookDocs.map((doc) => doc.id), [textbookDocs]);
-
-  useEffect(() => {
-    if (!user) {
-      setTextbookDocs([]);
-      setPastQuestionsDocs([]);
-      setDocsLoading(false);
-      return;
-    }
-    if (!isOnline) {
-      setDocsLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-
-    const fetchDocs = async () => {
-      if (cancelled) return;
-      setDocsLoading(true);
-      try {
-        const allDocs = await listAuDocumentsForUser(user);
-        if (cancelled) return;
-        
-        const textbooks = allDocs.filter(d => d.document_type === 'main_textbook');
-        setTextbookDocs(textbooks);
-
-        const pastQuestions = allDocs.filter(d => d.document_type === 'past_questions');
-        setPastQuestionsDocs(pastQuestions);
-      } catch (err) {
-        if (!cancelled) {
-          setTextbookDocs([]);
-          setPastQuestionsDocs([]);
-        }
-      } finally {
-        if (!cancelled) setDocsLoading(false);
-      }
-    };
-
-    fetchDocs();
-    const interval = setInterval(fetchDocs, 20000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(interval);
-    };
-  }, [user, isOnline]);
 
   const parseTopicWeights = useCallback((weights: string) => {
     const parsed = weights

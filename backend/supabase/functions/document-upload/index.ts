@@ -92,6 +92,16 @@ Deno.serve(async (req: Request) => {
         if (!fileName) fileName = `content-${Date.now()}.txt`;
       }
     }
+    
+    // Check file size for JSON/Raw uploads
+    if (fileSize > MAX_SIZE) {
+       return new Response(JSON.stringify({ 
+        error: "Upload failed: File size exceeds 50MB limit"
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 413,
+      });
+    }
 
     // 2. Validate required fields BEFORE DB logic
     if (!fileName && !body.content) {
