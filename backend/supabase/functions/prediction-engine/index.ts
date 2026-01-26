@@ -16,7 +16,7 @@ Deno.serve(async (req: Request) => {
     const { callAU, validateAuth, requireUser, emitEvent } = await import("../_shared/au.ts");
 
     const body = await req.json().catch(() => ({}));
-    const { userId, isGuest, ownershipFilter, supabaseAdmin, error: authError } = await requireUser(req, body);
+    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireUser(req, body);
 
     if (authError) {
       return new Response(JSON.stringify({ 
@@ -33,7 +33,7 @@ Deno.serve(async (req: Request) => {
     // but we prefer to have it for usage tracking.
     const effectiveFilter = ownershipFilter || {};
 
-    const { pastQuestionsContent, mainTextbookContent, documentId } = body;
+    const { pastQuestionsContent, mainTextbookContent } = body;
 
     if (!pastQuestionsContent) {
       return new Response(JSON.stringify({ 
@@ -98,20 +98,6 @@ Deno.serve(async (req: Request) => {
         user_id: userId,
         metadata: { predictionCount: result.predictions?.length }
       });
-
-      // Persist to au_predictions
-      const { error: saveError } = await supabaseAdmin
-        .from('au_predictions')
-        .insert({
-          user_id: isGuest ? null : userId,
-          guest_session_id: isGuest ? userId : null,
-          document_id: documentId || null,
-          content: result
-        });
-      
-      if (saveError) {
-        console.error(`[prediction-engine] Failed to save prediction:`, saveError);
-      }
     }
 
     return new Response(JSON.stringify({

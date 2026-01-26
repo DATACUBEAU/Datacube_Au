@@ -29,7 +29,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PwaInstallButton from '@/components/pwa-install-button';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { supabase, getGuestToken, clearGuestToken } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase/client';
 import { Switch } from '@/components/ui/switch';
 
 import {
@@ -68,10 +68,40 @@ export default function SettingsPage() {
   const [displayName, setDisplayName] = useState(currentDisplayName);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
+  const [isAssistantEnabled, setIsAssistantEnabled] = useState(true);
   const [showAuthPopup, setShowAuthPopup] = useState(false);
   const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
   const [signOutStep, setSignOutStep] = useState<'idle' | 'warning' | 'final' | 'processing'>('idle');
+
+  useEffect(() => {
+    if (user) {
+      const stored = localStorage.getItem(`au_assistant_settings_${user.id}`);
+      setIsAssistantEnabled(stored !== 'disabled');
+
+      const handleSettingsUpdate = (e: any) => {
+        setIsAssistantEnabled(e.detail.enabled);
+      };
+
+      window.addEventListener('au_assistant_settings_updated', handleSettingsUpdate);
+      return () => window.removeEventListener('au_assistant_settings_updated', handleSettingsUpdate);
+    }
+  }, [user]);
+
+  const handleToggleAssistant = (enabled: boolean) => {
+    setIsAssistantEnabled(enabled);
+    if (user) {
+      localStorage.setItem(`au_assistant_settings_${user.id}`, enabled ? 'enabled' : 'disabled');
+      // Dispatch custom event for real-time update in AUAssistant
+      window.dispatchEvent(new CustomEvent('au_assistant_settings_updated', { 
+        detail: { enabled } 
+      }));
+      toast({
+        title: enabled ? 'AU Assistant Enabled' : 'AU Assistant Disabled',
+        description: enabled ? 'The guide will now appear to assist you.' : 'The guide has been hidden.',
+      });
+    }
+  };
 
   const handleGoogleSignIn = async () => {
     setIsLoadingGoogle(true);
@@ -129,7 +159,7 @@ export default function SettingsPage() {
     try {
       // 1. Call wipe-user action in Edge Function
       const { data: { session } } = await supabase.auth.getSession();
-      const guestToken = getGuestToken();
+      const guestToken = typeof window !== 'undefined' ? localStorage.getItem('guest_token') : null;
       const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
       const accessToken = session?.access_token || guestToken || undefined;
 
@@ -146,8 +176,12 @@ export default function SettingsPage() {
       // Cool animation delay
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // 2. Clear tokens
-      clearGuestToken();
+      // 2. Clear local storage items
+      if (user?.id) {
+        localStorage.removeItem(`au_assistant_progress_${user.id}`);
+        localStorage.removeItem(`au_assistant_settings_${user.id}`);
+      }
+      localStorage.removeItem('guest_token');
 
       // 3. Final sign out
       await supabase.auth.signOut();
@@ -271,6 +305,26 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-6">
                 <PwaInstallButton />
+                
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between rounded-lg border p-4 bg-muted/30 gap-4">
+                  <div className="flex items-center gap-4">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary shrink-0">
+                      <Bot className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                    <div className="space-y-0.5">
+                      <Label className="text-base">AU Onboarding Assistant</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Enable or disable the floating guide that helps you navigate the site.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex w-full sm:w-auto justify-end">
+                    <Switch 
+                      checked={isAssistantEnabled} 
+                      onCheckedChange={handleToggleAssistant} 
+                    />
+                  </div>
+                </div>
             </CardContent>
           </Card>
 

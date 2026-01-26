@@ -15,7 +15,7 @@ Deno.serve(async (req: Request) => {
     const { callAU, validateAuth, requireUser, emitEvent } = await import("../_shared/au.ts");
 
     const body = await req.json().catch(() => ({}));
-    const { userId, isGuest, ownershipFilter, supabaseAdmin, error: authError } = await requireUser(req, body);
+    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireUser(req, body);
 
     if (authError) {
       return new Response(JSON.stringify({ 
@@ -28,7 +28,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { documentContent, pastQuestionsContent, documentId } = body;
+    const { documentContent, pastQuestionsContent } = body;
 
     if (!documentContent && !pastQuestionsContent) {
       return new Response(JSON.stringify({ 
@@ -100,20 +100,6 @@ Deno.serve(async (req: Request) => {
         user_id: userId,
         metadata: { questionCount: result.questions?.length }
       });
-
-      // Persist to au_exams
-      const { error: saveError } = await supabaseAdmin
-        .from('au_exams')
-        .insert({
-          user_id: isGuest ? null : userId,
-          guest_session_id: isGuest ? userId : null,
-          document_id: documentId || null,
-          content: result
-        });
-      
-      if (saveError) {
-        console.error(`[exam-generator] Failed to save exam:`, saveError);
-      }
     }
 
     return new Response(JSON.stringify({ 

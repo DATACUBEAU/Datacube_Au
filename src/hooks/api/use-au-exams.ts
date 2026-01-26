@@ -1,10 +1,5 @@
-import { useState, useCallback, useEffect } from 'react';
-import { 
-  generatePracticeExam, 
-  generatePredictions,
-  fetchLatestExam,
-  fetchLatestPredictions 
-} from '@/lib/api/exams';
+import { useState, useCallback } from 'react';
+import { generatePracticeExam, generatePredictions } from '@/lib/api/exams';
 import { getDocumentText } from '@/lib/api/documents';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -18,26 +13,6 @@ export function useAuExams(selectedDocId: string | null) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [examData, setExamData] = useState<GeneratePracticeExamOutput | null>(null);
   const [predictions, setPredictions] = useState<GenerateExamPredictionsOutput | null>(null);
-
-  // Hydrate from Supabase on document selection
-  useEffect(() => {
-    if (!selectedDocId) {
-      setExamData(null);
-      setPredictions(null);
-      return;
-    }
-
-    async function hydrate() {
-      const [exam, pred] = await Promise.all([
-        fetchLatestExam(selectedDocId!),
-        fetchLatestPredictions(selectedDocId!)
-      ]);
-      setExamData(exam);
-      setPredictions(pred);
-    }
-
-    hydrate();
-  }, [selectedDocId]);
 
   const startExamGeneration = useCallback(async (pastQuestionIds: string[] = []) => {
     if (!selectedDocId || !user) return;
@@ -55,7 +30,6 @@ export function useAuExams(selectedDocId: string | null) {
       }
 
       const result = await generatePracticeExam(
-        selectedDocId,
         documentContent,
         pastQuestionsContent,
         session?.access_token
@@ -85,7 +59,6 @@ export function useAuExams(selectedDocId: string | null) {
       const pastQuestionsContent = contents.join('\n\n---\n\n');
 
       const result = await generatePredictions(
-        selectedDocId,
         documentContent,
         pastQuestionsContent,
         session?.access_token

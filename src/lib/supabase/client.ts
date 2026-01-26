@@ -116,51 +116,20 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
-// Guest token functionality (Cookie-based for SSR support)
-const GUEST_TOKEN_KEY = 'guest_token';
-
+// Guest token functionality
 export function getGuestToken(): string | null {
   if (typeof window === 'undefined') return null;
-  
-  // Try cookie first
-  const name = GUEST_TOKEN_KEY + "=";
-  const decodedCookie = decodeURIComponent(document.cookie);
-  const ca = decodedCookie.split(';');
-  for (let i = 0; i < ca.length; i++) {
-    let c = ca[i];
-    while (c.charAt(0) === ' ') {
-      c = c.substring(1);
-    }
-    if (c.indexOf(name) === 0) {
-      return c.substring(name.length, c.length);
-    }
-  }
-
-  // Fallback to localStorage for migration
-  const legacyToken = localStorage.getItem(GUEST_TOKEN_KEY);
-  if (legacyToken) {
-    setGuestToken(legacyToken); // Migrate to cookie
-    localStorage.removeItem(GUEST_TOKEN_KEY);
-    return legacyToken;
-  }
-
-  return null;
+  return localStorage.getItem('guest_token');
 }
 
 export function setGuestToken(token: string): void {
   if (typeof window === 'undefined') return;
-  
-  // Set cookie with 1 year expiry
-  const d = new Date();
-  d.setTime(d.getTime() + (365 * 24 * 60 * 60 * 1000));
-  const expires = "expires=" + d.toUTCString();
-  document.cookie = `${GUEST_TOKEN_KEY}=${token};${expires};path=/;SameSite=Lax`;
+  localStorage.setItem('guest_token', token);
 }
 
 export function clearGuestToken(): void {
   if (typeof window === 'undefined') return;
-  document.cookie = `${GUEST_TOKEN_KEY}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
-  localStorage.removeItem(GUEST_TOKEN_KEY);
+  localStorage.removeItem('guest_token');
 }
 
 export function decodeJWT(token: string): any {
@@ -257,40 +226,28 @@ export async function ensureGuestSession(): Promise<string> {
 }
 
 /**
- * Updates the last_active_at timestamp and optional metadata for the current user or guest.
+ * Updates the last_active_at timestamp for the current user or guest.
  */
-export async function updateUserActivity(user: User | null, metadata?: any): Promise<void> {
+export async function updateUserActivity(user: User | null): Promise<void> {
   try {
     if (user?.id) {
       // For authenticated users
-      const updates: any = { user_id: user.id, last_active_at: new Date().toISOString() };
-      if (metadata) {
-        // Merge with existing metadata if possible
-        const { data: current } = await supabase
-          .from('au_user_activity')
-          .select('metadata')
-          .eq('user_id', user.id)
-          .single();
-        
-        updates.metadata = { ...(current?.metadata || {}), ...metadata };
-      }
       await supabase
         .from('au_user_activity')
-        .upsert(updates, { onConflict: 'user_id' });
+        .upsert({ user_id: user.id, last_active_at: new Date().toISOString() }, { onConflict: 'user_id' });
     } else {
       // For guest users
       const guestId = await ensureGuestSession();
       if (guestId) {
+        // Use service role via Edge Function to update guest session activity
+        // or if RLS allows, update directly. The migration added last_active_at.
+        // Given au_guest_sessions is managed by service_role, we should use an Edge Function.
         const { safeFetch } = await import('@/lib/api/safe-fetch');
         const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
         await safeFetch(`${SUPABASE_URL}/functions/v1/guest-session`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            action: 'heartbeat', 
-            guestId,
-            ...(metadata ? { metadata } : {})
-          }),
+          body: JSON.stringify({ action: 'heartbeat', guestId }),
         });
       }
     }
@@ -298,35 +255,4 @@ export async function updateUserActivity(user: User | null, metadata?: any): Pro
     // Fail silently to not disrupt the user experience
     console.warn('[client] Failed to update activity:', e);
   }
-}
-
-/**
- * Fetches the current user activity or guest session metadata.
- */
-export async function fetchUserMetadata(user: User | null): Promise<any> {
-  try {
-    if (user?.id) {
-      const { data, error } = await supabase
-        .from('au_user_activity')
-        .select('metadata')
-        .eq('user_id', user.id)
-        .single();
-      if (error) throw error;
-      return data?.metadata || {};
-    } else {
-      const guestId = await ensureGuestSession();
-      if (guestId) {
-        const { data, error } = await supabase
-          .from('au_guest_sessions')
-          .select('metadata')
-          .eq('id', guestId)
-          .single();
-        if (error) throw error;
-        return data?.metadata || {};
-      }
-    }
-  } catch (e) {
-    console.warn('[client] Failed to fetch user metadata:', e);
-  }
-  return {};
 }

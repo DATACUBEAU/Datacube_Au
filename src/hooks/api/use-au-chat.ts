@@ -1,15 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { 
-  sendChatMessage, 
-  generatePromptStarters, 
-  fetchChatHistory, 
-  saveChatMessage, 
-  ensureChatSession, 
-  fetchSessionMetadata,
-  updateSessionMetadata,
-  clearChatHistory,
-  type ChatMessage 
-} from '@/lib/api/chat';
+import { sendChatMessage, generatePromptStarters, type ChatMessage } from '@/lib/api/chat';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/hooks/use-store';
@@ -25,107 +15,33 @@ export function useAuChat(selectedDocId: string | null) {
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [isResponding, setIsResponding] = useState(false);
   const [promptStarters, setPromptStarters] = useState<string[]>([]);
-  const [guide, setGuide] = useState<string>('');
-  const [summaryMode, setSummaryMode] = useState<'short' | 'mid' | 'detailed' | null>(null);
-  const [hasGreeted, setHasGreeted] = useState<boolean>(false);
-  const [draftInput, setDraftInput] = useState<string>('');
-  const [scrollPosition, setScrollPosition] = useState<number>(0);
-  const [dbPromptStarters, setDbPromptStarters] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // --- HYDRATION: Load history and metadata from Supabase on mount or doc change ---
+  // --- PERSISTENCE: Load history on mount or doc change ---
   useEffect(() => {
-    let isMounted = true;
-
-    async function hydrate() {
-      if (selectedDocId) {
-        // Ensure session exists first
-        await ensureChatSession(selectedDocId, user);
-        
-        const [dbHistory, metadata] = await Promise.all([
-          fetchChatHistory(selectedDocId, user),
-          fetchSessionMetadata(selectedDocId, user)
-        ]);
-
-        if (isMounted) {
-          if (dbHistory.length > 0) {
-            setHistory(dbHistory);
-          } else {
-            // Check localStorage as fallback/migration path
-            const legacyKey = `au_chat_history_${user?.id || 'guest'}_${selectedDocId}`;
-            const savedHistory = localStorage.getItem(legacyKey);
-            if (savedHistory) {
-              try {
-                const parsed = JSON.parse(savedHistory);
-                setHistory(parsed);
-                // Optionally migrate to DB
-                for (const msg of parsed) {
-                  await saveChatMessage(selectedDocId, msg, user);
-                }
-                localStorage.removeItem(legacyKey);
-              } catch (e) {
-                setHistory([]);
-              }
-            } else {
-              setHistory([]);
-            }
-          }
-
-          // Hydrate metadata
-          if (metadata) {
-            setGuide(metadata.guide || '');
-            setSummaryMode(metadata.summaryMode || null);
-            setHasGreeted(metadata.hasGreeted || false);
-            setDraftInput(metadata.draftInput || '');
-            setScrollPosition(metadata.scrollPosition || 0);
-            setDbPromptStarters(metadata.promptStarters || []);
-          }
+    if (selectedDocId && user?.id) {
+      const savedHistory = localStorage.getItem(`au_chat_history_${user.id}_${selectedDocId}`);
+      if (savedHistory) {
+        try {
+          setHistory(JSON.parse(savedHistory));
+        } catch (e) {
+          console.error('[useAuChat] Failed to parse saved history:', e);
+          setHistory([]);
         }
       } else {
         setHistory([]);
-        setGuide('');
-        setSummaryMode(null);
-        setHasGreeted(false);
-        setDraftInput('');
-        setDbPromptStarters([]);
       }
+    } else if (!selectedDocId) {
+      setHistory([]);
     }
+  }, [selectedDocId, user?.id]);
 
-    hydrate();
-    return () => { isMounted = false; };
-  }, [selectedDocId, user]);
-
-  const updateMetadata = useCallback(async (updates: { guide?: string; summaryMode?: any; hasGreeted?: boolean; draftInput?: string; scrollPosition?: number; promptStarters?: string[] }) => {
-    if (!selectedDocId) return;
-    
-    const newMetadata = {
-      guide: updates.guide !== undefined ? updates.guide : guide,
-      summaryMode: updates.summaryMode !== undefined ? updates.summaryMode : summaryMode,
-      hasGreeted: updates.hasGreeted !== undefined ? updates.hasGreeted : hasGreeted,
-      draftInput: updates.draftInput !== undefined ? updates.draftInput : draftInput,
-      scrollPosition: updates.scrollPosition !== undefined ? updates.scrollPosition : scrollPosition,
-      promptStarters: updates.promptStarters !== undefined ? updates.promptStarters : dbPromptStarters,
-      documentId: selectedDocId
-    };
-
-    await updateSessionMetadata(selectedDocId, newMetadata, user);
-    
-    if (updates.guide !== undefined) setGuide(updates.guide);
-    if (updates.summaryMode !== undefined) setSummaryMode(updates.summaryMode);
-    if (updates.hasGreeted !== undefined) setHasGreeted(updates.hasGreeted);
-    if (updates.draftInput !== undefined) setDraftInput(updates.draftInput);
-    if (updates.scrollPosition !== undefined) setScrollPosition(updates.scrollPosition);
-    if (updates.promptStarters !== undefined) setDbPromptStarters(updates.promptStarters);
-  }, [selectedDocId, user, guide, summaryMode, hasGreeted, draftInput, scrollPosition, dbPromptStarters]);
-
-  const clearHistory = useCallback(async () => {
-    if (!selectedDocId) return;
-    await clearChatHistory(selectedDocId, user);
-    setHistory([]);
-    setPromptStarters([]);
-    // Optionally reset metadata? Usually we keep guide/mode but clear greeted.
-    await updateMetadata({ hasGreeted: false, draftInput: '' });
-  }, [selectedDocId, user, updateMetadata]);
+  // --- PERSISTENCE: Save history on change ---
+  useEffect(() => {
+    if (selectedDocId && user?.id && history.length > 0) {
+      localStorage.setItem(`au_chat_history_${user.id}_${selectedDocId}`, JSON.stringify(history));
+    }
+  }, [history, selectedDocId, user?.id]);
 
   const stopGeneration = useCallback(() => {
     if (abortControllerRef.current) {
@@ -143,7 +59,7 @@ export function useAuChat(selectedDocId: string | null) {
       browsingMode?: boolean;
     }
   ) => {
-    if (!selectedDocId) return;
+    if (!selectedDocId || !user) return;
 
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
@@ -155,9 +71,6 @@ export function useAuChat(selectedDocId: string | null) {
     setIsResponding(true);
     setAuAnimationState('thinking');
     setAuThinkingStatus('AU is initializing analytical context...');
-
-    // Persist user message immediately
-    await saveChatMessage(selectedDocId, userMessage, user);
 
     let thinkingInterval: any = null;
     try {
@@ -191,19 +104,13 @@ export function useAuChat(selectedDocId: string | null) {
       if (thinkingInterval) clearInterval(thinkingInterval);
       setAuAnimationState('responding');
       setAuThinkingStatus('Response ready.');
-
-      const assistantMessage: ChatMessage = {
+      setHistory(prev => prev.map(m => m.id === loadingId ? {
         id: loadingId,
         role: 'assistant',
         content: result.answer,
         citations: result.citations,
         thought: result.thought
-      };
-
-      // Persist assistant message
-      await saveChatMessage(selectedDocId, assistantMessage, user);
-
-      setHistory(prev => prev.map(m => m.id === loadingId ? assistantMessage : m));
+      } : m));
       return result;
     } catch (err: any) {
       if (thinkingInterval) clearInterval(thinkingInterval);
@@ -229,7 +136,7 @@ export function useAuChat(selectedDocId: string | null) {
   }, [selectedDocId, user, session, history]);
 
   const scanAndGreet = useCallback(async () => {
-    if (!selectedDocId) return;
+    if (!selectedDocId || !user) return;
     
     abortControllerRef.current = new AbortController();
     setIsResponding(true);
@@ -268,21 +175,15 @@ export function useAuChat(selectedDocId: string | null) {
         if (thinkingInterval) clearInterval(thinkingInterval);
         setAuAnimationState('responding');
         setAuThinkingStatus('Analysis complete.');
-
-        const greetingMessage: ChatMessage = {
-          id: nanoid(),
-          role: 'assistant',
-          content: result.answer,
-          thought: result.thought
-        };
-
-        // Persist greeting
-        await saveChatMessage(selectedDocId, greetingMessage, user);
-
         // Replace loading message with greeting
         setHistory(prev => {
             const filtered = prev.filter(m => m.id !== loadingId);
-            return [...filtered, greetingMessage];
+            return [...filtered, {
+                id: nanoid(),
+                role: 'assistant',
+                content: result.answer,
+                thought: result.thought
+            }];
         });
     } catch (err: any) {
         if (thinkingInterval) clearInterval(thinkingInterval);
@@ -304,46 +205,37 @@ export function useAuChat(selectedDocId: string | null) {
     }
   }, [selectedDocId, user, session, history.length]);
 
-  const fetchPromptStartersAction = useCallback(async (title: string, content: string, idea?: string) => {
-    if (!selectedDocId) return;
-    
+  const fetchPrompts = useCallback(async (title: string, content: string, idea?: string) => {
     try {
-      let prompts: string[] = [];
       if (idea) {
-        prompts = await generatePromptStarters(title, content, idea, session?.access_token);
-      } else {
-        // Smart suggestion: Scan chat history and document patterns
-        const historyContext = history.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
-        
-        try {
-          const result = await sendChatMessage({
-            messages: [{ 
-              id: nanoid(),
-              role: 'user', 
-              content: `Based on the document "${title}" and the recent chat history:\n${historyContext}\n\nGenerate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
-            }],
-            selectedDocId: selectedDocId!
-          }, session?.access_token);
-
-          const parsed = JSON.parse(result.answer);
-          if (Array.isArray(parsed)) {
-            prompts = parsed;
-          }
-        } catch (e) {
-          // Fallback to legacy
-          prompts = await generatePromptStarters(title, content, undefined, session?.access_token);
-        }
+        return await generatePromptStarters(title, content, idea, session?.access_token);
       }
 
-      if (prompts.length > 0) {
-        await updateMetadata({ promptStarters: prompts });
+      // Smart suggestion: Scan chat history and document patterns
+      const historyContext = history.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
+      
+      try {
+        const result = await sendChatMessage({
+          messages: [{ 
+            id: nanoid(),
+            role: 'user', 
+            content: `Based on the document "${title}" and the recent chat history:\n${historyContext}\n\nGenerate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
+          }],
+          selectedDocId: selectedDocId!
+        }, session?.access_token);
+
+        const parsed = JSON.parse(result.answer);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {
+        // Fallback to legacy
       }
-      return prompts;
+
+      return await generatePromptStarters(title, content, undefined, session?.access_token);
     } catch (err: any) {
       console.error('[useAuChat] Prompt generation failed:', err);
       return [];
     }
-  }, [selectedDocId, session, history, updateMetadata]);
+  }, [selectedDocId, session, history]);
 
   return {
     history,
@@ -352,14 +244,7 @@ export function useAuChat(selectedDocId: string | null) {
     sendMessage,
     stopGeneration,
     scanAndGreet,
-    promptStarters: dbPromptStarters,
-    fetchPrompts: fetchPromptStartersAction,
-    guide,
-    summaryMode,
-    hasGreeted,
-    updateMetadata,
-    clearHistory,
-    draftInput,
-    scrollPosition,
+    promptStarters,
+    fetchPrompts
   };
 }

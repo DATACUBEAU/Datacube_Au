@@ -19,12 +19,7 @@ export function useAuDocuments(pollInterval = 0) {
       setError(null);
     } catch (err: any) {
       setError(err);
-      console.error('[useAuDocuments] Failed to fetch:', {
-        message: err.message,
-        details: err.details,
-        status: err.status,
-        err
-      });
+      console.error('[useAuDocuments] Failed to fetch:', err);
     } finally {
       setLoading(false);
     }

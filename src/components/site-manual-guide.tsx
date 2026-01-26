@@ -1,5 +1,5 @@
 'use client';
-import React from 'react';
+
 import { useState, useEffect, useRef } from 'react';
 import { 
   Dialog, 
@@ -36,11 +36,7 @@ import {
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-import { updateUserActivity, fetchUserMetadata } from '@/lib/supabase/client';
-import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-
 export function SiteManualGuide() {
-  const [user] = useSupabaseUser();
   const [isOpen, setIsOpen] = useState(false);
   const [deviceType, setDeviceType] = useState<'desktop' | 'ios' | 'android' | 'tablet' | 'unknown'>('unknown');
   const [browserType, setBrowserType] = useState<'chrome' | 'safari' | 'firefox' | 'edge' | 'other'>('other');
@@ -68,17 +64,12 @@ export function SiteManualGuide() {
     else setBrowserType('other');
 
     // Auto-open
-    const checkGuide = async () => {
-      const metadata = await fetchUserMetadata(user);
-      const hasSeenGuide = metadata.hasSeenGuide;
-      if (!hasSeenGuide && !window.matchMedia('(display-mode: standalone)').matches) {
-        setIsOpen(true);
-        updateUserActivity(user, { hasSeenGuide: true });
-      }
-    };
-    
-    checkGuide();
-  }, [user]);
+    const hasSeenGuide = localStorage.getItem('au_site_guide_seen');
+    if (!hasSeenGuide && !window.matchMedia('(display-mode: standalone)').matches) {
+      setIsOpen(true);
+      localStorage.setItem('au_site_guide_seen', 'true');
+    }
+  }, []);
 
   const renderInstallInstructions = () => {
     if (isPwaInstalled) return (
@@ -155,7 +146,6 @@ export function SiteManualGuide() {
     { icon: ClipboardCheck, title: 'Predictions', description: 'AU predicts likely exam questions based on your documents.', bg: 'bg-purple-100', fg: 'text-purple-600' },
     { icon: BrainCircuit, title: 'Knowledge Graph', description: 'Visualize concept connections interactively.', bg: 'bg-orange-100', fg: 'text-orange-600' },
     { icon: PenTool, title: 'Practice Exam', description: 'Test your knowledge with realistic practice exams.', bg: 'bg-red-100', fg: 'text-red-600' },
-    { icon: Globe, title: 'AU Global', description: 'Enable Browser Mode to let AU search the web for real-time answers outside your documents.', bg: 'bg-cyan-100', fg: 'text-cyan-600' },
   ];
 
   return (
