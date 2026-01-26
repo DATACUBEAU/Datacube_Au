@@ -41,13 +41,6 @@ interface QuestionState extends PracticeQuestion {
   answerState: AnswerState;
 }
 
-interface StoredExamHistory {
-  timestamp: number;
-  data: GeneratePracticeExamOutput;
-}
-
-const getCacheKey = (userId: string, docId: string) => `practice_exam_history_${userId}_${docId}`;
-
 export default function PracticePage() {
   const [user] = useSupabaseUser();
   const [session] = useSupabaseSession();
@@ -80,14 +73,8 @@ export default function PracticePage() {
         answerState: 'unanswered' as AnswerState,
       }));
       setQuestions(initialQuestions);
-      
-      // Cache the result
-      if (user && selectedDocId) {
-        const historyToStore: StoredExamHistory = { timestamp: Date.now(), data: examData };
-        localStorage.setItem(getCacheKey(user.id, selectedDocId), JSON.stringify(historyToStore));
-      }
     }
-  }, [examData, user, selectedDocId]);
+  }, [examData]);
 
   const handleDocSelectionChange = useCallback((docId: string) => {
     setSelectedDocId(docId);
@@ -95,29 +82,7 @@ export default function PracticePage() {
     setCurrentQuestionIndex(0);
     setExamFinished(false);
     setScore(0);
-
-    if (user && isOnline) {
-      const cacheKey = getCacheKey(user.id, docId);
-      const storedJSON = localStorage.getItem(cacheKey);
-      if (storedJSON) {
-        try {
-          const stored: StoredExamHistory = JSON.parse(storedJSON);
-          const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-
-          if (stored.timestamp > threeDaysAgo) {
-            const cachedQuestions = stored.data.questions.map(q => ({ ...q, answerState: 'unanswered' as AnswerState }));
-            setQuestions(cachedQuestions);
-            toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
-          } else {
-            localStorage.removeItem(cacheKey); // Stale data
-          }
-        } catch (e) {
-          console.error("Failed to parse exam history from localStorage", e);
-          localStorage.removeItem(cacheKey);
-        }
-      }
-    }
-  }, [user, toast, isOnline]);
+  }, []);
   
   useEffect(() => {
     if (docsLoading || !documents.length) return;
@@ -141,22 +106,13 @@ export default function PracticePage() {
         return;
     }
     
-    if (!forceNew) {
-        const cacheKey = getCacheKey(user.id, selectedDocId);
-        const storedJSON = localStorage.getItem(cacheKey);
-        if (storedJSON) {
-            const stored: StoredExamHistory = JSON.parse(storedJSON);
-            const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-            if (stored.timestamp > threeDaysAgo) {
-                const cachedQuestions = stored.data.questions.map(q => ({ ...q, answerState: 'unanswered' as AnswerState }));
-                setQuestions(cachedQuestions);
-                toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
-                setExamFinished(false);
-                setCurrentQuestionIndex(0);
-                setScore(0);
-                return;
-            }
-        }
+    if (!forceNew && examData) {
+        // Already have data from hook hydration or previous generation
+        toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
+        setExamFinished(false);
+        setCurrentQuestionIndex(0);
+        setScore(0);
+        return;
     }
     
     setQuestions([]);
@@ -419,7 +375,7 @@ export default function PracticePage() {
         <span>
           {user?.is_anonymous 
             ? "Guest mode self-destruct in 24 hours." 
-            : "Generated exams are cached for 3 days to save you time."}
+            : "Generated exams are saved to your account for quick access."}
         </span>
       </div>
     </main>

@@ -212,11 +212,14 @@ export default function DocumentsPage() {
       
       if (job) {
         // Remove job (backgrounded in provider)
-        removeJob(job.id).catch(console.error);
+        await removeJob(job.id);
       } else {
         // Remove real document
-        apiRemove(id).catch(console.error);
+        await apiRemove(id);
       }
+
+      // Hard reload after delete for stability
+      window.location.reload();
     } catch (error: any) {
       console.error("[deleteDocument] Error:", error);
     }

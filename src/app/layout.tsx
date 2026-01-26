@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import { ThemeProvider } from '@/components/theme-provider';
 import { Toaster } from '@/components/ui/toaster';
 import { UploadJobsProvider } from '@/components/upload/upload-jobs-provider';
+import { BackgroundController } from '@/components/background-controller';
 import { PT_Sans, Space_Grotesk, Source_Code_Pro } from 'next/font/google';
 import './globals.css';
 
@@ -67,6 +68,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <BackgroundController />
           <UploadJobsProvider>{children}</UploadJobsProvider>
           <Toaster />
         </ThemeProvider>

@@ -97,6 +97,7 @@ export default function PredictionsPage() {
     isGeneratingPredictions,
     generatePredictions,
     clearKnowledgeAndPredictions,
+    rehydrateFromSupabase,
   } = useStore();
 
   const [formattedTopicWeights, setFormattedTopicWeights] = useState<FormattedTopicWeight[]>([]);
@@ -135,12 +136,26 @@ export default function PredictionsPage() {
   }, [predictionData, parseTopicWeights]);
 
 
-  const handlePastQuestionsChange = (docId: string) => {
+  const handlePastQuestionsChange = useCallback((docId: string) => {
     setSelectedPastQuestionsId(docId);
     const pqDoc = pastQuestionsDocs.find((d) => d.id === docId);
     setSelectedTextbookId(pqDoc?.parent_id || null);
     clearKnowledgeAndPredictions(); // Clear global store data
-  };
+    rehydrateFromSupabase(docId); // Hydrate from Supabase
+  }, [pastQuestionsDocs, clearKnowledgeAndPredictions, rehydrateFromSupabase]);
+
+  // Handle initial document selection on mount
+  useEffect(() => {
+    if (docsLoading || !pastQuestionsDocs.length) return;
+    const docIds = pastQuestionsDocs.map((doc) => doc.id);
+    if (!selectedPastQuestionsId || !docIds.includes(selectedPastQuestionsId)) {
+      const newSelectedId = docIds[0] || null;
+      if (newSelectedId) {
+        handlePastQuestionsChange(newSelectedId);
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pastQuestionsDocs, docsLoading]);
 
   const getDocContent = async (docId: string) => {
     if (!user) throw new Error('User not available');
@@ -176,7 +191,7 @@ export default function PredictionsPage() {
         return;
       }
 
-      await generatePredictions(pastQuestionsContent, session.access_token, mainTextbookContent);
+      await generatePredictions(selectedPastQuestionsId, pastQuestionsContent, session.access_token, mainTextbookContent);
 
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Prediction Failed', description: `Could not retrieve document content. ${err.message}` });

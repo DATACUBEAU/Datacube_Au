@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   ShieldAlert,
   Trash2,
+  Globe,
 } from 'lucide-react';
 import {
   Dialog,
@@ -59,10 +60,8 @@ import HeaderPwaInstallButton from '@/components/header-pwa-install-button';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { AnimatePresence, motion } from 'framer-motion';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { supabase } from '@/lib/supabase/client';
-import { AUAssistant } from '@/components/au-assistant';
+import { supabase, updateUserActivity, getGuestToken, clearGuestToken } from '@/lib/supabase/client';
 import { InactivityPolicyBanner } from '@/components/inactivity-policy-banner';
-import { updateUserActivity } from '@/lib/supabase/client';
 
 type NavItem = {
   href: string;
@@ -244,38 +243,38 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     setIsSigningOut(true);
     
     try {
-      // 1. Call wipe-user action in Edge Function
+      // 1. Optional: Call wipe-user action in Edge Function (only for guests or if requested)
       const { data: { session } } = await supabase.auth.getSession();
-      const guestToken = typeof window !== 'undefined' ? localStorage.getItem('guest_token') : null;
+      const guestToken = getGuestToken();
       const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
       const accessToken = session?.access_token || guestToken || undefined;
 
-      await fetch(`${SUPABASE_URL}/functions/v1/document-management`, {
-        method: 'POST',
-        headers: {
-          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-          'Content-Type': 'application/json',
-          ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {})
-        },
-        body: JSON.stringify({ action: 'wipe-user' })
-      });
+      // Only wipe if it's an anonymous user or explicitly requested (future-proofing)
+      if (isAnonymous) {
+        await fetch(`${SUPABASE_URL}/functions/v1/document-management`, {
+          method: 'POST',
+          headers: {
+            'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+            'Content-Type': 'application/json',
+            ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {})
+          },
+          body: JSON.stringify({ action: 'wipe-user' })
+        });
+      }
 
       // Cool animation delay
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      // 2. Clear local storage items
-      if (user?.id) {
-        localStorage.removeItem(`au_assistant_progress_${user.id}`);
-        localStorage.removeItem(`au_assistant_settings_${user.id}`);
+      // 2. Clear tokens (Only if guest)
+      if (isAnonymous) {
+        clearGuestToken();
       }
-      localStorage.removeItem('guest_token');
 
       // 3. Final sign out
       await supabase.auth.signOut();
       router.push('/');
     } catch (error) {
-      console.error("[signOut] Error wiping data:", error);
-      // Even if wipe fails, we should sign out for safety
+      console.error("[signOut] Error signing out:", error);
       await supabase.auth.signOut();
       router.push('/');
     }
@@ -285,6 +284,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { href: '/dashboard/documents', icon: FileTextIcon, label: 'Documents', tourId: 'upload-section' },
     { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
+    { href: '/dashboard/global-chat', icon: Globe, label: 'AU Global', tourId: 'global-chat-section' },
     { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge },
     { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section' },
     { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section' },
@@ -330,7 +330,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       
       // Handle Guest -> Auth migration
       const migrateGuest = async () => {
-        const guestToken = localStorage.getItem('guest_token');
+        const guestToken = getGuestToken();
         if (guestToken && !isAnonymous) {
           try {
             const { decodeJWT } = await import('@/lib/supabase/client');
@@ -346,7 +346,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               
               if (error) throw error;
               console.log('[migration] Successfully migrated guest data.');
-              localStorage.removeItem('guest_token');
+              clearGuestToken();
               toast({
                 title: 'Account Secured',
                 description: 'Your guest data has been successfully moved to your permanent account.'
@@ -482,20 +482,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                       <div className="mx-auto w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
                         <AlertTriangle className="w-8 h-8 text-destructive" />
                       </div>
-                      <DialogTitle className="text-center font-headline text-2xl text-destructive">Warning: Account Deletion</DialogTitle>
+                      <DialogTitle className="text-center font-headline text-2xl text-destructive">
+                        {isAnonymous ? "Warning: Account Deletion" : "Sign Out"}
+                      </DialogTitle>
                       <DialogDescription className="text-center text-base pt-2">
-                        If you sign out now, your account will be <span className="font-bold text-destructive">deleted automatically</span> from the system.
+                        {isAnonymous 
+                          ? <>If you sign out now, your account will be <span className="font-bold text-destructive">deleted automatically</span> from the system.</>
+                          : "Are you sure you want to sign out? Your session will be closed."}
                       </DialogDescription>
                     </DialogHeader>
-                    <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-4 text-sm text-destructive font-medium text-center">
-                      All your documents, chat history, and generated knowledge will be permanently erased.
-                    </div>
+                    {isAnonymous && (
+                      <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-4 text-sm text-destructive font-medium text-center">
+                        All your documents, chat history, and generated knowledge will be permanently erased.
+                      </div>
+                    )}
                     <div className="flex flex-col sm:flex-row gap-3 pt-2">
                       <Button variant="outline" onClick={() => setShowSignOutPopup(false)} className="flex-1">
                         Cancel
                       </Button>
-                      <Button variant="destructive" onClick={proceedToFinalWarning} className="flex-1 font-bold">
-                        I Understand, Sign Out
+                      <Button variant="destructive" onClick={isAnonymous ? proceedToFinalWarning : handleSignOutFinal} className="flex-1 font-bold">
+                        {isAnonymous ? "I Understand, Sign Out" : "Sign Out"}
                       </Button>
                     </div>
                   </motion.div>
@@ -652,7 +658,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </div>
       </SidebarProvider>
-      <AUAssistant />
     </>
   );
 }

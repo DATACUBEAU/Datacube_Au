@@ -46,7 +46,77 @@ Deno.serve(async (req: Request) => {
     // Since user wants RLS disabled, we'll allow it but logs/RAG will be empty or limited.
     const effectiveFilter = (ownershipFilter || {}) as any;
     
-    const { messages, sessionId, useRAG = true, guide, summaryMode, currentPath } = body;
+    const { messages, sessionId, useRAG = true, guide, summaryMode, currentPath, action, selectedDocId, browsingMode } = body;
+    
+    // --- SPECIAL ACTION: GREET & SCAN ---
+    if (action === 'scan_and_greet') {
+        if (!selectedDocId) {
+             return new Response(JSON.stringify({ error: "selectedDocId required for greeting" }), { status: 400, headers: corsHeaders });
+        }
+
+        // Fetch larger context for a "whole document" feel (limit 20 chunks)
+        const { data: chunks } = await supabaseAdmin
+            .from('au_document_chunks')
+            .select('text')
+            .eq('document_id', selectedDocId)
+            .order('chunk_index', { ascending: true })
+            .limit(20);
+            
+        const docContext = chunks?.map((c: any) => c.text).join("\n") || "";
+        
+        // Fetch document name
+        const { data: docInfo } = await supabaseAdmin.from('au_documents').select('file_name').eq('id', selectedDocId).single();
+        const docName = docInfo?.file_name || "Document";
+
+        const systemPrompt = `You are AU, the Intelligent Study Orchestrator.
+        Your goal is to provide a BOLD, comprehensive **Startup Guide & Study Roadmap** for the student's new document.
+        
+        TASK:
+        1. Analyze the provided document text (First 20 chunks scanned).
+        2. Generate a **Study Roadmap** that breaks the content into logical phases or modules.
+        3. Be BOLD, DIRECT, and ENCOURAGING. Do NOT use "AI", refer to yourself as "AU".
+        
+        OUTPUT FORMAT (JSON):
+        {
+          "thought": "I have scanned the document. It covers X, Y, Z. I will outline a 3-step roadmap.",
+          "answer": "Greeting message..."
+        }
+        
+        GREETING TEMPLATE (Markdown):
+        "# 🚀 Welcome to your Study Space for **${docName}**!
+        
+        I've scanned your document and generated a custom **Study Roadmap** to get you started:
+        
+        ### 📍 Phase 1: Core Concepts
+        [Brief list of key topics found]
+        
+        ### 📍 Phase 2: Deep Dive
+        [Advanced topics or details found]
+        
+        ### 📍 Phase 3: Mastery & Testing
+        [Suggestions for Practice Exams/Predictions]
+        
+        **Ready to begin?** Pick a phase or ask me anything!"
+        `;
+
+        const responseText = await callAU(supabaseAdmin, systemPrompt, `Document Content (Start):\n${docContext}`, 0.5, true);
+        let finalResponse = { answer: responseText, thought: "" };
+        try {
+            const cleaned = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+            finalResponse = JSON.parse(cleaned);
+        } catch {
+             finalResponse = { answer: responseText, thought: "Generated greeting." };
+        }
+        
+        return new Response(JSON.stringify({ 
+            ok: true, 
+            answer: finalResponse.answer, 
+            thought: finalResponse.thought,
+            requestId 
+        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // --- NORMAL CHAT ---
     
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return new Response(JSON.stringify({ 
@@ -89,12 +159,14 @@ Deno.serve(async (req: Request) => {
     }
 
     // 2. RAG Step (if enabled)
+    // SKIP RAG if browsingMode is ON to avoid context pollution, OR keep it? 
+    // Usually browsing implies looking outside. But user might want "updates on THIS topic".
+    // Let's keep RAG but prioritized lower or explicitly labeled.
     if (useRAG) {
       try {
         const embedding = await generateEmbedding(supabaseAdmin, latestMessage);
 
         // Filter by specific document if selectedDocId is provided
-        const { selectedDocId } = body;
         
         let docIdsToSearch: string[] = [];
         if (selectedDocId) {
@@ -113,14 +185,6 @@ Deno.serve(async (req: Request) => {
             docIdsToSearch.push(docInfo.parent_id);
           }
         }
-        
-        // Search - using supabaseAdmin with explicit ownership filters
-        // Note: The current RPC 'au_vector_search' doesn't support an array of IDs natively in the filter logic 
-        // without modification, OR we can fetch chunks for ALL user docs and filter in code (inefficient),
-        // OR we rely on semantic similarity globally (p_user_id) if we want "Smart Matching".
-        // 
-        // Strategy: If we have specific doc IDs, we'll fetch results globally for the user 
-        // and then filter for those IDs in the application layer to support the "Parent+Child" linking.
         
         const { data: chunks, error: searchError } = await supabaseAdmin.rpc("au_vector_search", {
           query_embedding: embedding,
@@ -168,7 +232,7 @@ Your goal is to tutor the student AND guide them to the right study tools (Knowl
 
 CORE SELF-INFO:
 - Role: Intelligent Study Orchestrator.
-- Capabilities: Tutoring, Cross-Section Navigation, Progress Tracking.
+- Capabilities: Tutoring, Cross-Section Navigation, Progress Tracking${browsingMode ? ", Internet Browsing (via Perplexity)" : ""}.
 - Personality: Smart, Proactive, Encouraging, System-Aware.
 
 SYSTEM AWARENESS (Use this to route students):
@@ -178,6 +242,7 @@ SYSTEM AWARENESS (Use this to route students):
 
 CURRENT CONTEXT:
 - Current Path: ${currentPath || 'Dashboard'}
+- Browsing Mode: ${browsingMode ? "ENABLED (You can search the web for recent info)" : "DISABLED (Stick to documents)"}
 ${logContext}
 
 ${summaryMode ? `SUMMARY MODE: You are in ${summaryMode.toUpperCase()} mode.
@@ -203,6 +268,9 @@ ORCHESTRATION GUIDELINES (CRITICAL):
      - Low confidence? -> Encourage, simplify, suggest **Knowledge Hub** for basics.
      - High confidence? -> Challenge them, suggest **Practice Exam** or **Prediction Engine**.
   5. **Exam Difficulty Tagging**: Tag exam discussions as [Easy/Medium/Hard].
+  6. **Browsing Rules**:
+     - If Browsing Mode is ON: You may fetch recent updates, definitions, or live exam trends. ALWAYS cite your sources.
+     - If Browsing Mode is OFF: Do NOT invent outside information. Stick to the documents.
 
 INSTRUCTIONS:
   - Use the DOCUMENT CONTEXT to answer accurately.
@@ -222,11 +290,6 @@ Example:
 }`;
 
     // Construct the prompt for the LLM
-    // To support persistent memory, we can append previous messages if available, 
-    // but for now, the system prompt + latestMessage + RAG context is the most robust stateless approach.
-    // If we want to include history, we would concatenate it to 'latestMessage' or use the 'messages' array in the LLM call.
-    // Let's create a combined user prompt that includes a snippet of history if it exists.
-    
     let userPrompt = latestMessage;
     if (messages.length > 1) {
        // Increase context window to last 5 messages for better continuity
@@ -236,13 +299,17 @@ Example:
        }
     }
 
+    // Browsing Mode Override
+    // Use a model with internet access if browsing is enabled
+    const modelOverride = browsingMode ? "perplexity/llama-3.1-sonar-large-128k-online" : undefined;
+
     const responseText = await callAU(
       supabaseAdmin,
       systemPrompt,
       userPrompt,
       0.5,
       false, // Disable JSON mode to avoid 400 errors with some free models
-      undefined,
+      modelOverride,
       { userId: userId || undefined, ownershipFilter, feature: "au-chat", sessionId }
     );
 
@@ -258,7 +325,7 @@ Example:
       };
     } catch (e) {
       // Fallback if AU doesn't return valid JSON
-      finalResponse = { answer: responseText, thought: "Analyzing document content...", citations };
+      finalResponse = { answer: responseText, thought: "", citations };
     }
 
     // 4. Save to History (Phase 4 requirement)

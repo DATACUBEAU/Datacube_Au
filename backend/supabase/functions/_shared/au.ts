@@ -302,11 +302,14 @@ export async function callAU(
   
   // Define fallback models in order of preference
   const FALLBACK_MODELS = [
-    "xiaomi/mimo-v2-flash:free",
     "google/gemini-2.0-flash-exp:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "qwen/qwen-3-235b-a22b:free",
-    "mistralai/mistral-7b-instruct:free"
+    "google/gemini-2.0-pro-exp-02-05:free",
+    "deepseek/deepseek-r1:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "google/gemini-2.0-flash-lite-preview-02-05:free",
+    "deepseek/deepseek-r1-distill-llama-70b:free",
+    "mistralai/mistral-7b-instruct:free" // Keeping at the very end as a last resort if it ever comes back
   ];
 
   // 1. Determine initial model list
@@ -323,7 +326,7 @@ export async function callAU(
         .eq('key', 'default_model')
         .single();
     
-    let defaultModel = "xiaomi/mimo-v2-flash:free";
+    let defaultModel = "google/gemini-2.0-flash-exp:free";
     if (setting && setting.value) {
         defaultModel = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
     }
@@ -360,6 +363,8 @@ export async function callAU(
 
       if (!response.ok) {
         const errorText = await response.text();
+        // If it's a 404 or 400 (bad model), we definitely want to skip to next
+        console.warn(`[au.ts] Model ${model} returned ${response.status}: ${errorText}`);
         throw new Error(`Status ${response.status}: ${errorText}`);
       }
 
@@ -392,11 +397,13 @@ export async function callAU(
       console.warn(`[au.ts] Model ${model} failed: ${err.message}`);
       lastError = err;
       
-      // Log the fallback attempt to DB
-      await supabaseAdmin.from('au_debug_logs').insert({
+      // Log the fallback attempt to DB - NON-BLOCKING
+      supabaseAdmin.from('au_debug_logs').insert({
         component: 'au_chat_fallback',
         message: `Falling back from ${model}`,
         details: { error: err.message, next_model: modelsToTry[modelsToTry.indexOf(model) + 1] || 'NONE' }
+      }).then(({ error }: any) => {
+        if (error) console.error("[au.ts] Failed to log fallback to DB:", error);
       });
       
       // Continue to next model in loop

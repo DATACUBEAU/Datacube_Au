@@ -44,12 +44,6 @@ const InteractiveConceptMap = dynamic(() => import('@/components/interactive-con
 });
 
 
-interface StoredKnowledgeHistory {
-  timestamp: number;
-  data: GenerateKnowledgeOutput;
-}
-
-
 export default function KnowledgePage() {
   const [user] = useSupabaseUser();
   const [session] = useSupabaseSession();
@@ -73,33 +67,13 @@ export default function KnowledgePage() {
     isGeneratingKnowledge,
     generateKnowledge,
     clearKnowledgeAndPredictions,
-    setKnowledgeData,
+    rehydrateFromSupabase,
   } = useStore();
 
   const handleDocSelectionChange = (docId: string) => {
     setSelectedDocId(docId);
     clearKnowledgeAndPredictions(); // Clear global state immediately
-
-    if (user && isOnline) {
-      const cacheKey = `knowledge_history_user_${docId}`;
-      const storedJSON = localStorage.getItem(cacheKey);
-      if (storedJSON) {
-        try {
-          const stored: StoredKnowledgeHistory = JSON.parse(storedJSON);
-          const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-
-          if (stored.timestamp > threeDaysAgo) {
-            setKnowledgeData(stored.data); // Directly set the data in the store
-            toast({ title: 'Loaded from history', description: 'Showing cached knowledge materials.' });
-          } else {
-            localStorage.removeItem(cacheKey); // Stale data
-          }
-        } catch (e) {
-          console.error('Failed to parse knowledge history from localStorage', e);
-          localStorage.removeItem(cacheKey);
-        }
-      }
-    }
+    rehydrateFromSupabase(docId);
   };
 
   useEffect(() => {

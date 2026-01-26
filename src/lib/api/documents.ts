@@ -1,4 +1,4 @@
-import { supabase, getEffectiveOwnershipConditions, decodeJWT, applyOwnershipFilter } from '@/lib/supabase/client';
+import { supabase, getEffectiveOwnershipConditions, decodeJWT, applyOwnershipFilter, getGuestToken } from '@/lib/supabase/client';
 import { safeFetch } from './safe-fetch';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
@@ -47,6 +47,8 @@ export async function uploadDocument(
   }
 }
 
+const SAFE_DOC_COLUMNS = 'id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, error';
+
 /**
  * Lists documents for the current user or guest session.
  * Mirrors RLS: USING (auth.uid() = user_id OR guest_session_id = ...)
@@ -56,17 +58,52 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
 
   const query = supabase
     .from('au_documents')
-    .select('*');
+    .select(SAFE_DOC_COLUMNS);
   
-  applyOwnershipFilter(query, conditions);
+  const filteredQuery = applyOwnershipFilter(query, conditions);
   
-  const { data, error } = await query.order('created_at', { ascending: false });
+  let { data, error } = await filteredQuery.order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[API] Error listing documents:', error);
+    const errorMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
+    const errorCode = error.code || 'unknown';
+
+    console.error('[API] Error listing documents:', {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code,
+      fullError: error
+    });
+
+    // Fallback logic if guest_session_id column is missing
+    if (errorMsg.includes('guest_session_id') || errorCode === '42703') {
+      console.warn('[API] Missing guest_session_id or columns in au_documents, retrying safe');
+      const retryConditions = conditions
+        .split(',')
+        .filter(c => !c.startsWith('guest_session_id'))
+        .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
+
+      const retryQuery = supabase
+        .from('au_documents')
+        .select(SAFE_DOC_COLUMNS)
+        .order('created_at', { ascending: false });
+      
+      applyOwnershipFilter(retryQuery, retryConditions);
+      const { data: retryData, error: retryError } = await retryQuery;
+      
+      if (!retryError) {
+        data = retryData;
+        error = null;
+      }
+    }
+  }
+
+  if (error) {
     throw error;
   }
-  return data || [];
+
+  return (data || []) as unknown as AuDocumentRow[];
 }
 
 /**
@@ -75,7 +112,7 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
  */
 export async function deleteDocument(user: User | null, documentId: string): Promise<{ ok: boolean }> {
   const { data: { session } } = await supabase.auth.getSession();
-  const guestToken = typeof window !== 'undefined' ? localStorage.getItem('guest_token') : null;
+  const guestToken = getGuestToken();
   const accessToken = session?.access_token || guestToken || undefined;
 
   const url = `${SUPABASE_URL}/functions/v1/document-management`;
