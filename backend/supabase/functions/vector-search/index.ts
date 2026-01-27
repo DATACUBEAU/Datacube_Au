@@ -1,8 +1,5 @@
 /// <reference path="../deno.d.ts" />
-// @ts-ignore: Deno modules
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { getCorsHeaders, requireAnyAuth } from "../_shared/au.ts";
-import { getApiKey } from "../_shared/getApiKey.ts";
+import { generateEmbedding, getCorsHeaders, requireAnyAuth } from "../_shared/au.ts";
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
@@ -45,35 +42,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    // Generate Query Embedding
-    const openAiKey = await getApiKey(supabaseAdmin, "openai");
-    
-    const embeddingResponse = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${openAiKey}`,
-      },
-      body: JSON.stringify({
-        input: query,
-        model: "text-embedding-ada-002",
-      }),
-    });
-
-    if (!embeddingResponse.ok) {
-      const errText = await embeddingResponse.text();
-      return new Response(JSON.stringify({ 
-        error: "Embedding failed",
-        details: `${embeddingResponse.status} ${errText}`,
-        requestId
-      }), {
-        headers: corsHeadersWithJson,
-        status: 500,
-      });
-    }
-    
-    const embeddingData = await embeddingResponse.json();
-    const queryEmbedding = embeddingData.data[0].embedding;
+    const queryEmbedding = await generateEmbedding(supabaseAdmin, query);
 
     // Call RPC with manual ownership filters and tuning
     const { data: chunks, error: rpcError } = await supabaseAdmin.rpc("au_vector_search", {

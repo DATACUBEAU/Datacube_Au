@@ -19,14 +19,17 @@ export function useAuExams(selectedDocId: string | null) {
     
     setIsGenerating(true);
     try {
-      const documentContent = await getDocumentText(user, selectedDocId);
+      // Truncate content to avoid payload size limits
+      const rawDocContent = await getDocumentText(user, selectedDocId);
+      const documentContent = rawDocContent.substring(0, 20000); // 20k chars limit
       
       let pastQuestionsContent = '';
       if (pastQuestionIds.length > 0) {
         const contents = await Promise.all(
           pastQuestionIds.map(id => getDocumentText(user, id))
         );
-        pastQuestionsContent = contents.join('\n\n---\n\n');
+        // Join and truncate past questions
+        pastQuestionsContent = contents.join('\n\n---\n\n').substring(0, 15000);
       }
 
       const result = await generatePracticeExam(

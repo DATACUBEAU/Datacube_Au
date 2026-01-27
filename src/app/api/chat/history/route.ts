@@ -1,91 +1,51 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'edge';
 
 function requiredEnv(key: string): string {
   const value = process.env[key];
-  if (!value) return "";
+  if (!value) throw new Error(`Missing environment variable: ${key}`);
   return value;
 }
 
-export async function GET(req: Request) {
-    const { searchParams } = new URL(req.url);
-    const docId = searchParams.get('docId');
-    const authorization = req.headers.get('Authorization');
-
-    if (!docId || !authorization) {
-        return NextResponse.json({ error: 'Missing docId or Authorization' }, { status: 400 });
-    }
-
-    const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL');
-    const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-    const supabase = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authorization } },
-    });
-
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-
-    // Find session
-    const { data: sessions } = await supabase
-        .from('au_sessions')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('title', docId) // Using docId as the linking key
-        .limit(1);
-
-    if (!sessions || sessions.length === 0) {
-        return NextResponse.json({ history: [] });
-    }
-
-    const sessionId = sessions[0].id;
-
-    // Fetch messages
-    const { data: messages } = await supabase
-        .from('au_messages')
-        .select('id, role, content, created_at, metadata')
-        .eq('session_id', sessionId)
-        .order('created_at', { ascending: true });
-
-    return NextResponse.json({ history: messages || [] });
+function createRequestClient(authorization?: string) {
+  const url = requiredEnv('NEXT_PUBLIC_SUPABASE_URL');
+  const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  return createClient(url, anonKey, {
+    global: {
+      headers: authorization ? { Authorization: authorization } : {},
+    },
+  });
 }
 
-export async function DELETE(req: Request) {
+export async function GET(req: Request) {
+  try {
     const { searchParams } = new URL(req.url);
-    const docId = searchParams.get('docId');
-    const authorization = req.headers.get('Authorization');
+    const sessionId = searchParams.get('sessionId');
+    const authorization = req.headers.get('authorization') ?? undefined;
 
-    if (!docId || !authorization) {
-        return NextResponse.json({ error: 'Missing docId or Authorization' }, { status: 400 });
+    if (!sessionId) {
+      return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
     }
 
-    const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL');
-    const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-    const supabase = createClient(supabaseUrl, anonKey, {
-      global: { headers: { Authorization: authorization } },
-    });
+    const supabase = createRequestClient(authorization);
 
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // RLS will ensure the user can only see their own session's messages
+    const { data, error } = await supabase
+      .from('au_messages')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      console.error('[API /api/chat/history] Supabase error:', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // Find session
-    const { data: sessions } = await supabase
-        .from('au_sessions')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('title', docId)
-        .limit(1);
-
-    if (sessions && sessions.length > 0) {
-        const sessionId = sessions[0].id;
-        // Delete messages
-        await supabase.from('au_messages').delete().eq('session_id', sessionId);
-    }
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ messages: data });
+  } catch (error: any) {
+    console.error('[API /api/chat/history] Error:', error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

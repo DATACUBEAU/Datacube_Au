@@ -105,7 +105,7 @@ Deno.serve(async (req: Request) => {
       console.log(`[document-management] Migrating data from guest ${guestSessionId} to user ${userId} [${requestId}]`);
 
       const newExpiresAt = new Date();
-      newExpiresAt.setDate(newExpiresAt.getDate() + 14);
+      newExpiresAt.setDate(newExpiresAt.getDate() + 7);
 
       await supabaseAdmin.from("au_documents").update({ 
         user_id: userId, guest_session_id: null, expires_at: newExpiresAt.toISOString() 

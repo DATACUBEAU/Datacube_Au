@@ -28,6 +28,19 @@ Deno.serve(async (req: Request) => {
   try {
     const body = await req.json().catch(() => ({}));
     
+    const { messages, sessionId, useRAG = true, guide, summaryMode, currentPath, action, selectedDocId, browsingMode } = body;
+    
+    // --- SPECIAL ACTION: GET MODELS (Public) ---
+    if (action === 'get_models') {
+       // Dynamic import to avoid circular deps if any, though likely safe here
+       const { VERIFIED_FREE_MODELS } = await import("../_shared/model_registry.ts");
+       return new Response(JSON.stringify({ 
+         ok: true, 
+         models: VERIFIED_FREE_MODELS,
+         requestId 
+       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     // 2. Validate Auth (need userId and ownershipFilter)
     const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireAnyAuth(req, body);
 
@@ -45,8 +58,7 @@ Deno.serve(async (req: Request) => {
     // If no ownership filter, we might still proceed but with no data access if RLS was on.
     // Since user wants RLS disabled, we'll allow it but logs/RAG will be empty or limited.
     const effectiveFilter = (ownershipFilter || {}) as any;
-    
-    const { messages, sessionId, useRAG = true, guide, summaryMode, currentPath, action, selectedDocId, browsingMode } = body;
+
     
     // --- SPECIAL ACTION: GREET & SCAN ---
     if (action === 'scan_and_greet') {
@@ -281,17 +293,10 @@ INSTRUCTIONS:
   - If asked about yourself, use CORE SELF-INFO.
   - **Maintain Context**: Remember what topic is being discussed.
   - **Never Generic**: Don't just say "check the other sections". Say "Check the Knowledge Hub *to see the mind map for this*".
-
-OUTPUT FORMAT (Strict JSON):
-Return a JSON object with exactly these fields:
-- "thought": A brief internal monologue (1-2 sentences) including your Intent Classification and routing decision.
-- "answer": Your final response in markdown format.
-
-Example:
-{
-  "thought": "[Assessment-Ready] User understands the basics. I will suggest the Practice Exam.",
-  "answer": "Exactly! The mitochondria... **Since you've got this down, shall we try a Practice Exam question to test your knowledge?**"
-}`;
+  - Do NOT output JSON.
+  - Do NOT include keys like "thought" or "answer".
+  - Write the final answer in clean markdown.
+`;
 
     // Construct the prompt for the LLM
     let userPrompt = latestMessage;
@@ -317,20 +322,74 @@ Example:
       { userId: userId || undefined, ownershipFilter, feature: "au-chat", sessionId }
     );
 
-    let finalResponse = { answer: responseText, thought: "", citations };
-    try {
-      // Clean up potential markdown code blocks
-      const cleaned = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-      finalResponse = { 
-        answer: parsed.answer || responseText, 
-        thought: parsed.thought || "",
-        citations 
-      };
-    } catch (e) {
-      // Fallback if AU doesn't return valid JSON
-      finalResponse = { answer: responseText, thought: "Analyzing...", citations };
-    }
+    const extractMarkdownAnswer = (text: string) => {
+      const trimmed = (text || "").trim();
+      const withoutFences = trimmed
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
+
+      const jsonStart = withoutFences.indexOf("{");
+      const jsonEnd = withoutFences.lastIndexOf("}");
+      if (jsonStart >= 0 && jsonEnd > jsonStart) {
+        const maybeJson = withoutFences.slice(jsonStart, jsonEnd + 1);
+        try {
+          const parsed = JSON.parse(maybeJson);
+          const parsedAnswer = (parsed as any)?.answer;
+          if (typeof parsedAnswer === "string" && parsedAnswer.trim()) return parsedAnswer.trim();
+        } catch {
+        }
+      }
+
+      if (/^Analyzing\.\.\./i.test(withoutFences)) {
+        const rest = withoutFences.replace(/^Analyzing\.\.\.\s*/i, "").trim();
+        if (rest) return rest;
+      }
+
+      return withoutFences;
+    };
+
+    const classifyIntent = (msg: string) => {
+      const m = (msg || "").toLowerCase();
+      if (!m.trim()) return "Idle";
+      if (/(i don't know|dont know|confus|what now|help me|i'm lost|im lost)/.test(m)) return "Confused";
+      if (/(quiz|test me|practice exam|exam question|mark scheme|grade me|score)/.test(m)) return "Assessment-Ready";
+      if (/(thanks|got it|clear now|understood|done)/.test(m)) return "Finished";
+      return "Exploratory";
+    };
+
+    const buildThoughtProcess = (args: {
+      latestMessage: string;
+      hasContext: boolean;
+      citationCount: number;
+      browsingMode: boolean;
+      currentPath: string;
+    }) => {
+      const intent = classifyIntent(args.latestMessage);
+      const snippet = (args.latestMessage || "").replace(/\s+/g, " ").trim();
+      const brief = snippet.length > 110 ? snippet.slice(0, 110) + "…" : snippet;
+      const kind = args.currentPath.includes("/dashboard/global-chat") ? "Global Assistant" : "Chat Workspace";
+      const sourceLine = args.hasContext
+        ? `I pulled relevant passages from your uploaded documents (${Math.max(1, args.citationCount)} source${args.citationCount === 1 ? "" : "s"}).`
+        : args.browsingMode
+          ? "I used external sources because browsing mode is enabled."
+          : "I did not find matching textbook passages, so I answered without document quotes.";
+      const nextLine = kind === "Global Assistant"
+        ? "Next: tell me what you want (explain, summarize, quiz, or generate)."
+        : "Next: I can quiz you, summarize, or send this topic to Knowledge Hub.";
+      return `[${intent}] ${kind}: I interpreted your prompt as “${brief}”. ${sourceLine} ${nextLine}`;
+    };
+
+    const answer = extractMarkdownAnswer(responseText);
+    const thought = buildThoughtProcess({
+      latestMessage,
+      hasContext: !!context,
+      citationCount: citations.length,
+      browsingMode: !!browsingMode,
+      currentPath: currentPath || "",
+    });
+
+    const finalResponse = { answer, thought, citations };
 
     // 4. Save to History (Phase 4 requirement)
     if (sessionId) {

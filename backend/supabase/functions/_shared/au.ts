@@ -228,65 +228,41 @@ export interface AUResponse {
 export async function generateEmbedding(
   supabaseAdmin: any,
   input: string,
-  model = "text-embedding-ada-002"
+  model?: string
 ): Promise<number[]> {
-  // 1. Try OpenAI First
-  try {
-    const openAiKey = await getApiKey(supabaseAdmin, "openai");
-    
-    const response = await fetch("https://api.openai.com/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openAiKey}`,
-      },
-      body: JSON.stringify({
-        input,
-        model,
-      }),
-    });
+  const { openrouterEmbeddings } = await import("./openrouter.ts");
 
-    if (response.ok) {
-      const data = await response.json();
-      return data.data[0].embedding;
-    } else {
-      console.warn(`[au.ts] OpenAI Embedding failed: ${response.status} ${response.statusText}`);
+  let resolvedModel = model;
+  if (!resolvedModel) {
+    try {
+      const { data: setting } = await supabaseAdmin
+        .from("au_rag_settings")
+        .select("value")
+        .eq("key", "embedding_model")
+        .single();
+
+      if (setting?.value) {
+        resolvedModel = typeof setting.value === "string"
+          ? setting.value
+          : JSON.stringify(setting.value).replace(/"/g, "");
+      }
+    } catch {
     }
-  } catch (e) {
-    console.warn(`[au.ts] OpenAI Embedding error:`, e);
   }
 
-  // 2. Fallback to OpenRouter (if OpenAI fails or key missing)
-  try {
-    console.log("[au.ts] Falling back to OpenRouter for embedding...");
-    const openRouterKey = await getApiKey(supabaseAdmin, "openrouter");
-    
-    // OpenRouter Embedding Endpoint
-    const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${openRouterKey}`,
-        "HTTP-Referer": "https://datacube-au.vercel.app",
-        "X-Title": "DataCube AU",
-      },
-      body: JSON.stringify({
-        input,
-        model: "text-embedding-ada-002", // OpenRouter maps this often, or we could use 'openai/text-embedding-ada-002'
-      }),
-    });
+  resolvedModel = resolvedModel || "openai/text-embedding-ada-002";
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`OpenRouter Embedding Error: ${response.status} - ${errorText}`);
-    }
+  const { embeddings } = await openrouterEmbeddings({
+    supabaseAdmin,
+    model: resolvedModel,
+    input,
+  });
 
-    const data = await response.json();
-    return data.data[0].embedding;
-  } catch (e: any) {
-    console.error("[au.ts] All embedding providers failed.");
-    throw new Error(`Embedding generation failed: ${e.message}`);
+  if (!embeddings[0]) {
+    throw new Error("Embedding generation failed: missing embedding");
   }
+
+  return embeddings[0];
 }
 
 export async function callAU(
@@ -298,236 +274,93 @@ export async function callAU(
   modelOverride?: string,
   usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any }
 ): Promise<string> {
-  const openRouterKey = await getApiKey(supabaseAdmin, "openrouter");
-  
-  // Define fallback models in order of preference
-  const FALLBACK_MODELS = [
-    "google/gemini-2.0-flash-exp:free",
-    "google/gemini-2.0-pro-exp-02-05:free",
-    "deepseek/deepseek-r1:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "qwen/qwen-2.5-72b-instruct:free",
-    "google/gemini-2.0-flash-lite-preview-02-05:free",
-    "deepseek/deepseek-r1-distill-llama-70b:free",
-    "mistralai/mistral-7b-instruct:free" // Keeping at the very end as a last resort if it ever comes back
-  ];
+  const { openrouterChatCompletions } = await import("./openrouter.ts");
+  const { getNextAvailableModel, markModelAsFailed } = await import("./model_registry.ts");
 
-  // 1. Determine initial model list
-  let modelsToTry: string[] = [];
-  
-  if (modelOverride) {
-    // If override is provided, try it first, then fallbacks
-    modelsToTry = [modelOverride, ...FALLBACK_MODELS.filter(m => m !== modelOverride)];
-  } else {
-    // Try to fetch default from DB
-    const { data: setting } = await supabaseAdmin
-        .from('au_rag_settings')
-        .select('value')
-        .eq('key', 'default_model')
+  let model = modelOverride;
+  if (!model) {
+    try {
+      const { data: setting } = await supabaseAdmin
+        .from("au_rag_settings")
+        .select("value")
+        .eq("key", "default_model")
         .single();
-    
-    let defaultModel = "google/gemini-2.0-flash-exp:free";
-    if (setting && setting.value) {
-        defaultModel = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
+
+      if (setting?.value) {
+        model = typeof setting.value === "string"
+          ? setting.value
+          : JSON.stringify(setting.value).replace(/"/g, "");
+      }
+    } catch {
     }
-    
-    // Put default first, then the rest of the fallback list (filtering out duplicates)
-    modelsToTry = [defaultModel, ...FALLBACK_MODELS.filter(m => m !== defaultModel)];
   }
 
-  let lastError: any = null;
+  model = model || "auto";
 
-  // 2. Loop through models until one works
-  for (const model of modelsToTry) {
+  // Retry loop for model fallback
+  let attempts = 0;
+  const MAX_ATTEMPTS = 6;
+  let lastError: Error | null = null;
+  
+  // Initialize currentModel. If "auto", pick one. If specific override, start there.
+  let currentModel = model === "auto" ? getNextAvailableModel([]) : model;
+
+  // Keep track of tried models in this session to avoid cycles
+  const triedModels = new Set<string>();
+
+  while (attempts < MAX_ATTEMPTS) {
+    if (triedModels.has(currentModel)) {
+       // If we already tried this model in this request, skip it and get another
+       currentModel = getNextAvailableModel(Array.from(triedModels));
+    }
+    triedModels.add(currentModel);
+
     try {
-      console.log(`[au.ts] Attempting generation with model: ${model}`);
+      console.log(`[au.ts] Attempt ${attempts + 1}/${MAX_ATTEMPTS} using model: ${currentModel} (JSON: ${jsonMode})`);
       
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openRouterKey}`,
-          "HTTP-Referer": "https://datacube-au.vercel.app",
-          "X-Title": "DataCube AU",
-        },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          temperature: temperature,
-          response_format: jsonMode ? { type: "json_object" } : undefined,
-        }),
+      const { content, usage, raw } = await openrouterChatCompletions({
+        supabaseAdmin,
+        model: currentModel,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature,
+        response_format: jsonMode ? { type: "json_object" } : undefined,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        // If it's a 404 or 400 (bad model), we definitely want to skip to next
-        console.warn(`[au.ts] Model ${model} returned ${response.status}: ${errorText}`);
-        throw new Error(`Status ${response.status}: ${errorText}`);
-      }
-
-      const data = await response.json();
-      
-      // If we got here, success! Log usage and return.
-      const usage = (data as any)?.usage;
       const feature = usageContext?.feature;
       if (usageContext?.ownershipFilter && feature && usage) {
-        // Run async (don't await to speed up response)
-        supabaseAdmin.from('au_model_usage').insert([
+        supabaseAdmin.from("au_model_usage").insert([
           {
             ...usageContext.ownershipFilter,
             feature,
-            model_id: model,
-            prompt_tokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null,
-            completion_tokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null,
-            total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
-            cost: typeof usage.total_cost === 'number' ? usage.total_cost : null,
-            metadata: { sessionId: usageContext?.sessionId ?? null, usage, used_fallback: model !== modelsToTry[0] },
-          },
-        ]).then(({ error }: any) => {
-          if (error) console.error("[au.ts] Failed to log usage:", error);
-        });
-      }
-      
-      return data.choices[0].message.content;
-
-    } catch (err: any) {
-      console.warn(`[au.ts] Model ${model} failed: ${err.message}`);
-      lastError = err;
-      
-      // Log the fallback attempt to DB - NON-BLOCKING
-      supabaseAdmin.from('au_debug_logs').insert({
-        component: 'au_chat_fallback',
-        message: `Falling back from ${model}`,
-        details: { error: err.message, next_model: modelsToTry[modelsToTry.indexOf(model) + 1] || 'NONE' }
-      }).then(({ error }: any) => {
-        if (error) console.error("[au.ts] Failed to log fallback to DB:", error);
-      });
-      
-      // Continue to next model in loop
-    }
-  }
-
-  // 3. If all fail, throw the last error
-  console.error("[au.ts] All models failed.");
-  throw new Error(`All AI models are currently unavailable. Last error: ${lastError?.message || 'Unknown'}`);
-}
-
-export async function callAUMessages(
-  supabaseAdmin: any,
-  messages: { role: string; content: string }[],
-  temperature = 0.5,
-  jsonMode = false,
-  modelOverride?: string,
-  usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any }
-): Promise<{ content: string; model: string; used_fallback: boolean }> {
-  const openRouterKey = await getApiKey(supabaseAdmin, "openrouter");
-
-  const FALLBACK_MODELS = [
-    "google/gemini-2.0-flash-exp:free",
-    "google/gemini-2.0-pro-exp-02-05:free",
-    "deepseek/deepseek-r1:free",
-    "meta-llama/llama-3.1-8b-instruct:free",
-    "qwen/qwen-2.5-72b-instruct:free",
-    "google/gemini-2.0-flash-lite-preview-02-05:free",
-    "deepseek/deepseek-r1-distill-llama-70b:free",
-    "mistralai/mistral-7b-instruct:free",
-  ];
-
-  let modelsToTry: string[] = [];
-
-  if (modelOverride) {
-    modelsToTry = [modelOverride, ...FALLBACK_MODELS.filter(m => m !== modelOverride)];
-  } else {
-    const { data: setting } = await supabaseAdmin
-      .from('au_rag_settings')
-      .select('value')
-      .eq('key', 'default_model')
-      .single();
-
-    let defaultModel = "google/gemini-2.0-flash-exp:free";
-    if (setting && setting.value) {
-      defaultModel = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
-    }
-
-    modelsToTry = [defaultModel, ...FALLBACK_MODELS.filter(m => m !== defaultModel)];
-  }
-
-  let lastError: any = null;
-
-  for (const model of modelsToTry) {
-    try {
-      console.log(`[au.ts] Attempting messages generation with model: ${model}`);
-
-      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openRouterKey}`,
-          "HTTP-Referer": "https://datacube-au.vercel.app",
-          "X-Title": "DataCube AU",
-        },
-        body: JSON.stringify({
-          model,
-          messages,
-          temperature,
-          response_format: jsonMode ? { type: "json_object" } : undefined,
-        }),
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.warn(`[au.ts] Model ${model} returned ${response.status}: ${errorText}`);
-        const err: any = new Error(`Status ${response.status}: ${errorText}`);
-        err.status = response.status;
-        throw err;
-      }
-
-      const data = await response.json();
-
-      const usage = (data as any)?.usage;
-      const feature = usageContext?.feature;
-      if (usageContext?.ownershipFilter && feature && usage) {
-        supabaseAdmin.from('au_model_usage').insert([
-          {
-            ...usageContext.ownershipFilter,
-            feature,
-            model_id: model,
-            prompt_tokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null,
-            completion_tokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null,
-            total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
-            cost: typeof usage.total_cost === 'number' ? usage.total_cost : null,
-            metadata: { sessionId: usageContext?.sessionId ?? null, usage, used_fallback: model !== modelsToTry[0] },
+            model_id: raw?.model || currentModel,
+            prompt_tokens: typeof usage.prompt_tokens === "number" ? usage.prompt_tokens : null,
+            completion_tokens: typeof usage.completion_tokens === "number" ? usage.completion_tokens : null,
+            total_tokens: typeof usage.total_tokens === "number" ? usage.total_tokens : null,
+            cost: typeof usage.total_cost === "number" ? usage.total_cost : null,
+            metadata: { sessionId: usageContext?.sessionId ?? null, usage },
           },
         ]).then(({ error }: any) => {
           if (error) console.error("[au.ts] Failed to log usage:", error);
         });
       }
 
-      return {
-        content: data.choices?.[0]?.message?.content ?? "",
-        model,
-        used_fallback: model !== modelsToTry[0],
-      };
+      return content;
+
     } catch (err: any) {
-      console.warn(`[au.ts] Model ${model} failed: ${err.message}`);
+      console.warn(`[au.ts] Model ${currentModel} failed: ${err.message}`);
       lastError = err;
-      supabaseAdmin.from('au_debug_logs').insert({
-        component: 'au_chat_fallback',
-        message: `Falling back from ${model}`,
-        details: { error: err.message, next_model: modelsToTry[modelsToTry.indexOf(model) + 1] || 'NONE', status: err?.status }
-      }).then(({ error }: any) => {
-        if (error) console.error("[au.ts] Failed to log fallback to DB:", error);
-      });
+      markModelAsFailed(currentModel);
+      
+      // Get next best model, excluding all we have tried so far
+      currentModel = getNextAvailableModel(Array.from(triedModels));
+      attempts++;
     }
   }
 
-  console.error("[au.ts] All models failed.");
-  const finalErr: any = new Error(`All AI models are currently unavailable. Last error: ${lastError?.message || 'Unknown'}`);
-  if (lastError?.status) finalErr.status = lastError.status;
-  throw finalErr;
+  throw lastError || new Error("All AI models are currently unavailable.");
 }
 
 /**

@@ -71,7 +71,12 @@ const itemVariants = {
   },
 };
 
-export default function InteractiveConceptMap({ content }: { content: string }) {
+export type InteractiveConceptMapProps = {
+  content: string;
+  onConceptClick?: (term: string) => void;
+};
+
+export default function InteractiveConceptMap({ content, onConceptClick }: InteractiveConceptMapProps) {
   const parsedContent = parseConceptMap(content);
 
   // If parsing results in no interactive parts, just show the plain text.
@@ -92,23 +97,45 @@ export default function InteractiveConceptMap({ content }: { content: string }) 
             // Render plain text segments directly.
             <motion.span variants={itemVariants}>{part}</motion.span>
           ) : (
-            // Render interactive concepts with a Popover.
-            <Popover>
-              <PopoverTrigger asChild>
-                <motion.span
-                  variants={itemVariants}
-                  className="cursor-pointer rounded-md bg-primary/10 px-1 py-0.5 font-semibold text-primary transition-all hover:bg-primary/20"
-                >
-                  {part.term}
-                </motion.span>
-              </PopoverTrigger>
-              <PopoverContent className="w-auto max-w-[90vw] sm:max-w-sm" side="top" align="center">
-                <div className="space-y-2">
-                  <h4 className="font-bold">{part.term}</h4>
-                  <p className="text-sm text-muted-foreground">{part.details}</p>
-                </div>
-              </PopoverContent>
-            </Popover>
+            onConceptClick ? (
+              <motion.span
+                variants={itemVariants}
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer rounded-md bg-primary/10 px-1 py-0.5 font-semibold text-primary transition-all hover:bg-primary/20"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onConceptClick(part.term);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onConceptClick(part.term);
+                  }
+                }}
+              >
+                {part.term}
+              </motion.span>
+            ) : (
+              <Popover>
+                <PopoverTrigger asChild>
+                  <motion.span
+                    variants={itemVariants}
+                    className="cursor-pointer rounded-md bg-primary/10 px-1 py-0.5 font-semibold text-primary transition-all hover:bg-primary/20"
+                  >
+                    {part.term}
+                  </motion.span>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto max-w-[90vw] sm:max-w-sm" side="top" align="center">
+                  <div className="space-y-2">
+                    <h4 className="font-bold">{part.term}</h4>
+                    <p className="text-sm text-muted-foreground">{part.details}</p>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )
           )}
         </Fragment>
       ))}

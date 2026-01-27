@@ -18,7 +18,6 @@ import {
   Trash2,
   Globe,
   BookOpen,
-  Network,
 } from 'lucide-react';
 import {
   Dialog,
@@ -300,7 +299,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
     { href: '/dashboard/global-chat', icon: Globe, label: 'Global Chat' },
     { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge },
-    { href: '/dashboard/concept-map', icon: Network, label: 'Concept Map' },
     { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section' },
     { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section' },
   ], [isGeneratingKnowledge, isGeneratingPredictions]);

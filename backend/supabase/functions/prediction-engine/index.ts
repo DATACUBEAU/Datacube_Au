@@ -46,10 +46,11 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const systemPrompt = `You are an expert exam strategist and predictor. Analyze the provided past exam questions (and optional textbook content) to predict upcoming exam topics.
+    const systemPrompt = `You are AU, an expert exam strategist and predictor. Analyze the provided past exam questions (and optional textbook content) to predict upcoming exam topics.
 
     You must output a valid JSON object with the following structure:
     {
+      "briefing": "A bold, encouraging executive summary of the analysis in markdown format. Use emojis and be direct. e.g., '# 🚀 Exam Intelligence Briefing\n\nBased on the past 3 years...'",
       "topicWeights": "A numbered list of the top 5 most important topics and their percentage weight. Format: '1. Topic Name: XX%'",
       "predictions": [
         {
@@ -69,26 +70,46 @@ Deno.serve(async (req: Request) => {
       userPrompt += `\n\nReference context from the main textbook:\n\n${mainTextbookContent.substring(0, 10000)}`;
     }
 
-    const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.4, true, undefined, {
+    const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.4, false, undefined, {
       userId: userId ?? undefined,
       ownershipFilter: ownershipFilter,
       feature: "prediction-engine",
     });
     
-    let result;
-    try {
-      result = JSON.parse(aiResponse);
-    } catch (e) {
-      return new Response(JSON.stringify({ 
-        error: "Invalid AI response format",
-        details: "Failed to parse AI output as JSON",
+    const extractJson = (text: string) => {
+      const trimmed = (text || "").trim();
+      const withoutFences = trimmed
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
+
+      const start = withoutFences.indexOf("{");
+      const end = withoutFences.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        const slice = withoutFences.slice(start, end + 1);
+        try {
+          return JSON.parse(slice);
+        } catch {
+        }
+      }
+
+      return null;
+    };
+
+    const parsed = extractJson(aiResponse);
+    if (!parsed) {
+      return new Response(JSON.stringify({
+        error: "Invalid AU response format",
+        details: "Failed to parse AU output as JSON",
         requestId,
-        rawResponse: aiResponse
+        rawResponse: aiResponse,
       }), {
         headers: corsHeadersWithJson,
         status: 500,
       });
     }
+
+    const result = parsed as any;
 
     // Emit Sync Event
     if (userId) {

@@ -15,6 +15,7 @@ export const PredictionDetailSchema = z.object({
 export type PredictionDetail = z.infer<typeof PredictionDetailSchema>;
 
 export const GenerateExamPredictionsOutputSchema = z.object({
+  briefing: z.string().optional().describe('A bold, encouraging executive summary of the analysis in markdown format.'),
   topicWeights: z
     .string()
     .describe('A numbered list of the top 5 most important topics and their percentage weight (e.g., "1. Quantum Physics: 45%").'),

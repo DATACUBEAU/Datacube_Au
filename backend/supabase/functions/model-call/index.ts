@@ -1,99 +1,163 @@
-/// <reference path="../deno.d.ts" />
-import { getCorsHeaders, requireAnyAuth, callAUMessages, getServiceClient } from "../_shared/au.ts";
-import { getApiKey } from "../_shared/getApiKey.ts";
+import { getCorsHeaders, requireAnyAuth } from "../_shared/au.ts";
+import { openrouterChatCompletions } from "../_shared/openrouter.ts";
+
+type ChatRole = "system" | "user" | "assistant" | "tool";
+
+type ChatMessage = {
+  role: ChatRole;
+  content: string;
+};
+
+function isChatMessageArray(value: unknown): value is ChatMessage[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((m) => {
+    if (!m || typeof m !== "object") return false;
+    const role = (m as any).role;
+    const content = (m as any).content;
+    return (
+      (role === "system" || role === "user" || role === "assistant" || role === "tool") &&
+      typeof content === "string"
+    );
+  });
+}
+
+async function getDefaultModel(supabaseAdmin: any): Promise<string> {
+  try {
+    const { data: setting } = await supabaseAdmin
+      .from("au_rag_settings")
+      .select("value")
+      .eq("key", "default_model")
+      .single();
+
+    if (setting?.value) {
+      return typeof setting.value === "string"
+        ? setting.value
+        : JSON.stringify(setting.value).replace(/"/g, "");
+    }
+  } catch {
+  }
+  return "google/gemini-2.0-flash-exp:free";
+}
+
+async function assertValidGuestSession(supabaseAdmin: any, guestSessionId: string) {
+  const { data, error } = await supabaseAdmin
+    .from("au_guest_sessions")
+    .select("id, expires_at")
+    .eq("id", guestSessionId)
+    .maybeSingle();
+
+  if (error) {
+    const err = new Error(`Guest session lookup failed: ${error.message}`) as any;
+    err.status = 500;
+    throw err;
+  }
+
+  if (!data?.id) {
+    const err = new Error("Unauthorized: Invalid guest session") as any;
+    err.status = 401;
+    throw err;
+  }
+
+  if (data.expires_at) {
+    const exp = new Date(data.expires_at).getTime();
+    if (!Number.isNaN(exp) && exp < Date.now()) {
+      const err = new Error("Unauthorized: Guest session expired") as any;
+      err.status = 401;
+      throw err;
+    }
+  }
+}
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
-
-  let corsHeaders: any = {
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-upsert, tus-resumable, upload-length, upload-metadata, upload-offset",
-  };
-
-  try {
-    corsHeaders = getCorsHeaders(req);
-  } catch {
-  }
-
-  const headers = { ...corsHeaders, "Content-Type": "application/json" };
+  const corsHeaders = getCorsHeaders(req);
 
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed", requestId }),
+      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    );
+  }
+
   try {
     const body = await req.json().catch(() => ({}));
-    const { action, messages, model, modelOverride, temperature, jsonMode, feature, sessionId } = body;
 
-    if (action === 'ping') {
-      const supabaseAdmin = getServiceClient();
-      const openRouterKey = await getApiKey(supabaseAdmin, 'openrouter');
-      const pingModel = typeof model === 'string' && model.trim() ? model : (typeof modelOverride === 'string' ? modelOverride : "");
-      if (!pingModel) {
-        return new Response(JSON.stringify({ error: 'Model required for ping', requestId }), { status: 400, headers });
-      }
+    const auth = await requireAnyAuth(req, body);
 
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${openRouterKey}`,
-          "HTTP-Referer": "https://datacube-au.vercel.app",
-          "X-Title": "DataCube AU",
-        },
-        body: JSON.stringify({
-          model: pingModel,
-          messages: [{ role: 'user', content: 'ping' }],
-          max_tokens: 1,
-        }),
-      });
-
-      return new Response(JSON.stringify({ ok: true, reachable: res.ok, status: res.ok ? 200 : res.status, model: pingModel, requestId }), { headers });
+    const authHeader = req.headers.get("Authorization");
+    if (!auth.isGuest && !auth.isAdmin && !authHeader) {
+      return new Response(
+        JSON.stringify({ error: "Unauthorized: Bearer token required", requestId }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireAnyAuth(req, body);
-
-    if (authError) {
-      return new Response(JSON.stringify({ error: authError, details: "Authentication failed", requestId }), { status: 401, headers });
+    if (auth.isGuest) {
+      await assertValidGuestSession(auth.supabaseAdmin, auth.userId as string);
     }
 
-    if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return new Response(JSON.stringify({ error: 'Missing messages', details: 'messages must be a non-empty array', requestId }), { status: 400, headers });
+    const supabaseAdmin = auth.supabaseAdmin;
+
+    const temperature =
+      typeof body.temperature === "number" ? body.temperature : 0.5;
+    const jsonMode = body.jsonMode === true || body.response_format === "json";
+    const maxTokens = typeof body.max_tokens === "number" ? body.max_tokens : undefined;
+
+    let messages: ChatMessage[] | null = null;
+    if (isChatMessageArray(body.messages)) {
+      messages = body.messages;
+    } else if (typeof body.userPrompt === "string") {
+      const systemPrompt = typeof body.systemPrompt === "string" ? body.systemPrompt : "";
+      messages = [
+        ...(systemPrompt ? [{ role: "system" as const, content: systemPrompt }] : []),
+        { role: "user" as const, content: body.userPrompt },
+      ];
     }
 
-    const t = typeof temperature === 'number' ? temperature : 0.7;
-    const jm = jsonMode === true;
-    const override = typeof modelOverride === 'string' && modelOverride.trim() ? modelOverride : (typeof model === 'string' && model.trim() ? model : undefined);
-    const ctxFeature = typeof feature === 'string' ? feature : 'model-call';
+    if (!messages || messages.length === 0) {
+      return new Response(
+        JSON.stringify({ error: "Missing messages", requestId }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
 
-    const result = await callAUMessages(
+    const requestedModel = typeof body.model === "string" ? body.model : null;
+    const model = requestedModel ?? (await getDefaultModel(supabaseAdmin));
+
+    const { content, usage } = await openrouterChatCompletions({
       supabaseAdmin,
+      model,
       messages,
-      t,
-      jm,
-      override,
-      { userId: userId || undefined, ownershipFilter, feature: ctxFeature, sessionId }
+      temperature,
+      max_tokens: maxTokens,
+      response_format: jsonMode ? { type: "json_object" } : undefined,
+      requestId,
+    });
+
+    return new Response(
+      JSON.stringify({
+        ok: true,
+        content,
+        model,
+        usage,
+        requestId,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
-
-    const provider = result.model.includes('/') ? result.model.split('/')[0] : 'unknown';
-    console.log('[model-call] success', { model: result.model, provider, used_fallback: result.used_fallback, feature: ctxFeature, requestId });
-
-    return new Response(JSON.stringify({ ok: true, content: result.content, model: result.model, provider, usedFallback: result.used_fallback, requestId, pipeline: 'model-call' }), { headers });
   } catch (error: any) {
-    const status = typeof error?.status === 'number' ? error.status : 500;
-    const errorType = status === 429
-      ? 'rate_limit'
-      : status === 402
-      ? 'payment_required'
-      : status === 404
-      ? 'model_not_found'
-      : status === 400
-      ? 'bad_request'
-      : status === 401 || status === 403
-      ? 'auth'
-      : 'unknown';
-    console.error(`[model-call] Error [${requestId}]:`, error);
-    return new Response(JSON.stringify({ error: error?.message || 'Internal server error', errorType, details: error?.stack || String(error), requestId, pipeline: 'model-call' }), { status, headers });
+    return new Response(
+      JSON.stringify({
+        error: error.message || "Internal server error",
+        requestId,
+      }),
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: error.status || 500,
+      },
+    );
   }
 });

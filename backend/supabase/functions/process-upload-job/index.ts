@@ -304,6 +304,25 @@ Deno.serve(async (req: Request) => {
       throw new Error("Chunks were processed but none returned from DB");
     }
 
+    let embeddingModel: string | null = null;
+    try {
+      const { data: setting } = await supabase
+        .from("au_rag_settings")
+        .select("value")
+        .eq("key", "embedding_model")
+        .single();
+
+      if (setting?.value) {
+        embeddingModel = typeof setting.value === "string"
+          ? setting.value
+          : JSON.stringify(setting.value).replace(/"/g, "");
+      }
+    } catch {
+      embeddingModel = null;
+    }
+
+    embeddingModel = embeddingModel || "openai/text-embedding-ada-002";
+
     for (let i = 0; i < insertedChunks.length; i += EMBEDDING_BATCH_SIZE) {
       const batch = insertedChunks.slice(i, i + EMBEDDING_BATCH_SIZE);
       const embeddingsToInsert: any[] = [];
@@ -315,7 +334,7 @@ Deno.serve(async (req: Request) => {
           embeddingsToInsert.push({
             chunk_id: chunk.id,
             embedding: vector,
-            model_name: "text-embedding-ada-002",
+            model_name: embeddingModel,
           });
         } catch (e: any) {
           console.error(`Embedding failed for chunk ${chunk.id}:`, e);
@@ -356,7 +375,7 @@ Deno.serve(async (req: Request) => {
       await supabaseClient.from("au_upload_jobs")
         .update({ 
           status: "failed", 
-          error_message: error.message || "Unknown error",
+          error: error.message || "Unknown error",
           progress: 100 
         })
         .eq("id", currentJobId);

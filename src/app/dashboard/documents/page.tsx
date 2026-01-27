@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatDistanceStrict } from "date-fns";
-import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase/client';
+import { formatDistanceToNowStrict } from "date-fns";
 import { useSupabaseUser, useIsAdmin } from "@/hooks/use-supabase-auth";
 import { useAuDocuments } from "@/hooks/api/use-au-documents";
 import UploadCenter from "@/components/upload/upload-center";
@@ -58,6 +57,8 @@ interface DocumentData {
 }
 
 const FAILED_AUTO_DELETE_MS = 60 * 60 * 1000; // 1 hour
+const AUTH_DOCUMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const GUEST_DOCUMENT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export default function DocumentsPage() {
   const [user] = useSupabaseUser();
@@ -71,12 +72,6 @@ export default function DocumentsPage() {
   const { jobs, removeJob } = useUploadJobs();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 60_000);
-    return () => window.clearInterval(id);
-  }, []);
 
   const toggleFolder = (id: string) => {
     setExpandedFolders(prev => {
@@ -102,33 +97,41 @@ export default function DocumentsPage() {
   const loading = apiLoading;
   const cleanupInProgress = useMemo(() => new Set<string>(), []);
 
+  const getComputedExpiresAt = (doc: DocumentData) => {
+    const ttlMs = user?.is_anonymous ? GUEST_DOCUMENT_TTL_MS : AUTH_DOCUMENT_TTL_MS;
+    return new Date(new Date(doc.createdAt).getTime() + ttlMs).toISOString();
+  };
+
   useEffect(() => {
     const runCleanup = async () => {
       // Find docs that actually need cleanup
       const now = Date.now();
-      const docsToClean = documents.filter(doc => 
-        doc.status === "failed" &&
-        now - new Date(doc.createdAt).getTime() > FAILED_AUTO_DELETE_MS &&
-        !cleanupInProgress.has(doc.id)
-      );
+      const docsToClean = documents.filter(doc => {
+        if (cleanupInProgress.has(doc.id)) return false;
+
+        const createdAtMs = new Date(doc.createdAt).getTime();
+        const effectiveExpiresAt = doc.expiresAt || getComputedExpiresAt(doc);
+        const expiresAtMs = new Date(effectiveExpiresAt).getTime();
+
+        const failedAutoDeleteReady =
+          doc.status === "failed" &&
+          now - createdAtMs > FAILED_AUTO_DELETE_MS;
+
+        const expired = now > expiresAtMs;
+
+        return failedAutoDeleteReady || expired;
+      });
 
       if (docsToClean.length === 0) return;
-
-      const conditions = await getEffectiveOwnershipConditions(user);
       
+
       docsToClean.forEach(async (doc) => {
         cleanupInProgress.add(doc.id);
-        
+
         try {
-          const query = supabase.from("au_documents")
-            .delete()
-            .eq("id", doc.id);
-          
-          applyOwnershipFilter(query, conditions);
-          
-          await query;
+          await apiRemove(doc.id);
         } catch (err) {
-          console.error("[Cleanup] Error deleting failed document:", err);
+          console.error("[Cleanup] Error deleting document:", err);
         } finally {
           cleanupInProgress.delete(doc.id);
         }
@@ -136,7 +139,7 @@ export default function DocumentsPage() {
     };
     
     runCleanup();
-  }, [documents, user, cleanupInProgress]);
+  }, [documents, user, cleanupInProgress, apiRemove]);
 
   // ---- MERGE UPLOAD JOBS INTO UI (VISUAL ONLY) ----
   const mergedDocuments = useMemo(() => {
@@ -233,10 +236,11 @@ export default function DocumentsPage() {
 
   const daysLeft = (expires?: string) => {
     if (!expires) return "No expiry";
-    const distance = formatDistanceStrict(new Date(now), new Date(expires));
+    const distance = formatDistanceToNowStrict(new Date(expires));
     if (user?.is_anonymous) return `Guest mode self-destruct in ${distance}`;
     return `${distance} left`;
   };
+
 
   const ProgressBar = ({ status, expiresAt }: { status: DocumentStatus; expiresAt?: string }) => {
     const isExpiring = !!expiresAt;
@@ -276,7 +280,7 @@ export default function DocumentsPage() {
     );
   };
 
-  const renderDoc = (doc: DocumentData, children: any[] = [], child = false, isLast = false) => {
+  const renderDoc = (doc: DocumentData, children: any[] = [], child = false, isLast = false, parentExpiresAt?: string) => {
     const isFolder = doc.documentType === "main_textbook";
     const isExpanded = expandedFolders.has(doc.id);
     const hasChildren = children.length > 0;
@@ -285,7 +289,7 @@ export default function DocumentsPage() {
     // Propagate parent expiry if child has none
     // If we passed effectiveExpiresAt from parent, use it here if doc.expiresAt is undefined
     // For now, let's keep it simple: use doc.expiresAt
-    const effectiveExpiresAt = doc.expiresAt;
+    const effectiveExpiresAt = doc.expiresAt || parentExpiresAt || getComputedExpiresAt(doc);
 
     return (
       <div key={doc.id} className="flex flex-col relative overflow-hidden">
@@ -377,17 +381,17 @@ export default function DocumentsPage() {
                     </div>
                   </>
                 )}
-                {doc.expiresAt && (
+                {doc.status !== "failed" && effectiveExpiresAt && (
                   <>
                     <span className="text-[11px] text-muted-foreground">•</span>
                     <div className="flex items-center gap-1 text-[11px] text-green-600 font-medium">
                       <Clock className="h-3 w-3" aria-hidden="true" />
-                      {daysLeft(doc.expiresAt)}
+                      {daysLeft(effectiveExpiresAt)}
                     </div>
                   </>
                 )}
               </div>
-              {!isDeleting && <ProgressBar status={doc.status} expiresAt={doc.expiresAt} />}
+              {!isDeleting && <ProgressBar status={doc.status} expiresAt={effectiveExpiresAt} />}
             </div>
           </div>
 
@@ -431,7 +435,7 @@ export default function DocumentsPage() {
             >
               <div className="divide-y divide-border/50">
                 {children.map((c: any, index: number) => 
-                  renderDoc(c.doc, [], true, index === children.length - 1)
+                  renderDoc(c.doc, [], true, index === children.length - 1, effectiveExpiresAt)
                 )}
               </div>
             </motion.div>
@@ -507,7 +511,7 @@ export default function DocumentsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => window.location.reload()}>Cancel</AlertDialogCancel>
             <AlertDialogAction 
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"

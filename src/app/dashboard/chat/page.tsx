@@ -78,7 +78,7 @@ import { safeFetch } from '@/lib/api/safe-fetch';
 import { validateQuery } from '@/lib/upload/file-types';
 import { TruncatedText } from '@/components/TruncatedText';
 import { ThinkingProcess } from '@/components/thinking-process';
-import { AI_MODEL_DISPLAY_NAMES, useStore } from '@/hooks/use-store';
+import { useStore } from '@/hooks/use-store';
 
 import { type ChatMessage } from '@/lib/api/chat';
 
@@ -161,25 +161,21 @@ export default function ChatPage() {
     fetchPrompts,
     expiresAt,
     isInitialized,
-    clearChat: clearProviderChat
+    clearChat: clearProviderChat,
+    availableModels,
+    selectedModel
   } = useAuChat(selectedDocId);
 
   // Sync AU State with Global Background Animation
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
   const auAnimationState = useStore(state => state.auAnimationState);
-
-  const models = useStore(state => state.models);
-  const activeModelId = useStore(state => state.activeModelId);
   
 
   const activeModel = useMemo(() => {
-    const resolved = (activeModelId ? models.find(m => m.id === activeModelId) : null) || models.find(m => m.status === 'active');
-    if (!resolved) return null;
-    return {
-      ...resolved,
-      name: AI_MODEL_DISPLAY_NAMES[resolved.id] ?? resolved.id,
-    };
-  }, [activeModelId, models]);
+    const id = selectedModel || availableModels[0];
+    if (!id) return null;
+    return { id, status: 'active' as const, name: id };
+  }, [availableModels, selectedModel]);
 
   useEffect(() => {
     let newState: 'idle' | 'thinking' | 'responding' = 'idle';

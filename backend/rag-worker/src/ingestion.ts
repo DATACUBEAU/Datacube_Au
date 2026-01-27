@@ -1,12 +1,17 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { OpenAI } from 'openai';
 import { Chunk, Embedding } from './types';
 import { logger } from './utils';
+
+type OpenRouterConfig = {
+  apiKey: string;
+  httpReferer?: string;
+  xTitle?: string;
+};
 
 export class IngestionService {
   constructor(
     private supabase: SupabaseClient,
-    private openai: OpenAI
+    private openrouter: OpenRouterConfig
   ) {}
 
   /**
@@ -62,7 +67,7 @@ export class IngestionService {
   /**
    * Generates and upserts embeddings for chunks.
    */
-  async processEmbeddings(documentId: string, modelName: string = 'text-embedding-ada-002'): Promise<void> {
+  async processEmbeddings(documentId: string, modelName: string = 'openai/text-embedding-ada-002'): Promise<void> {
     logger.info('Processing embeddings', { documentId, modelName });
 
     const { data: chunks, error: fetchError } = await this.supabase
@@ -74,12 +79,33 @@ export class IngestionService {
 
     for (const chunk of chunks) {
       try {
-        const embeddingResponse = await this.openai.embeddings.create({
-          model: modelName,
-          input: chunk.text,
+        const endpoint = 'https://openrouter.ai/api/v1/embeddings';
+        logger.info('Embedding request', { provider: 'openrouter', endpoint, model: modelName });
+
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.openrouter.apiKey}`,
+            'HTTP-Referer': this.openrouter.httpReferer ?? 'https://datacube-au.vercel.app',
+            'X-Title': this.openrouter.xTitle ?? 'DataCube AU',
+          },
+          body: JSON.stringify({
+            model: modelName,
+            input: chunk.text,
+          }),
         });
 
-        const embedding = embeddingResponse.data[0].embedding;
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`OpenRouter Embedding Error: ${response.status} - ${errorText}`);
+        }
+
+        const data = await response.json();
+        const embedding = data?.data?.[0]?.embedding;
+        if (!Array.isArray(embedding)) {
+          throw new Error('Malformed OpenRouter embeddings response: missing embedding');
+        }
 
         // Atomic upsert for embedding
         const { error: upsertError } = await this.supabase

@@ -23,7 +23,7 @@ import { Progress } from '@/components/ui/progress';
 import { useToast } from '@/hooks/use-toast';
 import type { PracticeQuestion, GeneratePracticeExamOutput } from '@shared/schemas';
 import { FeedbackSection } from "@/components/au-feedback";
-import { Loader2, SquarePen, CheckCircle, XCircle, Lightbulb, RefreshCw, Info, WifiOff, X } from 'lucide-react';
+import { Loader2, SquarePen, CheckCircle, XCircle, Lightbulb, RefreshCw, Info, WifiOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Icons } from '@/components/icons';
 import { useOnlineStatus } from '@/hooks/use-online-status';
@@ -32,9 +32,6 @@ import { TruncatedText } from '@/components/TruncatedText';
 import { Badge } from '@/components/ui/badge';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useAuExams } from '@/hooks/api/use-au-exams';
-import { useConceptGraphStore } from '@/hooks/use-concept-graph-store';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 
 
 type AnswerState = 'unanswered' | 'correct' | 'incorrect';
@@ -52,17 +49,10 @@ interface StoredExamHistory {
 const getCacheKey = (userId: string, docId: string) => `practice_exam_history_${userId}_${docId}`;
 
 export default function PracticePage() {
-  const router = useRouter();
   const [user] = useSupabaseUser();
   const [session] = useSupabaseSession();
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
-
-  const setActiveDoc = useConceptGraphStore(s => s.setActiveDoc);
-  const ensureDoc = useConceptGraphStore(s => s.ensureDoc);
-  const applyPracticeAnswer = useConceptGraphStore(s => s.applyPracticeAnswer);
-  const graphDoc = useConceptGraphStore(s => (selectedDocId ? s.docs[selectedDocId] : null));
-  const setSelectedNodeIds = useConceptGraphStore(s => s.setSelectedNodeIds);
 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const { documents: allDocuments, loading: docsLoading } = useAuDocuments();
@@ -101,8 +91,6 @@ export default function PracticePage() {
 
   const handleDocSelectionChange = useCallback((docId: string) => {
     setSelectedDocId(docId);
-    setActiveDoc(docId);
-    ensureDoc(docId);
     setQuestions([]);
     setCurrentQuestionIndex(0);
     setExamFinished(false);
@@ -202,10 +190,6 @@ export default function PracticePage() {
       question.answerState = 'incorrect';
     }
 
-    if (selectedDocId) {
-      applyPracticeAnswer(selectedDocId, question, answer === question.correctAnswer);
-    }
-
     setQuestions(updatedQuestions);
   };
   
@@ -283,19 +267,6 @@ export default function PracticePage() {
              <Button onClick={handleRestart} className="mt-8">
                 <RefreshCw className="mr-2 h-4 w-4" />
                 Generate a New Exam
-             </Button>
-             <Button
-               variant="secondary"
-               onClick={() => {
-                 if (selectedDocId) {
-                   setActiveDoc(selectedDocId);
-                   ensureDoc(selectedDocId);
-                 }
-                 router.push('/dashboard/concept-map');
-               }}
-               className="mt-2"
-             >
-               View progress on Concept Map
              </Button>
         </motion.div>
       );
@@ -417,41 +388,6 @@ export default function PracticePage() {
           </Button>
         </div>
       </div>
-
-      {selectedDocId && (graphDoc?.selectedNodeIds?.length ?? 0) > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Active concepts</CardTitle>
-            <CardDescription>These come from your Concept Map selection.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-center gap-2">
-              {graphDoc?.selectedNodeIds.map((id) => {
-                const label = graphDoc.graph.nodes[id]?.label || id;
-                return (
-                  <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs">
-                    <span className="max-w-[220px] truncate">{label}</span>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedNodeIds(selectedDocId, graphDoc.selectedNodeIds.filter(x => x !== id))}
-                      className="rounded p-0.5 hover:bg-muted"
-                      aria-label="Remove concept"
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </button>
-                  </span>
-                );
-              })}
-              <Button type="button" size="sm" variant="outline" onClick={() => setSelectedNodeIds(selectedDocId, [])} className="ml-auto">
-                Clear
-              </Button>
-              <Button asChild type="button" size="sm" variant="secondary">
-                <Link href="/dashboard/concept-map">Edit selection</Link>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
       
       <div className="flex-1 rounded-xl border bg-card text-card-foreground shadow flex flex-col justify-center mt-4">
         {isGenerating ? renderLoadingState() : (

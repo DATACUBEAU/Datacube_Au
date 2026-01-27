@@ -43,18 +43,6 @@ Deno.serve(async (req: Request) => {
       });
     }
     
-    // NOTE: For RAG, we still ideally need OpenAI embeddings or a compatible alternative.
-    // However, since we are moving to OpenRouter + Free models, we'll try to use the same logic
-    // but replace the generation step with callAI (OpenRouter).
-    // For embeddings, if you don't have an OpenAI key, this part will fail unless we switch to a free embedding provider
-    // or if the chunks were already embedded with OpenAI.
-    // Assuming we still need OpenAI for embeddings for now as it's hard to switch embeddings on the fly without re-indexing.
-    // If we want to fully remove OpenAI, we'd need a TEI endpoint or similar.
-    // For this refactor, I will keep the embedding part as is (assuming the user might provide an OpenAI key for embeddings only),
-    // OR we can try to use a free embedding model if available via OpenRouter (OpenRouter doesn't standardly support embeddings API yet in the same way).
-    
-    // Let's assume for this specific step (Chat RAG), we stick to the existing embedding logic but use OpenRouter for the chat completion.
-    
     // 2. Embed Question
     let embedding;
     try {
@@ -62,7 +50,7 @@ Deno.serve(async (req: Request) => {
     } catch (embError: any) {
        return new Response(JSON.stringify({ 
           error: "Failed to generate embedding",
-          details: embError.message || "Check OpenAI key configuration.",
+          details: embError.message || "Embedding generation failed",
           requestId
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },

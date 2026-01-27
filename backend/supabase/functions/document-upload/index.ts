@@ -145,6 +145,13 @@ Deno.serve(async (req: Request) => {
       }
     }
 
+    if (!expiresAt) {
+      const ttlMs = (effectiveFilter as any)?.guest_session_id
+        ? 24 * 60 * 60 * 1000
+        : 7 * 24 * 60 * 60 * 1000;
+      expiresAt = new Date(Date.now() + ttlMs).toISOString();
+    }
+
     // 5. Upload to Storage if file data is present
     let filePath = body.filePath || body.file_path || "";
     if (fileData && fileName) {

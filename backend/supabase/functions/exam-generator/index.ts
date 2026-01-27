@@ -71,19 +71,37 @@ Deno.serve(async (req: Request) => {
       userPrompt += `Reference Past Exam Questions:\n\n${pastQuestionsContent.substring(0, 8000)}`;
     }
 
-    const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.5, true, undefined, {
+    const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.5, false, undefined, {
       userId: userId ?? undefined,
       ownershipFilter: ownershipFilter,
       feature: "exam-generator",
     });
 
-    let result;
-    try {
-      result = JSON.parse(aiResponse);
-    } catch (e) {
+    const extractJson = (text: string) => {
+      const trimmed = (text || "").trim();
+      const withoutFences = trimmed
+        .replace(/```json\s*/gi, "")
+        .replace(/```\s*/g, "")
+        .trim();
+
+      const start = withoutFences.indexOf("{");
+      const end = withoutFences.lastIndexOf("}");
+      if (start >= 0 && end > start) {
+        const slice = withoutFences.slice(start, end + 1);
+        try {
+          return JSON.parse(slice);
+        } catch {
+        }
+      }
+      return null;
+    };
+
+    const result = extractJson(aiResponse);
+
+    if (!result) {
       return new Response(JSON.stringify({ 
         error: "Parse failed",
-        details: "AI returned invalid JSON",
+        details: "AU returned invalid JSON",
         requestId,
         raw: aiResponse
       }), {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-// export const runtime = 'edge';
+export const runtime = 'edge';
 
 function requiredEnv(key: string): string {
   const value = process.env[key];

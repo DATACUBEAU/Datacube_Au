@@ -1,4 +1,4 @@
-export async function safeFetch(url: string, options: RequestInit) {
+export async function safeFetch(url: string, options: RequestInit, config?: { silent?: boolean }) {
   let res: Response;
   try {
     // If we have a trailing dot or malformed URL, try to sanitize it
@@ -9,7 +9,9 @@ export async function safeFetch(url: string, options: RequestInit) {
 
     res = await fetch(sanitizedUrl, options);
   } catch (e: any) {
-    console.error(`[safeFetch] Network error fetching ${url}:`, e);
+    if (!config?.silent) {
+      console.error(`[safeFetch] Network error fetching ${url}:`, e);
+    }
     throw new Error(`Failed to fetch from ${url}. ${e.message || ''}`);
   }
 
@@ -27,11 +29,13 @@ export async function safeFetch(url: string, options: RequestInit) {
   }
 
   if (!res.ok) {
-    console.error("API error", {
-      status: res.status,
-      statusText: res.statusText,
-      body,
-    });
+    if (!config?.silent) {
+      console.error("API error", {
+        status: res.status,
+        statusText: res.statusText,
+        body,
+      });
+    }
 
     // Extract meaningful error message
     let errorMessage = `API Error ${res.status}`;
@@ -46,11 +50,6 @@ export async function safeFetch(url: string, options: RequestInit) {
     const error = new Error(errorMessage);
     (error as any).status = res.status;
     (error as any).body = body;
-    if (body && typeof body === 'object') {
-      if ('errorType' in body) (error as any).errorType = (body as any).errorType;
-      if ('pipeline' in body) (error as any).pipeline = (body as any).pipeline;
-      if ('requestId' in body) (error as any).requestId = (body as any).requestId;
-    }
     throw error;
   }
 

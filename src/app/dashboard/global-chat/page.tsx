@@ -187,6 +187,10 @@ export default function GlobalChatPage() {
 
   const clearChat = () => {
     clearProviderChat();
+    toast({ title: "Hot Reload", description: "Reloading to clear all states..." });
+    setTimeout(() => {
+        window.location.reload();
+    }, 500);
   };
 
   const deleteMessage = (messageId: string) => {
@@ -274,28 +278,14 @@ export default function GlobalChatPage() {
     try {
       await sendMessage(currentInput, {
         guide: guideText !== defaultGuideText ? guideText : undefined,
-        summaryMode: overrideMode || summaryMode,
         browsingMode: browsingMode // Use state (true by default for global)
       });
     } catch (error: any) {
       console.error("[GlobalChatPage] Message error:", error);
-
-      let errorMsg = "Error communicating with AU Global.";
-      if (error.status === 401) {
-        errorMsg = "Your session has timed out. Please refresh or sign in again.";
-      } else if (error.errorType === 'rate_limit' || error.status === 429) {
-        errorMsg = "The AI provider is rate-limiting requests right now. Please try again shortly.";
-      } else if (error.errorType === 'payment_required' || error.status === 402) {
-        errorMsg = "The selected AI model is temporarily unavailable for this account. AU will retry using a fallback automatically.";
-      } else if (error.errorType === 'model_not_found' || error.status === 404) {
-        errorMsg = "That AI model endpoint is unavailable. AU will retry using a fallback automatically.";
-      } else if (error.errorType === 'bad_request' || error.status === 400) {
-        errorMsg = "The AI provider rejected the request payload. AU will retry using a fallback automatically.";
-      }
       toast({
         variant: 'destructive',
         title: 'AU Chat Issue',
-        description: errorMsg,
+        description: "Error communicating with AU Global.",
       });
     }
   };
@@ -345,19 +335,6 @@ export default function GlobalChatPage() {
                   <Trash2 className="mr-2 h-4 w-4" />
                   Clear Chat History
                 </DropdownMenuItem>
-                <div className="h-px bg-muted my-1" />
-                <DropdownMenuItem onClick={() => handleSummaryAction('short')}>
-                  <Scissors className="mr-2 h-4 w-4" />
-                  Short Summary
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleSummaryAction('mid')}>
-                  <AlignLeft className="mr-2 h-4 w-4" />
-                  Mid Summary
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleSummaryAction('detailed')}>
-                  <FileTextIcon className="mr-2 h-4 w-4" />
-                  Detailed Summary
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -368,28 +345,6 @@ export default function GlobalChatPage() {
         <div className="flex-1 overflow-hidden relative">
           <ScrollArea id="chat-section" className="h-full flex-1" ref={scrollAreaRef}>
             <div className="mx-auto max-w-4xl space-y-8 p-4 md:p-6">
-              {/* Summary Mode Banner */}
-              <AnimatePresence>
-                {summaryMode && (
-                  <motion.div
-                    initial={{ height: 0, opacity: 0, y: -20 }}
-                    animate={{ height: 'auto', opacity: 1, y: 0 }}
-                    exit={{ height: 0, opacity: 0, y: -20 }}
-                    className="sticky top-0 z-10 mb-4 overflow-hidden"
-                  >
-                    <div className="flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-2 text-xs font-medium text-primary shadow-sm backdrop-blur-md">
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="h-3 w-3 animate-pulse" aria-hidden="true" />
-                        <span>AU is in <strong>{summaryMode.toUpperCase()} SUMMARY</strong> mode.</span>
-                      </div>
-                      <button onClick={() => setSummaryMode(null)} className="rounded-full p-1 hover:bg-primary/20 transition-colors">
-                        <X className="h-3 w-3" aria-hidden="true" />
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
               {currentChatHistory.length === 0 && !isResponding && (
                 <div className="flex h-full flex-col items-center justify-center pt-16 text-center text-muted-foreground">
                   <div className="bg-primary/5 p-4 rounded-full mb-4">
@@ -452,18 +407,15 @@ export default function GlobalChatPage() {
                                 {copiedMessageId === message.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                               </Button>
                               {idx === currentChatHistory.length - 1 && (
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md">
-                                      <RotateCcw className="h-3.5 w-3.5" />
-                                    </Button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent align="end">
-                                    <DropdownMenuItem onClick={() => handleRegenerate(message.id)}>Regenerate (Default)</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleRegenerate(message.id, 'short')}>Regenerate (Short)</DropdownMenuItem>
-                                    <DropdownMenuItem onClick={() => handleRegenerate(message.id, 'detailed')}>Regenerate (Detailed)</DropdownMenuItem>
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md"
+                                  onClick={() => handleRegenerate(message.id)}
+                                  aria-label="Regenerate response"
+                                >
+                                  <RotateCcw className="h-3.5 w-3.5" />
+                                </Button>
                               )}
                               <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive rounded-md" onClick={() => deleteMessage(message.id)}>
                                 <Trash2 className="h-3.5 w-3.5" />
@@ -493,24 +445,11 @@ export default function GlobalChatPage() {
         <div className="relative mx-auto max-w-4xl">
           <form onSubmit={(e) => handleSendMessage(e)} className="flex w-full items-end space-x-2">
             <div className="relative flex-1">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button type="button" variant="ghost" size="icon" disabled={!isOnline} className={`absolute left-1.5 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 transition-all duration-300 hover:scale-110 ${summaryMode ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary'}`}>
-                    {summaryMode === 'short' ? <Scissors className="h-5 w-5" /> : summaryMode === 'mid' ? <AlignLeft className="h-5 w-5" /> : summaryMode === 'detailed' ? <FileTextIcon className="h-5 w-5" /> : <Sparkles className="h-5 w-5" />}
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => setSummaryMode(null)}><Sparkles className="mr-2 h-4 w-4" /> Default</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSummaryMode('short')}><Scissors className="mr-2 h-4 w-4" /> Short</DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSummaryMode('detailed')}><FileTextIcon className="mr-2 h-4 w-4" /> Detailed</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-
               <Textarea
                 id="message"
                 ref={textareaRef}
                 placeholder={!isOnline ? "You are offline." : "Ask Global Assistant..."}
-                className="flex-1 resize-none rounded-full border bg-secondary p-3 pl-12 pr-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
+                className="flex-1 resize-none rounded-full border bg-secondary p-3 px-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}

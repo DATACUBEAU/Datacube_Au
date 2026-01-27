@@ -1,5 +1,4 @@
-import { createClient } from "@supabase/supabase-js";
-import { getApiKey } from "./getApiKey.ts";
+import { openrouterChatCompletions } from "./openrouter.ts";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,60 +20,35 @@ export async function callAU(
   modelOverride?: string,
   usageContext?: { userId?: string; feature?: string; sessionId?: string }
 ): Promise<string> {
-  const openRouterKey = await getApiKey(supabaseAdmin, "openrouter");
-  
-  // 1. Check for Model Override or Default from DB
   let model = modelOverride;
-
   if (!model) {
-      // Try to fetch default from DB, otherwise fallback to hardcoded approved model
+    try {
       const { data: setting } = await supabaseAdmin
-          .from('au_rag_settings')
-          .select('value')
-          .eq('key', 'default_model')
-          .single();
-      
-      if (setting && setting.value) {
-          model = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
-      } else {
-          // Fallback to one of the approved free models
-          model = "allenai/olmo-3.1-32b-think:free"; 
+        .from('au_rag_settings')
+        .select('value')
+        .eq('key', 'default_model')
+        .single();
+
+      if (setting?.value) {
+        model = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
       }
+    } catch {
+    }
   }
 
-  // Ensure model is one of the approved ones (optional strict check, but we allow admin override)
-  // Approved: 
-  // - allenai/olmo-3.1-32b-think:free
-  // - nvidia/nemotron-3-nano-30b-a3b:free
-  // - mistralai/devstral-2512:free
-  // - google/gemini-2.0-flash-exp:free (Previous default, keeping as fallback option if configured)
+  model = model || "allenai/olmo-3.1-32b-think:free";
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${openRouterKey}`,
-      "HTTP-Referer": "https://datacube-au.vercel.app",
-      "X-Title": "DataCube AU",
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: temperature,
-      response_format: jsonMode ? { type: "json_object" } : undefined,
-    }),
+  const { content, usage } = await openrouterChatCompletions({
+    supabaseAdmin,
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    temperature,
+    response_format: jsonMode ? { type: "json_object" } : undefined,
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`OpenRouter API Error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  const usage = (data as any)?.usage;
   const userId = usageContext?.userId;
   const feature = usageContext?.feature;
   if (userId && feature && usage) {
@@ -91,5 +65,6 @@ export async function callAU(
       },
     ]);
   }
-  return data.choices[0].message.content;
+
+  return content;
 }

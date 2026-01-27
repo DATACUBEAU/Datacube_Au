@@ -79,7 +79,7 @@ Deno.serve(async (req: Request) => {
     } catch (e) {
       return new Response(JSON.stringify({ 
         error: "Parse failed",
-        details: "AI returned invalid JSON",
+        details: "AU returned invalid JSON",
         requestId,
         raw: aiResponse
       }), {

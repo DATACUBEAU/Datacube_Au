@@ -27,13 +27,14 @@ import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { useStore } from '@/hooks/use-store';
 import type { GenerateKnowledgeOutput } from '@/app/actions';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { TruncatedText } from '@/components/TruncatedText';
 import { Badge } from '@/components/ui/badge';
+import { formatDistanceToNowStrict } from 'date-fns';
 
 // Lazy-load the animation components to keep the initial bundle small
 const AnimatedText = dynamic(() => import('@/components/animated-text'), {
@@ -60,6 +61,26 @@ export default function KnowledgePage() {
   const { documents: apiDocuments, loading: docsLoading } = useAuDocuments();
 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [isConceptMapDevOpen, setIsConceptMapDevOpen] = useState(false);
+  const [conceptMapClickedTerm, setConceptMapClickedTerm] = useState<string | null>(null);
+
+  const selectedDoc = useMemo(() => {
+    if (!selectedDocId) return null;
+    return apiDocuments.find(d => d.id === selectedDocId) || null;
+  }, [apiDocuments, selectedDocId]);
+
+  const attachedFileCount = useMemo(() => {
+    if (!selectedDocId) return 0;
+    return apiDocuments.filter(d => d.parent_id === selectedDocId).length;
+  }, [apiDocuments, selectedDocId]);
+
+  const ttlMs = user?.is_anonymous ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const selectedDocExpiresAt = useMemo(() => {
+    if (!selectedDoc) return null;
+    const exp = selectedDoc.expires_at;
+    if (exp) return exp;
+    return new Date(new Date(selectedDoc.created_at).getTime() + ttlMs).toISOString();
+  }, [selectedDoc, ttlMs]);
   
   // Filter documents for Knowledge Hub (Textbooks only)
   const documents = useMemo(() => apiDocuments.filter(d => 
@@ -72,23 +93,9 @@ export default function KnowledgePage() {
     knowledgeData,
     isGeneratingKnowledge,
     generateKnowledge,
-    isCheckingKnowledgeModel,
-    checkKnowledgeModel,
     clearKnowledgeAndPredictions,
     setKnowledgeData,
   } = useStore();
-
-  const handleModelCheck = async () => {
-    if (!isOnline) {
-      toast({ variant: 'destructive', title: 'You are offline', description: 'This action requires an internet connection.' });
-      return;
-    }
-    if (!session?.access_token) {
-      toast({ variant: 'destructive', title: 'Sign in required', description: 'Please sign in to check the knowledge model.' });
-      return;
-    }
-    await checkKnowledgeModel(session.access_token);
-  };
 
   const handleDocSelectionChange = (docId: string) => {
     setSelectedDocId(docId);
@@ -220,7 +227,7 @@ export default function KnowledgePage() {
          <div className="flex h-full min-h-[400px] flex-col items-center justify-center">
               <div className="space-y-2 text-center text-muted-foreground">
                 <Wand2 className="mx-auto h-10 w-10 text-primary/30" aria-hidden="true" />
-                <p className="text-lg font-semibold">{selectedDocId ? "Ready to unlock A U insights?" : "Please select a document"}</p>
+                <p className="text-lg font-semibold">{selectedDocId ? "Ready to unlock AU insights?" : "Please select a document"}</p>
                 <p>{selectedDocId ? "Click 'Generate' to begin." : "Choose one of your completed textbooks to get started."}</p>
               </div>
         </div>
@@ -276,11 +283,80 @@ export default function KnowledgePage() {
             <Card>
                 <CardHeader>
                     <CardTitle className="font-headline">Interactive Concept Map</CardTitle>
-                    <CardDescription>Click a highlighted keyword to explore its details.</CardDescription>
+                    <CardDescription>Nodes are visible, but this section is still under development.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                     <div className="pr-6">
-                        {InteractiveConceptMap && <InteractiveConceptMap content={knowledgeData.conceptMap} />}
+                     <div className="relative pr-6">
+                        {InteractiveConceptMap && (
+                          <InteractiveConceptMap
+                            content={knowledgeData.conceptMap}
+                            onConceptClick={(term) => {
+                              setConceptMapClickedTerm(term);
+                              setIsConceptMapDevOpen(true);
+                            }}
+                          />
+                        )}
+
+                        <AnimatePresence>
+                          {isConceptMapDevOpen && (
+                            <motion.div
+                              initial={{ opacity: 0 }}
+                              animate={{ opacity: 1 }}
+                              exit={{ opacity: 0 }}
+                              className="absolute inset-0 z-20"
+                            >
+                              <div
+                                className="absolute inset-0 rounded-lg bg-background/60 backdrop-blur-sm"
+                                onClick={() => setIsConceptMapDevOpen(false)}
+                                role="button"
+                                tabIndex={0}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    setIsConceptMapDevOpen(false);
+                                  }
+                                }}
+                              />
+
+                              <motion.div
+                                initial={{ y: 8, scale: 0.98, opacity: 0 }}
+                                animate={{ y: 0, scale: 1, opacity: 1 }}
+                                exit={{ y: 8, scale: 0.98, opacity: 0 }}
+                                transition={{ duration: 0.2, ease: 'easeOut' }}
+                                className="relative mx-auto mt-6 w-[min(520px,92%)] rounded-xl border bg-background/80 p-4 shadow-lg"
+                              >
+                                <div className="flex items-start gap-4">
+                                  <motion.img
+                                    src="/assets/au-anime-dev.svg"
+                                    alt="AU character"
+                                    className="h-24 w-24 shrink-0"
+                                    animate={{ y: [0, -6, 0] }}
+                                    transition={{ duration: 2.2, repeat: Infinity, ease: 'easeInOut' }}
+                                    draggable={false}
+                                  />
+
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-semibold">The future is coming soon… still under development!</p>
+                                    {conceptMapClickedTerm && (
+                                      <p className="mt-1 text-xs text-muted-foreground">
+                                        You clicked: <span className="font-semibold text-foreground">{conceptMapClickedTerm}</span>
+                                      </p>
+                                    )}
+                                    <p className="mt-2 text-xs text-muted-foreground">
+                                      This modal only affects the Concept Map section. Everything else in Knowledge Hub stays live.
+                                    </p>
+
+                                    <div className="mt-3 flex justify-end">
+                                      <Button size="sm" variant="secondary" onClick={() => setIsConceptMapDevOpen(false)}>
+                                        Close
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
                      </div>
                 </CardContent>
             </Card>
@@ -350,25 +426,37 @@ export default function KnowledgePage() {
                Loading documents...
              </div>
           ) : (
-            <Select value={selectedDocId || undefined} onValueChange={handleDocSelectionChange}>
-              <SelectTrigger className="w-full sm:w-[250px]" aria-label="Select document">
-                <SelectValue placeholder="Select a textbook" />
-              </SelectTrigger>
-              <SelectContent>
-                {documents.map((doc) => (
-                  <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
-                    <div className="flex items-center gap-2">
-                      <TruncatedText text={doc.file_name} maxWidthClass="max-w-[200px]" />
-                      {doc.status !== 'completed' && (
-                        <Badge variant="outline" className="text-[10px] h-4 px-1 animate-pulse">
-                          {doc.status}...
-                        </Badge>
-                      )}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div className="flex flex-col gap-1 w-full sm:w-auto">
+              <Select value={selectedDocId || undefined} onValueChange={handleDocSelectionChange}>
+                <SelectTrigger className="w-full sm:w-[250px]" aria-label="Select document">
+                  <SelectValue placeholder="Select a textbook" />
+                </SelectTrigger>
+                <SelectContent>
+                  {documents.map((doc) => (
+                    <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
+                      <div className="flex items-center gap-2">
+                        <TruncatedText text={doc.file_name} maxWidthClass="max-w-[200px]" />
+                        {doc.status !== 'completed' && (
+                          <Badge variant="outline" className="text-[10px] h-4 px-1 animate-pulse">
+                            {doc.status}...
+                          </Badge>
+                        )}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {selectedDocId && selectedDocExpiresAt && (
+                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <span className="uppercase tracking-wider font-bold">main textbook</span>
+                  <span>•</span>
+                  <span>{attachedFileCount} {attachedFileCount === 1 ? 'file' : 'files'}</span>
+                  <span>•</span>
+                  <span>{formatDistanceToNowStrict(new Date(selectedDocExpiresAt))} left</span>
+                </div>
+              )}
+            </div>
           )}
 
           <Button 
@@ -383,20 +471,6 @@ export default function KnowledgePage() {
             )}
             Generate
           </Button>
-
-          <Button
-            variant="outline"
-            onClick={handleModelCheck}
-            disabled={isGeneratingKnowledge || isCheckingKnowledgeModel || !isOnline}
-            className="shrink-0 gap-2"
-          >
-            {isCheckingKnowledgeModel ? (
-              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <Info className="h-4 w-4" aria-hidden="true" />
-            )}
-            Check AI
-          </Button>
         </div>
       </div>
         <div className="mt-4 flex-1">
@@ -407,7 +481,7 @@ export default function KnowledgePage() {
           <span>
             {user?.is_anonymous 
               ? "Guest mode self-destruct in 24 hours." 
-              : "Generated materials are cached for 3 days to ensure freshness."}
+              : "Documents auto-delete after 7 days. Generated materials are cached for 3 days."}
           </span>
         </div>
       </main>

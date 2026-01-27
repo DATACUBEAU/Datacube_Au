@@ -33,12 +33,13 @@ export async function generatePredictions(
   pastQuestionsContent: string,
   accessToken?: string
 ): Promise<GenerateExamPredictionsOutput> {
-  return safeFetch(`${SUPABASE_URL}/functions/v1/generate-exam-predictions`, {
+  // Updated to point to the correct 'prediction-engine' function
+  return safeFetch(`${SUPABASE_URL}/functions/v1/prediction-engine`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
-    body: JSON.stringify({ documentContent, pastQuestionsContent }),
+    body: JSON.stringify({ pastQuestionsContent, mainTextbookContent: documentContent }),
   });
 }
