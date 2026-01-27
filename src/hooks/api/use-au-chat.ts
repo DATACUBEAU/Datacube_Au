@@ -11,11 +11,55 @@ export function useAuChat(selectedDocId: string | null) {
   const { toast } = useToast();
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
   const setAuThinkingStatus = useStore(state => state.setAuThinkingStatus);
+  const initializeModelRegistry = useStore(state => state.initializeModelRegistry);
+  const checkModelHealth = useStore(state => state.checkModelHealth);
+  const setModelStatus = useStore(state => state.setModelStatus);
+  const selectActiveModel = useStore(state => state.selectActiveModel);
+  const setActiveModelId = useStore(state => state.setActiveModelId);
+  const modelDiagnostics = useStore(state => state.modelDiagnostics);
+  const modelRetryCount = useStore(state => state.modelRetryCount);
+  const markRetryScheduled = useStore(state => state.markRetryScheduled);
   
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [isResponding, setIsResponding] = useState(false);
   const [promptStarters, setPromptStarters] = useState<string[]>([]);
+  const [isInitialized, setIsInitialized] = useState(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
+
+  const expiresAt = session?.expires_at ? session.expires_at * 1000 : null;
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      initializeModelRegistry();
+      await checkModelHealth({ force: true });
+      const state = useStore.getState();
+      const noActive = state.models.every(m => m.status !== 'active');
+      if (noActive) {
+        const retryCount = state.modelRetryCount || 1;
+        const delayMs = Math.min(10_000 * Math.pow(2, retryCount - 1), 300_000);
+        const nextAt = state.nextRetryAt && state.nextRetryAt > Date.now() ? state.nextRetryAt : Date.now() + delayMs;
+        state.markRetryScheduled(nextAt, retryCount);
+        if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = window.setTimeout(async () => {
+          await checkModelHealth({ force: true });
+          const after = useStore.getState();
+          if (after.models.some(mm => mm.status === 'active')) {
+            after.markRetryScheduled(null, 0);
+          }
+        }, Math.max(0, nextAt - Date.now()));
+      }
+      if (mounted) setIsInitialized(true);
+    })();
+    return () => {
+      mounted = false;
+      if (retryTimerRef.current) {
+        window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [initializeModelRegistry, checkModelHealth]);
 
   // Helper for LocalStorage Key
   const getStorageKey = useCallback(() => {
@@ -108,6 +152,14 @@ export function useAuChat(selectedDocId: string | null) {
   ) => {
     if (!selectedDocId || !user) return;
 
+    if (!session?.access_token) {
+      toast({
+        title: 'Session initializing',
+        description: 'Please try again in a moment.',
+      });
+      return;
+    }
+
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
 
@@ -147,13 +199,107 @@ export function useAuChat(selectedDocId: string | null) {
         }
       }, 1500);
 
-      const result = await sendChatMessage({
-        messages: [...history, userMessage],
-        selectedDocId,
-        guide: options?.guide,
-        summaryMode: options?.summaryMode,
-        browsingMode: options?.browsingMode
-      }, session?.access_token);
+      await checkModelHealth({ force: true });
+      selectActiveModel();
+
+      const runAttempt = async (endpoint: string) => {
+        const attemptController = new AbortController();
+        const userSignal = abortControllerRef.current?.signal;
+        if (userSignal) {
+          if (userSignal.aborted) {
+            attemptController.abort();
+          } else {
+            userSignal.addEventListener('abort', () => attemptController.abort(), { once: true });
+          }
+        }
+
+        const timeoutId = window.setTimeout(() => attemptController.abort(), 20_000);
+        try {
+          return await sendChatMessage(
+            {
+              messages: [...history, userMessage],
+              selectedDocId,
+              guide: options?.guide,
+              summaryMode: options?.summaryMode,
+              browsingMode: options?.browsingMode,
+              model: endpoint,
+              signal: attemptController.signal,
+            },
+            session?.access_token
+          );
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
+      };
+
+      let result: any = null;
+
+      const activeModels = () => useStore.getState().models.filter(m => m.status === 'active');
+
+      for (const m of activeModels()) {
+        if (abortControllerRef.current?.signal.aborted) {
+          const abortErr: any = new Error('Aborted');
+          abortErr.name = 'AbortError';
+          throw abortErr;
+        }
+
+        setActiveModelId(m.id);
+        setAuThinkingStatus(`Routing via ${m.provider}...`);
+
+        console.log('[AU Chat Model]', {
+          modelId: m.id,
+          provider: m.provider,
+          endpoint: m.endpoint,
+          time: new Date().toISOString(),
+        });
+
+        try {
+          result = await runAttempt(m.endpoint);
+          setModelStatus(m.id, 'active', { lastCheckedAt: Date.now(), lastHttpStatus: 200 });
+          markRetryScheduled(null, 0);
+          break;
+        } catch (e: any) {
+          if (e?.name === 'AbortError' && abortControllerRef.current?.signal.aborted) throw e;
+          const httpStatus = (e as any)?.status;
+          setModelStatus(m.id, 'down', {
+            lastFailureAt: Date.now(),
+            lastFailureReason: e?.name === 'AbortError' ? 'Timeout' : 'Request failed',
+            lastHttpStatus: typeof httpStatus === 'number' ? httpStatus : undefined,
+          });
+        }
+      }
+
+      if (!result) {
+        const retryCount = modelRetryCount + 1;
+        const delayMs = Math.min(10_000 * Math.pow(2, retryCount - 1), 300_000);
+        const nextAt = Date.now() + delayMs;
+        markRetryScheduled(nextAt, retryCount);
+
+        setHistory(prev => prev.map(msg => (msg.id === loadingId ? {
+          id: loadingId,
+          role: 'assistant',
+          content: 'AI services are temporarily unavailable. Retrying automatically…',
+          isLoading: false,
+          isError: true,
+        } as any : msg)));
+
+        if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
+        retryTimerRef.current = window.setTimeout(async () => {
+          await checkModelHealth({ force: true });
+          if (useStore.getState().models.some(mm => mm.status === 'active')) {
+            markRetryScheduled(null, 0);
+          }
+        }, delayMs);
+
+        toast({
+          title: 'AI services unavailable',
+          description: 'Retrying automatically in the background.',
+        });
+
+        if (thinkingInterval) clearInterval(thinkingInterval);
+        setAuAnimationState('idle');
+        return null;
+      }
 
       if (thinkingInterval) clearInterval(thinkingInterval);
       setAuAnimationState('responding');
@@ -168,14 +314,22 @@ export function useAuChat(selectedDocId: string | null) {
       return result;
     } catch (err: any) {
       if (thinkingInterval) clearInterval(thinkingInterval);
-      setAuThinkingStatus('Analytical engine error.');
+      setAuThinkingStatus('AI Service Interruption.');
+      
       if (err.name === 'AbortError') {
         console.log('[useAuChat] Message aborted');
         setHistory(prev => prev.filter(m => m.id !== loadingId));
         setAuAnimationState('idle');
         return;
       }
-      console.error('[useAuChat] Message error:', err);
+      
+      console.log('[AU Chat Error]', { time: new Date().toISOString() });
+      toast({
+        title: 'AU Chat Issue',
+        description: 'AU hit a temporary issue. Please try again.',
+        variant: 'destructive',
+      });
+
       setHistory(prev => prev.filter(m => m.id !== loadingId));
       setAuAnimationState('error');
       throw err;
@@ -187,7 +341,22 @@ export function useAuChat(selectedDocId: string | null) {
         setAuAnimationState('idle');
       }, 3000);
     }
-  }, [selectedDocId, user, session, history]);
+  }, [
+    selectedDocId,
+    user,
+    session?.access_token,
+    history,
+    setAuAnimationState,
+    setAuThinkingStatus,
+    checkModelHealth,
+    setModelStatus,
+    selectActiveModel,
+    setActiveModelId,
+    modelDiagnostics,
+    modelRetryCount,
+    markRetryScheduled,
+    toast,
+  ]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
@@ -344,6 +513,8 @@ export function useAuChat(selectedDocId: string | null) {
     scanAndGreet,
     promptStarters,
     fetchPrompts,
+    expiresAt,
+    isInitialized,
     clearChat
   };
 }

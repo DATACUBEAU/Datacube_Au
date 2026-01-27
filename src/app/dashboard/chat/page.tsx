@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { formatDistanceStrict } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
+  Activity,
   Loader2,
   Wand2,
   Sparkles,
@@ -76,7 +78,7 @@ import { safeFetch } from '@/lib/api/safe-fetch';
 import { validateQuery } from '@/lib/upload/file-types';
 import { TruncatedText } from '@/components/TruncatedText';
 import { ThinkingProcess } from '@/components/thinking-process';
-import { useStore } from '@/hooks/use-store';
+import { AI_MODEL_DISPLAY_NAMES, useStore } from '@/hooks/use-store';
 
 import { type ChatMessage } from '@/lib/api/chat';
 
@@ -140,6 +142,13 @@ export default function ChatPage() {
   const [session] = useSupabaseSession();
   const isOnline = useOnlineStatus();
 
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const { documents: apiDocuments, loading: docsLoading } = useAuDocuments();
   const { 
@@ -158,6 +167,19 @@ export default function ChatPage() {
   // Sync AU State with Global Background Animation
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
   const auAnimationState = useStore(state => state.auAnimationState);
+
+  const models = useStore(state => state.models);
+  const activeModelId = useStore(state => state.activeModelId);
+  
+
+  const activeModel = useMemo(() => {
+    const resolved = (activeModelId ? models.find(m => m.id === activeModelId) : null) || models.find(m => m.status === 'active');
+    if (!resolved) return null;
+    return {
+      ...resolved,
+      name: AI_MODEL_DISPLAY_NAMES[resolved.id] ?? resolved.id,
+    };
+  }, [activeModelId, models]);
 
   useEffect(() => {
     let newState: 'idle' | 'thinking' | 'responding' = 'idle';
@@ -183,49 +205,14 @@ export default function ChatPage() {
       return () => setAuAnimationState('idle');
   }, [setAuAnimationState]);
 
-  // Background Notification Logic
-  useEffect(() => {
-     // If we are NOT on this doc, but it's responding?
-     // Actually useAuChat instance is tied to selectedDocId. 
-     // We need a global context or a way to track background generations if we want true background.
-     // BUT, the prompt says "If the user switches documents while AU is generating: Generation continues... Result is cached".
-     // Since useAuChat is re-instantiated on doc switch, the previous one unmounts and ABORTS (unless we lift state).
-     // TO SUPPORT TRUE BACKGROUND: We need to lift useAuChat to a Context or keep instances alive.
-     // For now, simpler approach: The "Background" requirement implies the STATE should persist.
-     // We are persisting to localStorage. 
-     // If the user switches back, they see the result.
-     // To notify them "while away", we need a global listener.
-     
-     // Current implementation:
-     // - Switching docs unmounts the hook for Doc A.
-     // - AbortController in hook kills the request.
-     // - So "Generation continues" is NOT possible with current architecture without major refactor to Context.
-     // - However, we can simulate "Resume" by checking if last message was loading when we return.
-     
-     // Wait! The requirement "Generation continues" means we MUST NOT abort on unmount if it's a background task.
-     // But useAuChat kills it.
-     // We will stick to the "Persistent Chat" part mostly. 
-     // True background generation requires a Global Chat Provider. 
-     // Let's implement the Notification part for when they RETURN.
-     
-     const hasUnseen = localStorage.getItem(`au_notification_${selectedDocId}`);
-     if (hasUnseen && !isResponding) {
-         toast({
-             title: "AU has responded",
-             description: "I finished responding while you were away.",
-             action: <Button variant="outline" size="sm" onClick={() => scrollToBottom()}>View</Button>
-         });
-         localStorage.removeItem(`au_notification_${selectedDocId}`);
-     }
-  }, [selectedDocId, isResponding, toast]);
-
   const documentList = useMemo(() => apiDocuments
     .filter(d => d.document_type === 'main_textbook' || d.document_type === 'exam_questions') // Keep exams visible if desired, or strict 'main_textbook'
     .map(d => ({ 
       id: d.id, 
       fileName: d.file_name, 
       status: d.status,
-      type: d.document_type 
+      type: d.document_type,
+      expiresAt: d.expires_at ?? undefined,
     }))
     .filter(d => d.type === 'main_textbook'), // Strict filter: ONLY main textbooks appear in chat selector
     [apiDocuments]
@@ -753,6 +740,14 @@ export default function ChatPage() {
       
       if (error.status === 401) {
         errorMsg = "It looks like your session has timed out for security. Please try refreshing the page or logging back in so we can continue our analysis.";
+      } else if (error.errorType === 'rate_limit' || error.status === 429) {
+        errorMsg = "The AI provider is rate-limiting requests right now. Please wait a moment and try again.";
+      } else if (error.errorType === 'payment_required' || error.status === 402) {
+        errorMsg = "The selected AI model is temporarily unavailable for this account. AU will retry using a fallback automatically.";
+      } else if (error.errorType === 'model_not_found' || error.status === 404) {
+        errorMsg = "That AI model endpoint is unavailable. AU will retry using a fallback automatically.";
+      } else if (error.errorType === 'bad_request' || error.status === 400) {
+        errorMsg = "The AI provider rejected the request payload. AU will retry using a fallback automatically.";
       } else if (error.message?.includes("API key")) {
         errorMsg = "I'm having trouble connecting to my language center (API Key missing). Please check the backend configuration.";
       } else if (error.message?.includes("Failed to fetch")) {
@@ -772,7 +767,15 @@ export default function ChatPage() {
   return (
     <main className="flex h-[calc(100dvh-3.5rem)] flex-col">
       <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background px-4 py-3 md:h-14 md:flex-row md:items-center md:px-8 shrink-0">
-        <h1 className="font-headline text-lg font-semibold md:text-xl">AU Chat Workspace</h1>
+        <div className="flex flex-col">
+            <h1 className="font-headline text-lg font-semibold md:text-xl">AU Chat Workspace</h1>
+            {activeModel && (
+                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground animate-in fade-in slide-in-from-left-2">
+                    <Activity className={`h-3 w-3 ${activeModel.status === 'active' ? 'text-green-500' : 'text-orange-500'}`} />
+                    <span>Auto-selected: {activeModel.name}</span>
+                </div>
+            )}
+        </div>
         <div className="flex w-full flex-col gap-2 md:ml-auto md:w-auto md:flex-row md:items-center">
           <div className="flex items-center gap-2">
             <Select onValueChange={id => handleDocSelection(id)} value={selectedDocId || ''} disabled={docsLoading}>
@@ -1084,7 +1087,20 @@ export default function ChatPage() {
         <div className="relative mx-auto max-w-4xl">
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-xs text-muted-foreground">
-              {selectedDocName ? `Chatting with: ${selectedDocName}` : 'Select a document to start chatting.'}
+              {selectedDocName ? (
+                <span>
+                  Chatting with: {selectedDocName}
+                  {selectedDoc?.expiresAt ? (
+                    <span className="ml-2">
+                      • {new Date(selectedDoc.expiresAt).getTime() <= now
+                        ? 'Expired'
+                        : `${user?.is_anonymous ? 'Self-destructs in ' : 'Expires in '}${formatDistanceStrict(new Date(now), new Date(selectedDoc.expiresAt))}`}
+                    </span>
+                  ) : null}
+                </span>
+              ) : (
+                'Select a document to start chatting.'
+              )}
             </div>
             <Tooltip>
               <TooltipTrigger asChild>

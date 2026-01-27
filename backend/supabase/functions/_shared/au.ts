@@ -415,6 +415,121 @@ export async function callAU(
   throw new Error(`All AI models are currently unavailable. Last error: ${lastError?.message || 'Unknown'}`);
 }
 
+export async function callAUMessages(
+  supabaseAdmin: any,
+  messages: { role: string; content: string }[],
+  temperature = 0.5,
+  jsonMode = false,
+  modelOverride?: string,
+  usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any }
+): Promise<{ content: string; model: string; used_fallback: boolean }> {
+  const openRouterKey = await getApiKey(supabaseAdmin, "openrouter");
+
+  const FALLBACK_MODELS = [
+    "google/gemini-2.0-flash-exp:free",
+    "google/gemini-2.0-pro-exp-02-05:free",
+    "deepseek/deepseek-r1:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
+    "qwen/qwen-2.5-72b-instruct:free",
+    "google/gemini-2.0-flash-lite-preview-02-05:free",
+    "deepseek/deepseek-r1-distill-llama-70b:free",
+    "mistralai/mistral-7b-instruct:free",
+  ];
+
+  let modelsToTry: string[] = [];
+
+  if (modelOverride) {
+    modelsToTry = [modelOverride, ...FALLBACK_MODELS.filter(m => m !== modelOverride)];
+  } else {
+    const { data: setting } = await supabaseAdmin
+      .from('au_rag_settings')
+      .select('value')
+      .eq('key', 'default_model')
+      .single();
+
+    let defaultModel = "google/gemini-2.0-flash-exp:free";
+    if (setting && setting.value) {
+      defaultModel = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
+    }
+
+    modelsToTry = [defaultModel, ...FALLBACK_MODELS.filter(m => m !== defaultModel)];
+  }
+
+  let lastError: any = null;
+
+  for (const model of modelsToTry) {
+    try {
+      console.log(`[au.ts] Attempting messages generation with model: ${model}`);
+
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openRouterKey}`,
+          "HTTP-Referer": "https://datacube-au.vercel.app",
+          "X-Title": "DataCube AU",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature,
+          response_format: jsonMode ? { type: "json_object" } : undefined,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.warn(`[au.ts] Model ${model} returned ${response.status}: ${errorText}`);
+        const err: any = new Error(`Status ${response.status}: ${errorText}`);
+        err.status = response.status;
+        throw err;
+      }
+
+      const data = await response.json();
+
+      const usage = (data as any)?.usage;
+      const feature = usageContext?.feature;
+      if (usageContext?.ownershipFilter && feature && usage) {
+        supabaseAdmin.from('au_model_usage').insert([
+          {
+            ...usageContext.ownershipFilter,
+            feature,
+            model_id: model,
+            prompt_tokens: typeof usage.prompt_tokens === 'number' ? usage.prompt_tokens : null,
+            completion_tokens: typeof usage.completion_tokens === 'number' ? usage.completion_tokens : null,
+            total_tokens: typeof usage.total_tokens === 'number' ? usage.total_tokens : null,
+            cost: typeof usage.total_cost === 'number' ? usage.total_cost : null,
+            metadata: { sessionId: usageContext?.sessionId ?? null, usage, used_fallback: model !== modelsToTry[0] },
+          },
+        ]).then(({ error }: any) => {
+          if (error) console.error("[au.ts] Failed to log usage:", error);
+        });
+      }
+
+      return {
+        content: data.choices?.[0]?.message?.content ?? "",
+        model,
+        used_fallback: model !== modelsToTry[0],
+      };
+    } catch (err: any) {
+      console.warn(`[au.ts] Model ${model} failed: ${err.message}`);
+      lastError = err;
+      supabaseAdmin.from('au_debug_logs').insert({
+        component: 'au_chat_fallback',
+        message: `Falling back from ${model}`,
+        details: { error: err.message, next_model: modelsToTry[modelsToTry.indexOf(model) + 1] || 'NONE', status: err?.status }
+      }).then(({ error }: any) => {
+        if (error) console.error("[au.ts] Failed to log fallback to DB:", error);
+      });
+    }
+  }
+
+  console.error("[au.ts] All models failed.");
+  const finalErr: any = new Error(`All AI models are currently unavailable. Last error: ${lastError?.message || 'Unknown'}`);
+  if (lastError?.status) finalErr.status = lastError.status;
+  throw finalErr;
+}
+
 /**
  * Standardized Event Emission for the Sync Layer
  */

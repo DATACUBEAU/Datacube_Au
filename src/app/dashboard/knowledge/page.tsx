@@ -72,9 +72,23 @@ export default function KnowledgePage() {
     knowledgeData,
     isGeneratingKnowledge,
     generateKnowledge,
+    isCheckingKnowledgeModel,
+    checkKnowledgeModel,
     clearKnowledgeAndPredictions,
     setKnowledgeData,
   } = useStore();
+
+  const handleModelCheck = async () => {
+    if (!isOnline) {
+      toast({ variant: 'destructive', title: 'You are offline', description: 'This action requires an internet connection.' });
+      return;
+    }
+    if (!session?.access_token) {
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Please sign in to check the knowledge model.' });
+      return;
+    }
+    await checkKnowledgeModel(session.access_token);
+  };
 
   const handleDocSelectionChange = (docId: string) => {
     setSelectedDocId(docId);
@@ -368,6 +382,20 @@ export default function KnowledgePage() {
               <Wand2 className="h-4 w-4" aria-hidden="true" />
             )}
             Generate
+          </Button>
+
+          <Button
+            variant="outline"
+            onClick={handleModelCheck}
+            disabled={isGeneratingKnowledge || isCheckingKnowledgeModel || !isOnline}
+            className="shrink-0 gap-2"
+          >
+            {isCheckingKnowledgeModel ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Info className="h-4 w-4" aria-hidden="true" />
+            )}
+            Check AI
           </Button>
         </div>
       </div>

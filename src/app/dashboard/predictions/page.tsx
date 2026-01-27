@@ -50,6 +50,10 @@ import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/docume
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { supabase } from '@/lib/supabase/client';
 import { TruncatedText } from '@/components/TruncatedText';
+import { useConceptGraphStore } from '@/hooks/use-concept-graph-store';
+import { normalizeLabel } from '@/lib/concept-graph/utils';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
 import { FeedbackSection } from "@/components/au-feedback";
 import {
@@ -60,6 +64,7 @@ import {
   BrainCircuit,
   ChevronRight,
   WifiOff,
+  X,
 } from 'lucide-react';
 import type { GeneratePredictionsOutput } from '@/app/actions';
 
@@ -83,6 +88,7 @@ const chartConfig: ChartConfig = {
 };
 
 export default function PredictionsPage() {
+  const router = useRouter();
   const [user] = useSupabaseUser();
   const [session] = useSupabaseSession();
   const isOnline = useOnlineStatus();
@@ -102,6 +108,13 @@ export default function PredictionsPage() {
   const [formattedTopicWeights, setFormattedTopicWeights] = useState<FormattedTopicWeight[]>([]);
   const [selectedPrediction, setSelectedPrediction] = useState<PredictionDetail | null>(null);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+
+  const setActiveDoc = useConceptGraphStore(s => s.setActiveDoc);
+  const ensureDoc = useConceptGraphStore(s => s.ensureDoc);
+  const applyPredictions = useConceptGraphStore(s => s.applyPredictions);
+  const setSelectedNodeIds = useConceptGraphStore(s => s.setSelectedNodeIds);
+  const graphDoc = useConceptGraphStore(s => (selectedTextbookId ? s.docs[selectedTextbookId] : null));
+  const docGraph = graphDoc?.graph ?? null;
 
   // Use global hook
   const { documents: allDocuments, loading: docsLoading } = useAuDocuments();
@@ -134,11 +147,43 @@ export default function PredictionsPage() {
     }
   }, [predictionData, parseTopicWeights]);
 
+  useEffect(() => {
+    if (!selectedTextbookId || !predictionData) return;
+    setActiveDoc(selectedTextbookId);
+    ensureDoc(selectedTextbookId);
+    applyPredictions(selectedTextbookId, predictionData);
+  }, [applyPredictions, ensureDoc, predictionData, selectedTextbookId, setActiveDoc]);
+
+  const findConceptIdsForTopic = useCallback((topic: string): string[] => {
+    if (!docGraph) return [];
+    const norm = normalizeLabel(topic);
+    const matches = Object.values(docGraph.nodes)
+      .map(n => ({ id: n.id, score: normalizeLabel(n.label) === norm ? 1000 : normalizeLabel(n.label).includes(norm) ? norm.length : norm.includes(normalizeLabel(n.label)) ? normalizeLabel(n.label).length : 0 }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3)
+      .map(x => x.id);
+    return matches;
+  }, [docGraph]);
+
+  const openTopicInConceptMap = useCallback((topic: string) => {
+    if (!selectedTextbookId) return;
+    const ids = findConceptIdsForTopic(topic);
+    setActiveDoc(selectedTextbookId);
+    ensureDoc(selectedTextbookId);
+    if (ids.length > 0) setSelectedNodeIds(selectedTextbookId, [ids[0]]);
+    router.push('/dashboard/concept-map');
+  }, [ensureDoc, findConceptIdsForTopic, router, selectedTextbookId, setActiveDoc, setSelectedNodeIds]);
+
 
   const handlePastQuestionsChange = (docId: string) => {
     setSelectedPastQuestionsId(docId);
     const pqDoc = pastQuestionsDocs.find((d) => d.id === docId);
     setSelectedTextbookId(pqDoc?.parent_id || null);
+    if (pqDoc?.parent_id) {
+      setActiveDoc(pqDoc.parent_id);
+      ensureDoc(pqDoc.parent_id);
+    }
     clearKnowledgeAndPredictions(); // Clear global store data
   };
 
@@ -260,6 +305,47 @@ export default function PredictionsPage() {
               </Button>
             </div>
           </div>
+
+          {selectedTextbookId && (graphDoc?.selectedNodeIds?.length ?? 0) > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Active concepts</CardTitle>
+                <CardDescription>These come from your Concept Map selection.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap items-center gap-2">
+                  {graphDoc?.selectedNodeIds.map((id) => {
+                    const label = graphDoc.graph.nodes[id]?.label || id;
+                    return (
+                      <span key={id} className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-xs">
+                        <span className="max-w-[220px] truncate">{label}</span>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedNodeIds(selectedTextbookId, graphDoc.selectedNodeIds.filter(x => x !== id))}
+                          className="rounded p-0.5 hover:bg-muted"
+                          aria-label="Remove concept"
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    );
+                  })}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setSelectedNodeIds(selectedTextbookId, [])}
+                    className="ml-auto"
+                  >
+                    Clear
+                  </Button>
+                  <Button asChild type="button" size="sm" variant="secondary">
+                    <Link href="/dashboard/concept-map">Edit selection</Link>
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Dynamic Content */}
@@ -318,23 +404,44 @@ export default function PredictionsPage() {
                 <CardContent>
                   <div className="space-y-3">
                     {predictionData.predictions.map((p, i) => (
-                      <button key={i} onClick={() => { setSelectedPrediction(p); setIsDialogOpen(true); }} className="flex w-full items-center justify-between rounded-lg border p-4 text-left transition-all hover:bg-muted">
-                        <div className="flex-1">
-                          <p className="font-semibold">{p.topic}</p>
-                          <p className="text-sm text-muted-foreground">{p.rationale}</p>
+                      <div key={i} className="rounded-lg border p-4 transition-all hover:bg-muted">
+                        <div className="flex items-start justify-between gap-3">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedPrediction(p);
+                              setIsDialogOpen(true);
+                            }}
+                            className="flex-1 text-left"
+                          >
+                            <p className="font-semibold">{p.topic}</p>
+                            <p className="text-sm text-muted-foreground">{p.rationale}</p>
+                          </button>
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Badge variant={p.likelihood > 75 ? 'destructive' : p.likelihood > 50 ? 'default' : 'secondary'}>
+                                  {p.likelihood}%
+                                </Badge>
+                              </TooltipTrigger>
+                              <TooltipContent><p>Likelihood</p></TooltipContent>
+                            </Tooltip>
+                            <button
+                              type="button"
+                              onClick={() => openTopicInConceptMap(p.topic)}
+                              className="rounded-md border bg-background px-2 py-1 text-xs hover:bg-background/60"
+                            >
+                              View map
+                            </button>
+                            <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Badge variant={p.likelihood > 75 ? 'destructive' : p.likelihood > 50 ? 'default' : 'secondary'}>
-                                {p.likelihood}%
-                              </Badge>
-                            </TooltipTrigger>
-                            <TooltipContent><p>Likelihood</p></TooltipContent>
-                          </Tooltip>
-                          <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-                        </div>
-                      </button>
+                        {selectedTextbookId && findConceptIdsForTopic(p.topic).length > 0 && (
+                          <div className="mt-3 text-xs text-muted-foreground">
+                            Linked concepts: {findConceptIdsForTopic(p.topic).length}
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 </CardContent>
@@ -360,6 +467,21 @@ export default function PredictionsPage() {
               <DialogDescription>Likelihood: {selectedPrediction?.likelihood}%</DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-4 text-sm">
+              {selectedPrediction?.topic && selectedTextbookId && (
+                <div>
+                  <h4 className="font-semibold text-primary">Graph linkage</h4>
+                  <p className="text-muted-foreground">
+                    {findConceptIdsForTopic(selectedPrediction.topic).length > 0
+                      ? `This prediction is linked to ${findConceptIdsForTopic(selectedPrediction.topic).length} concept node(s) in your graph.`
+                      : 'No matching concept node found yet. It will appear as a prediction-sourced concept in the Concept Map once you open it.'}
+                  </p>
+                  <div className="mt-2">
+                    <Button type="button" variant="secondary" onClick={() => openTopicInConceptMap(selectedPrediction.topic)}>
+                      View in Concept Map
+                    </Button>
+                  </div>
+                </div>
+              )}
               <div>
                 <h4 className="font-semibold text-primary">Rationale</h4>
                 <p className="text-muted-foreground">{selectedPrediction?.rationale}</p>

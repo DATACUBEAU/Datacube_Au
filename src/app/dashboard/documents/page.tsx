@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatDistanceToNowStrict } from "date-fns";
+import { formatDistanceStrict } from "date-fns";
 import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase/client';
 import { useSupabaseUser, useIsAdmin } from "@/hooks/use-supabase-auth";
 import { useAuDocuments } from "@/hooks/api/use-au-documents";
@@ -71,6 +71,12 @@ export default function DocumentsPage() {
   const { jobs, removeJob } = useUploadJobs();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const toggleFolder = (id: string) => {
     setExpandedFolders(prev => {
@@ -227,7 +233,7 @@ export default function DocumentsPage() {
 
   const daysLeft = (expires?: string) => {
     if (!expires) return "No expiry";
-    const distance = formatDistanceToNowStrict(new Date(expires));
+    const distance = formatDistanceStrict(new Date(now), new Date(expires));
     if (user?.is_anonymous) return `Guest mode self-destruct in ${distance}`;
     return `${distance} left`;
   };

@@ -279,10 +279,23 @@ export default function GlobalChatPage() {
       });
     } catch (error: any) {
       console.error("[GlobalChatPage] Message error:", error);
+
+      let errorMsg = "Error communicating with AU Global.";
+      if (error.status === 401) {
+        errorMsg = "Your session has timed out. Please refresh or sign in again.";
+      } else if (error.errorType === 'rate_limit' || error.status === 429) {
+        errorMsg = "The AI provider is rate-limiting requests right now. Please try again shortly.";
+      } else if (error.errorType === 'payment_required' || error.status === 402) {
+        errorMsg = "The selected AI model is temporarily unavailable for this account. AU will retry using a fallback automatically.";
+      } else if (error.errorType === 'model_not_found' || error.status === 404) {
+        errorMsg = "That AI model endpoint is unavailable. AU will retry using a fallback automatically.";
+      } else if (error.errorType === 'bad_request' || error.status === 400) {
+        errorMsg = "The AI provider rejected the request payload. AU will retry using a fallback automatically.";
+      }
       toast({
         variant: 'destructive',
         title: 'AU Chat Issue',
-        description: "Error communicating with AU Global.",
+        description: errorMsg,
       });
     }
   };

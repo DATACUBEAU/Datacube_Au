@@ -14,6 +14,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const { callAU, validateAuth, requireUser } = await import("../_shared/au.ts");
+    const { getApiKey } = await import("../_shared/getApiKey.ts");
 
     const body = await req.json().catch(() => ({}));
     const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireUser(req, body);
@@ -29,7 +30,47 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { documentContent, pastQuestionsContent } = body;
+    const { action, documentContent, pastQuestionsContent } = body;
+
+    if (action === 'ping') {
+      const { data: setting } = await supabaseAdmin
+        .from('au_rag_settings')
+        .select('value')
+        .eq('key', 'default_model')
+        .single();
+
+      let defaultModel = "google/gemini-2.0-flash-exp:free";
+      if (setting && setting.value) {
+        defaultModel = typeof setting.value === 'string' ? setting.value : JSON.stringify(setting.value).replace(/"/g, '');
+      }
+
+      const openRouterKey = await getApiKey(supabaseAdmin, 'openrouter');
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${openRouterKey}`,
+          'HTTP-Referer': 'https://datacube-au.vercel.app',
+          'X-Title': 'DataCube AU',
+        },
+        body: JSON.stringify({
+          model: defaultModel,
+          messages: [{ role: 'user', content: 'ping' }],
+          max_tokens: 1,
+        }),
+      });
+
+      const reachable = response.ok;
+      return new Response(JSON.stringify({
+        ok: true,
+        reachable,
+        defaultModel,
+        status: response.ok ? 200 : response.status,
+        requestId,
+      }), {
+        headers: corsHeadersWithJson,
+      });
+    }
 
     if (!documentContent && !pastQuestionsContent) {
       return new Response(JSON.stringify({ 

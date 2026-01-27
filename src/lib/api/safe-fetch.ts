@@ -46,6 +46,11 @@ export async function safeFetch(url: string, options: RequestInit) {
     const error = new Error(errorMessage);
     (error as any).status = res.status;
     (error as any).body = body;
+    if (body && typeof body === 'object') {
+      if ('errorType' in body) (error as any).errorType = (body as any).errorType;
+      if ('pipeline' in body) (error as any).pipeline = (body as any).pipeline;
+      if ('requestId' in body) (error as any).requestId = (body as any).requestId;
+    }
     throw error;
   }
 

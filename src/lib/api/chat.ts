@@ -25,6 +25,8 @@ export type ChatRequest = {
   summaryMode?: 'short' | 'mid' | 'detailed' | null;
   action?: 'scan_and_greet' | 'chat';
   browsingMode?: boolean;
+  model?: string;
+  signal?: AbortSignal;
 };
 
 /**
@@ -33,24 +35,25 @@ export type ChatRequest = {
 export async function sendChatMessage(
   request: ChatRequest,
   accessToken?: string
-): Promise<RagBasedQuestionAnsweringOutput & { thought?: string }> {
-  // Using local API route with multi-model fallback support
+): Promise<RagBasedQuestionAnsweringOutput & { thought?: string; model?: string }> {
   return safeFetch(`/api/chat/fallback`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
+    signal: request.signal,
     body: JSON.stringify({
       messages: request.messages,
-      sessionId: request.selectedDocId, // Using docId as sessionId for context stability
-      selectedDocId: request.selectedDocId, // Explicitly pass for filtering
+      sessionId: request.selectedDocId,
+      selectedDocId: request.selectedDocId,
       useRAG: true,
       guide: request.guide,
       summaryMode: request.summaryMode,
       action: request.action,
       browsingMode: request.browsingMode,
       currentPath: typeof window !== 'undefined' ? window.location.pathname : '',
+      model: request.model,
     }),
   });
 }
@@ -70,11 +73,7 @@ export async function generatePromptStarters(
       'Content-Type': 'application/json',
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
-    body: JSON.stringify({
-      documentTitle,
-      documentContent: documentContent.substring(0, 10000), // Efficiency limit
-      userIdea,
-    }),
+    body: JSON.stringify({ documentTitle, documentContent: documentContent.substring(0, 10000), userIdea }),
   });
   return result.prompts || [];
 }

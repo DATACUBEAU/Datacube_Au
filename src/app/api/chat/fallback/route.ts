@@ -3,31 +3,6 @@ import { NextResponse } from 'next/server';
 
 export const runtime = 'edge';
 
-// Models configuration
-// Using exact models requested by the user
-const FREE_MODELS = [
-  "google/gemini-2.0-flash-exp:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "deepseek/deepseek-r1:free",
-  "mistralai/mistral-small-3.1-24b:free",
-  "microsoft/phi-3-medium-128k-instruct:free"
-];
-
-const MODELS_TO_TRY = [
-  "google/gemini-2.0-flash-exp:free",
-  "google/gemini-2.0-pro-exp-02-05:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "meta-llama/llama-3.1-405b-instruct:free",
-  "deepseek/deepseek-r1-0528:free", 
-  "deepseek/deepseek-r1:free",
-  "qwen/qwen-3-235b-a22b:free",
-  "qwen/qwen-2.5-72b-instruct:free", 
-  "mistralai/mistral-small-3.1-24b:free",
-  "microsoft/phi-3-medium-128k-instruct:free", 
-];
-
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-
 function requiredEnv(key: string): string {
   const value = process.env[key];
   if (!value) {
@@ -38,8 +13,30 @@ function requiredEnv(key: string): string {
 
 export async function POST(req: Request) {
   try {
-    const { messages, selectedDocId, useRAG, guide, summaryMode, browsingMode, action } = await req.json();
+    const { messages, selectedDocId, useRAG, guide, summaryMode, browsingMode, action, model } = await req.json();
     const authorization = req.headers.get('Authorization');
+
+    if (action === 'ping') {
+      if (!model) {
+        return NextResponse.json({ error: 'Model required for ping' }, { status: 400 });
+      }
+
+      const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
+      const response = await fetch(`${supabaseUrl}/functions/v1/model-call`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(authorization ? { Authorization: authorization } : {}),
+        },
+        body: JSON.stringify({ action: 'ping', model }),
+      });
+
+      const body = await response.json().catch(() => ({}));
+      if (body?.ok === true && body?.reachable === true) {
+        return NextResponse.json({ ok: true, model });
+      }
+      return NextResponse.json({ ok: false, status: body?.status ?? response.status }, { status: 200 });
+    }
 
     if (!authorization) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -122,62 +119,29 @@ ${contextText.slice(0, 20000)} // Limit context to avoid token limits on free mo
         content: m.content
     }));
 
-    // 5. Fallback Logic Loop
-    let lastError = null;
-    let successResponse = null;
-    let successfulModel = "";
+    const supabaseFunctionsUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
+    const modelCallResponse = await fetch(`${supabaseFunctionsUrl}/functions/v1/model-call`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
+      body: JSON.stringify({
+        messages: apiMessages,
+        temperature: 0.7,
+        jsonMode: false,
+        modelOverride: model,
+        feature: 'chat',
+        sessionId: selectedDocId,
+      }),
+    });
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-        return NextResponse.json({ error: 'Server configuration error: Missing AI credentials' }, { status: 500 });
-    }
+    const modelCallBody = await modelCallResponse.json().catch(() => ({}));
 
-    // Optional: Try auto first if requested
-    const modelList = [...MODELS_TO_TRY];
-    // if (process.env.ENABLE_OPENROUTER_AUTO) modelList.unshift("openrouter/auto");
-
-    for (const model of modelList) {
-        try {
-            console.log(`[Chat Fallback] Trying model: ${model}`);
-            const response = await fetch(OPENROUTER_API_URL, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${apiKey}`,
-                    'HTTP-Referer': 'https://datacube-au.com', // Required by OpenRouter
-                    'X-Title': 'Datacube AU',
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    model: model,
-                    messages: apiMessages,
-                    temperature: 0.7,
-                    // stream: false // For now, no streaming to keep fallback logic simple
-                })
-            });
-
-            if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`API ${response.status} (${response.statusText}): ${errText}`);
-            }
-
-            const data = await response.json();
-            if (data.choices && data.choices.length > 0) {
-                successResponse = data.choices[0].message.content;
-                successfulModel = model;
-                break; // Success!
-            } else {
-                throw new Error('No choices in response');
-            }
-
-        } catch (error: any) {
-            console.warn(`[Chat Fallback] Model ${model} failed:`, error.message);
-            lastError = error;
-            // Continue to next model
-        }
-    }
-
-    if (successResponse) {
-        console.log(`[Chat Fallback] Success with model: ${successfulModel}`);
+    if (modelCallResponse.ok && modelCallBody?.ok === true) {
+        const successResponse = modelCallBody.content;
+        const successfulModel = modelCallBody.model;
+        console.log(`[Chat Pipeline] model-call`, { model: successfulModel, usedFallback: modelCallBody.usedFallback === true });
 
         // --- PERSISTENCE LOGIC (RECONSTRUCTION) ---
         // Save the conversation to Supabase so it survives reload
@@ -243,16 +207,16 @@ ${contextText.slice(0, 20000)} // Limit context to avoid token limits on free mo
             answer: successResponse,
             citations: [], // RAG citations not easily available without vector search specifics, returning empty
             thought: `Processed by ${successfulModel}`,
-            model: successfulModel
+            model: successfulModel,
+            pipeline: 'model-call'
         });
     }
 
-    // If all failed
-    return NextResponse.json({ 
-        error: 'All AI models are temporarily unavailable. Please try again later.',
-        details: lastError?.message,
-        triedModels: modelList
-    }, { status: 503 });
+    return NextResponse.json({
+      error: modelCallBody?.error || 'All AI models are temporarily unavailable. Please try again later.',
+      details: modelCallBody?.details,
+      pipeline: 'model-call'
+    }, { status: modelCallResponse.status || 503 });
 
   } catch (error: any) {
     console.error('[Chat Fallback] Critical error:', error);
