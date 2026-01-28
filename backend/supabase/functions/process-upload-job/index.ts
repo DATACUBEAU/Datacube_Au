@@ -106,7 +106,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const { userId, ownershipFilter, supabaseAdmin: supabase, error: authError, isAdmin } = await requireAnyAuth(req, body);
+    const { ownershipFilter, supabaseAdmin: supabase, authError, isAdmin } = await requireAnyAuth(req, body);
     supabaseClient = supabase;
 
     if (authError) {

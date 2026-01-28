@@ -18,7 +18,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => ({}));
     
     // 2. Validate Auth (need userId and ownershipFilter)
-    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await validateAuth(req, body);
+    const { userId, ownershipFilter, supabaseAdmin, authError } = await validateAuth(req, body);
 
     if (authError || !userId || !ownershipFilter) {
       return new Response(JSON.stringify({ 

@@ -399,13 +399,18 @@ Example:
 
   } catch (error: any) {
     console.error(`[au-chat] Error [${requestId}]:`, error);
+    const status = typeof error?.status === "number" ? error.status : 500;
+    const safeMessage =
+      status === 401 ? "Unauthorized" :
+      status === 403 ? "Forbidden" :
+      status >= 500 ? "AI service temporarily unavailable. Please try again later." :
+      (error?.message || "Request failed");
     return new Response(JSON.stringify({ 
-      error: error.message || "Internal server error",
-      details: error.stack || String(error),
+      error: safeMessage,
       requestId
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: error.status || 500,
+      status,
     });
   }
 });

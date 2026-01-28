@@ -1,6 +1,55 @@
 // @ts-ignore: Deno modules
 import { corsHeaders } from "../_shared/cors.ts";
 
+const PREDICTION_ENGINE_CANDIDATE_MODELS = [
+  "mistralai/mistral-7b-instruct",
+  "mistralai/mistral-7b-instruct:free",
+  "meta-llama/llama-3.1-8b-instruct",
+  "meta-llama/llama-3-8b-instruct",
+  "google/gemma-7b-it",
+  "google/gemma-2b-it",
+  "deepseek/deepseek-chat",
+  "deepseek/deepseek-r1",
+  "qwen/qwen-2-7b-instruct",
+  "qwen/qwen-1.5-7b-chat",
+  "nousresearch/nous-hermes-2-mistral-7b",
+  "openchat/openchat-7b",
+  "teknium/openhermes-2.5-mistral-7b",
+  "phind/phind-codellama-34b",
+  "gryphe/mythomist-7b",
+  "undi95/toppy-m-7b",
+  "intel/neural-chat-7b",
+  "microsoft/phi-3-medium-128k-instruct",
+  "microsoft/phi-3-mini-128k-instruct",
+  "huggingfaceh4/zephyr-7b-beta",
+] as const;
+
+const modelCooldownUntilMs = new Map<string, number>();
+
+function isModelOnCooldown(modelId: string) {
+  const until = modelCooldownUntilMs.get(modelId);
+  return typeof until === "number" && until > Date.now();
+}
+
+function setModelCooldown(modelId: string, cooldownMs: number) {
+  modelCooldownUntilMs.set(modelId, Date.now() + cooldownMs);
+}
+
+function parseOpenRouterStatus(err: any): number | null {
+  const msg = typeof err?.message === "string" ? err.message : "";
+  const m = msg.match(/OpenRouter (?:API|Embedding) Error:\s*(\d{3})\b/);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) ? n : null;
+}
+
+function sanitizeProviderMessage(err: any): string {
+  const msg = typeof err?.message === "string" ? err.message : "";
+  if (!msg) return "Unknown error";
+  const parts = msg.split(" - ");
+  return parts[0] || "Unknown error";
+}
+
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
   const corsHeadersWithJson = { ...corsHeaders, "Content-Type": "application/json" };
@@ -13,23 +62,11 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { callAU, validateAuth, requireUser, emitEvent } = await import("../_shared/au.ts");
+    const { requireUser, emitEvent } = await import("../_shared/au.ts");
+    const { openrouterChatCompletions } = await import("../_shared/openrouter.ts");
 
     const body = await req.json().catch(() => ({}));
-    const auth = await requireUser(req, body);
-    const { userId, ownershipFilter, supabaseAdmin } = auth;
-    const authError = auth.authError;
-
-    if (authError) {
-      return new Response(JSON.stringify({ 
-        error: authError,
-        details: "Authentication failed",
-        requestId
-      }), {
-        headers: corsHeadersWithJson,
-        status: 401,
-      });
-    }
+    const { userId, ownershipFilter, supabaseAdmin } = await requireUser(req, body);
 
     // Since RLS is disabled, we'll allow proceeding even if userId is missing,
     // but we prefer to have it for usage tracking.
@@ -72,12 +109,6 @@ Deno.serve(async (req: Request) => {
       userPrompt += `\n\nReference context from the main textbook:\n\n${mainTextbookContent.substring(0, 10000)}`;
     }
 
-    const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.4, false, undefined, {
-      userId: userId ?? undefined,
-      ownershipFilter: ownershipFilter,
-      feature: "prediction-engine",
-    });
-    
     const extractJson = (text: string) => {
       const trimmed = (text || "").trim();
       const withoutFences = trimmed
@@ -98,16 +129,53 @@ Deno.serve(async (req: Request) => {
       return null;
     };
 
-    const parsed = extractJson(aiResponse);
+    let aiResponse: string | null = null;
+    let parsed: any | null = null;
+
+    for (const modelId of PREDICTION_ENGINE_CANDIDATE_MODELS) {
+      if (isModelOnCooldown(modelId)) continue;
+
+      try {
+        const res = await openrouterChatCompletions({
+          supabaseAdmin,
+          model: modelId,
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt },
+          ],
+          temperature: 0.4,
+          requestId,
+        });
+
+        aiResponse = res.content;
+        parsed = extractJson(aiResponse);
+        if (!parsed) {
+          throw new Error("Prediction Engine model returned non-JSON output");
+        }
+
+        break;
+      } catch (err: any) {
+        const status = parseOpenRouterStatus(err);
+
+        if (status === 404) setModelCooldown(modelId, 24 * 60 * 60 * 1000);
+        else if (status === 429) setModelCooldown(modelId, 60 * 1000);
+        else if (typeof status === "number" && status >= 500) setModelCooldown(modelId, 2 * 60 * 1000);
+        else setModelCooldown(modelId, 2 * 60 * 1000);
+
+        console.warn(
+          `[prediction-engine] model_failed requestId=${requestId} model=${modelId} status=${status ?? "unknown"} reason=${sanitizeProviderMessage(err)}`,
+        );
+      }
+    }
+    
     if (!parsed) {
+      const safeMessage = "Exam prediction service temporarily unavailable. Please try again later.";
       return new Response(JSON.stringify({
-        error: "Invalid AU response format",
-        details: "Failed to parse AU output as JSON",
+        error: safeMessage,
         requestId,
-        rawResponse: aiResponse,
       }), {
         headers: corsHeadersWithJson,
-        status: 500,
+        status: 503,
       });
     }
 
@@ -133,13 +201,17 @@ Deno.serve(async (req: Request) => {
 
   } catch (error: any) {
     console.error(`[prediction-engine] Error [${requestId}]:`, error);
+    const status = typeof error?.status === "number" ? error.status : 500;
+    const safeMessage =
+      status === 401 || status === 403
+        ? "Unauthorized"
+        : "Exam prediction service temporarily unavailable. Please try again later.";
     return new Response(JSON.stringify({ 
-      error: error.message || "Internal server error",
-      details: error.stack || String(error),
+      error: safeMessage,
       requestId
     }), {
       headers: corsHeadersWithJson,
-      status: error.status || 500,
+      status,
     });
   }
 });

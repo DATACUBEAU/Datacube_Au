@@ -1,5 +1,5 @@
 import { openrouterChatCompletions } from "./openrouter.ts";
-import { getNextAvailableModel, markModelAsFailed } from "./model_registry.ts";
+import { getNextAvailableModelAsync, getVerifiedModelIds, markModelAsFailed } from "./model_registry.ts";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -43,11 +43,11 @@ export async function callAU(
 
   // If still no model (or DB failed), get best available from registry
   if (!currentModel) {
-    currentModel = getNextAvailableModel();
+    currentModel = await getNextAvailableModelAsync(supabaseAdmin);
   }
 
   const attemptedModels: string[] = [];
-  const MAX_RETRIES = 4; // Tier 1 -> 2 -> 3 -> 4 roughly maps to 4 retries if we switch tiers
+  const MAX_RETRIES = Math.max(0, Math.min(getVerifiedModelIds().length, 20) - 1);
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -92,17 +92,18 @@ export async function callAU(
       console.warn(`[ai] Model ${currentModel} failed: ${error.message}`);
       
       // Mark as failed in registry (cooldown)
-      markModelAsFailed(currentModel);
+      markModelAsFailed(currentModel, typeof error?.status === "number" ? error.status : undefined);
       attemptedModels.push(currentModel);
 
       // If we've exhausted retries, throw the last error
       if (attempt === MAX_RETRIES) {
-        throw new Error(`All model attempts failed. Chain: ${attemptedModels.join(" -> ")}. Last error: ${error.message}`);
+        console.warn(`[ai] Exhausted model attempts. Chain: ${attemptedModels.join(" -> ")}.`);
+        throw new Error("All AI models are currently unavailable.");
       }
 
       // Prepare next model
       // We exclude everything we've already tried in this request
-      currentModel = getNextAvailableModel(attemptedModels);
+      currentModel = await getNextAvailableModelAsync(supabaseAdmin, attemptedModels);
     }
   }
 

@@ -284,7 +284,7 @@ export async function callAU(
   usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any }
 ): Promise<string> {
   const { openrouterChatCompletions } = await import("./openrouter.ts");
-  const { getNextAvailableModel, markModelAsFailed } = await import("./model_registry.ts");
+  const { getNextAvailableModelAsync, getVerifiedModelIds, markModelAsFailed } = await import("./model_registry.ts");
 
   let model = modelOverride;
   if (!model) {
@@ -308,11 +308,11 @@ export async function callAU(
 
   // Retry loop for model fallback
   let attempts = 0;
-  const MAX_ATTEMPTS = 6;
+  const MAX_ATTEMPTS = Math.max(1, Math.min(getVerifiedModelIds().length, 20));
   let lastError: Error | null = null;
   
   // Initialize currentModel. If "auto", pick one. If specific override, start there.
-  let currentModel = model === "auto" ? getNextAvailableModel([]) : model;
+  let currentModel = model === "auto" ? await getNextAvailableModelAsync(supabaseAdmin, []) : model;
 
   // Keep track of tried models in this session to avoid cycles
   const triedModels = new Set<string>();
@@ -320,7 +320,7 @@ export async function callAU(
   while (attempts < MAX_ATTEMPTS) {
     // If the current model has already been tried (e.g. from exclusion list in previous recursion or loop), get another one.
     if (triedModels.has(currentModel)) {
-       currentModel = getNextAvailableModel(Array.from(triedModels));
+       currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels));
     }
     
     // Double check: if even the new one is tried, we might be stuck. 
@@ -369,15 +369,18 @@ export async function callAU(
     } catch (err: any) {
       console.warn(`[au.ts] Model ${currentModel} failed: ${err.message}`);
       lastError = err;
-      markModelAsFailed(currentModel);
+      markModelAsFailed(currentModel, typeof err?.status === "number" ? err.status : undefined);
       
       // Get next best model, excluding all we have tried so far
-      currentModel = getNextAvailableModel(Array.from(triedModels));
+      currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels));
       attempts++;
     }
   }
 
-  throw lastError || new Error("All AI models are currently unavailable.");
+  if (lastError) {
+    console.warn(`[au.ts] Exhausted model attempts. Last error: ${lastError.message}`);
+  }
+  throw new Error("All AI models are currently unavailable.");
 }
 
 /**

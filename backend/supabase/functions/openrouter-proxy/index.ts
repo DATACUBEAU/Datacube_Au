@@ -1,8 +1,5 @@
 // @ts-ignore: Deno modules
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-// @ts-ignore: Deno modules
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
-import { corsHeaders, callAU, validateAuth, requireAdmin } from "../_shared/au.ts";
+import { corsHeaders, callAU, requireAdmin } from "../_shared/au.ts";
 
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
@@ -17,22 +14,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const body = await req.json().catch(() => ({}));
-    const auth = await requireAdmin(req, body);
-    
-    if (auth.error) {
-      return new Response(JSON.stringify({ 
-        error: auth.error,
-        details: "Admin authentication failed",
-        requestId
-      }), {
-        headers: corsHeadersWithJson,
-        status: 401,
-      });
-    }
-
-    const userId = auth.userId as string | null;
-    const ownershipFilter = auth.ownershipFilter;
-    const supabaseAdmin = auth.supabaseAdmin;
+    const { userId, ownershipFilter, supabaseAdmin } = await requireAdmin(req, body);
 
     const { systemPrompt, userPrompt, model, temperature } = body;
 

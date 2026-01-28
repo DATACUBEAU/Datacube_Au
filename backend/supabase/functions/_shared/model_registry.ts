@@ -38,22 +38,33 @@ export const FALLBACK_CHAIN = [
 ];
 
 // In-memory cache for failed models (persists only while Edge Function instance is warm)
-// Key: Model ID, Value: Timestamp when it failed
+// Key: Model ID, Value: Timestamp (ms) until it should be retried
 const FAILED_MODELS = new Map<string, number>();
-const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const COOLDOWN_404_MS = 24 * 60 * 60 * 1000; // 24 hours
+const COOLDOWN_429_MS = 60 * 1000; // 60 seconds
+const COOLDOWN_5XX_MS = 2 * 60 * 1000; // 2 minutes
 
-export function markModelAsFailed(modelId: string) {
-  FAILED_MODELS.set(modelId, Date.now());
-  console.warn(`[ModelRegistry] Marked model as failed: ${modelId} (Cooldown: ${COOLDOWN_MS}ms)`);
+const VALIDATION_TTL_MS = 5 * 60 * 1000; // 5 minutes
+let validatedCache: { models: Model[]; expiresAt: number } | null = null;
+
+export function markModelAsFailed(modelId: string, status?: number) {
+  let cooldownMs = DEFAULT_COOLDOWN_MS;
+  if (status === 404) cooldownMs = COOLDOWN_404_MS;
+  else if (status === 429) cooldownMs = COOLDOWN_429_MS;
+  else if (typeof status === "number" && status >= 500) cooldownMs = COOLDOWN_5XX_MS;
+
+  const retryAt = Date.now() + cooldownMs;
+  FAILED_MODELS.set(modelId, retryAt);
+  console.warn(`[ModelRegistry] Marked model as failed: ${modelId} (Cooldown: ${cooldownMs}ms)`);
 }
 
 function isModelInCooldown(modelId: string): boolean {
-  const failedAt = FAILED_MODELS.get(modelId);
-  if (!failedAt) return false;
-  
-  const elapsed = Date.now() - failedAt;
-  if (elapsed > COOLDOWN_MS) {
-    FAILED_MODELS.delete(modelId); // Cooldown expired
+  const retryAt = FAILED_MODELS.get(modelId);
+  if (!retryAt) return false;
+
+  if (Date.now() >= retryAt) {
+    FAILED_MODELS.delete(modelId);
     return false;
   }
   return true;
@@ -91,6 +102,44 @@ export function getNextAvailableModel(exclude: string[] = []): string {
   return picked.id;
 }
 
+export async function getNextAvailableModelAsync(supabaseAdmin: any, exclude: string[] = []): Promise<string> {
+  let sourceModels = VERIFIED_FREE_MODELS;
+  if (validatedCache && Date.now() < validatedCache.expiresAt) {
+    sourceModels = validatedCache.models.length > 0 ? validatedCache.models : VERIFIED_FREE_MODELS;
+  } else {
+    try {
+      const validated = await validateAvailableModels(supabaseAdmin);
+      validatedCache = { models: validated, expiresAt: Date.now() + VALIDATION_TTL_MS };
+      sourceModels = validated.length > 0 ? validated : VERIFIED_FREE_MODELS;
+    } catch {
+      sourceModels = VERIFIED_FREE_MODELS;
+    }
+  }
+
+  const chain = [
+    ...sourceModels.filter(m => m.tier === 1),
+    ...sourceModels.filter(m => m.tier === 2),
+    ...sourceModels.filter(m => m.tier === 3),
+    ...sourceModels.filter(m => m.tier === 4),
+  ];
+
+  const candidates = chain.filter(m => {
+    if (exclude.includes(m.id)) return false;
+    if (isModelInCooldown(m.id)) return false;
+    return true;
+  });
+
+  if (candidates.length === 0) {
+    console.warn("[ModelRegistry] All models failed or excluded. Resetting exclusions as last resort.");
+    return VERIFIED_FREE_MODELS[0].id;
+  }
+
+  const topTier = candidates[0].tier;
+  const topTierCandidates = candidates.filter(m => m.tier === topTier);
+  const picked = topTierCandidates[Math.floor(Math.random() * topTierCandidates.length)];
+  return picked.id;
+}
+
 export function getVerifiedModelIds() {
     return VERIFIED_FREE_MODELS.map(m => m.id);
 }
@@ -120,7 +169,15 @@ export async function validateAvailableModels(supabaseAdmin: any): Promise<Model
         if (!res.ok) throw new Error(`Failed to fetch models: ${res.status}`);
         
         const data = await res.json();
-        const availableIds = new Set((data.data || []).map((m: any) => m.id));
+        const availableIds = new Set(
+          (data.data || [])
+            .filter((m: any) => {
+              const endpoints = m?.endpoints;
+              if (!endpoints) return true;
+              return Array.isArray(endpoints) && endpoints.length > 0;
+            })
+            .map((m: any) => m.id)
+        );
         
         const validated = VERIFIED_FREE_MODELS.filter(m => availableIds.has(m.id));
         console.log(`[ModelRegistry] Validation complete. ${validated.length}/${VERIFIED_FREE_MODELS.length} models available.`);

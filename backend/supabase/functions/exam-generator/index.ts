@@ -102,13 +102,11 @@ Deno.serve(async (req: Request) => {
 
     if (!result) {
       return new Response(JSON.stringify({ 
-        error: "Parse failed",
-        details: "AU returned invalid JSON",
+        error: "Exam generation service temporarily unavailable. Please try again later.",
         requestId,
-        raw: aiResponse
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 500,
+        status: 502,
       });
     }
 
@@ -132,13 +130,17 @@ Deno.serve(async (req: Request) => {
 
   } catch (error: any) {
     console.error(`[exam-generator] Error [${requestId}]:`, error);
+    const status = typeof error?.status === "number" ? error.status : 500;
+    const safeMessage =
+      status === 401 || status === 403
+        ? "Unauthorized"
+        : "Exam generation service temporarily unavailable. Please try again later.";
     return new Response(JSON.stringify({ 
-      error: error.message || "Internal server error",
-      details: error.stack || String(error),
+      error: safeMessage,
       requestId
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: error.status || 500,
+      status,
     });
   }
 });
