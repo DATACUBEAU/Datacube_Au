@@ -16,7 +16,9 @@ Deno.serve(async (req: Request) => {
     const { callAU, validateAuth, requireUser } = await import("../_shared/au.ts");
 
     const body = await req.json().catch(() => ({}));
-    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireUser(req, body);
+    const auth = await requireUser(req, body);
+    const { userId, ownershipFilter, supabaseAdmin } = auth;
+    const authError = auth.authError;
 
     if (authError) {
       return new Response(JSON.stringify({ 

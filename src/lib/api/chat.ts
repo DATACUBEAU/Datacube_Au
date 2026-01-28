@@ -101,7 +101,7 @@ export async function getAvailableModels(accessToken?: string): Promise<string[]
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ action: 'get_models' }),
-    });
+    }, { silent: true });
 
     const models = (result as any)?.models;
     if (Array.isArray(models)) {

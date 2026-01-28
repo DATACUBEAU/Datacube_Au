@@ -29,14 +29,6 @@ export async function safeFetch(url: string, options: RequestInit, config?: { si
   }
 
   if (!res.ok) {
-    if (!config?.silent) {
-      console.error("API error", {
-        status: res.status,
-        statusText: res.statusText,
-        body,
-      });
-    }
-
     // Extract meaningful error message
     let errorMessage = `API Error ${res.status}`;
     if (body) {
@@ -45,6 +37,13 @@ export async function safeFetch(url: string, options: RequestInit, config?: { si
       } else if (typeof body === 'object') {
         errorMessage = body.error || body.message || body.details || JSON.stringify(body);
       }
+    }
+
+    if (!config?.silent) {
+      console.error(`[safeFetch] API error ${res.status} (${res.statusText}) on ${url}:`, {
+        body,
+        errorMessage
+      });
     }
 
     const error = new Error(errorMessage);

@@ -108,7 +108,16 @@ export async function validateAuth(req: Request, body?: any) {
               userId = decodedPayload.sub || decodedPayload.guest_session_id || null;
               
               if (decodedPayload.exp && Date.now() / 1000 > decodedPayload.exp) {
-                return { user: null, userId: null, error: "Token expired" };
+                return { 
+                  user: null, 
+                  userId: null, 
+                  isGuest: false,
+                  isAdmin: false,
+                  authError: "Token expired",
+                  ownershipFilter: null,
+                  supabaseClient: anonClient,
+                  supabaseAdmin: getServiceClient()
+                };
               }
 
               // Check for admin/service_role in JWT claims

@@ -97,6 +97,27 @@ const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, s
 const defaultGuideText = "Use this AU Guide to tell the assistant how you like to interact. For example, ask for short explanations, creative ideas, or code snippets.";
 const GLOBAL_CHAT_ID = 'global';
 
+function sanitizeAnswer(text: string) {
+  const raw = text ?? '';
+  const withoutMarkdownBold = raw.replace(/\*\*/g, '');
+  const withoutBrackets = withoutMarkdownBold.replace(/[\[\]]/g, '');
+  const withoutSourceLines = withoutBrackets
+    .split('\n')
+    .filter((line) => !/^\s*source:\s*web\s*lookup\b/i.test(line))
+    .join('\n');
+  return withoutSourceLines.trim();
+}
+
+function sanitizeThought(text?: string) {
+  const raw = text ?? '';
+  const withoutInternalWords = raw.replace(
+    /\b(exploratory|retrieving|retrieval|syncing|chunk(?:s)?|pipeline|lookup|document(?:s)?)\b/gi,
+    ''
+  );
+  const normalized = withoutInternalWords.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 export default function GlobalChatPage() {
   const { toast } = useToast();
   const [user] = useSupabaseUser();
@@ -104,7 +125,7 @@ export default function GlobalChatPage() {
 
   // Hardcoded to 'global'
   const selectedDocId = GLOBAL_CHAT_ID;
-  const selectedDocName = "Global Assistant";
+  const selectedDocName = "AU Global Assistant";
 
   const { 
     history: currentChatHistory, 
@@ -323,20 +344,24 @@ export default function GlobalChatPage() {
               </TooltipContent>
             </Tooltip>
             </TooltipProvider>
+<DropdownMenu>
+  <DropdownMenuTrigger asChild>
+    <Button variant="ghost" size="icon" className="h-10 w-10">
+      <MoreVertical className="h-5 w-5" />
+    </Button>
+  </DropdownMenuTrigger>
 
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-10 w-10">
-                  <MoreVertical className="h-5 w-5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setIsClearChatOpen(true)} className="text-destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Clear Chat History
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+  <DropdownMenuContent align="end">
+    <DropdownMenuItem
+      className="text-destructive"
+      onClick={clearChat}
+    >
+      <Trash2 className="mr-2 h-4 w-4" />
+      Clear Chat History
+    </DropdownMenuItem>
+  </DropdownMenuContent>
+</DropdownMenu>
+
           </div>
         </div>
       </header>
@@ -377,6 +402,10 @@ export default function GlobalChatPage() {
                       </div>
                     </div>
                   ) : (
+                    (() => {
+                      const sanitizedAnswer = sanitizeAnswer(message.content);
+                      const sanitizedThought = sanitizeThought(message.thought);
+                      return (
                     <div className="flex items-start gap-4">
                       <Avatar className="h-9 w-9 flex items-center justify-center bg-primary flex-shrink-0 shadow-sm">
                         <Icons.logo className="h-5 w-5 text-primary-foreground" aria-hidden="true" />
@@ -386,10 +415,10 @@ export default function GlobalChatPage() {
                           <ThinkingProcess isThinking={true} />
                         ) : (
                           <div className="space-y-4">
-                            {message.thought && (
-                              <ThinkingProcess isThinking={false} thought={message.thought} />
+                            {sanitizedThought && (
+                              <ThinkingProcess isThinking={false} thought={sanitizedThought} />
                             )}
-                            <TypingAnimation content={message.content} shouldAnimate={idx === currentChatHistory.length - 1 && isResponding} />
+                            <TypingAnimation content={sanitizedAnswer} shouldAnimate={idx === currentChatHistory.length - 1 && isResponding} />
                             
                             {message.citations && message.citations.length > 0 && (
                               <div>
@@ -425,6 +454,8 @@ export default function GlobalChatPage() {
                         )}
                       </div>
                     </div>
+                      );
+                    })()
                   )}
                 </div>
               ))}
@@ -465,18 +496,7 @@ export default function GlobalChatPage() {
       </TooltipProvider>
 
       {/* Clear Chat Dialog */}
-      <AlertDialog open={isClearChatOpen} onOpenChange={setIsClearChatOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear Global History?</AlertDialogTitle>
-            <AlertDialogDescription>This will clear your local conversation history with the Global Assistant.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={clearChat} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Yes, Clear History</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+     {/* i removed it */}
     </main>
   );
 }

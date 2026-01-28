@@ -31,7 +31,9 @@ Deno.serve(async (req: Request) => {
     }
 
     // 3. Authenticate
-    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await requireAnyAuth(req, body);
+    const auth = await requireAnyAuth(req, body);
+    const { userId, ownershipFilter, supabaseAdmin } = auth;
+    const authError = auth.authError;
 
     if (authError) {
       return new Response(JSON.stringify({ 
