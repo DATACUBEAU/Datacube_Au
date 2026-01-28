@@ -6,6 +6,8 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
 
+const AUTO_CLEAR_MS = 3 * 24 * 60 * 60 * 1000;
+
 export function useAuChat(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
   const [session] = useSupabaseSession();
@@ -19,7 +21,7 @@ export function useAuChat(selectedDocId: string | null) {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState<string>('');
+  const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [isInitialized, setIsInitialized] = useState(false);
 
   // --- Load Models ---
@@ -27,20 +29,28 @@ export function useAuChat(selectedDocId: string | null) {
     if (!user) return;
 
     getAvailableModels(session?.access_token)
-      .then(models => {
-        setAvailableModels(models);
-        setSelectedModel(prev => {
-          if (prev && models.includes(prev)) return prev;
-          return models[0] || '';
-        });
-      })
+      .then(models => setAvailableModels(models))
       .catch(err => console.error("Failed to load models:", err));
   }, [user, session]);
 
   // --- PERSISTENCE: Load history on mount or doc change ---
   useEffect(() => {
     if (selectedDocId && user?.id) {
-      const savedHistory = localStorage.getItem(`au_chat_history_${user.id}_${selectedDocId}`);
+      const historyKey = `au_chat_history_${user.id}_${selectedDocId}`;
+      const lastActiveKey = `au_chat_last_active_${user.id}_${selectedDocId}`;
+
+      const lastActiveRaw = localStorage.getItem(lastActiveKey);
+      if (lastActiveRaw) {
+        const lastActive = Number(lastActiveRaw);
+        if (Number.isFinite(lastActive) && Date.now() - lastActive > AUTO_CLEAR_MS) {
+          localStorage.removeItem(historyKey);
+          setHistory([]);
+          setIsInitialized(true);
+          return;
+        }
+      }
+
+      const savedHistory = localStorage.getItem(historyKey);
       if (savedHistory) {
         try {
           setHistory(JSON.parse(savedHistory));
@@ -62,6 +72,7 @@ export function useAuChat(selectedDocId: string | null) {
   useEffect(() => {
     if (selectedDocId && user?.id && history.length > 0) {
       localStorage.setItem(`au_chat_history_${user.id}_${selectedDocId}`, JSON.stringify(history));
+      localStorage.setItem(`au_chat_last_active_${user.id}_${selectedDocId}`, Date.now().toString());
     }
   }, [history, selectedDocId, user?.id]);
 
@@ -69,8 +80,7 @@ export function useAuChat(selectedDocId: string | null) {
     setHistory([]);
     if (user?.id && selectedDocId) {
       localStorage.removeItem(`au_chat_history_${user.id}_${selectedDocId}`);
-      // Also clear prompt starters cache if needed
-      localStorage.removeItem(`chat_prompt_starters_${user.id}_${selectedDocId}`);
+      localStorage.removeItem(`au_chat_last_active_${user.id}_${selectedDocId}`);
     }
   }, [user?.id, selectedDocId]);
 
@@ -109,10 +119,11 @@ export function useAuChat(selectedDocId: string | null) {
     try {
       // Step 1: Simulated "Steps" to mimic Trae's thinking behavior
       const thinkingSteps = [
-        'Thinking...',
-        'Analyzing request...',
-        'Connecting ideas...',
-        'Formulating response...'
+        'Searching document index...',
+        'Extracting relevant knowledge chunks...',
+        'Synthesizing cross-references...',
+        'Applying user guide preferences...',
+        'Formulating analytical response...'
       ];
 
       let currentStep = 0;
@@ -131,45 +142,18 @@ export function useAuChat(selectedDocId: string | null) {
         guide: options?.guide,
         summaryMode: options?.summaryMode,
         browsingMode: options?.browsingMode,
-        model: selectedModel || undefined
+        model: selectedModel === 'auto' ? undefined : selectedModel
       }, session?.access_token);
 
       if (thinkingInterval) clearInterval(thinkingInterval);
       setAuAnimationState('responding');
       setAuThinkingStatus('Response ready.');
-
-      // Parse JSON response if leaked into answer
-      let finalAnswer = result.answer;
-      let finalThought = result.thought;
-
-      try {
-        // Robust JSON extraction (handles Markdown blocks ```json ... ```)
-        const jsonMatch = finalAnswer.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            try {
-                const parsed = JSON.parse(jsonMatch[0]);
-                if (parsed.thought && parsed.answer) {
-                    finalThought = parsed.thought;
-                    finalAnswer = parsed.answer;
-                } else if (parsed.response && parsed.thinking) {
-                    // Handle alternative keys just in case
-                    finalThought = parsed.thinking;
-                    finalAnswer = parsed.response;
-                }
-            } catch (e) {
-                // Parsing failed, keep original
-            }
-        }
-      } catch (e) {
-        // Fallback to original text if parse fails
-      }
-
       setHistory(prev => prev.map(m => m.id === loadingId ? {
         id: loadingId,
         role: 'assistant',
-        content: finalAnswer,
+        content: result.answer,
         citations: result.citations,
-        thought: finalThought
+        thought: result.thought
       } : m));
       return result;
     } catch (err: any) {
@@ -193,7 +177,7 @@ export function useAuChat(selectedDocId: string | null) {
         setAuAnimationState('idle');
       }, 3000);
     }
-  }, [selectedDocId, user, session, history, selectedModel]);
+  }, [selectedDocId, user, session, history, selectedModel, setAuAnimationState, setAuThinkingStatus]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
@@ -230,7 +214,7 @@ export function useAuChat(selectedDocId: string | null) {
             messages: [{ id: 'system-init', role: 'user', content: 'INIT_GREETING' }], // Dummy message
             selectedDocId,
             action: 'scan_and_greet',
-            model: selectedModel || undefined
+            model: selectedModel === 'auto' ? undefined : selectedModel
         }, session?.access_token);
 
         if (thinkingInterval) clearInterval(thinkingInterval);
@@ -264,7 +248,7 @@ export function useAuChat(selectedDocId: string | null) {
           setAuAnimationState('idle');
         }, 3000);
     }
-  }, [selectedDocId, user, session, history.length]);
+  }, [selectedDocId, user, session, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus]);
 
   const fetchPrompts = useCallback(async (title: string, content: string, idea?: string) => {
     try {

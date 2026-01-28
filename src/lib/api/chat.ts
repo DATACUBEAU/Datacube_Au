@@ -29,16 +29,7 @@ export type ChatRequest = {
   model?: string; // Add model parameter
 };
 
-const DEFAULT_MODEL_IDS: string[] = [
-  "google/gemini-2.0-flash-exp:free",
-  "google/gemini-2.0-pro-exp-02-05:free",
-  "deepseek/deepseek-r1:free",
-  "meta-llama/llama-3.1-8b-instruct:free",
-  "qwen/qwen-2.5-72b-instruct:free",
-  "google/gemini-2.0-flash-lite-preview-02-05:free",
-  "deepseek/deepseek-r1-distill-llama-70b:free",
-  "mistralai/mistral-7b-instruct:free",
-];
+const DEFAULT_MODEL_IDS: string[] = []; // Intentionally empty to enforce backend source of truth
 
 /**
  * Sends a chat request to the au-chat Edge Function.
@@ -110,7 +101,7 @@ export async function getAvailableModels(accessToken?: string): Promise<string[]
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ action: 'get_models' }),
-    }, { silent: true });
+    });
 
     const models = (result as any)?.models;
     if (Array.isArray(models)) {

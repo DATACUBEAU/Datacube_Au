@@ -4,7 +4,6 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { formatDistanceStrict } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Activity,
   Loader2,
   Wand2,
   Sparkles,
@@ -55,16 +54,6 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Icons } from '@/components/icons';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
@@ -159,11 +148,7 @@ export default function ChatPage() {
     stopGeneration,
     scanAndGreet,
     fetchPrompts,
-    expiresAt,
-    isInitialized,
-    clearChat: clearProviderChat,
-    availableModels,
-    selectedModel
+    isInitialized
   } = useAuChat(selectedDocId);
 
   // Sync AU State with Global Background Animation
@@ -171,11 +156,7 @@ export default function ChatPage() {
   const auAnimationState = useStore(state => state.auAnimationState);
   
 
-  const activeModel = useMemo(() => {
-    const id = selectedModel || availableModels[0];
-    if (!id) return null;
-    return { id, status: 'active' as const, name: id };
-  }, [availableModels, selectedModel]);
+
 
   useEffect(() => {
     let newState: 'idle' | 'thinking' | 'responding' = 'idle';
@@ -233,7 +214,7 @@ export default function ChatPage() {
   const [summaryMode, setSummaryMode] = useState<'short' | 'mid' | 'detailed' | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [isClearChatOpen, setIsClearChatOpen] = useState(false);
+
 
   // --- First-Time Engagement Logic ---
   const greetingAttemptedRef = useRef<Set<string>>(new Set());
@@ -297,12 +278,6 @@ export default function ChatPage() {
     setSummaryMode(prev => prev === mode ? null : mode);
   };
 
-  const clearChat = () => {
-    clearProviderChat();
-    // Toast is handled by provider? Let's check provider code.
-    // Provider code: toast({ title: "Chat cleared", description: "The conversation history has been reset." });
-    // So we don't need to toast here.
-  };
 
   const deleteMessage = (messageId: string) => {
     setCurrentChatHistory(prev => prev.filter(m => m.id !== messageId));
@@ -429,23 +404,23 @@ export default function ChatPage() {
       }
   }, [currentChatHistory, isResponding, setCurrentChatHistory]);
 
-  const updateUrlParams = (docId: string | null) => {
-      if (!docId) return;
-      const url = new URL(window.location.href);
-      url.searchParams.set('docId', docId);
-      window.history.pushState({}, '', url);
-  };
+  const updateUrlParams = useCallback((docId: string | null) => {
+    if (!docId) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('docId', docId);
+    window.history.pushState({}, '', url);
+  }, []);
 
-  const handleDocSelection = (newSelectedId: string | null) => {
+  const handleDocSelection = useCallback((newSelectedId: string | null) => {
     if (newSelectedId !== selectedDocId) {
       setIsSwitchingDocs(true);
       setSelectedDocId(newSelectedId);
-      updateUrlParams(newSelectedId); // Update URL
+      updateUrlParams(newSelectedId);
       setCurrentChatHistory([]);
       setPromptStarters([]);
-      setTimeout(() => setIsSwitchingDocs(false), 100); // Give time for other effects to catch up
+      setTimeout(() => setIsSwitchingDocs(false), 100);
     }
-  };
+  }, [selectedDocId, updateUrlParams, setCurrentChatHistory]);
 
   // Handle URL params for deep linking
   useEffect(() => {
@@ -454,7 +429,7 @@ export default function ChatPage() {
       if (docIdParam && docIdParam !== selectedDocId && documentList.some(d => d.id === docIdParam)) {
           handleDocSelection(docIdParam);
       }
-  }, [documentList, selectedDocId]);
+  }, [documentList, selectedDocId, handleDocSelection]);
 
   useEffect(() => {
     if (docsLoading || !user) return;
@@ -592,9 +567,6 @@ export default function ChatPage() {
       const documentContent = await getDocumentContent(selectedDocId);
       if (!documentContent) return;
       
-      // Smart suggestion: Scan chat history and document patterns
-      const historyContext = currentChatHistory.slice(-5).map(m => `${m.role}: ${m.content}`).join('\n');
-      
       const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
       
       const result = await safeFetch(`${SUPABASE_URL}/functions/v1/au-chat`, {
@@ -606,7 +578,7 @@ export default function ChatPage() {
         body: JSON.stringify({ 
           messages: [{ 
             role: 'user', 
-            content: `Based on the document "${selectedDocName}" and the recent chat history:\n${historyContext}\n\nGenerate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
+            content: `Based on the document "${selectedDocName}", generate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
           }],
           useRAG: true,
           selectedDocId
@@ -634,20 +606,29 @@ export default function ChatPage() {
       setIsFetchingPrompts(false);
       fetchingPromptsRef.current = false;
     }
-  }, [selectedDocId, selectedDocName, user, session, getDocumentContent, isOnline, currentChatHistory]);
+  }, [selectedDocId, selectedDocName, user, session, getDocumentContent, isOnline]);
+
+  const PROMPT_GENERATED_KEY = (userId: string, docId: string) => `au_prompt_generated_${userId}_${docId}`;
 
   useEffect(() => {
     if (!selectedDocId || !user) {
       setPromptStarters([]);
       return;
     }
-    
-    // Always fetch prompts (or load from cache) when document changes
+
+    const generatedKey = PROMPT_GENERATED_KEY(user.id, selectedDocId);
+    if (localStorage.getItem(generatedKey) === 'true') {
+      return;
+    }
+
     const storedPrompts = localStorage.getItem(getLocalStorageKey(user.id, selectedDocId));
     if (storedPrompts) {
       setPromptStarters(JSON.parse(storedPrompts));
+      localStorage.setItem(generatedKey, 'true');
     } else if (isOnline) {
-      fetchPromptStarters();
+      fetchPromptStarters().finally(() => {
+        localStorage.setItem(generatedKey, 'true');
+      });
     }
   }, [selectedDocId, user, isOnline, fetchPromptStarters]);
 
@@ -762,17 +743,8 @@ export default function ChatPage() {
 
   return (
     <main className="flex h-[calc(100dvh-3.5rem)] flex-col">
-      <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background px-4 py-3 md:h-14 md:flex-row md:items-center md:px-8 shrink-0">
-        <div className="flex flex-col">
-            <h1 className="font-headline text-lg font-semibold md:text-xl">AU Chat Workspace</h1>
-            {activeModel && (
-                <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground animate-in fade-in slide-in-from-left-2">
-                    <Activity className={`h-3 w-3 ${activeModel.status === 'active' ? 'text-green-500' : 'text-orange-500'}`} />
-                    <span>Auto-selected: {activeModel.name}</span>
-                </div>
-            )}
-        </div>
-        <div className="flex w-full flex-col gap-2 md:ml-auto md:w-auto md:flex-row md:items-center">
+      <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background px-4 py-3 md:h-14 md:flex-row md:items-center md:justify-end md:px-8 shrink-0">
+        <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
           <div className="flex items-center gap-2">
             <Select onValueChange={id => handleDocSelection(id)} value={selectedDocId || ''} disabled={docsLoading}>
               <SelectTrigger className="min-w-0 md:min-w-[250px]">
@@ -802,12 +774,17 @@ export default function ChatPage() {
               </SelectContent>
             </Select>
 
-            {expiresAt && (
-               <Badge variant="outline" className={`hidden md:flex items-center gap-1 text-xs border-dashed ${user?.is_anonymous ? "text-orange-600 border-orange-200 bg-orange-50" : "text-muted-foreground"}`}>
-                 <History className="h-3 w-3" />
-                 {user?.is_anonymous ? "Guest: " : ""}{Math.max(0, Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60)))}h left
-               </Badge>
-            )}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Badge variant="outline" className="hidden md:flex items-center gap-1 text-xs border-dashed text-muted-foreground cursor-default">
+                  <History className="h-3 w-3" />
+                  Auto-clear: 3 days
+                </Badge>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Chat history auto-clears after 3 days of inactivity.</p>
+              </TooltipContent>
+            </Tooltip>
 
             <Tooltip>
               <TooltipTrigger asChild>
@@ -833,11 +810,8 @@ export default function ChatPage() {
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => setIsClearChatOpen(true)} className="text-destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Clear Chat History
-                </DropdownMenuItem>
-                <div className="h-px bg-muted my-1" />
+
+
                 <DropdownMenuItem onClick={() => handleSummaryAction('short')}>
                   <Scissors className="mr-2 h-4 w-4" />
                   Short Summary
@@ -1235,6 +1209,8 @@ export default function ChatPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+
       
       <Dialog open={isGuideOpen} onOpenChange={setIsGuideOpen}>
         <DialogContent className="sm:max-w-[500px]">
@@ -1266,24 +1242,7 @@ export default function ChatPage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={isClearChatOpen} onOpenChange={setIsClearChatOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Clear Chat History?</AlertDialogTitle>
-            <AlertDialogDescription>
-              ⚠️ Clearing chat history will remove AU&apos;s memory for this document. AU will no longer remember your learning progress here.
-              <br/><br/>
-              This will clear your local conversation history. It will NOT delete the document itself or any exam predictions.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={clearChat} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Yes, Clear History
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+
     </main>
   );
 }

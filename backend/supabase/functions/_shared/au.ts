@@ -250,7 +250,7 @@ export async function generateEmbedding(
     }
   }
 
-  resolvedModel = resolvedModel || "openai/text-embedding-ada-002";
+  resolvedModel = resolvedModel || "google/gemini-2.0-flash-lite-preview-02-05:free";
 
   const { embeddings } = await openrouterEmbeddings({
     supabaseAdmin,
@@ -309,10 +309,18 @@ export async function callAU(
   const triedModels = new Set<string>();
 
   while (attempts < MAX_ATTEMPTS) {
+    // If the current model has already been tried (e.g. from exclusion list in previous recursion or loop), get another one.
     if (triedModels.has(currentModel)) {
-       // If we already tried this model in this request, skip it and get another
        currentModel = getNextAvailableModel(Array.from(triedModels));
     }
+    
+    // Double check: if even the new one is tried, we might be stuck. 
+    // getNextAvailableModel should handle exclusion, but let's be safe.
+    if (triedModels.has(currentModel)) {
+        // Force reset or just pick random to avoid infinite loop of same failures
+        console.warn(`[au.ts] Exhausted models or circular logic. Forced to retry ${currentModel}`);
+    }
+
     triedModels.add(currentModel);
 
     try {
