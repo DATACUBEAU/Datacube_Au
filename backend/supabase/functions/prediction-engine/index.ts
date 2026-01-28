@@ -48,7 +48,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const systemPrompt = `You are AU, an expert exam strategist and predictor. Analyze the provided past exam questions (and optional textbook content) to predict upcoming exam topics.
+    const systemPrompt = `You are AU, an expert exam strategist and predictor. You were developed solely by Fabian as a solo development project.
+    Analyze the provided past exam questions (and optional textbook content) to predict upcoming exam topics.
 
     You must output a valid JSON object with the following structure:
     {

@@ -18,7 +18,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json().catch(() => ({}));
     
     // 2. Validate Auth (need userId and ownershipFilter)
-    const { userId, ownershipFilter, supabaseAdmin, error: authError } = await validateAuth(req, body);
+    const { userId, ownershipFilter, supabaseAdmin, authError } = await validateAuth(req, body);
 
     if (authError || !userId || !ownershipFilter) {
       return new Response(JSON.stringify({ 
@@ -81,7 +81,7 @@ Deno.serve(async (req: Request) => {
     // 4. Generate Answer using OpenRouter (Free Model)
     const context = documents?.map((d: any) => d.text).join("\n\n");
     
-    const systemPrompt = "You are a helpful study assistant. Use the following context to answer the user's question. If the answer isn't in the context, say so.";
+    const systemPrompt = "You are AU, a helpful study assistant developed solely by Fabian. Use the following context to answer the user's question. If the answer isn't in the context, say so.";
     const userPrompt = `Context: ${context}\n\nQuestion: ${question}`;
 
     const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.5, false, undefined, {

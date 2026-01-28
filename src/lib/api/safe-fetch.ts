@@ -35,6 +35,7 @@ export async function safeFetch(url: string, options: RequestInit, config?: { si
       if (typeof body === 'string') {
         errorMessage = body;
       } else if (typeof body === 'object') {
+        // Prioritize 'error' field as it usually contains our clean message
         errorMessage = body.error || body.message || body.details || JSON.stringify(body);
       }
     }

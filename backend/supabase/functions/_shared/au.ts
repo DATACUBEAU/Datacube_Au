@@ -284,7 +284,7 @@ export async function callAU(
   usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any }
 ): Promise<string> {
   const { openrouterChatCompletions } = await import("./openrouter.ts");
-  const { getNextAvailableModel, markModelAsFailed } = await import("./model_registry.ts");
+  const { getNextAvailableModel, markModelAsFailed, getVerifiedModelIds } = await import("./model_registry.ts");
 
   let model = modelOverride;
   if (!model) {
@@ -307,27 +307,28 @@ export async function callAU(
   model = model || "auto";
 
   // Retry loop for model fallback
+  const verifiedModels = getVerifiedModelIds();
+  // Always allow trying all verified models as fallbacks, 
+  // even if a specific model was initially requested.
+  const MAX_ATTEMPTS = Math.max(verifiedModels.length, 6);
   let attempts = 0;
-  const MAX_ATTEMPTS = 6;
-  let lastError: Error | null = null;
+  let lastError: any = null;
   
   // Initialize currentModel. If "auto", pick one. If specific override, start there.
-  let currentModel = model === "auto" ? getNextAvailableModel([]) : model;
+  let currentModel = (model === "auto" || !model) ? getNextAvailableModel([]) : model;
 
   // Keep track of tried models in this session to avoid cycles
   const triedModels = new Set<string>();
 
   while (attempts < MAX_ATTEMPTS) {
-    // If the current model has already been tried (e.g. from exclusion list in previous recursion or loop), get another one.
-    if (triedModels.has(currentModel)) {
+    // If the current model is missing or has already been tried, get another one.
+    if (!currentModel || triedModels.has(currentModel)) {
        currentModel = getNextAvailableModel(Array.from(triedModels));
     }
     
-    // Double check: if even the new one is tried, we might be stuck. 
-    // getNextAvailableModel should handle exclusion, but let's be safe.
-    if (triedModels.has(currentModel)) {
-        // Force reset or just pick random to avoid infinite loop of same failures
-        console.warn(`[au.ts] Exhausted models or circular logic. Forced to retry ${currentModel}`);
+    // If no more models are available to try in the registry
+    if (!currentModel) {
+        break;
     }
 
     triedModels.add(currentModel);
@@ -367,9 +368,25 @@ export async function callAU(
       return content;
 
     } catch (err: any) {
-      console.warn(`[au.ts] Model ${currentModel} failed: ${err.message}`);
+      const status = err.status;
+      console.warn(`[au.ts] Model ${currentModel} failed (Status: ${status}): ${err.message}`);
       lastError = err;
-      markModelAsFailed(currentModel);
+
+      // Handle specific status codes
+      if (status === 404) {
+        // Model not found, mark as failed permanently for this instance's cooldown
+        markModelAsFailed(currentModel);
+      } else if (status === 429) {
+        // Rate limited, skip for now but don't necessarily mark as failed for long cooldown
+        // though markModelAsFailed uses a 5min cooldown which is reasonable for 429 too.
+        markModelAsFailed(currentModel);
+      } else if (status >= 500) {
+        // Server error, fallback immediately
+        markModelAsFailed(currentModel);
+      } else {
+        // Other errors (400, 401, etc.) might be terminal for the request, but we'll try fallback anyway
+        markModelAsFailed(currentModel);
+      }
       
       // Get next best model, excluding all we have tried so far
       currentModel = getNextAvailableModel(Array.from(triedModels));
@@ -377,7 +394,12 @@ export async function callAU(
     }
   }
 
-  throw lastError || new Error("All AI models are currently unavailable.");
+  // If we reach here, all attempts failed
+  const cleanErrorMessage = "All AI models are currently unavailable. Please try again in a few minutes.";
+  const finalError = new Error(cleanErrorMessage) as any;
+  finalError.status = lastError?.status || 503;
+  finalError.details = lastError?.message || "Exhausted all models";
+  throw finalError;
 }
 
 /**

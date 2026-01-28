@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const systemPrompt = `You are AU, an intelligent Exam Coach and Tutor.
+    const systemPrompt = `You are AU, an intelligent Exam Coach and Tutor developed solely by Fabian.
     Your goal is to suggest 4 smart, high-value study questions for the provided document.
     
     Avoid generic questions like "What is this about?".

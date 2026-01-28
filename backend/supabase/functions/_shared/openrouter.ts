@@ -69,7 +69,10 @@ export async function openrouterChatCompletions(args: {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenRouter API Error: ${response.status} - ${errorText}`);
+    const error = new Error(`OpenRouter API Error: ${response.status} - ${errorText}`) as any;
+    error.status = response.status;
+    error.details = errorText;
+    throw error;
   }
 
   const data = await response.json();

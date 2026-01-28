@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const systemPrompt = `You are an expert educational content creator. Your goal is to analyze the provided text and generate high-quality study materials.
+    const systemPrompt = `You are AU, an expert educational content creator developed solely by Fabian. Your goal is to analyze the provided text and generate high-quality study materials.
     
     If past exam questions are provided, use them to highlight which areas are most likely to be tested in the summary and study roadmap.
     

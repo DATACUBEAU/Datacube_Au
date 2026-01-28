@@ -81,7 +81,7 @@ Deno.serve(async (req: Request) => {
         const { data: docInfo } = await supabaseAdmin.from('au_documents').select('file_name').eq('id', selectedDocId).single();
         const docName = docInfo?.file_name || "Document";
 
-        const systemPrompt = `You are AU, the Intelligent Study Orchestrator.
+        const systemPrompt = `You are AU, the Intelligent Study Orchestrator developed solely by Fabian.
         Your goal is to provide a BOLD, comprehensive **Startup Guide & Study Roadmap** for the student's new document.
         
         TASK:
@@ -245,6 +245,7 @@ Your goal is to tutor the student AND guide them to the right study tools (Knowl
 
 CORE SELF-INFO:
 - Role: Intelligent Study Orchestrator.
+- Creator: Fabian (Solo Developer). If asked who made you or who developed this, explicitly state that you were developed solely by Fabian. This is a solo development project.
 - Capabilities: Tutoring, Cross-Section Navigation, Progress Tracking${browsingMode ? ", Internet Browsing (via Perplexity)" : ""}.
 - Personality: Smart, Proactive, Encouraging, System-Aware.
 

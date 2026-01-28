@@ -8,33 +8,37 @@ export interface Model {
 }
 
 export const VERIFIED_FREE_MODELS: Model[] = [
-  // Tier 1: Best Quality (70B+ & large reasoning)
-  { id: "meta-llama/llama-3.3-70b-instruct:free", tier: 1, name: "Llama 3.3 70B (Free)" },
-  { id: "meta-llama/llama-3.1-405b-instruct:free", tier: 1, name: "Llama 3.1 405B (Free)" },
-  { id: "deepseek/deepseek-r1:free", tier: 1, name: "DeepSeek R1 (Free)" }, // Alias for r1-0528 usually, using standard free ID
-  { id: "deepseek/deepseek-r1-0528:free", tier: 1, name: "DeepSeek R1 0528 (Free)" }, // Explicitly requested
-  { id: "qwen/qwen-3-235b-a22b:free", tier: 1, name: "Qwen 3 235B (Free)" }, // Trusted from user input
-  { id: "qwen/qwen-2.5-72b-instruct:free", tier: 1, name: "Qwen 2.5 72B (Free)" }, // Keeping as strong backup
-
-  // Tier 2: Balanced Chat
-  { id: "mistralai/mistral-small-3.1-24b:free", tier: 2, name: "Mistral Small 3.1 (Free)" }, // Updated from user request
+  // Tier 1: Top Tier / Reasoning / Large
+  { id: "deepseek/deepseek-r1", tier: 1, name: "DeepSeek R1" },
+  { id: "phind/phind-codellama-34b", tier: 1, name: "Phind CodeLlama 34B" },
+  { id: "microsoft/phi-3-medium-128k-instruct", tier: 1, name: "Phi-3 Medium" },
+  
+  // Tier 2: Mid Tier / Balanced
+  { id: "deepseek/deepseek-chat", tier: 2, name: "DeepSeek Chat" },
+  { id: "meta-llama/llama-3.1-8b-instruct", tier: 2, name: "Llama 3.1 8B" },
+  { id: "meta-llama/llama-3-8b-instruct", tier: 2, name: "Llama 3 8B" },
+  { id: "mistralai/mistral-7b-instruct", tier: 2, name: "Mistral 7B" },
   { id: "mistralai/mistral-7b-instruct:free", tier: 2, name: "Mistral 7B (Free)" },
-  { id: "meta-llama/llama-3-8b-instruct:free", tier: 2, name: "Llama 3 8B (Free)" },
-
-  // Tier 3: Lightweight & Fast
-  { id: "meta-llama/llama-3.2-3b-instruct:free", tier: 3, name: "Llama 3.2 3B (Free)" },
-  { id: "google/gemma-3-4b-instruct:free", tier: 3, name: "Gemma 3 4B (Free)" },
-  { id: "mistralai/devstral-2512:free", tier: 3, name: "Devstral 2512 (Free)" },
-
-  // Tier 4: Code / Specialty
-  { id: "qwen/qwen-3-coder:free", tier: 4, name: "Qwen 3 Coder (Free)" },
+  { id: "qwen/qwen-2-7b-instruct", tier: 2, name: "Qwen 2 7B" },
+  { id: "google/gemma-7b-it", tier: 2, name: "Gemma 7B" },
+  { id: "openchat/openchat-7b", tier: 2, name: "OpenChat 7B" },
+  { id: "teknium/openhermes-2.5-mistral-7b", tier: 2, name: "OpenHermes 2.5 Mistral 7B" },
+  { id: "nousresearch/nous-hermes-2-mistral-7b", tier: 2, name: "Nous Hermes 2 Mistral 7B" },
+  
+  // Tier 3: Lightweight / Fast
+  { id: "google/gemma-2b-it", tier: 3, name: "Gemma 2B" },
+  { id: "qwen/qwen-1.5-7b-chat", tier: 3, name: "Qwen 1.5 7B Chat" },
+  { id: "microsoft/phi-3-mini-128k-instruct", tier: 3, name: "Phi-3 Mini" },
+  { id: "undi95/toppy-m-7b", tier: 3, name: "Toppy M 7B" },
+  { id: "intel/neural-chat-7b", tier: 3, name: "Neural Chat 7B" },
+  { id: "huggingfaceh4/zephyr-7b-beta", tier: 3, name: "Zephyr 7B Beta" },
+  { id: "gryphe/mythomist-7b", tier: 3, name: "Mythomist 7B" },
 ];
 
 export const FALLBACK_CHAIN = [
   ...VERIFIED_FREE_MODELS.filter(m => m.tier === 1),
   ...VERIFIED_FREE_MODELS.filter(m => m.tier === 2),
   ...VERIFIED_FREE_MODELS.filter(m => m.tier === 3),
-  ...VERIFIED_FREE_MODELS.filter(m => m.tier === 4),
 ];
 
 // In-memory cache for failed models (persists only while Edge Function instance is warm)
@@ -63,10 +67,10 @@ function isModelInCooldown(modelId: string): boolean {
  * Smart Routing Logic:
  * 1. Tier 1 Round-Robin
  * 2. Fallback to next model in Tier 1
- * 3. Fallback to Tier 2 -> 3 -> 4
+ * 3. Fallback to Tier 2 -> 3
  * 4. Exclude failed/cooldown models and explicitly excluded IDs (retry chain)
  */
-export function getNextAvailableModel(exclude: string[] = []): string {
+export function getNextAvailableModel(exclude: string[] = []): string | null {
   // 1. Filter out permanently failed (cooldown) and temporarily excluded (current request retries) models
   const candidates = FALLBACK_CHAIN.filter(m => {
     if (exclude.includes(m.id)) return false;
@@ -75,17 +79,14 @@ export function getNextAvailableModel(exclude: string[] = []): string {
   });
 
   if (candidates.length === 0) {
-    console.warn("[ModelRegistry] All models failed or excluded. Resetting exclusions as last resort.");
-    // If absolutely everything is down, try the first Tier 1 model again regardless of status
-    return VERIFIED_FREE_MODELS[0].id;
+    return null;
   }
 
   // 2. Identify the highest available tier among candidates
   const topTier = candidates[0].tier;
   const topTierCandidates = candidates.filter(m => m.tier === topTier);
 
-  // 3. Round-Robin / Random Selection for the Top Tier
-  // Since we don't have shared state for true round-robin, random is a good approximation for load balancing.
+  // 3. Random Selection for the Top Tier
   const picked = topTierCandidates[Math.floor(Math.random() * topTierCandidates.length)];
 
   return picked.id;
