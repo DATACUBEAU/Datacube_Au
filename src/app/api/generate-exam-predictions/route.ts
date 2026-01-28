@@ -55,7 +55,7 @@ export async function POST(req: Request) {
             console.log(`[Predictions] Trying model: ${model}`);
             
             // Construct prompt for prediction
-            const prompt = `You are AU, an expert exam strategist and predictor. Analyze the following past questions and textbook content to predict likely future exam topics.
+            const prompt = `You are AU, an expert exam strategist and predictor developed solely by Fabian as a solo project. Analyze the following past questions and textbook content to predict likely future exam topics.
 
             You MUST return a valid JSON object matching this structure exactly:
             {

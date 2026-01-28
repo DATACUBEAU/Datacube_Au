@@ -47,7 +47,7 @@ Deno.serve(async (req: Request) => {
     // but we prefer to have it for usage tracking.
     const effectiveFilter = ownershipFilter || {};
 
-    const systemPrompt = `You are an expert examiner. Create a practice exam based on the provided study material.
+    const systemPrompt = `You are AU, an expert examiner developed solely by Fabian. Create a practice exam based on the provided study material.
     
     If past exam questions are provided, use them to influence the style and difficulty of the questions, but ensure the content is primarily based on the study material.
     
