@@ -27,11 +27,13 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { listAuDocumentsForUser } from '@/lib/au/documents';
 import { TruncatedText } from '@/components/TruncatedText';
 import type { AuDocumentRow } from '@/lib/au/types';
+import { useAuDocuments } from '@/hooks/api/use-au-documents';
+import { useUploadJobs } from '@/components/upload/upload-jobs-provider';
+import type { UploadJobStatus } from '@/lib/upload/types';
 
 const quickAccessItems = [
   {
@@ -67,35 +69,58 @@ const quickAccessItems = [
 
 export default function DashboardPage() {
   const [user] = useSupabaseUser();
-  const [recentDocuments, setRecentDocuments] = useState<AuDocumentRow[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const { documents, loading: documentsLoading } = useAuDocuments();
+  const { jobs } = useUploadJobs();
 
-  useEffect(() => {
-    if (!user) {
-      setRecentDocuments([]);
-      return;
-    }
-    
-    setIsLoading(true);
-    
-    // Use the same robust isAnonymous check as in other pages
-    const isAnonymous = (user as any).is_anonymous ?? !user.email;
-    
-    listAuDocumentsForUser(user)
-      .then((docs) => {
-        // Filter out "No expiry" completed documents to match the Documents page behavior
-        // This hides system/seeded documents that don't have an expiry date.
-        const filteredDocs = docs.filter(d => {
-          return !!d.expires_at || d.status !== 'completed';
-        });
-        setRecentDocuments(filteredDocs.slice(0, 5));
-      })
-      .catch((err) => {
-        console.error('Error fetching recent documents:', err);
-        setRecentDocuments([]);
-      })
-      .finally(() => setIsLoading(false));
-  }, [user]);
+  const recentDocuments = useMemo(() => {
+    if (!user) return [];
+
+    const statusFromJob = (status: UploadJobStatus): AuDocumentRow['status'] | null => {
+      if (status === 'done') return 'completed';
+      if (status === 'failed') return 'failed';
+      if (status === 'processing' || status === 'uploaded') return 'processing';
+      if (status === 'uploading' || status === 'queued') return 'uploading';
+      return null;
+    };
+
+    const map = new Map<string, AuDocumentRow>();
+    documents.forEach((d) => map.set(d.id, d));
+
+    jobs.forEach((job) => {
+      const id = job.document_id || job.id;
+      const mappedStatus = statusFromJob(job.status);
+      if (!mappedStatus) return;
+
+      if (map.has(id)) {
+        const existing = map.get(id)!;
+        if (mappedStatus === 'completed' && existing.status !== 'completed') {
+          map.set(id, { ...existing, status: 'completed' });
+          return;
+        }
+        if (existing.status !== 'completed' && mappedStatus !== 'completed') {
+          map.set(id, { ...existing, status: mappedStatus });
+        }
+        return;
+      }
+
+      map.set(id, {
+        id,
+        user_id: job.user_id ?? user.id,
+        document_type: (job.label as AuDocumentRow['document_type'] | null) ?? 'main_textbook',
+        file_name: job.file_name,
+        file_path: job.object_path,
+        status: mappedStatus,
+        parent_id: null,
+        created_at: job.created_at ?? new Date().toISOString(),
+        expires_at: null,
+        error: (job as any).error ?? null,
+      });
+    });
+
+    return Array.from(map.values())
+      .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
+      .slice(0, 5);
+  }, [documents, jobs, user]);
 
   function statusToBadge(status: string) {
     switch (status) {
@@ -167,7 +192,7 @@ export default function DashboardPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading ? (
+                {documentsLoading ? (
                   <TableRow>
                     <TableCell colSpan={3} className="h-24 text-center">
                       <div className="inline-flex items-center gap-2">
