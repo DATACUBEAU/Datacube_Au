@@ -38,6 +38,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
+  DialogFooter,
 } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -55,6 +56,10 @@ export default function SettingsPage() {
   const [user] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
+  const isAnonymous = useMemo(() => {
+    if (!user) return true;
+    return (user as any).is_anonymous ?? !user.email;
+  }, [user]);
 
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
@@ -73,6 +78,7 @@ export default function SettingsPage() {
   const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
   const [signOutStep, setSignOutStep] = useState<'idle' | 'warning' | 'final' | 'processing'>('idle');
+  const [showGuestSignInDisabledDialog, setShowGuestSignInDisabledDialog] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -104,6 +110,10 @@ export default function SettingsPage() {
   };
 
   const handleGoogleSignIn = async () => {
+    if (isAnonymous) {
+      setShowGuestSignInDisabledDialog(true);
+      return;
+    }
     setIsLoadingGoogle(true);
     setShowAuthPopup(true);
     
@@ -141,8 +151,6 @@ export default function SettingsPage() {
   useEffect(() => {
     setDisplayName(currentDisplayName);
   }, [currentDisplayName]);
-
-  const isAnonymous = user ? ((user as any).is_anonymous ?? !user.email) : true;
 
   const startSignOutFlow = () => {
     setSignOutStep('warning');
@@ -240,7 +248,12 @@ export default function SettingsPage() {
                     </CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <Button onClick={handleGoogleSignIn} disabled={isLoadingGoogle} className="w-full sm:w-auto">
+                    <Button
+                      onClick={handleGoogleSignIn}
+                      disabled={isLoadingGoogle}
+                      aria-disabled={isAnonymous}
+                      className={`w-full sm:w-auto ${isAnonymous ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    >
                         {isLoadingGoogle ? (
                             <Icons.google className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
                         ) : (
@@ -420,6 +433,23 @@ export default function SettingsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={showGuestSignInDisabledDialog} onOpenChange={setShowGuestSignInDisabledDialog}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="font-headline">Sign-in is disabled in Guest mode</DialogTitle>
+            <DialogDescription>
+              For security reasons and future-proofing, guest sessions are locked and can’t be linked to Google yet.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-sm text-muted-foreground">
+            This prevents account-mixups and protects your data while we finalize the upgrade flow.
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setShowGuestSignInDisabledDialog(false)}>Ok</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Sign Out & Deletion Flow */}
       <AnimatePresence mode="wait">

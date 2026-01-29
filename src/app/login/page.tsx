@@ -40,7 +40,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 export default function LoginPage() {
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
   const [isLoadingGuest, setIsLoadingGuest] = useState(false);
-  const [showGuestInfo, setShowGuestInfo] = useState(false);
+  const [showGuestDisabled, setShowGuestDisabled] = useState(false);
   
   const [user, isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
@@ -95,7 +95,6 @@ export default function LoginPage() {
 
   const startGuestSession = async () => {
     setIsLoadingGuest(true);
-    setShowGuestInfo(false); // Close dialog if open
     
     try {
       clearGuestToken();
@@ -254,14 +253,13 @@ export default function LoginPage() {
 
           <Button 
             variant="secondary" 
-            onClick={() => setShowGuestInfo(true)}
-            disabled={disableAuthButtons}
-            className="w-full"
+            onClick={() => setShowGuestDisabled(true)}
+            className="w-full opacity-60 cursor-not-allowed"
           >
              {isLoadingGuest ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : <UserX className="mr-2 h-4 w-4" />}
-            Continue as Guest
+            Continue as Guest (Disabled)
           </Button>
         </CardContent>
       </Card>
@@ -272,54 +270,32 @@ export default function LoginPage() {
         <Link href="/policy#privacy" className="text-primary underline underline-offset-4">Privacy Policy</Link>.
       </footer>
 
-      {/* Guest Info Dialog */}
-      <Dialog open={showGuestInfo} onOpenChange={setShowGuestInfo}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-                <ShieldCheck className="h-5 w-5 text-green-500" />
-                Secure Guest Access
-            </DialogTitle>
-            <DialogDescription>
-              DataCube AU offers a private, ephemeral guest mode without creating an account.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="grid gap-4 py-4">
-             <div className="flex items-start gap-3 rounded-md bg-muted p-3">
-                <Clock className="h-5 w-5 mt-0.5 text-primary" />
-                <div className="text-sm">
-                    <p className="font-medium">24-Hour Session</p>
-                    <p className="text-muted-foreground">Guest mode self-destruct in 24 hours.</p>
-                </div>
-             </div>
-             
-             <div className="flex items-start gap-3 rounded-md bg-muted p-3">
-                <ShieldCheck className="h-5 w-5 mt-0.5 text-primary" />
-                <div className="text-sm">
-                    <p className="font-medium">Private & Isolated</p>
-                    <p className="text-muted-foreground">Your data is strictly isolated to your temporary session using advanced Row Level Security.</p>
-                </div>
-             </div>
-             
-             <div className="flex items-start gap-3 rounded-md bg-muted p-3">
-                <Icons.logo className="h-5 w-5 mt-0.5 text-primary" />
-                <div className="text-sm">
-                    <p className="font-medium">Full Feature Access</p>
-                    <p className="text-muted-foreground">Use RAG chat, exam predictions, and document analysis with free AU models.</p>
-                </div>
-             </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowGuestInfo(false)}>Cancel</Button>
-            <Button onClick={startGuestSession} disabled={isLoadingGuest}>
-                {isLoadingGuest && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                I Agree & Continue
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Guest Disabled Dialog */}
+      <AlertDialog open={showGuestDisabled} onOpenChange={setShowGuestDisabled}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2 font-headline text-xl text-destructive">
+                <UserX className="h-5 w-5" />
+                Guest Mode Disabled
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild className="text-base space-y-3">
+              <div className="mt-2">
+                <p>
+                  Access to Guest Mode is currently disabled for <strong>security reasons</strong> and to ensure <strong>future-proof</strong> stability of the application.
+                </p>
+                <p className="mt-3">
+                  We are working on a more secure way to provide anonymous access while protecting user data and system integrity. Please sign in with Google to continue.
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => setShowGuestDisabled(false)}>
+                Got it
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

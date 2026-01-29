@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { 
   Dialog, 
   DialogContent, 
@@ -8,36 +8,47 @@ import {
   DialogTitle, 
   DialogDescription, 
   DialogFooter,
-  DialogTrigger
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
-  Laptop, 
   Smartphone, 
   Tablet, 
-  Chrome, 
   Globe, 
   Share, 
   PlusSquare, 
   Menu, 
   Download, 
   HelpCircle, 
-  BookOpen, 
   MessageCircle, 
   BrainCircuit, 
   ClipboardCheck, 
   FileText, 
   Monitor, 
   PenTool, 
-  Highlighter, 
-  ChevronDown, 
   Settings
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
-export function SiteManualGuide({ children }: { children?: React.ReactNode }) {
-  const [isOpen, setIsOpen] = useState(false);
+export function SiteManualGuide({
+  children,
+  open,
+  onOpenChange,
+}: {
+  children?: React.ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+}) {
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false);
+  const isControlled = open !== undefined;
+  const isOpen = isControlled ? open : uncontrolledOpen;
+  const setIsOpen = useCallback(
+    (nextOpen: boolean) => {
+      if (isControlled) onOpenChange?.(nextOpen);
+      else setUncontrolledOpen(nextOpen);
+    },
+    [isControlled, onOpenChange]
+  );
   const [deviceType, setDeviceType] = useState<'desktop' | 'ios' | 'android' | 'tablet' | 'unknown'>('unknown');
   const [browserType, setBrowserType] = useState<'chrome' | 'safari' | 'firefox' | 'edge' | 'other'>('other');
   const [isPwaInstalled, setIsPwaInstalled] = useState(false);
@@ -69,9 +80,9 @@ export function SiteManualGuide({ children }: { children?: React.ReactNode }) {
       setIsOpen(true);
       localStorage.setItem('au_site_guide_seen', 'true');
     }
-  }, []);
+  }, [setIsOpen]);
 
-  const renderInstallInstructions = () => {
+  const renderInstallInstructions = useCallback(() => {
     if (isPwaInstalled) return (
       <div className="flex flex-col items-center justify-center py-8 text-center space-y-4">
         <div className="rounded-full bg-green-100 p-4 dark:bg-green-900/30">
@@ -138,25 +149,30 @@ export function SiteManualGuide({ children }: { children?: React.ReactNode }) {
     );
 
     return <p>Could not detect device. Please check browser settings.</p>;
-  };
+  }, [browserType, deviceType, isPwaInstalled]);
 
-  const features = [
-    { icon: FileText, title: 'Documents', description: 'Upload textbooks or notes, AU analyzes them and creates summaries.', bg: 'bg-blue-100', fg: 'text-blue-600' },
-    { icon: MessageCircle, title: 'AU Chat', description: 'Ask specific questions. AU cites exact pages.', bg: 'bg-green-100', fg: 'text-green-600' },
-    { icon: ClipboardCheck, title: 'Predictions', description: 'AU predicts likely exam questions based on your documents.', bg: 'bg-purple-100', fg: 'text-purple-600' },
-    { icon: BrainCircuit, title: 'Knowledge Graph', description: 'Visualize concept connections interactively.', bg: 'bg-orange-100', fg: 'text-orange-600' },
-    { icon: PenTool, title: 'Practice Exam', description: 'Test your knowledge with realistic practice exams.', bg: 'bg-red-100', fg: 'text-red-600' },
-  ];
+  const features = useMemo(
+    () => [
+      { icon: FileText, title: 'Documents', description: 'Upload textbooks or notes, AU analyzes them and creates summaries.', bg: 'bg-blue-100', fg: 'text-blue-600' },
+      { icon: MessageCircle, title: 'AU Chat', description: 'Ask specific questions. AU cites exact pages.', bg: 'bg-green-100', fg: 'text-green-600' },
+      { icon: ClipboardCheck, title: 'Predictions', description: 'AU predicts likely exam questions based on your documents.', bg: 'bg-purple-100', fg: 'text-purple-600' },
+      { icon: BrainCircuit, title: 'Knowledge Graph', description: 'Visualize concept connections interactively.', bg: 'bg-orange-100', fg: 'text-orange-600' },
+      { icon: PenTool, title: 'Practice Exam', description: 'Test your knowledge with realistic practice exams.', bg: 'bg-red-100', fg: 'text-red-600' },
+    ],
+    []
+  );
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogTrigger asChild>
-        {children ? children : (
-        <Button variant="outline" size="sm" className="gap-2">
-          <HelpCircle className="h-4 w-4" /> User Guide & Install
-        </Button>
-        )}
-      </DialogTrigger>
+      {children
+        ? children
+        : isControlled
+          ? null
+          : (
+            <Button variant="outline" size="sm" className="gap-2" onClick={() => setIsOpen(true)}>
+              <HelpCircle className="h-4 w-4" /> User Guide & Install
+            </Button>
+          )}
 
       <DialogContent className="w-[95vw] sm:max-w-[600px] max-h-[90svh] flex flex-col p-4 sm:p-6">
         <Tabs defaultValue="guide" className="flex-1 flex flex-col overflow-hidden">

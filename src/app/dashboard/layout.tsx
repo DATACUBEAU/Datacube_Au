@@ -107,6 +107,7 @@ const SidebarFooterMenu = ({
   userDisplayName,
   userEmail,
   isAnonymous,
+  onOpenGuide,
 }: {
   footerItems: Array<any>;
   isOnline: boolean;
@@ -114,16 +115,15 @@ const SidebarFooterMenu = ({
   userDisplayName: string;
   userEmail: string;
   isAnonymous: boolean;
+  onOpenGuide: () => void;
 }) => (
   <SidebarFooter className="p-2">
     <SidebarMenu>
       <SidebarMenuItem>
-        <SiteManualGuide>
-          <SidebarMenuButton tooltip={{ children: 'User Guide & Install' }}>
-            <BookOpen />
-            <span>User Guide</span>
-          </SidebarMenuButton>
-        </SiteManualGuide>
+        <SidebarMenuButton tooltip={{ children: 'User Guide & Install' }} onClick={onOpenGuide}>
+          <BookOpen />
+          <span>User Guide</span>
+        </SidebarMenuButton>
       </SidebarMenuItem>
       {footerItems.map((item) => (
         <SidebarMenuItem key={item.key}>
@@ -185,6 +185,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
   const [signOutStep, setSignOutStep] = useState<'idle' | 'warning' | 'final' | 'processing'>('idle');
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [isSiteGuideOpen, setIsSiteGuideOpen] = useState(false);
 
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
@@ -621,6 +622,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               userDisplayName={userDisplayName}
               userEmail={userEmail}
               isAnonymous={isAnonymous}
+              onOpenGuide={() => setIsSiteGuideOpen(true)}
             />
           </Sidebar>
 
@@ -665,6 +667,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </main>
           </div>
         </div>
+        <SiteManualGuide open={isSiteGuideOpen} onOpenChange={setIsSiteGuideOpen} />
       </SidebarProvider>
       <AUAssistant />
     </AuChatProvider>
