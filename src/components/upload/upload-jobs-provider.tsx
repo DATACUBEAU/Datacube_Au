@@ -458,6 +458,9 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
         console.log(`[upload-jobs] Storage upload complete for ${job.id}. Registering with Edge Function...`);
 
+        // Update local UI state to 100% immediately so the user doesn't see a stall at 95%
+        updateJobLocal(job.id, { progress: 100 });
+
         // 5. Find the document to get its expires_at and parent_id
         const { data: docData } = await supabase
           .from('au_documents')

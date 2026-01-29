@@ -179,6 +179,7 @@ Deno.serve(async (req: Request) => {
       bucket: Deno.env.get("SUPABASE_BUCKET") || Deno.env.get("NEXT_PUBLIC_SUPABASE_BUCKET") || "documents",
       object_path: filePath,
       status: "queued",
+      progress: 100,
       updated_at: new Date().toISOString(),
     };
     
@@ -216,13 +217,14 @@ Deno.serve(async (req: Request) => {
       })
       .catch(err => console.error(`[document-upload] Async trigger failed for job ${job.id}:`, err));
 
-      // @ts-ignore - EdgeRuntime is available in the environment
+      // Use EdgeRuntime.waitUntil if available (Supabase standard)
+      // @ts-ignore
       if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
         // @ts-ignore
         EdgeRuntime.waitUntil(triggerPromise);
       } else {
-        // Fallback: await it (might delay response slightly but ensures delivery)
-        await triggerPromise;
+        // Fire and forget - don't await it to avoid blocking the client response
+        console.log(`[document-upload] Proceeding without awaiting trigger (fire-and-forget)`);
       }
     }
 
