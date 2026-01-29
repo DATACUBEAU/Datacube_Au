@@ -69,11 +69,7 @@ export async function openrouterChatCompletions(args: {
 
   if (!response.ok) {
     const errorText = await response.text();
-<<<<<<< HEAD
     const error = new Error(`OpenRouter API Error: ${response.status}`) as any;
-=======
-    const error = new Error(`OpenRouter API Error: ${response.status} - ${errorText}`) as any;
->>>>>>> 9363d22cea249954e4529f484841187dac6947d8
     error.status = response.status;
     error.details = errorText;
     throw error;

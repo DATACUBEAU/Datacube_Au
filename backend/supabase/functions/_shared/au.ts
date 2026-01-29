@@ -284,11 +284,7 @@ export async function callAU(
   usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any }
 ): Promise<string> {
   const { openrouterChatCompletions } = await import("./openrouter.ts");
-<<<<<<< HEAD
   const { getNextAvailableModelAsync, getVerifiedModelIds, markModelAsFailed } = await import("./model_registry.ts");
-=======
-  const { getNextAvailableModel, markModelAsFailed, getVerifiedModelIds } = await import("./model_registry.ts");
->>>>>>> 9363d22cea249954e4529f484841187dac6947d8
 
   let model = modelOverride;
   if (!model) {
@@ -312,36 +308,22 @@ export async function callAU(
 
   // Retry loop for model fallback
   const verifiedModels = getVerifiedModelIds();
-  // Always allow trying all verified models as fallbacks, 
-  // even if a specific model was initially requested.
-  const MAX_ATTEMPTS = Math.max(verifiedModels.length, 6);
+  const MAX_ATTEMPTS = Math.max(1, Math.min(verifiedModels.length, 20));
   let attempts = 0;
-<<<<<<< HEAD
-  const MAX_ATTEMPTS = Math.max(1, Math.min(getVerifiedModelIds().length, 20));
-  let lastError: Error | null = null;
-  
-  // Initialize currentModel. If "auto", pick one. If specific override, start there.
-  let currentModel = model === "auto" ? await getNextAvailableModelAsync(supabaseAdmin, []) : model;
-=======
   let lastError: any = null;
   
   // Initialize currentModel. If "auto", pick one. If specific override, start there.
-  let currentModel = (model === "auto" || !model) ? getNextAvailableModel([]) : model;
->>>>>>> 9363d22cea249954e4529f484841187dac6947d8
+  let currentModel = model === "auto"
+    ? await getNextAvailableModelAsync(supabaseAdmin, [])
+    : model;
 
   // Keep track of tried models in this session to avoid cycles
   const triedModels = new Set<string>();
 
   while (attempts < MAX_ATTEMPTS) {
-<<<<<<< HEAD
     // If the current model has already been tried (e.g. from exclusion list in previous recursion or loop), get another one.
     if (triedModels.has(currentModel)) {
        currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels));
-=======
-    // If the current model is missing or has already been tried, get another one.
-    if (!currentModel || triedModels.has(currentModel)) {
-       currentModel = getNextAvailableModel(Array.from(triedModels));
->>>>>>> 9363d22cea249954e4529f484841187dac6947d8
     }
     
     // If no more models are available to try in the registry
@@ -389,26 +371,7 @@ export async function callAU(
       const status = err.status;
       console.warn(`[au.ts] Model ${currentModel} failed (Status: ${status}): ${err.message}`);
       lastError = err;
-<<<<<<< HEAD
       markModelAsFailed(currentModel, typeof err?.status === "number" ? err.status : undefined);
-=======
-
-      // Handle specific status codes
-      if (status === 404) {
-        // Model not found, mark as failed permanently for this instance's cooldown
-        markModelAsFailed(currentModel);
-      } else if (status === 429) {
-        // Rate limited, skip for now but don't necessarily mark as failed for long cooldown
-        // though markModelAsFailed uses a 5min cooldown which is reasonable for 429 too.
-        markModelAsFailed(currentModel);
-      } else if (status >= 500) {
-        // Server error, fallback immediately
-        markModelAsFailed(currentModel);
-      } else {
-        // Other errors (400, 401, etc.) might be terminal for the request, but we'll try fallback anyway
-        markModelAsFailed(currentModel);
-      }
->>>>>>> 9363d22cea249954e4529f484841187dac6947d8
       
       // Get next best model, excluding all we have tried so far
       currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels));
@@ -416,19 +379,10 @@ export async function callAU(
     }
   }
 
-<<<<<<< HEAD
   if (lastError) {
     console.warn(`[au.ts] Exhausted model attempts. Last error: ${lastError.message}`);
   }
   throw new Error("All AI models are currently unavailable.");
-=======
-  // If we reach here, all attempts failed
-  const cleanErrorMessage = "All AI models are currently unavailable. Please try again in a few minutes.";
-  const finalError = new Error(cleanErrorMessage) as any;
-  finalError.status = lastError?.status || 503;
-  finalError.details = lastError?.message || "Exhausted all models";
-  throw finalError;
->>>>>>> 9363d22cea249954e4529f484841187dac6947d8
 }
 
 /**
