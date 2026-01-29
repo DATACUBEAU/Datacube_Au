@@ -93,12 +93,16 @@ export async function uploadTus({
   onProgress,
 }: TusUploadArgs): Promise<void> {
   let offset = await getTusOffset(uploadUrl, anonKey, accessToken);
+  let stuckCount = 0;
+  const MAX_STUCK_RETRIES = 3;
 
   while (offset < file.size) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     const chunk = file.slice(offset, Math.min(file.size, offset + chunkSizeBytes));
     const chunkArrayBuffer = await chunk.arrayBuffer();
+
+    console.log(`[TUS] Uploading chunk: offset ${offset}, size ${chunk.size}, total ${file.size}...`);
 
     const resp = await fetch(uploadUrl, {
       method: 'PATCH',
@@ -114,16 +118,26 @@ export async function uploadTus({
     });
 
     if (!resp.ok) {
-      throw new Error(`Upload failed (${resp.status})`);
+      const errorText = await resp.text().catch(() => 'No error body');
+      console.error(`[TUS] Upload failed with status ${resp.status}:`, errorText);
+      throw new Error(`Upload failed (${resp.status}): ${errorText}`);
     }
 
     const nextOffsetRaw = resp.headers.get('upload-offset');
     const nextOffset = nextOffsetRaw ? Number(nextOffsetRaw) : offset + chunk.size;
     
     if (nextOffset === offset) {
-      throw new Error("Upload stuck: server returned same offset.");
+      stuckCount++;
+      console.warn(`[TUS] Server returned same offset (${offset}). Retry ${stuckCount}/${MAX_STUCK_RETRIES}...`);
+      if (stuckCount >= MAX_STUCK_RETRIES) {
+        throw new Error("Upload stuck: server repeatedly returned same offset.");
+      }
+      // Wait a bit before retrying the same chunk
+      await new Promise(resolve => setTimeout(resolve, 1000 * stuckCount));
+      continue; 
     }
 
+    stuckCount = 0; // Reset on success
     offset = nextOffset;
     // IMPORTANT: await to avoid late async progress writes overwriting the final 100% update.
     await onProgress?.(offset, file.size);

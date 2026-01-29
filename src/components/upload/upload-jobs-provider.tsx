@@ -492,10 +492,18 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
            accessToken || undefined
          );
 
-         if (!result.ok) {
-           console.error(`[upload-jobs] Edge Function registration failed for ${job.id}:`, result);
-           throw new Error('Upload registration failed. The server could not enqueue the job.');
-         }
+         if (!result || (typeof result.ok !== 'undefined' && !result.ok)) {
+            console.error(`[upload-jobs] Edge Function registration failed for ${job.id}:`, result);
+            const errorMessage =
+              typeof (result as any)?.error === 'string'
+                ? (result as any).error
+                : typeof (result as any)?.message === 'string'
+                  ? (result as any).message
+                  : 'The server could not enqueue the job.';
+            throw new Error(`Upload registration failed: ${errorMessage}`);
+          }
+
+          console.log(`[upload-jobs] Registration success for ${job.id}. jobId: ${result.jobId}`);
 
         // On success, the job is enqueued on the backend.
         // We update the local state and stop here.

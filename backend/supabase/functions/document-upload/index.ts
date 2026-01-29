@@ -228,6 +228,7 @@ Deno.serve(async (req: Request) => {
 
     // 9. Success Response (Structured JSON as requested)
     return new Response(JSON.stringify({ 
+      ok: true,
       jobId: job.id,
       status: job.status
     }), {
