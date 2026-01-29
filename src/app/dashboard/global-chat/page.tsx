@@ -97,8 +97,8 @@ const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, s
 const defaultGuideText = "Use this AU Guide to tell the assistant how you like to interact. For example, ask for short explanations, creative ideas, or code snippets.";
 const GLOBAL_CHAT_ID = 'global';
 
-function sanitizeAnswer(text: string) {
-  const raw = text ?? '';
+function sanitizeAnswer(text: any) {
+  const raw = typeof text === 'string' ? text : (Array.isArray(text) ? text.join('\n') : String(text ?? ''));
   const withoutMarkdownBold = raw.replace(/\*\*/g, '');
   const withoutBrackets = withoutMarkdownBold.replace(/[\[\]]/g, '');
   const withoutSourceLines = withoutBrackets

@@ -124,8 +124,25 @@ export default function PredictionsPage() {
 
   const mainTextbookIds = useMemo(() => textbookDocs.map((doc) => doc.id), [textbookDocs]);
 
-  const parseTopicWeights = useCallback((weights: string) => {
-    const parsed = weights
+  const parseTopicWeights = useCallback((weights: any) => {
+    if (!weights) {
+      setFormattedTopicWeights([]);
+      return;
+    }
+
+    let weightsStr = '';
+    if (typeof weights === 'string') {
+      weightsStr = weights;
+    } else if (Array.isArray(weights)) {
+      // If LLM returned an array of strings
+      weightsStr = weights.join('\n');
+    } else {
+      console.warn('[Predictions] Unexpected type for topicWeights:', typeof weights);
+      setFormattedTopicWeights([]);
+      return;
+    }
+
+    const parsed = weightsStr
       .split('\n')
       .map((line, i) => {
         const [rawTopic, rawWeight] = line.split(':');

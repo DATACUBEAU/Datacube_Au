@@ -50,6 +50,11 @@ interface StoredKnowledgeHistory {
   data: GenerateKnowledgeOutput;
 }
 
+function coerceMultiline(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((v) => String(v)).join('\n');
+  return '';
+}
 
 export default function KnowledgePage() {
   const [user] = useSupabaseUser();
@@ -268,7 +273,7 @@ export default function KnowledgePage() {
                       initial="hidden"
                       animate="visible"
                   >
-                  {knowledgeData.keyPoints.split('\n').filter(p => p.trim()).map((point, index) => (
+                  {coerceMultiline((knowledgeData as any)?.keyPoints).split('\n').filter((p: string) => p.trim()).map((point: string, index: number) => (
                       <motion.div key={index} variants={itemVariants} className="flex items-start rounded-lg border bg-secondary/50 p-4">
                       <div className="mr-4 mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary"><span className="text-xs font-bold text-primary-foreground">{index + 1}</span></div>
                       <p className="text-sm leading-relaxed">{point.replace(/^\d+\.\s*/, '')}</p>
@@ -387,7 +392,7 @@ export default function KnowledgePage() {
                 initial="hidden"
                 animate="visible"
                 >
-                {knowledgeData.studyRoadmap.split('\n').filter(s => s.trim().length > 0).map((item, index) => {
+                {coerceMultiline((knowledgeData as any)?.studyRoadmap).split('\n').filter((s: string) => s.trim().length > 0).map((item: string, index: number) => {
                     const [title, ...descriptionParts] = item.replace(/^\d+\.\s*/, '').split(': ');
                     const description = descriptionParts.join(': ');
                     return (

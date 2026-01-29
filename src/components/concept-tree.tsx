@@ -13,8 +13,9 @@ type ConceptNodeData = {
   children: ConceptNodeData[];
 };
 
-function parseMarkdownList(markdown: string): ConceptNodeData[] {
-  const lines = markdown.split('\n').filter(line => line.trim() !== '');
+function parseMarkdownList(markdown: any): ConceptNodeData[] {
+  const text = typeof markdown === 'string' ? markdown : (Array.isArray(markdown) ? markdown.join('\n') : String(markdown ?? ''));
+  const lines = text.split('\n').filter(line => line.trim() !== '');
   if (lines.length === 0) return [];
   
   const root: ConceptNodeData = { text: 'root', children: [] };
