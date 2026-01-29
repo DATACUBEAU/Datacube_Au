@@ -407,14 +407,56 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           guestSessionId = await ensureGuestSession();
         }
 
-        // 3. Prepare FormData for Edge Function
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('filename', job.file_name);
-        formData.append('job_id', job.id);
-        formData.append('document_id', job.document_id);
+        // 3. Prepare Storage Upload (Architecture Change: Browser Direct Upload)
+        const effectiveUserId = currentSession?.user?.id || guestSessionId;
+        if (!effectiveUserId) throw new Error('Could not determine owner ID. Please sign in or refresh.');
+
+        // File size validation
+        const MAX_SIZE = 50 * 1024 * 1024; // 50MB
+        if (file.size > MAX_SIZE) {
+          throw new Error(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds the 50MB limit.`);
+        }
+
+        let folder = "uploads";
+        if (job.label === "main_textbook") folder = "textbooks";
+        else if (job.label === "supplementary") folder = "supplementary";
         
-        // Find the document to get its expires_at and parent_id
+        const safeFileName = job.file_name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const filePath = `${effectiveUserId}/${folder}/${safeFileName}`;
+        const bucket = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || "documents";
+
+        // Update local UI state
+        updateJobLocal(job.id, { status: 'uploading', progress: 5 });
+
+        // 4. Upload directly to Supabase Storage using TUS for reliability & progress
+        // We use the same anonKey and accessToken (which could be a guest token)
+        console.log(`[upload-jobs] Starting direct storage upload for ${job.id} to ${filePath}...`);
+        
+        const uploadUrl = await createTusUpload({
+          supabaseUrl,
+          anonKey,
+          accessToken: accessToken || anonKey, // Use anonKey as fallback if no token
+          bucket,
+          objectName: filePath,
+          file,
+          upsert: true,
+        });
+
+        await uploadTus({
+          uploadUrl,
+          anonKey,
+          accessToken: accessToken || anonKey,
+          file,
+          signal: controller.signal,
+          onProgress: (uploaded, total) => {
+            const pct = Math.round((uploaded / total) * 90); // 0-90% for upload
+            updateJobLocal(job.id, { progress: 5 + pct });
+          }
+        });
+
+        console.log(`[upload-jobs] Storage upload complete for ${job.id}. Registering with Edge Function...`);
+
+        // 5. Find the document to get its expires_at and parent_id
         const { data: docData } = await supabase
           .from('au_documents')
           .select('expires_at, parent_id')
@@ -422,28 +464,25 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           .maybeSingle();
         
         const effectiveParentId = (job as any).parent_id || docData?.parent_id;
-        
-        if (docData?.expires_at) {
-          formData.append('expires_at', docData.expires_at);
-        }
-        if (effectiveParentId) {
-          formData.append('parent_id', effectiveParentId);
-        }
 
-        if (guestSessionId) formData.append('guest_session_id', guestSessionId);
-        if (job.label) formData.append('document_type', job.label);
-
-        // Update local UI state
-        updateJobLocal(job.id, { status: 'uploading', progress: 10 });
-
-        // 4. Call Edge Function via safeFetch (Enqueue only)
+        // 6. Call Edge Function with metadata only (Architecture Change: Metadata-only Edge Function)
         const result = await uploadDocument(
           user,
-          formData,
+          {
+            fileName: job.file_name,
+            filePath,
+            fileSize: file.size,
+            jobId: job.id,
+            documentId: job.document_id,
+            guestSessionId: guestSessionId || undefined,
+            documentType: job.label ?? undefined,
+            expiresAt: docData?.expires_at,
+            parentId: effectiveParentId,
+          },
           accessToken || undefined
         );
 
-        if (!result.ok) throw new Error('Upload failed to enqueue');
+        if (!result.ok) throw new Error('Upload registration failed');
 
         // On success, the job is enqueued on the backend.
         // We update the local state and stop here.

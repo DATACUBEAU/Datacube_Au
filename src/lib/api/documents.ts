@@ -13,11 +13,22 @@ if (!SUPABASE_URL) {
 }
 
 /**
- * Uploads a document using the Edge Function with fallback to direct storage/DB operations.
+ * Registers a document after successful storage upload.
  */
 export async function uploadDocument(
   user: User | null,
-  formData: FormData,
+  metadata: {
+    fileName: string;
+    filePath: string;
+    fileSize: number;
+    jobId: string;
+    documentId: string;
+    expiresAt?: string;
+    parentId?: string;
+    guestSessionId?: string;
+    documentType?: string;
+    metadata?: any;
+  },
   accessToken?: string
 ): Promise<{ ok: boolean; jobId: string }> {
   const url = `${SUPABASE_URL}/functions/v1/document-upload`;
@@ -25,23 +36,22 @@ export async function uploadDocument(
   // Prepare headers
   const headers: Record<string, string> = {
     'apikey': SUPABASE_ANON_KEY || '',
+    'Content-Type': 'application/json',
   };
   if (accessToken && accessToken !== 'undefined') {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
   try {
-    // 1. Try the Edge Function with safeFetch
+    // 1. Send JSON metadata to Edge Function
     const res = await safeFetch(url, {
       method: 'POST',
       headers,
-      body: formData,
+      body: JSON.stringify(metadata),
     });
 
     return res;
   } catch (error: any) {
-    // If it's a deployment error or network error, we might still want fallback, 
-    // but the user's instructions prioritize the "enqueue only" flow via the function.
     console.error('[API] document-upload failed:', error);
     throw error;
   }
