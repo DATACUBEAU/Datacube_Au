@@ -4,6 +4,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { UploadJobsProvider } from '@/components/upload/upload-jobs-provider';
 import { BackgroundController } from '@/components/background-controller';
 import { PT_Sans, Space_Grotesk, Source_Code_Pro } from 'next/font/google';
+import { SpeedInsights } from '@vercel/speed-insights/next';
 import './globals.css';
 
 const ptSans = PT_Sans({
@@ -72,6 +73,7 @@ export default function RootLayout({
           <UploadJobsProvider>{children}</UploadJobsProvider>
           <Toaster />
         </ThemeProvider>
+        <SpeedInsights />
       </body>
     </html>
   );
