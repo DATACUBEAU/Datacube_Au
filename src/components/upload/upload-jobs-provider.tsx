@@ -418,8 +418,10 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
 
         let folder = "uploads";
-        if (job.label === "main_textbook") folder = "textbooks";
-        else if (job.label === "supplementary") folder = "supplementary";
+        const normalizedLabel = (job.label || "").toLowerCase().trim().replace(/\s+/g, "_");
+        
+        if (normalizedLabel === "main_textbook") folder = "textbooks";
+        else if (normalizedLabel === "supplementary") folder = "supplementary";
         
         const safeFileName = job.file_name.replace(/[^a-zA-Z0-9._-]/g, "_");
         const filePath = `${effectiveUserId}/${folder}/${safeFileName}`;
@@ -430,7 +432,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
         // 4. Upload directly to Supabase Storage using TUS for reliability & progress
         // We use the same anonKey and accessToken (which could be a guest token)
-        console.log(`[upload-jobs] Starting direct storage upload for ${job.id} to ${filePath}...`);
+        console.log(`[upload-jobs] Starting direct storage upload for ${job.id} to ${filePath} (label: ${job.label})...`);
         
         const uploadUrl = await createTusUpload({
           supabaseUrl,
@@ -466,23 +468,34 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         const effectiveParentId = (job as any).parent_id || docData?.parent_id;
 
         // 6. Call Edge Function with metadata only (Architecture Change: Metadata-only Edge Function)
-        const result = await uploadDocument(
-          user,
-          {
-            fileName: job.file_name,
-            filePath,
-            fileSize: file.size,
-            jobId: job.id,
-            documentId: job.document_id,
-            guestSessionId: guestSessionId || undefined,
-            documentType: job.label ?? undefined,
-            expiresAt: docData?.expires_at,
-            parentId: effectiveParentId,
-          },
-          accessToken || undefined
-        );
+         console.log(`[upload-jobs] Registering metadata for ${job.id} with Edge Function...`, {
+           fileName: job.file_name,
+           filePath,
+           fileSize: file.size,
+           documentType: job.label
+         });
 
-        if (!result.ok) throw new Error('Upload registration failed');
+         const result = await uploadDocument(
+           user,
+           {
+             fileName: job.file_name,
+             filePath,
+             fileSize: file.size,
+             mimeType: file.type || undefined,
+             jobId: job.id,
+             documentId: job.document_id,
+             guestSessionId: guestSessionId || undefined,
+             documentType: job.label ?? undefined,
+             expiresAt: docData?.expires_at,
+             parentId: effectiveParentId,
+           },
+           accessToken || undefined
+         );
+
+         if (!result.ok) {
+           console.error(`[upload-jobs] Edge Function registration failed for ${job.id}:`, result);
+           throw new Error('Upload registration failed. The server could not enqueue the job.');
+         }
 
         // On success, the job is enqueued on the backend.
         // We update the local state and stop here.

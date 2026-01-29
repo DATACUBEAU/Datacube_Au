@@ -52,8 +52,15 @@ Deno.serve(async (req: Request) => {
     const documentId = body.documentId || body.document_id;
     const parentId = body.parentId || body.parent_id;
     let expiresAt = body.expiresAt || body.expires_at;
-    const documentType = body.documentType || body.document_type || "main_textbook";
+    const documentTypeRaw = body.documentType || body.document_type || "main_textbook";
     const metadata = body.metadata || {};
+    const mimeType = body.mimeType || body.mime_type;
+
+    // Normalize documentType (e.g., "Main Textbook" -> "main_textbook")
+    const documentType = (documentTypeRaw || "")
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, "_") || "main_textbook";
 
     // 2. Validate Auth
     const { userId, ownershipFilter, supabaseAdmin: supabase, authError } = await requireAnyAuth(req, body);
@@ -160,16 +167,19 @@ Deno.serve(async (req: Request) => {
     }
     console.log(`[document-upload] Document registered: ${doc.id}`);
 
-    // 7. Enqueue Job (Atomic step 2)
+    // 7. Enqueue/Update Job (Atomic step 2)
     console.log(`[document-upload] Enqueueing job for document ${doc.id}...`);
     const jobData: any = {
       id: jobId || crypto.randomUUID(),
       document_id: doc.id,
       file_name: fileName,
       file_size_bytes: fileSize,
+      mime_type: mimeType || (fileName?.endsWith(".pdf") ? "application/pdf" : "text/plain"),
+      label: documentType,
       bucket: Deno.env.get("SUPABASE_BUCKET") || Deno.env.get("NEXT_PUBLIC_SUPABASE_BUCKET") || "documents",
       object_path: filePath,
       status: "queued",
+      updated_at: new Date().toISOString(),
     };
     
     // Add ownership fields explicitly
@@ -179,7 +189,7 @@ Deno.serve(async (req: Request) => {
 
     const { data: job, error: jobError } = await supabase
       .from("au_upload_jobs")
-      .insert(jobData)
+      .upsert(jobData)
       .select()
       .single();
 

@@ -21,6 +21,7 @@ export async function uploadDocument(
     fileName: string;
     filePath: string;
     fileSize: number;
+    mimeType?: string;
     jobId: string;
     documentId: string;
     expiresAt?: string;
