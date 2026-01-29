@@ -77,7 +77,7 @@ Deno.serve(async (req: Request) => {
       userId: userId ?? undefined,
       ownershipFilter: ownershipFilter,
       feature: "exam-generator",
-    });
+    }, "exam");
 
     const extractJson = (text: string) => {
       const trimmed = (text || "").trim();
@@ -134,9 +134,10 @@ Deno.serve(async (req: Request) => {
     const safeMessage =
       status === 401 || status === 403
         ? "Unauthorized"
-        : "Exam generation service temporarily unavailable. Please try again later.";
+        : "Exam generator temporarily unavailable. Please try again later.";
     return new Response(JSON.stringify({ 
       error: safeMessage,
+      details: error.details || error.message || String(error),
       requestId
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

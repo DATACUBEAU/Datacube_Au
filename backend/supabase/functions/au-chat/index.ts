@@ -56,7 +56,7 @@ Deno.serve(async (req: Request) => {
        const { getActiveModels } = await import("../_shared/model_registry.ts");
        return new Response(JSON.stringify({ 
          ok: true, 
-         models: getActiveModels(),
+         models: getActiveModels("chat"),
          requestId 
        }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -112,7 +112,7 @@ Deno.serve(async (req: Request) => {
         **Ready to begin?** Pick a phase or ask me anything!"
         `;
 
-        const responseText = await callAU(supabaseAdmin, systemPrompt, `Document Content (Start):\n${docContext}`, 0.5, true);
+        const responseText = await callAU(supabaseAdmin, systemPrompt, `Document Content (Start):\n${docContext}`, 0.5, true, undefined, undefined, "chat");
         let finalResponse = { answer: responseText, thought: "" };
         try {
             const cleaned = responseText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
@@ -328,7 +328,8 @@ Example:
       0.5,
       false, // Disable JSON mode to avoid 400 errors with some free models
       modelOverride,
-      { userId: userId || undefined, ownershipFilter, feature: "au-chat", sessionId }
+      { userId: userId || undefined, ownershipFilter, feature: "au-chat", sessionId },
+      "chat"
     );
 
     let finalResponse = { answer: responseText, thought: "", citations };
@@ -401,13 +402,16 @@ Example:
   } catch (error: any) {
     console.error(`[au-chat] Error [${requestId}]:`, error);
     const status = typeof error?.status === "number" ? error.status : 500;
+    
+    const rawMessage = error.message || String(error);
     const safeMessage =
-      status === 401 ? "Unauthorized" :
-      status === 403 ? "Forbidden" :
-      status >= 500 ? "AI service temporarily unavailable. Please try again later." :
-      (error?.message || "Request failed");
+      status === 401 || status === 403
+        ? "Unauthorized"
+        : (rawMessage.includes("All AI models") ? rawMessage : "Study assistant temporarily unavailable. Please try again later.");
+        
     return new Response(JSON.stringify({ 
       error: safeMessage,
+      details: error.details || error.message || String(error),
       requestId
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -41,10 +41,9 @@ export async function safeFetch(url: string, options: RequestInit, config?: { si
     }
 
     if (!config?.silent) {
-      console.error(`[safeFetch] API error ${res.status} (${res.statusText}) on ${url}:`, {
-        body,
-        errorMessage
-      });
+      console.error(`[safeFetch] API error ${res.status} (${res.statusText}) on ${url}`);
+      if (body) console.error(`[safeFetch] Response body:`, body);
+      console.error(`[safeFetch] Error message:`, errorMessage);
     }
 
     const error = new Error(errorMessage);

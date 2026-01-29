@@ -100,17 +100,23 @@ DataCube AU is an advanced, AI-powered document analysis and knowledge managemen
 
 1. **Initialize Supabase**:
    ```bash
-   supabase init
+   npx supabase --workdir backend init
    ```
 
 2. **Run Migrations**:
    ```bash
-   supabase db push
+   npx supabase --workdir backend db push
    ```
 
 3. **Deploy Edge Functions**:
    ```bash
-   supabase functions deploy
+   npx supabase --workdir backend functions deploy
+   ```
+
+   Alternatively:
+   ```bash
+   cd backend
+   npx supabase functions deploy
    ```
 
 ---

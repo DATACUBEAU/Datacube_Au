@@ -88,7 +88,7 @@ Deno.serve(async (req: Request) => {
       userId: userId ?? undefined,
       ownershipFilter: ownershipFilter,
       feature: "chat-rag",
-    });
+    }, "chat");
 
     return new Response(JSON.stringify({ 
       ok: true,

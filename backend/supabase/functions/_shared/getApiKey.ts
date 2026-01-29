@@ -13,7 +13,9 @@ export async function getApiKey(supabase: any, service: string): Promise<string>
     .single();
 
   if (error || !data) {
-    throw new Error(`API key for ${service} not found`);
+    const msg = `API key for ${service} not found. Please ensure it is set in 'au_api_keys' table or as ${service.toUpperCase()}_API_KEY environment variable.`;
+    console.error(`[getApiKey] ${msg}`);
+    throw new Error(msg);
   }
 
   // In a real scenario, decrypt here if stored encrypted using pgcrypto and a key

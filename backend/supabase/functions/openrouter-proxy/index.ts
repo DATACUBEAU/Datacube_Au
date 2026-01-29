@@ -37,7 +37,8 @@ Deno.serve(async (req: Request) => {
       typeof temperature === "number" ? temperature : 0.5,
       false,
       typeof model === "string" ? model : undefined,
-      { userId: userId || undefined, ownershipFilter, feature: "openrouter-proxy" }
+      { userId: userId || undefined, ownershipFilter, feature: "openrouter-proxy" },
+      "chat"
     ); 
 
     return new Response(JSON.stringify({ 

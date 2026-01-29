@@ -1,5 +1,5 @@
 import { openrouterChatCompletions } from "./openrouter.ts";
-import { getNextAvailableModelAsync, getVerifiedModelIds, markModelAsFailed } from "./model_registry.ts";
+import { getNextAvailableModelAsync, getVerifiedModelIds, reportModelHealth } from "./model_registry.ts";
 
 export const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -19,7 +19,8 @@ export async function callAU(
   temperature = 0.5,
   jsonMode = false,
   modelOverride?: string,
-  usageContext?: { userId?: string; feature?: string; sessionId?: string }
+  usageContext?: { userId?: string; feature?: string; sessionId?: string },
+  scope = "chat"
 ): Promise<string> {
   // 1. Determine Initial Model
   let currentModel = modelOverride;
@@ -43,7 +44,7 @@ export async function callAU(
 
   // If still no model (or DB failed), get best available from registry
   if (!currentModel) {
-    currentModel = await getNextAvailableModelAsync(supabaseAdmin);
+    currentModel = await getNextAvailableModelAsync(supabaseAdmin, [], scope);
   }
 
   const attemptedModels: string[] = [];
@@ -51,7 +52,7 @@ export async function callAU(
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      console.log(`[ai] Attempt ${attempt + 1}/${MAX_RETRIES + 1} using model: ${currentModel}`);
+      console.log(`[ai][${scope}] Attempt ${attempt + 1}/${MAX_RETRIES + 1} using model: ${currentModel}`);
       
       const { content, usage } = await openrouterChatCompletions({
         supabaseAdmin,
@@ -63,6 +64,9 @@ export async function callAU(
         temperature,
         response_format: jsonMode ? { type: "json_object" } : undefined,
       });
+
+      // Report success for health scoring
+      reportModelHealth(currentModel, true, undefined, scope);
 
       // Success! Log usage and return.
       const userId = usageContext?.userId;
@@ -89,23 +93,43 @@ export async function callAU(
       return content;
 
     } catch (error: any) {
-      console.warn(`[ai] Model ${currentModel} failed: ${error.message}`);
+      const message = error.message || String(error);
+      console.warn(`[ai][${scope}] Model ${currentModel} failed: ${message}`);
       
-      // Mark as failed in registry (cooldown)
-      markModelAsFailed(currentModel, typeof error?.status === "number" ? error.status : undefined);
+      // If it's a terminal configuration error (e.g. missing API key), don't retry other models
+      if (message.includes("API key for") && message.includes("not found")) {
+        console.error(`[ai] Terminal configuration error: ${message}`);
+        throw error;
+      }
+
+      // Mark as failed in registry (health update)
+      reportModelHealth(currentModel, false, typeof error?.status === "number" ? error.status : undefined, scope);
+      
+      // If we hit a rate limit (429), add a small delay before the next attempt
+      if (error?.status === 429) {
+        const delay = 500 + Math.random() * 500; // 500-1000ms jitter
+        console.log(`[ai.ts] Rate limit hit on ${currentModel}. Waiting ${Math.round(delay)}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
       attemptedModels.push(currentModel);
 
-      // If we've exhausted retries, throw the last error
+      // If we've exhausted retries, throw a clean error
       if (attempt === MAX_RETRIES) {
         console.warn(`[ai] Exhausted model attempts. Chain: ${attemptedModels.join(" -> ")}.`);
-        throw new Error("All AI models are currently unavailable.");
+        const lastErrorMessage = error?.message || "Exhausted all models";
+        const finalError = new Error(`All AI models are currently unavailable. Last error: ${lastErrorMessage}`) as any;
+        finalError.status = 503;
+        finalError.details = lastErrorMessage;
+        throw finalError;
       }
 
       // Prepare next model
       // We exclude everything we've already tried in this request
-      currentModel = await getNextAvailableModelAsync(supabaseAdmin, attemptedModels);
+      currentModel = await getNextAvailableModelAsync(supabaseAdmin, attemptedModels, scope);
     }
   }
+
 
   throw new Error("Unexpected end of retry loop");
 }

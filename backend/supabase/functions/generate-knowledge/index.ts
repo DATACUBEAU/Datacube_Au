@@ -71,7 +71,7 @@ Deno.serve(async (req: Request) => {
       userId: userId || undefined,
       ownershipFilter: ownershipFilter,
       feature: "generate-knowledge",
-    });
+    }, "knowledge");
     
     const extractJson = (text: string) => {
       const trimmed = (text || "").trim();

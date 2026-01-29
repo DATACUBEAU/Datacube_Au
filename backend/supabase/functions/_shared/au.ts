@@ -281,10 +281,11 @@ export async function callAU(
   temperature = 0.5,
   jsonMode = false,
   modelOverride?: string,
-  usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any }
+  usageContext?: { userId?: string; feature?: string; sessionId?: string; ownershipFilter?: any },
+  scope = "chat"
 ): Promise<string> {
   const { openrouterChatCompletions } = await import("./openrouter.ts");
-  const { getNextAvailableModelAsync, getVerifiedModelIds, markModelAsFailed } = await import("./model_registry.ts");
+  const { getNextAvailableModelAsync, getVerifiedModelIds, reportModelHealth } = await import("./model_registry.ts");
 
   let model = modelOverride;
   if (!model) {
@@ -314,7 +315,7 @@ export async function callAU(
   
   // Initialize currentModel. If "auto", pick one. If specific override, start there.
   let currentModel = model === "auto"
-    ? await getNextAvailableModelAsync(supabaseAdmin, [])
+    ? await getNextAvailableModelAsync(supabaseAdmin, [], scope)
     : model;
 
   // Keep track of tried models in this session to avoid cycles
@@ -323,7 +324,7 @@ export async function callAU(
   while (attempts < MAX_ATTEMPTS) {
     // If the current model has already been tried (e.g. from exclusion list in previous recursion or loop), get another one.
     if (triedModels.has(currentModel)) {
-       currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels));
+       currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels), scope);
     }
     
     // If no more models are available to try in the registry
@@ -334,7 +335,7 @@ export async function callAU(
     triedModels.add(currentModel);
 
     try {
-      console.log(`[au.ts] Attempt ${attempts + 1}/${MAX_ATTEMPTS} using model: ${currentModel} (JSON: ${jsonMode})`);
+      console.log(`[au.ts][${scope}] Attempt ${attempts + 1}/${MAX_ATTEMPTS} using model: ${currentModel} (JSON: ${jsonMode})`);
       
       const { content, usage, raw } = await openrouterChatCompletions({
         supabaseAdmin,
@@ -346,6 +347,9 @@ export async function callAU(
         temperature,
         response_format: jsonMode ? { type: "json_object" } : undefined,
       });
+
+      // Report success for health scoring
+      reportModelHealth(currentModel, true, undefined, scope);
 
       const feature = usageContext?.feature;
       if (usageContext?.ownershipFilter && feature && usage) {
@@ -369,12 +373,27 @@ export async function callAU(
 
     } catch (err: any) {
       const status = err.status;
-      console.warn(`[au.ts] Model ${currentModel} failed (Status: ${status}): ${err.message}`);
+      const message = err.message || String(err);
+      console.warn(`[au.ts][${scope}] Model ${currentModel} failed (Status: ${status}): ${message}`);
       lastError = err;
-      markModelAsFailed(currentModel, typeof err?.status === "number" ? err.status : undefined);
+
+      // If it's a terminal configuration error (e.g. missing API key), don't retry other models
+      if (message.includes("API key for") && message.includes("not found")) {
+        console.error(`[au.ts] Terminal configuration error: ${message}`);
+        throw err;
+      }
+
+      reportModelHealth(currentModel, false, typeof err?.status === "number" ? err.status : undefined, scope);
       
+      // If we hit a rate limit (429), add a small delay before the next attempt
+      if (status === 429) {
+        const delay = 500 + Math.random() * 500; // 500-1000ms jitter
+        console.log(`[au.ts] Rate limit hit on ${currentModel}. Waiting ${Math.round(delay)}ms before retry...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+
       // Get next best model, excluding all we have tried so far
-      currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels));
+      currentModel = await getNextAvailableModelAsync(supabaseAdmin, Array.from(triedModels), scope);
       attempts++;
     }
   }
@@ -382,7 +401,12 @@ export async function callAU(
   if (lastError) {
     console.warn(`[au.ts] Exhausted model attempts. Last error: ${lastError.message}`);
   }
-  throw new Error("All AI models are currently unavailable.");
+  
+  const lastErrorMessage = lastError?.message || "Exhausted all models";
+  const finalError = new Error(`All AI models are currently unavailable. Last error: ${lastErrorMessage}`) as any;
+  finalError.status = 503;
+  finalError.details = lastErrorMessage;
+  throw finalError;
 }
 
 /**

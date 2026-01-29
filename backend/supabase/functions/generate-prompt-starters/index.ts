@@ -73,7 +73,7 @@ Deno.serve(async (req: Request) => {
       userId: userId as string,
       ownershipFilter: ownershipFilter,
       feature: "generate-prompt-starters",
-    });
+    }, "chat");
 
     let result;
     try {

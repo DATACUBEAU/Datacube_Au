@@ -1,55 +1,6 @@
 // @ts-ignore: Deno modules
 import { corsHeaders } from "../_shared/cors.ts";
 
-const PREDICTION_ENGINE_CANDIDATE_MODELS = [
-  "mistralai/mistral-7b-instruct",
-  "mistralai/mistral-7b-instruct:free",
-  "meta-llama/llama-3.1-8b-instruct",
-  "meta-llama/llama-3-8b-instruct",
-  "google/gemma-7b-it",
-  "google/gemma-2b-it",
-  "deepseek/deepseek-chat",
-  "deepseek/deepseek-r1",
-  "qwen/qwen-2-7b-instruct",
-  "qwen/qwen-1.5-7b-chat",
-  "nousresearch/nous-hermes-2-mistral-7b",
-  "openchat/openchat-7b",
-  "teknium/openhermes-2.5-mistral-7b",
-  "phind/phind-codellama-34b",
-  "gryphe/mythomist-7b",
-  "undi95/toppy-m-7b",
-  "intel/neural-chat-7b",
-  "microsoft/phi-3-medium-128k-instruct",
-  "microsoft/phi-3-mini-128k-instruct",
-  "huggingfaceh4/zephyr-7b-beta",
-] as const;
-
-const modelCooldownUntilMs = new Map<string, number>();
-
-function isModelOnCooldown(modelId: string) {
-  const until = modelCooldownUntilMs.get(modelId);
-  return typeof until === "number" && until > Date.now();
-}
-
-function setModelCooldown(modelId: string, cooldownMs: number) {
-  modelCooldownUntilMs.set(modelId, Date.now() + cooldownMs);
-}
-
-function parseOpenRouterStatus(err: any): number | null {
-  const msg = typeof err?.message === "string" ? err.message : "";
-  const m = msg.match(/OpenRouter (?:API|Embedding) Error:\s*(\d{3})\b/);
-  if (!m) return null;
-  const n = Number(m[1]);
-  return Number.isFinite(n) ? n : null;
-}
-
-function sanitizeProviderMessage(err: any): string {
-  const msg = typeof err?.message === "string" ? err.message : "";
-  if (!msg) return "Unknown error";
-  const parts = msg.split(" - ");
-  return parts[0] || "Unknown error";
-}
-
 Deno.serve(async (req: Request) => {
   const requestId = crypto.randomUUID();
   const corsHeadersWithJson = { ...corsHeaders, "Content-Type": "application/json" };
@@ -62,8 +13,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { requireUser, emitEvent } = await import("../_shared/au.ts");
-    const { openrouterChatCompletions } = await import("../_shared/openrouter.ts");
+    const { callAU, requireUser, emitEvent } = await import("../_shared/au.ts");
 
     const body = await req.json().catch(() => ({}));
     const { userId, ownershipFilter, supabaseAdmin } = await requireUser(req, body);
@@ -130,53 +80,23 @@ Deno.serve(async (req: Request) => {
       return null;
     };
 
-    let aiResponse: string | null = null;
-    let parsed: any | null = null;
+    // Use centralized callAU with automatic retries and model selection
+    const aiResponse = await callAU(supabaseAdmin, systemPrompt, userPrompt, 0.4, false, undefined, {
+      userId: userId || undefined,
+      ownershipFilter: ownershipFilter,
+      feature: "prediction-engine",
+    }, "prediction");
 
-    for (const modelId of PREDICTION_ENGINE_CANDIDATE_MODELS) {
-      if (isModelOnCooldown(modelId)) continue;
-
-      try {
-        const res = await openrouterChatCompletions({
-          supabaseAdmin,
-          model: modelId,
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt },
-          ],
-          temperature: 0.4,
-          requestId,
-        });
-
-        aiResponse = res.content;
-        parsed = extractJson(aiResponse);
-        if (!parsed) {
-          throw new Error("Prediction Engine model returned non-JSON output");
-        }
-
-        break;
-      } catch (err: any) {
-        const status = parseOpenRouterStatus(err);
-
-        if (status === 404) setModelCooldown(modelId, 24 * 60 * 60 * 1000);
-        else if (status === 429) setModelCooldown(modelId, 60 * 1000);
-        else if (typeof status === "number" && status >= 500) setModelCooldown(modelId, 2 * 60 * 1000);
-        else setModelCooldown(modelId, 2 * 60 * 1000);
-
-        console.warn(
-          `[prediction-engine] model_failed requestId=${requestId} model=${modelId} status=${status ?? "unknown"} reason=${sanitizeProviderMessage(err)}`,
-        );
-      }
-    }
-    
+    const parsed = extractJson(aiResponse);
     if (!parsed) {
-      const safeMessage = "Exam prediction service temporarily unavailable. Please try again later.";
       return new Response(JSON.stringify({
-        error: safeMessage,
+        error: "Invalid AU response format",
+        details: "Failed to parse AU output as JSON",
         requestId,
+        rawResponse: aiResponse,
       }), {
         headers: corsHeadersWithJson,
-        status: 503,
+        status: 500,
       });
     }
 
@@ -203,12 +123,17 @@ Deno.serve(async (req: Request) => {
   } catch (error: any) {
     console.error(`[prediction-engine] Error [${requestId}]:`, error);
     const status = typeof error?.status === "number" ? error.status : 500;
+    
+    // Use the error's own message if it's already a clean "All models unavailable" message
+    const rawMessage = error.message || String(error);
     const safeMessage =
       status === 401 || status === 403
         ? "Unauthorized"
-        : "Exam prediction service temporarily unavailable. Please try again later.";
+        : (rawMessage.includes("All AI models") ? rawMessage : "Exam prediction service temporarily unavailable. Please try again later.");
+        
     return new Response(JSON.stringify({ 
       error: safeMessage,
+      details: error.details || error.message || String(error),
       requestId
     }), {
       headers: corsHeadersWithJson,
