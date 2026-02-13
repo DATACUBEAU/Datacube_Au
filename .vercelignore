@@ -1,0 +1,18 @@
+node_modules
+build
+dist
+.git
+.trae
+.log
+.figma
+
+# Backend and Firebase (Not for Vercel)
+/backend/
+/functions/
+/supabase/
+/tests/
+/vcodeN/
+/docs/
+/backend/supabase/
+/backend/firebase-worker/
+/backend/rag-worker/
