@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, getGuestToken, decodeJWT } from '@/lib/supabase/client';
+import { supabase, getGuestToken, decodeJWT } from '@/lib/supabase-client/client';
 import { useSupabaseSession } from '@/hooks/use-supabase-auth';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';

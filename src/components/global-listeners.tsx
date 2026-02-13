@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, decodeJWT, getGuestToken } from '@/lib/supabase/client';
+import { supabase, decodeJWT, getGuestToken } from '@/lib/supabase-client/client';
 import { DirectMessageListener } from './direct-message-listener';
 import { BroadcastListener } from './broadcast-listener';
 import { useActivity } from '@/hooks/use-activity';

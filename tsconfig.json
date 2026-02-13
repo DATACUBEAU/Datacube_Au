@@ -44,7 +44,7 @@
     "backend",
     "functions",
     "functions/src/index.ts",
-    "supabase",
+    "./supabase",
     "tests",
     "rag-worker"
   ]

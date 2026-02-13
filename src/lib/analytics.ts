@@ -1,6 +1,6 @@
 import { analytics } from './firebase/client';
 import { logEvent as firebaseLogEvent } from 'firebase/analytics';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 
 export const logEvent = async (name: string, params: Record<string, any> = {}, tier?: string) => {
   // 1. Firebase Analytics (Client Side)

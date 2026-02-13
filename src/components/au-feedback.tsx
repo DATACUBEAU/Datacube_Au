@@ -11,7 +11,7 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { toast } from '@/hooks/use-toast';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 
 interface FeedbackSectionProps {
@@ -40,7 +40,7 @@ export function FeedbackSection({ sectionName }: FeedbackSectionProps) {
 
       if (guestToken) {
         try {
-          const { decodeJWT } = await import('@/lib/supabase/client');
+          const { decodeJWT } = await import('@/lib/supabase-client/client');
           const decoded = decodeJWT(guestToken);
           guestSessionId = decoded?.guest_session_id || decoded?.sub;
         } catch (e) {

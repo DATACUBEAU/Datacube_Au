@@ -6,7 +6,7 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { db, auth as firebaseAuth } from '@/lib/firebase/client';
 import { collection, query, where, onSnapshot, orderBy, limit, addDoc, doc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { signInWithCustomToken } from 'firebase/auth';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { useToast } from '@/hooks/use-toast';
 import { LocalChatStorage } from '@/lib/storage/local-chat';
 import { ChatMessage } from '@/lib/api/chat';
@@ -83,14 +83,14 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
             if (!session) return;
 
             // Call Edge Function to get custom token
-            const { safeFetch } = await import('@/lib/api/safe-fetch');
-            const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-            const res = await safeFetch(`${SUPABASE_URL}/functions/v1/get-firebase-token`, {
+            const { data, error } = await supabase.functions.invoke('get-firebase-token', {
                 headers: { Authorization: `Bearer ${session.access_token}` }
             });
             
-            if (res.token) {
-                await signInWithCustomToken(firebaseAuth, res.token);
+            if (error) throw error;
+
+            if (data?.token) {
+                await signInWithCustomToken(firebaseAuth, data.token);
                 // console.log("[ChatRuntime] Firebase Auth Synced!");
                 setIsFirebaseAuthReady(true);
             }
@@ -208,7 +208,7 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
 
     // C. Call Edge Function
     try {
-        const { supabase } = await import('@/lib/supabase/client'); // Dynamic import
+        const { supabase } = await import('@/lib/supabase-client/client'); // Dynamic import
         const sb = supabase; // Get client
         
         const { data, error } = await sb.functions.invoke('enqueue-chat-job', {
@@ -278,7 +278,7 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
   const markSupportRead = useCallback(async () => {
       if (!user) return;
       try {
-          const { supabase } = await import('@/lib/supabase/client');
+          const { supabase } = await import('@/lib/supabase-client/client');
           const sb = supabase;
           await sb.functions.invoke('support-mark-read', {
               body: { viewer: 'user' }
@@ -295,7 +295,7 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
       if (unreadBroadcasts === 0) return; // No op
 
       try {
-          const { supabase } = await import('@/lib/supabase/client');
+          const { supabase } = await import('@/lib/supabase-client/client');
           const sb = supabase;
           await sb.functions.invoke('support-mark-read', {
               body: { viewer: 'user', scope: 'broadcasts', version: activeBroadcastVersion }

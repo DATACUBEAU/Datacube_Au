@@ -35,7 +35,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PwaInstallButton from '@/components/pwa-install-button';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 

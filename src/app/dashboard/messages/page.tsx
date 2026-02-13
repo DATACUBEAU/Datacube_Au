@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { db } from '@/lib/firebase/client';
 import { collection, query, where, onSnapshot, orderBy, limit, doc } from 'firebase/firestore';
 import { Loader2, Bell, Inbox, Send, Reply } from 'lucide-react';

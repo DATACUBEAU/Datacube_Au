@@ -49,7 +49,7 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { TruncatedText } from '@/components/TruncatedText';
 
 import { FeedbackSection } from "@/components/au-feedback";

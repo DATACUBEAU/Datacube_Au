@@ -1,4 +1,4 @@
-import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase/client';
+import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
 import type { AuDocumentChunkRow, AuDocumentRow } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
 

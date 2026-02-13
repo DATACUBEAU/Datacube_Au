@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { listDocuments, deleteDocument, type AuDocumentRow } from '@/lib/api/documents';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 
 export function useAuDocuments(pollInterval = 0) {
   const [user] = useSupabaseUser();
