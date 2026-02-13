@@ -34,7 +34,9 @@ export async function initiateUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string }> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    'apikey': SUPABASE_ANON_KEY || ''
+  };
   if (accessToken && accessToken !== 'undefined') {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
@@ -71,7 +73,9 @@ export async function completeUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; jobId: string }> {
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    'apikey': SUPABASE_ANON_KEY || ''
+  };
   if (accessToken && accessToken !== 'undefined') {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }

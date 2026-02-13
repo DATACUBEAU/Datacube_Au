@@ -149,7 +149,7 @@ export async function sendChatMessage(
       };
   }
 
-  return safeFetch(`${SUPABASE_URL}/functions/v1/${endpoint}`, {
+  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -157,7 +157,15 @@ export async function sendChatMessage(
     },
     signal: opts?.signal,
     body: JSON.stringify(payload),
-  }, { timeoutMs: 120_000, retries: 3 });
+    timeout: 120_000 // safeFetch options are merged into the second argument
+  });
+
+  if (!response.ok) {
+      throw new Error(`Chat request failed: ${response.statusText}`);
+  }
+  
+  const result = await response.json();
+  return result;
 }
 
 /**
@@ -169,7 +177,7 @@ export async function generatePromptStarters(
   userIdea?: string,
   accessToken?: string
 ): Promise<string[]> {
-  const result = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-prompt-starters`, {
+  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-prompt-starters`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -180,8 +188,12 @@ export async function generatePromptStarters(
       documentContent: documentContent.substring(0, 10000), // Efficiency limit
       userIdea,
     }),
-  }, { timeoutMs: 30_000, retries: 1, silent: true });
-  return result.prompts || [];
+    timeout: 30_000,
+    silent: true
+  });
+  
+  const result = await response.json();
+  return (result as any).prompts || [];
 }
 
 /**
@@ -195,15 +207,17 @@ export async function getAvailableModels(accessToken?: string): Promise<string[]
   }
 
   try {
-    const result = await safeFetch(`${SUPABASE_URL}/functions/v1/au-chat`, {
+    const response = await safeFetch(`${SUPABASE_URL}/functions/v1/au-chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
       body: JSON.stringify({ action: 'get_models' }),
-    }, { silent: true });
+      silent: true
+    });
 
+    const result = await response.json();
     const models = (result as any)?.models;
     if (Array.isArray(models)) {
       if (models.every((m) => typeof m === 'string')) return models;

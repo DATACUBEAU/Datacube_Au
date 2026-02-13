@@ -7,7 +7,7 @@ import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '
 
 export function useAuExams(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const { toast } = useToast();
   
   const [isGenerating, setIsGenerating] = useState(false);

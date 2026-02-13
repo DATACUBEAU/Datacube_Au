@@ -134,6 +134,7 @@ export default function SettingsPage() {
                   'Content-Type': 'application/json'
               },
               body: JSON.stringify({ 
+                  email: user?.email,
                   planType,
                   redirectUrls: {
                       success: window.location.href,
@@ -164,10 +165,11 @@ export default function SettingsPage() {
                   'Content-Type': 'application/json'
               },
               body: JSON.stringify({ 
+                  email: user?.email,
                   planType,
                   redirectUrls: {
                       success: `${origin}/dashboard/settings/subscription?success=true`,
-                      cancel: `${origin}/dashboard/settings`
+                      cancel: `${origin}/dashboard/settings/subscription?cancelled=true`
                   }
               }) 
           });

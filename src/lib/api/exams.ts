@@ -15,7 +15,7 @@ export async function generatePracticeExam(
   pastQuestionsContent?: string,
   accessToken?: string
 ): Promise<GeneratePracticeExamOutput> {
-  return safeFetch(`${SUPABASE_URL}/functions/v1/exam-generator`, {
+  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/exam-generator`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -23,6 +23,12 @@ export async function generatePracticeExam(
     },
     body: JSON.stringify({ documentContent, pastQuestionsContent }),
   });
+
+  if (!response.ok) {
+      throw new Error(`Exam generation failed: ${response.statusText}`);
+  }
+
+  return response.json();
 }
 
 /**
@@ -34,7 +40,7 @@ export async function generatePredictions(
   accessToken?: string
 ): Promise<GenerateExamPredictionsOutput> {
   // Updated to point to the correct 'prediction-engine' function
-  return safeFetch(`${SUPABASE_URL}/functions/v1/prediction-engine`, {
+  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/prediction-engine`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -42,4 +48,10 @@ export async function generatePredictions(
     },
     body: JSON.stringify({ pastQuestionsContent, mainTextbookContent: documentContent }),
   });
+
+  if (!response.ok) {
+      throw new Error(`Prediction generation failed: ${response.statusText}`);
+  }
+
+  return response.json();
 }

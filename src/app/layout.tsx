@@ -5,6 +5,7 @@ import { UploadJobsProvider } from '@/components/upload/upload-jobs-provider';
 import { BackgroundController } from '@/components/background-controller';
 import { GlobalListeners } from '@/components/global-listeners';
 import { SmartAuthProvider } from '@/hooks/use-smart-auth';
+import { NetworkStatusProvider } from '@/components/providers/network-status-provider';
 import { FeatureFlagProvider } from '@/components/feature-flag-provider';
 import { PT_Sans, Space_Grotesk, Source_Code_Pro } from 'next/font/google';
 import './globals.css';
@@ -71,14 +72,16 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <SmartAuthProvider>
-            <FeatureFlagProvider>
-              <BackgroundController />
-              <UploadJobsProvider>{children}</UploadJobsProvider>
-              <GlobalListeners />
-              <Toaster />
-            </FeatureFlagProvider>
-          </SmartAuthProvider>
+          <NetworkStatusProvider>
+            <SmartAuthProvider>
+              <FeatureFlagProvider>
+                <BackgroundController />
+                <UploadJobsProvider>{children}</UploadJobsProvider>
+                <GlobalListeners />
+                <Toaster />
+              </FeatureFlagProvider>
+            </SmartAuthProvider>
+          </NetworkStatusProvider>
         </ThemeProvider>
       </body>
     </html>

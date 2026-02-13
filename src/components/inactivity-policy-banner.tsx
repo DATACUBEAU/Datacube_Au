@@ -8,7 +8,7 @@ import { ShieldAlert, LogIn, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 export function InactivityPolicyBanner() {
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const [isVisible, setIsVisible] = useState(false);
   const [userType, setUserType] = useState<'guest' | 'auth'>('guest');
   const router = useRouter();

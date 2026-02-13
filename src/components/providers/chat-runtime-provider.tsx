@@ -83,9 +83,7 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
             if (!session) return;
 
             // Call Edge Function to get custom token
-            const { data, error } = await supabase.functions.invoke('get-firebase-token', {
-                headers: { Authorization: `Bearer ${session.access_token}` }
-            });
+            const { data, error } = await supabase.functions.invoke('get-firebase-token');
             
             if (error) throw error;
 

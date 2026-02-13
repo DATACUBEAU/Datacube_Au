@@ -64,7 +64,7 @@ function createId() {
 
 export function UploadJobsProvider({ children }: { children: React.ReactNode }) {
   const [user] = useSupabaseUser();
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const { toast } = useToast();
 
   const [jobs, setJobs] = useState<UploadJobRow[]>([]);

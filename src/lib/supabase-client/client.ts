@@ -225,7 +225,7 @@ export async function ensureGuestSession(): Promise<string> {
     const { safeFetch } = await import('@/lib/api/safe-fetch');
     const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
     const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const data = await safeFetch(`${SUPABASE_URL}/functions/v1/guest-session`, {
+    const response = await safeFetch(`${SUPABASE_URL}/functions/v1/guest-session`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -234,8 +234,9 @@ export async function ensureGuestSession(): Promise<string> {
       body: JSON.stringify({}),
     });
 
-    const accessToken = data?.token || data?.access_token;
-    const sessionId = data?.session_id;
+    const data = await response.json();
+    const accessToken = (data as any)?.token || (data as any)?.access_token;
+    const sessionId = (data as any)?.session_id;
 
     if (accessToken) {
       setGuestToken(accessToken);

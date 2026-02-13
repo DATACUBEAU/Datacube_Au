@@ -158,7 +158,7 @@ export default function ChatPage() {
   const { toast } = useToast();
   const router = useRouter();
   const [user] = useSupabaseUser();
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const isOnline = useOnlineStatus();
 
   const [now, setNow] = useState(() => Date.now());
@@ -671,9 +671,10 @@ export default function ChatPage() {
         }),
       });
 
+      const data = await result.json();
       let prompts: string[] = [];
       try {
-        const parsed = JSON.parse(result.answer);
+        const parsed = JSON.parse(data.answer);
         prompts = Array.isArray(parsed) ? parsed : [];
       } catch {
         // Fallback to legacy function if smart generation fails or returns plain text
@@ -746,7 +747,8 @@ export default function ChatPage() {
         }),
       });
       
-      const prompts = result.prompts || [];
+      const data = await result.json();
+      const prompts = data.prompts || [];
       
       if (prompts.length > 0) {
         setGeneratedPrompts(prompts);

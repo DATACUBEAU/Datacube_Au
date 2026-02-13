@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, CreditCard, Banknote, Loader2, AlertTriangle, ShieldCheck, Lock, RefreshCw, X, Check, Clock, Calendar } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase-client/client';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
@@ -14,6 +14,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { OfflineGuard } from '@/components/offline-guard';
+
+const PRICING = {
+  weekly: { amount: 1900, compare_at: 2500, label: 'Save 24%' },
+  monthly: { amount: 4500, compare_at: 6000, label: 'Save 25%' },
+} as const;
 
 export default function SubscriptionPage() {
   const [user] = useSupabaseUser();
@@ -40,18 +46,9 @@ export default function SubscriptionPage() {
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [pricing, setPricing] = useState<{
-      weekly: { amount: number, compare_at: number, label: string },
-      monthly: { amount: number, compare_at: number, label: string }
-  }>({
-    weekly: { amount: 1900, compare_at: 2500, label: "Save 24%" },
-    monthly: { amount: 4500, compare_at: 6000, label: "Save 25%" }
-  });
-
-  // Calculate savings percentage dynamically
-  const getSavings = (amount: number, compareAt: number) => {
-      if (!compareAt || compareAt <= amount) return 0;
-      return Math.round(((compareAt - amount) / compareAt) * 100);
-  };
+    weekly: { amount: number; compare_at: number; label: string };
+    monthly: { amount: number; compare_at: number; label: string };
+  }>(PRICING);
 
   // Initial Load & URL Check
   useEffect(() => {
@@ -199,6 +196,7 @@ export default function SubscriptionPage() {
                   'Content-Type': 'application/json'
               },
               body: JSON.stringify({ 
+                  email: user?.email,
                   planType,
                   channels,
                   mode,
@@ -276,8 +274,7 @@ export default function SubscriptionPage() {
     loading, 
     highlighted, 
     savedLabel,
-    disabled,
-    promoText
+    disabled
   }: any) => (
     <div className={cn(
         "relative flex flex-col bg-white rounded-3xl shadow-xl overflow-hidden transition-all duration-300",
@@ -312,14 +309,6 @@ export default function SubscriptionPage() {
             <span className={cn("text-xs font-medium uppercase mt-2", highlighted ? "text-purple-100" : "text-muted-foreground")}>
                 /{period}
             </span>
-            {promoText && (
-                <div className={cn(
-                    "mt-3 text-xs font-bold px-3 py-1 rounded-full",
-                    highlighted ? "bg-white/20 text-white" : "bg-purple-100 text-purple-700"
-                )}>
-                    {promoText}
-                </div>
-            )}
          </div>
 
          {savedLabel && (
@@ -497,39 +486,43 @@ export default function SubscriptionPage() {
                                     {formatDate(expiry || '')}
                                 </div>
                                 {subscription?.status === 'active' ? (
-                                    <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
-                                        <DialogTrigger asChild>
-                                            <Button variant="outline" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-100">
-                                                Cancel Auto-renew
-                                            </Button>
-                                        </DialogTrigger>
-                                        <DialogContent>
-                                            <DialogHeader>
-                                                <DialogTitle>Cancel Subscription</DialogTitle>
-                                                <DialogDescription>
-                                                    Are you sure? You will lose access to Pro features at the end of your current billing period.
-                                                </DialogDescription>
-                                            </DialogHeader>
-                                            <div className="space-y-4 py-4">
-                                                <Label>Reason for cancellation (required)</Label>
-                                                <Textarea 
-                                                    placeholder="Please tell us why you are leaving..." 
-                                                    value={cancelReason} 
-                                                    onChange={(e) => setCancelReason(e.target.value)}
-                                                />
-                                            </div>
-                                            <DialogFooter>
-                                                <Button variant="outline" onClick={() => setIsCancelDialogOpen(false)}>Keep Plan</Button>
-                                                <Button variant="destructive" onClick={handleCancelSubscription} disabled={isCancelling}>
-                                                    {isCancelling ? <Loader2 className="animate-spin h-4 w-4" /> : 'Confirm Cancellation'}
+                                    <OfflineGuard>
+                                        <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
+                                            <DialogTrigger asChild>
+                                                <Button variant="outline" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-100">
+                                                    Cancel Auto-renew
                                                 </Button>
-                                            </DialogFooter>
-                                        </DialogContent>
-                                    </Dialog>
+                                            </DialogTrigger>
+                                            <DialogContent>
+                                                <DialogHeader>
+                                                    <DialogTitle>Cancel Subscription</DialogTitle>
+                                                    <DialogDescription>
+                                                        Are you sure? You will lose access to Pro features at the end of your current billing period.
+                                                    </DialogDescription>
+                                                </DialogHeader>
+                                                <div className="space-y-4 py-4">
+                                                    <Label>Reason for cancellation (required)</Label>
+                                                    <Textarea 
+                                                        placeholder="Please tell us why you are leaving..." 
+                                                        value={cancelReason} 
+                                                        onChange={(e) => setCancelReason(e.target.value)}
+                                                    />
+                                                </div>
+                                                <DialogFooter>
+                                                    <Button variant="outline" onClick={() => setIsCancelDialogOpen(false)}>Keep Plan</Button>
+                                                    <Button variant="destructive" onClick={handleCancelSubscription} disabled={isCancelling}>
+                                                        {isCancelling ? <Loader2 className="animate-spin h-4 w-4" /> : 'Confirm Cancellation'}
+                                                    </Button>
+                                                </DialogFooter>
+                                            </DialogContent>
+                                        </Dialog>
+                                    </OfflineGuard>
                                 ) : (
-                                    <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => setTier('free')}>
-                                        Re-subscribe
-                                    </Button>
+                                    <OfflineGuard>
+                                        <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => setTier('free')}>
+                                            Re-subscribe
+                                        </Button>
+                                    </OfflineGuard>
                                 )}
                             </div>
                         </div>
@@ -597,42 +590,45 @@ export default function SubscriptionPage() {
                     />
 
                     {/* Monthly (Highlighted) */}
-                    <PricingCard 
-                        title="Pro Monthly"
-                        price={`₦${pricing.monthly.amount.toLocaleString()}`}
-                        originalPrice={`₦${pricing.monthly.compare_at.toLocaleString()}`}
-                        period="month"
-                        highlighted={true}
-                        savedLabel={pricing.monthly.label}
-                        promoText="Try for 7 days – ₦1,900"
-                        loading={loadingPlan === 'monthly'}
-                        onSelect={() => handlePaystack('monthly')}
-                        features={[
-                            "Unlimited documents",
-                            "30-day history retention",
-                            "Premium AI models (GPT-4)",
-                            "Priority processing",
-                            "Advanced data analysis",
-                            "Priority support"
-                        ]}
-                    />
+                    <OfflineGuard asChild>
+                        <PricingCard 
+                            title="Pro Monthly"
+                            price={`₦${pricing.monthly.amount.toLocaleString()}`}
+                            originalPrice={`₦${pricing.monthly.compare_at.toLocaleString()}`}
+                            period="month"
+                            highlighted={true}
+                            savedLabel={pricing.monthly.label}
+                            loading={loadingPlan === 'monthly'}
+                            onSelect={() => handlePaystack('monthly')}
+                            features={[
+                                "Unlimited documents",
+                                "30-day history retention",
+                                "Premium AI models (GPT-4)",
+                                "Priority processing",
+                                "Advanced data analysis",
+                                "Priority support"
+                            ]}
+                        />
+                    </OfflineGuard>
 
                     {/* Weekly */}
-                    <PricingCard 
-                        title="Pro Weekly"
-                        price={`₦${pricing.weekly.amount.toLocaleString()}`}
-                        originalPrice={`₦${pricing.weekly.compare_at.toLocaleString()}`}
-                        period="week"
-                        savedLabel={pricing.weekly.label}
-                        loading={loadingPlan === 'weekly'}
-                        onSelect={() => handlePaystack('weekly')}
-                        features={[
-                            "All Pro features",
-                            "7-day access",
-                            "Cancel anytime",
-                            "Standard support"
-                        ]}
-                    />
+                    <OfflineGuard asChild>
+                        <PricingCard 
+                            title="Pro Weekly"
+                            price={`₦${pricing.weekly.amount.toLocaleString()}`}
+                            originalPrice={`₦${pricing.weekly.compare_at.toLocaleString()}`}
+                            period="week"
+                            savedLabel={pricing.weekly.label}
+                            loading={loadingPlan === 'weekly'}
+                            onSelect={() => handlePaystack('weekly')}
+                            features={[
+                                "All Pro features",
+                                "7-day access",
+                                "Cancel anytime",
+                                "Standard support"
+                            ]}
+                        />
+                    </OfflineGuard>
                 </div>
             )}
             

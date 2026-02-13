@@ -34,9 +34,17 @@ export const AdminAnalytics = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_analytics' })
       });
-      
-      if (res.ok && res.analytics) {
-        setData(res.analytics);
+
+      if (res.ok) {
+          const resultData = await res.json();
+          if (resultData.analytics) {
+             setData(resultData.analytics);
+          } else if (resultData.data?.analytics) {
+             setData(resultData.data.analytics);
+          } else {
+             // Fallback if structure doesn't match
+             setData(generateMockData());
+          }
       } else {
         // Fallback to mock
         setData(generateMockData());

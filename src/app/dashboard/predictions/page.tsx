@@ -96,7 +96,7 @@ const chartConfig: ChartConfig = {
 
 export default function PredictionsPage() {
   const [user] = useSupabaseUser();
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const isOnline = useOnlineStatus();
   const { toast } = useToast();
 

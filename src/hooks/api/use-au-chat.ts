@@ -23,7 +23,7 @@ const simpleHash = (str: string) => {
 
 export function useAuChat(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const { toast } = useToast();
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
   const setAuThinkingStatus = useStore(state => state.setAuThinkingStatus);

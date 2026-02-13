@@ -86,14 +86,18 @@ export const useStore = create<AppState>()(
         set({ isGeneratingKnowledge: true, knowledgeData: null });
         
         try {
-          const result = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-knowledge`, {
+          // Use Supabase Edge Function directly for consistency
+          const response = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-knowledge`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
             },
-            body: JSON.stringify({ documentContent: docContent, pastQuestionsContent }),
+            body: JSON.stringify({ documentContent: docContent, pastQuestionsContent: pastQuestionsContent || '' }),
           });
+
+          if (!response.ok) throw new Error('Failed to generate knowledge');
+          const result = await response.json();
 
           set({ knowledgeData: result });
 
@@ -124,7 +128,7 @@ export const useStore = create<AppState>()(
 
         try {
           // Use Supabase Edge Function directly for consistency
-          const result = await safeFetch(`${SUPABASE_URL}/functions/v1/prediction-engine`, {
+          const response = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-exam-predictions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -132,6 +136,9 @@ export const useStore = create<AppState>()(
             },
             body: JSON.stringify({ pastQuestionsContent, mainTextbookContent }),
           });
+
+          if (!response.ok) throw new Error('Failed to generate predictions');
+          const result = await response.json();
 
           set({ predictionData: result });
           

@@ -29,13 +29,10 @@ export function DirectMessageListener({ userId, guestId }: { userId?: string; gu
             const { data: { session } } = await supabase.auth.getSession();
             if (!session) return false;
 
-            const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/get-firebase-token`, {
-                headers: { Authorization: `Bearer ${session.access_token}` }
-            });
+            const { data, error } = await supabase.functions.invoke('get-firebase-token');
             
-            if (res.ok) {
-                const { token } = await res.json();
-                await signInWithCustomToken(firebaseAuth, token);
+            if (!error && data?.token) {
+                await signInWithCustomToken(firebaseAuth, data.token);
                 return true;
             }
         } catch (e) {

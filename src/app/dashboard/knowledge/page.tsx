@@ -58,7 +58,7 @@ function coerceMultiline(value: unknown): string {
 
 export default function KnowledgePage() {
   const [user] = useSupabaseUser();
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
   

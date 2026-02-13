@@ -1,6 +1,8 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
+import { WifiOff } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
 
 interface NetworkStatusContextType {
   isOnline: boolean;
@@ -11,7 +13,7 @@ interface NetworkStatusContextType {
 const NetworkStatusContext = createContext<NetworkStatusContextType | undefined>(undefined);
 
 export function NetworkStatusProvider({ children }: { children: React.ReactNode }) {
-  // optimistic initial state based on navigator
+  // Optimistic initial state based on navigator
   const [isOnline, setIsOnline] = useState(() => 
     typeof window !== 'undefined' ? window.navigator.onLine : true
   );
@@ -112,6 +114,23 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
   return (
     <NetworkStatusContext.Provider value={{ isOnline, lastCheckedAt, checkNow: checkHealth }}>
       {children}
+      
+      {/* Global Offline Banner */}
+      <AnimatePresence>
+        {!isOnline && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="bg-yellow-500/90 text-yellow-950 text-xs font-bold text-center overflow-hidden backdrop-blur-sm z-[100] fixed top-0 left-0 right-0"
+          >
+            <div className="py-1 flex items-center justify-center gap-2">
+              <WifiOff className="h-3 w-3" />
+              <span>Offline Mode — You are browsing a cached version. Some features are unavailable.</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </NetworkStatusContext.Provider>
   );
 }

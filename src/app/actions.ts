@@ -22,7 +22,7 @@ function functionsBaseUrl(): string {
   return `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
 }
 
-async function makeFunctionRequest(functionName: string, body: any) {
+async function makeFunctionRequest<T>(functionName: string, body: any): Promise<T> {
   const url = `${functionsBaseUrl()}/${functionName}`;
   const options = {
     method: 'POST',
@@ -30,7 +30,11 @@ async function makeFunctionRequest(functionName: string, body: any) {
     body: JSON.stringify(body),
   };
 
-  return safeFetch(url, options);
+  const response = await safeFetch(url, options);
+  if (!response.ok) {
+      throw new Error(`Function ${functionName} failed: ${response.statusText}`);
+  }
+  return response.json();
 }
 
 // Re-exporting types for client-side usage
@@ -45,29 +49,29 @@ export type { RagBasedQuestionAnsweringOutput };
 export async function generateKnowledgeMaterials(
   { documentContent }: { documentContent: string }
 ): Promise<GenerateStudyMaterialsOutput> {
-  return makeFunctionRequest('generate-knowledge', { documentContent });
+  return makeFunctionRequest<GenerateStudyMaterialsOutput>('generate-knowledge', { documentContent });
 }
 
 export async function generateExamPredictions(
   { pastQuestionsContent, mainTextbookContent }: { pastQuestionsContent: string, mainTextbookContent?: string }
 ): Promise<GenerateExamPredictionsOutput> {
-  return makeFunctionRequest('generate-exam-predictions', { pastQuestionsContent, mainTextbookContent });
+  return makeFunctionRequest<GenerateExamPredictionsOutput>('generate-exam-predictions', { pastQuestionsContent, mainTextbookContent });
 }
 
 export async function generatePracticeExam(
   { documentContent }: { documentContent: string }
 ): Promise<GeneratePracticeExamOutput> {
-  return makeFunctionRequest('generate-practice-exam', { documentContent });
+  return makeFunctionRequest<GeneratePracticeExamOutput>('generate-practice-exam', { documentContent });
 }
 
 export async function ragBasedQuestionAnsweringAction(
     { question, userId, mainTextbookId }: { question: string, userId: string, mainTextbookId: string }
 ): Promise<RagBasedQuestionAnsweringOutput> {
-    return makeFunctionRequest('chat', { question, userId, mainTextbookId });
+    return makeFunctionRequest<RagBasedQuestionAnsweringOutput>('chat', { question, userId, mainTextbookId });
 }
 
 export async function generatePromptStartersAction(
     { documentTitle, documentContent, userIdea }: { documentTitle: string, documentContent?: string, userIdea?: string }
 ): Promise<{ prompts: string[] }> {
-    return makeFunctionRequest('generate-prompt-starters', { documentTitle, documentContent, userIdea });
+    return makeFunctionRequest<{ prompts: string[] }>('generate-prompt-starters', { documentTitle, documentContent, userIdea });
 }

@@ -50,7 +50,7 @@ const getCacheKey = (userId: string, docId: string) => `practice_exam_history_${
 
 export default function PracticePage() {
   const [user] = useSupabaseUser();
-  const [session] = useSupabaseSession();
+  const { session } = useSupabaseSession();
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
 

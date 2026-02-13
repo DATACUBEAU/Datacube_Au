@@ -36,7 +36,7 @@ const AdminBilling = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_conex_config' })
       });
-      if (res.ok) setConfig(res.config || {});
+      if (res.ok) setConfig((res as any).config || {});
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
@@ -238,7 +238,7 @@ const AdminManualPayments = ({ token }: { token: string }) => {
                 method: 'POST',
                 body: JSON.stringify({ action: 'get_manual_payments' })
             });
-            if (res.ok) setPayments(res.payments || []);
+            if (res.ok) setPayments((res as any).payments || []);
         } catch (e) {
             console.error(e);
         } finally {
@@ -347,8 +347,8 @@ const AdminUsage = ({ token }: { token: string }) => {
         body: JSON.stringify({ action: 'get_usage' })
       });
       if (usageRes.ok) {
-        setUsage(usageRes.usage || []);
-        if (usageRes.stats) setStats(usageRes.stats);
+        setUsage((usageRes as any).usage || []);
+        if ((usageRes as any).stats) setStats((usageRes as any).stats);
       }
 
       // Fetch Users Count using the centralized fetchAdmin utility
@@ -358,8 +358,8 @@ const AdminUsage = ({ token }: { token: string }) => {
       });
       if (usersRes.ok) {
         setTotalUsers({
-          authenticated: usersRes.users.authenticated?.length || 0,
-          guests: usersRes.users.guests?.length || 0
+          authenticated: (usersRes as any).users.authenticated?.length || 0,
+          guests: (usersRes as any).users.guests?.length || 0
         });
       }
     } catch (e) {
@@ -489,8 +489,8 @@ const AdminRegistry = ({ token }: { token: string }) => {
         })
       });
       if (res.ok) {
-        setKeys(res.keys || []);
-        setModels(res.models || []);
+        setKeys((res as any).keys || []);
+        setModels((res as any).models || []);
       }
     } catch (e) {
       console.error('[AdminRegistry] fetch error:', e);
@@ -1070,8 +1070,8 @@ const AdminUsers = ({ token }: { token: string }) => {
         })
       });
       if (res.ok) {
-        setUsers(res.users || []);
-        setTotal(res.total || 0);
+        setUsers((res as any).users || []);
+        setTotal((res as any).total || 0);
       }
     } catch (e) {
       console.error('[AdminUsers] fetch error:', e);
@@ -1118,13 +1118,13 @@ const AdminUsers = ({ token }: { token: string }) => {
           type: filterStatus,
         })
       });
-      if (!res.ok || !res.csv) throw new Error(res.error || 'Export failed');
+      if (!res.ok || !(res as any).csv) throw new Error((res as any).error || 'Export failed');
 
-      const blob = new Blob([res.csv], { type: 'text/csv;charset=utf-8' });
+      const blob = new Blob([(res as any).csv], { type: 'text/csv;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = res.filename || 'users_export.csv';
+      a.download = (res as any).filename || 'users_export.csv';
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
@@ -1547,7 +1547,7 @@ const AdminActivity = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_active_users' }),
       });
-      if (res.ok) setEvents(res.events || []);
+      if (res.ok) setEvents((res as any).events || []);
     } catch (e: any) {
       console.error('[AdminActivity] fetch error:', e);
       toast({ title: 'Error', description: 'Failed to load activity feed.', variant: 'destructive' });
@@ -1695,7 +1695,7 @@ const AdminFeedback = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_feedback' })
       });
-      if (res.ok) setFeedback(res.feedback || []);
+      if (res.ok) setFeedback((res as any).feedback || []);
     } catch (e) {
       console.error('[AdminFeedback] fetch error:', e);
     } finally {
@@ -1791,7 +1791,7 @@ const AdminAlerts = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_alert_config' })
       });
-      if (res.ok) setConfigs(res.configs || []);
+      if (res.ok) setConfigs((res as any).configs || []);
     } catch (e) {
       console.error('[AdminAlerts] fetch error:', e);
     } finally {
@@ -1875,7 +1875,7 @@ const AdminLogs = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_debug_logs' })
       });
-      if (res.ok) setLogs(res.logs || []);
+      if (res.ok) setLogs((res as any).logs || []);
     } catch (e) {
       console.error('[AdminLogs] fetch error:', e);
     } finally {
@@ -1980,7 +1980,7 @@ const AdminHealth = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'verify_system' })
       });
-      if (res.ok) setResults(res.results || {});
+      if (res.ok) setResults((res as any).results || {});
     } catch (e) {
       console.error('[AdminHealth] verify error:', e);
     } finally {
@@ -2084,9 +2084,9 @@ export default function ConexPage() {
         body: JSON.stringify({ action: 'auth', step: 1, answer })
       });
       if (res.ok) {
-        setSessionId(res.sessionId);
+        setSessionId((res as any).sessionId);
         setStep(2);
-        localStorage.setItem('conex_session_id', res.sessionId);
+        localStorage.setItem('conex_session_id', (res as any).sessionId);
         localStorage.setItem('conex_auth_step', '2');
       }
     } catch (e: any) {
@@ -2106,9 +2106,9 @@ export default function ConexPage() {
         body: JSON.stringify({ action: 'auth', step: 2, accessKey, sessionId })
       });
       if (res.ok) {
-        setAdminToken(res.adminToken);
+        setAdminToken((res as any).adminToken);
         setStep(3);
-        localStorage.setItem('conex_admin_token', res.adminToken);
+        localStorage.setItem('conex_admin_token', (res as any).adminToken);
         localStorage.setItem('conex_auth_step', '3');
         toast({ title: 'Welcome, Admin', description: 'System access granted.' });
       }
