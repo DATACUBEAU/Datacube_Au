@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, CreditCard, Banknote, Loader2, AlertTriangle, ShieldCheck, Lock, RefreshCw, X, Check } from 'lucide-react';
+import { CheckCircle2, CreditCard, Banknote, Loader2, AlertTriangle, ShieldCheck, Lock, RefreshCw, X, Check, Clock, Calendar } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase-client/client';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 export default function SubscriptionPage() {
   const [user] = useSupabaseUser();
@@ -23,6 +24,7 @@ export default function SubscriptionPage() {
   const [tier, setTier] = useState<string>('free');
   const [expiry, setExpiry] = useState<string | null>(null);
   const [subscription, setSubscription] = useState<any>(null);
+  const [payments, setPayments] = useState<any[]>([]);
   
   // Toggle: true = Auto-renew (Card), false = Manual (Bank Transfer)
   const [isAutoRenew, setIsAutoRenew] = useState(true);
@@ -120,6 +122,7 @@ export default function SubscriptionPage() {
               setTier(data.tier || 'free');
               setExpiry(data.tier_expires_at);
               setSubscription(data.subscription);
+              setPayments(data.payments || []);
               
               if (data.pricing) {
                   setPricing(data.pricing);
@@ -217,7 +220,8 @@ export default function SubscriptionPage() {
           }
 
       } catch (e: any) {
-          toast({ variant: 'destructive', title: 'Payment Error', description: e.message });
+          console.error(e);
+          toast({ variant: 'destructive', title: 'Payment Error', description: e.message || "Failed to initialize payment" });
           setLoadingPlan(null);
           setPaymentState('idle');
       }
@@ -272,7 +276,8 @@ export default function SubscriptionPage() {
     loading, 
     highlighted, 
     savedLabel,
-    disabled 
+    disabled,
+    promoText
   }: any) => (
     <div className={cn(
         "relative flex flex-col bg-white rounded-3xl shadow-xl overflow-hidden transition-all duration-300",
@@ -307,6 +312,14 @@ export default function SubscriptionPage() {
             <span className={cn("text-xs font-medium uppercase mt-2", highlighted ? "text-purple-100" : "text-muted-foreground")}>
                 /{period}
             </span>
+            {promoText && (
+                <div className={cn(
+                    "mt-3 text-xs font-bold px-3 py-1 rounded-full",
+                    highlighted ? "bg-white/20 text-white" : "bg-purple-100 text-purple-700"
+                )}>
+                    {promoText}
+                </div>
+            )}
          </div>
 
          {savedLabel && (
@@ -448,75 +461,121 @@ export default function SubscriptionPage() {
         <div className="container max-w-6xl mx-auto px-4 -mt-20 relative z-20">
             {tier === 'pro' ? (
                 // Active Pro View
-                <div className="max-w-2xl mx-auto bg-white rounded-3xl shadow-xl p-8 border border-purple-100">
-                    <div className="flex items-center justify-between mb-8">
-                        <div>
-                            <h2 className="text-2xl font-bold text-gray-900">Pro Plan Active</h2>
-                            <p className="text-muted-foreground mt-1">You have full access to all premium features.</p>
+                <div className="max-w-4xl mx-auto space-y-8">
+                    {/* Subscription Status */}
+                    <div className="bg-white rounded-3xl shadow-xl p-8 border border-purple-100">
+                        <div className="flex items-center justify-between mb-8">
+                            <div>
+                                <h2 className="text-2xl font-bold text-gray-900">Pro Plan Active</h2>
+                                <p className="text-muted-foreground mt-1">You have full access to all premium features.</p>
+                            </div>
+                            <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
+                                <CheckCircle2 className="h-6 w-6 text-green-600" />
+                            </div>
                         </div>
-                        <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
-                            <CheckCircle2 className="h-6 w-6 text-green-600" />
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3">
+                                    <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                                    <span className="font-medium">Unlimited Premium Models</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                                    <span className="font-medium">High-Priority Processing</span>
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                                    <span className="font-medium">Extended Context Window</span>
+                                </div>
+                            </div>
+                            <div className="bg-gray-50 rounded-2xl p-6">
+                                <div className="text-sm text-muted-foreground mb-1">
+                                    {subscription?.status === 'active' ? 'Renews on' : 'Expires on'}
+                                </div>
+                                <div className="text-2xl font-bold text-gray-900 mb-4">
+                                    {formatDate(expiry || '')}
+                                </div>
+                                {subscription?.status === 'active' ? (
+                                    <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
+                                        <DialogTrigger asChild>
+                                            <Button variant="outline" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-100">
+                                                Cancel Auto-renew
+                                            </Button>
+                                        </DialogTrigger>
+                                        <DialogContent>
+                                            <DialogHeader>
+                                                <DialogTitle>Cancel Subscription</DialogTitle>
+                                                <DialogDescription>
+                                                    Are you sure? You will lose access to Pro features at the end of your current billing period.
+                                                </DialogDescription>
+                                            </DialogHeader>
+                                            <div className="space-y-4 py-4">
+                                                <Label>Reason for cancellation (required)</Label>
+                                                <Textarea 
+                                                    placeholder="Please tell us why you are leaving..." 
+                                                    value={cancelReason} 
+                                                    onChange={(e) => setCancelReason(e.target.value)}
+                                                />
+                                            </div>
+                                            <DialogFooter>
+                                                <Button variant="outline" onClick={() => setIsCancelDialogOpen(false)}>Keep Plan</Button>
+                                                <Button variant="destructive" onClick={handleCancelSubscription} disabled={isCancelling}>
+                                                    {isCancelling ? <Loader2 className="animate-spin h-4 w-4" /> : 'Confirm Cancellation'}
+                                                </Button>
+                                            </DialogFooter>
+                                        </DialogContent>
+                                    </Dialog>
+                                ) : (
+                                    <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => setTier('free')}>
+                                        Re-subscribe
+                                    </Button>
+                                )}
+                            </div>
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                         <div className="space-y-4">
-                            <div className="flex items-center gap-3">
-                                <CheckCircle2 className="h-5 w-5 text-purple-600" />
-                                <span className="font-medium">Unlimited Premium Models</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                                <CheckCircle2 className="h-5 w-5 text-purple-600" />
-                                <span className="font-medium">High-Priority Processing</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                                <CheckCircle2 className="h-5 w-5 text-purple-600" />
-                                <span className="font-medium">Extended Context Window</span>
-                            </div>
+                    {/* Payment History Table */}
+                    <div className="bg-white rounded-3xl shadow-xl p-8 border border-gray-100">
+                        <div className="flex items-center gap-2 mb-6">
+                            <Clock className="h-5 w-5 text-gray-500" />
+                            <h2 className="text-xl font-bold text-gray-900">Payment History</h2>
                         </div>
-                        <div className="bg-gray-50 rounded-2xl p-6">
-                            <div className="text-sm text-muted-foreground mb-1">
-                                {subscription?.status === 'active' ? 'Renews on' : 'Expires on'}
+                        
+                        {payments.length > 0 ? (
+                            <div className="overflow-x-auto">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Date</TableHead>
+                                            <TableHead>Description</TableHead>
+                                            <TableHead>Amount</TableHead>
+                                            <TableHead>Status</TableHead>
+                                            <TableHead className="text-right">Reference</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {payments.map((p) => (
+                                            <TableRow key={p.reference}>
+                                                <TableCell className="font-medium">{formatDate(p.created_at)}</TableCell>
+                                                <TableCell className="capitalize">{p.plan} Plan</TableCell>
+                                                <TableCell>₦{p.amount_ngn.toLocaleString()}</TableCell>
+                                                <TableCell>
+                                                    <Badge variant={p.status === 'success' ? 'default' : 'secondary'} className={p.status === 'success' ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
+                                                        {p.status}
+                                                    </Badge>
+                                                </TableCell>
+                                                <TableCell className="text-right font-mono text-xs text-muted-foreground">{p.reference.substring(0, 8)}...</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
                             </div>
-                            <div className="text-2xl font-bold text-gray-900 mb-4">
-                                {formatDate(expiry || '')}
+                        ) : (
+                            <div className="text-center py-8 text-muted-foreground bg-gray-50 rounded-xl">
+                                No payment history found.
                             </div>
-                            {subscription?.status === 'active' ? (
-                                <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
-                                    <DialogTrigger asChild>
-                                        <Button variant="outline" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-100">
-                                            Cancel Auto-renew
-                                        </Button>
-                                    </DialogTrigger>
-                                    <DialogContent>
-                                        <DialogHeader>
-                                            <DialogTitle>Cancel Subscription</DialogTitle>
-                                            <DialogDescription>
-                                                Are you sure? You will lose access to Pro features at the end of your current billing period.
-                                            </DialogDescription>
-                                        </DialogHeader>
-                                        <div className="space-y-4 py-4">
-                                            <Label>Reason for cancellation (required)</Label>
-                                            <Textarea 
-                                                placeholder="Please tell us why you are leaving..." 
-                                                value={cancelReason} 
-                                                onChange={(e) => setCancelReason(e.target.value)}
-                                            />
-                                        </div>
-                                        <DialogFooter>
-                                            <Button variant="outline" onClick={() => setIsCancelDialogOpen(false)}>Keep Plan</Button>
-                                            <Button variant="destructive" onClick={handleCancelSubscription} disabled={isCancelling}>
-                                                {isCancelling ? <Loader2 className="animate-spin h-4 w-4" /> : 'Confirm Cancellation'}
-                                            </Button>
-                                        </DialogFooter>
-                                    </DialogContent>
-                                </Dialog>
-                            ) : (
-                                <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => setTier('free')}>
-                                    Re-subscribe
-                                </Button>
-                            )}
-                        </div>
+                        )}
                     </div>
                 </div>
             ) : (
@@ -545,6 +604,7 @@ export default function SubscriptionPage() {
                         period="month"
                         highlighted={true}
                         savedLabel={pricing.monthly.label}
+                        promoText="Try for 7 days – ₦1,900"
                         loading={loadingPlan === 'monthly'}
                         onSelect={() => handlePaystack('monthly')}
                         features={[
