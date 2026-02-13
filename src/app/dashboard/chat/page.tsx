@@ -71,7 +71,6 @@ import { TruncatedText } from '@/components/TruncatedText';
 import { ThinkingProcess } from '@/components/thinking-process';
 import { useStore } from '@/hooks/use-store';
 import { GlobalChatDevDialog } from '@/components/global-chat-dev-dialog';
-import { UsageLimitNotice } from '@/components/usage-limit-notice';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
@@ -1428,11 +1427,6 @@ export default function ChatPage() {
       <GlobalChatDevDialog 
         open={showGlobalChatDevDialog} 
         onOpenChange={setShowGlobalChatDevDialog}
-        onContactSupport={handleWhatsAppRedirect}
-      />
-
-      <UsageLimitNotice 
-        isResponding={isResponding}
         onContactSupport={handleWhatsAppRedirect}
       />
 

@@ -402,6 +402,20 @@ export default function SettingsPage() {
       <div className="mx-auto grid w-full max-w-4xl gap-2">
         <h1 className="font-headline text-3xl font-semibold">Settings</h1>
       </div>
+      
+      <div className="mx-auto w-full max-w-4xl">
+        <Alert variant="destructive" className="border-2 border-red-500 bg-red-50 dark:bg-red-950/20">
+          <ShieldAlert className="h-5 w-5 text-red-600 dark:text-red-400" />
+          <AlertTitle className="text-red-800 dark:text-red-400 font-bold mb-1">
+            Policy Update: Data Security Notice
+          </AlertTitle>
+          <AlertDescription className="text-red-700 dark:text-red-300">
+            Inactive accounts will be automatically deleted after <strong>14 DAYS</strong> to ensure data security. 
+            Sign in regularly to keep your account active.
+          </AlertDescription>
+        </Alert>
+      </div>
+
       <div className="mx-auto grid w-full max-w-4xl items-start gap-6">
         <div className="grid gap-6">
           {isAnonymous ? (

@@ -1,78 +1,42 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, getGuestToken, decodeJWT } from '@/lib/supabase-client/client';
 import { useSupabaseSession } from '@/hooks/use-supabase-auth';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { ShieldAlert, LogIn, Clock } from 'lucide-react';
+import { ShieldAlert, LogIn, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 
 export function InactivityPolicyBanner() {
   const [session] = useSupabaseSession();
-  const [lastActive, setLastActive] = useState<Date | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [userType, setUserType] = useState<'guest' | 'auth'>('guest');
   const router = useRouter();
 
   useEffect(() => {
-    const checkInactivity = async () => {
-      if (session?.user) {
-        setUserType('auth');
-        const { data } = await supabase
-          .from('au_user_activity')
-          .select('last_active_at')
-          .eq('user_id', session.user.id)
-          .maybeSingle();
-        
-        if (data?.last_active_at) {
-          const lastActiveDate = new Date(data.last_active_at);
-          setLastActive(lastActiveDate);
-          
-          // Show if inactive for more than 10 days (limit is 14 days)
-          const diffDays = (Date.now() - lastActiveDate.getTime()) / (1000 * 60 * 60 * 24);
-          if (diffDays > 10) {
-            setIsVisible(true);
-          }
-        }
-      } else {
-        setUserType('guest');
-        const token = getGuestToken();
-        if (token) {
-          const decoded = decodeJWT(token);
-          const guestId = decoded?.guest_session_id || decoded?.sub;
-          if (guestId) {
-            const { data } = await supabase
-              .from('au_guest_sessions')
-              .select('last_active_at')
-              .eq('id', guestId)
-              .maybeSingle();
-            
-            if (data?.last_active_at) {
-              const lastActiveDate = new Date(data.last_active_at);
-              setLastActive(lastActiveDate);
-              
-              // Show if inactive for more than 18 hours (limit is 24 hours)
-              const diffHours = (Date.now() - lastActiveDate.getTime()) / (1000 * 60 * 60);
-              if (diffHours > 18) {
-                setIsVisible(true);
-              }
-            }
-          }
-        }
-      }
-    };
+    // Check if user has seen the policy
+    const hasSeen = localStorage.getItem('au_policy_notice_seen_v1');
+    if (!hasSeen) {
+       setIsVisible(true);
+    }
 
-    checkInactivity();
-    const interval = setInterval(checkInactivity, 60000); // Check every minute
-    return () => clearInterval(interval);
+    if (session?.user) {
+        setUserType('auth');
+    } else {
+        setUserType('guest');
+    }
   }, [session]);
 
-  if (!isVisible) return null;
+  const handleDismiss = () => {
+      localStorage.setItem('au_policy_notice_seen_v1', 'true');
+      setIsVisible(false);
+  };
 
   const handleSignIn = () => {
     router.push('/login');
   };
+
+  if (!isVisible) return null;
 
   return (
     <div className="fixed bottom-4 left-4 right-4 z-50 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -106,8 +70,8 @@ export function InactivityPolicyBanner() {
                 Sign In Now
               </Button>
             )}
-            <Button variant="outline" size="sm" onClick={() => setIsVisible(false)} className="w-full border-red-200 hover:bg-red-100 dark:border-red-800 dark:hover:bg-red-900">
-              <Clock className="mr-2 h-4 w-4" />
+            <Button variant="outline" size="sm" onClick={handleDismiss} className="w-full border-red-200 hover:bg-red-100 dark:border-red-800 dark:hover:bg-red-900">
+              <X className="mr-2 h-4 w-4" />
               Dismiss
             </Button>
           </div>
