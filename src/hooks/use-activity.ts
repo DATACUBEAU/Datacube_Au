@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { updateUserActivity } from '@/lib/supabase/client';
+import { updateUserActivity } from '@/lib/supabase-client/client';
 import { usePathname } from 'next/navigation';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 

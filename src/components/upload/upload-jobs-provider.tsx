@@ -13,7 +13,7 @@ import {
   ensureGuestSession,
   getEffectiveOwnershipConditions,
   applyOwnershipFilter
-} from '@/lib/supabase/client';
+} from '@/lib/supabase-client/client';
 import { initiateUpload, completeUpload, deleteDocument } from '@/lib/api/documents';
 import type { UploadJobRow, CreateUploadJobInput, UploadJobStatus } from '@/lib/upload/types';
 import { deleteJobFile, getJobFile, putJobFile } from '@/lib/upload/idb';

@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect, useState, createContext, useContext, useMemo, useCallback } from 'react';
-import { supabase } from '@/lib/supabase/client';
-import { getGuestToken } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
+import { getGuestToken } from '@/lib/supabase-client/client';
 
 interface SmartUser {
   id: string;

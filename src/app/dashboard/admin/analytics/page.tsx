@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { Loader2 } from 'lucide-react';
 
 export default function AnalyticsDashboard() {

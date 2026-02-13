@@ -1,5 +1,5 @@
 
-import { supabase, getEffectiveOwnershipConditions, decodeJWT, applyOwnershipFilter } from '@/lib/supabase/client';
+import { supabase, getEffectiveOwnershipConditions, decodeJWT, applyOwnershipFilter } from '@/lib/supabase-client/client';
 import { safeFetch } from './safe-fetch';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
@@ -9,8 +9,12 @@ export type { AuDocumentRow, AuDocumentType };
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-if (!SUPABASE_URL) {
-  console.error("NEXT_PUBLIC_SUPABASE_URL is not defined in environment variables.");
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  const errorMsg = "Configuration Error: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY is missing.";
+  console.error(errorMsg);
+  if (typeof window !== 'undefined') {
+    throw new Error(errorMsg);
+  }
 }
 
 /**
@@ -30,26 +34,26 @@ export async function initiateUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string }> {
-  const url = `${SUPABASE_URL}/functions/v1/document-upload`;
-  
-  const headers: Record<string, string> = {
-    'apikey': SUPABASE_ANON_KEY || '',
-    'Content-Type': 'application/json',
-  };
+  const headers: Record<string, string> = {};
   if (accessToken && accessToken !== 'undefined') {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  const res: any = await safeFetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
+  const { data, error } = await supabase.functions.invoke('document-upload', {
+    body: {
       action: 'initiate',
       ...metadata
-    }),
+    },
+    headers
   });
 
-  return res;
+  if (error) {
+    console.error('[API] initiateUpload error:', error);
+    // Mimic the error object structure expected by callers if needed, or just throw
+    throw error;
+  }
+
+  return data;
 }
 
 /**
@@ -67,26 +71,25 @@ export async function completeUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; jobId: string }> {
-  const url = `${SUPABASE_URL}/functions/v1/document-upload`;
-  
-  const headers: Record<string, string> = {
-    'apikey': SUPABASE_ANON_KEY || '',
-    'Content-Type': 'application/json',
-  };
+  const headers: Record<string, string> = {};
   if (accessToken && accessToken !== 'undefined') {
     headers['Authorization'] = `Bearer ${accessToken}`;
   }
 
-  const res: any = await safeFetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
+  const { data, error } = await supabase.functions.invoke('document-upload', {
+    body: {
       action: 'complete',
       ...metadata
-    }),
+    },
+    headers
   });
 
-  return res;
+  if (error) {
+    console.error('[API] completeUpload error:', error);
+    throw error;
+  }
+
+  return data;
 }
 
 /**

@@ -1,5 +1,5 @@
 
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { safeFetch } from './safe-fetch';
 
 export type AuApiClientOptions = {

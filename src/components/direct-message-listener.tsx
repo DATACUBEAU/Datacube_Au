@@ -5,7 +5,7 @@ import { useToast } from '@/hooks/use-toast';
 import { db, auth as firebaseAuth } from '@/lib/firebase/client';
 import { signInWithCustomToken } from 'firebase/auth';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
-import { supabase } from '@/lib/supabase/client';
+import { supabase } from '@/lib/supabase-client/client';
 
 /**
  * Targeted listener for direct messages sent from the Conex admin panel (via Firestore).
