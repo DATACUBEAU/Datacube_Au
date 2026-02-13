@@ -170,6 +170,8 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
                   }
               }
           });
+      }, (error) => {
+        console.warn("Job completion listener error:", error);
       });
       
       return () => unsub();
@@ -251,6 +253,8 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
               setUnreadSupport(0);
               setLastSeenBroadcastVersion(0);
           }
+      }, (error) => {
+          console.warn("Notification listener error:", error);
       });
 
       // B. Broadcast Meta (Global)
@@ -259,6 +263,8 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
           if (doc.exists()) {
               setActiveBroadcastVersion(doc.data().active_broadcast_version || 0);
           }
+      }, (error) => {
+          console.warn("Broadcast meta listener error:", error);
       });
 
       return () => {

@@ -131,10 +131,27 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
+
+
 // Guest token functionality
 export function getGuestToken(): string | null {
   if (typeof window === 'undefined') return null;
-  return localStorage.getItem('guest_token');
+  const token = localStorage.getItem('guest_token');
+  if (!token) return null;
+
+  // Check expiration
+  const decoded = decodeJWT(token);
+  if (decoded?.exp) {
+    const now = Math.floor(Date.now() / 1000);
+    // Add 10 second buffer
+    if (decoded.exp < now + 10) {
+      console.warn('[client] Guest token expired, clearing');
+      localStorage.removeItem('guest_token');
+      return null;
+    }
+  }
+  
+  return token;
 }
 
 export function setGuestToken(token: string): void {

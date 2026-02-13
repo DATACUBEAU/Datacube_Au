@@ -95,6 +95,8 @@ export function BroadcastListener() {
           setIsVisible(true);
         }
       });
+    }, (error) => {
+      console.warn("Broadcast listener error:", error);
     });
 
     // 2. Direct Message Listener (Firestore)
@@ -146,6 +148,11 @@ export function BroadcastListener() {
             toast({ title: "New Message", description: "You have a new message from Support." });
           }
         });
+      }, (error) => {
+        // Suppress permission denied errors if auth is still syncing
+        if (error.code !== 'permission-denied') {
+           console.warn("DM listener error:", error);
+        }
       });
     };
 
