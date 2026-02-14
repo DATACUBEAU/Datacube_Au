@@ -5,7 +5,7 @@ import { useToast } from '@/hooks/use-toast';
 import { db, auth as firebaseAuth } from '@/lib/firebase/client';
 import { signInWithCustomToken } from 'firebase/auth';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
-import { supabase } from '@/lib/supabase-client/client';
+import { invokeEdgeFunction } from '@/lib/supabase-client/client';
 
 /**
  * Targeted listener for direct messages sent from the Conex admin panel (via Firestore).
@@ -26,14 +26,7 @@ export function DirectMessageListener({ userId }: { userId?: string }) {
         if (firebaseAuth.currentUser?.uid === targetId) return true;
 
         try {
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session?.user) return false;
-
-            const { data, error } = await supabase.functions.invoke('get-firebase-token', {
-                headers: {
-                    Authorization: `Bearer ${session.access_token}`
-                }
-            });
+            const { data, error } = await invokeEdgeFunction<{ token?: string }>('get-firebase-token', { requireAuth: true });
             
             if (!error && data?.token) {
                 await signInWithCustomToken(firebaseAuth, data.token);

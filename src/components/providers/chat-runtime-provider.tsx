@@ -6,7 +6,7 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { db, auth as firebaseAuth } from '@/lib/firebase/client';
 import { collection, query, where, onSnapshot, orderBy, limit, addDoc, doc, setDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { signInWithCustomToken } from 'firebase/auth';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { useToast } from '@/hooks/use-toast';
 import { LocalChatStorage } from '@/lib/storage/local-chat';
 import { ChatMessage } from '@/lib/api/chat';
@@ -78,31 +78,15 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
         }
 
         try {
-            // console.log("[ChatRuntime] Syncing Firebase Auth...");
-            const { data: { session } } = await supabase.auth.getSession();
-            if (!session) {
-                console.warn("[ChatRuntime] No session found during syncAuth");
-                return;
-            }
-
-            // Call Edge Function to get custom token
-            // console.log("[ChatRuntime] Invoking get-firebase-token...");
-            const { data, error } = await supabase.functions.invoke('get-firebase-token', {
-                headers: {
-                    Authorization: `Bearer ${session.access_token}`
-                }
-            });
+            const { data, error } = await invokeEdgeFunction<{ token?: string }>('get-firebase-token', { requireAuth: true });
             
             if (error) {
                 console.error("[ChatRuntime] get-firebase-token error details:", error);
-                // If 401, maybe token is expired? Refresh?
-                // The getSession() above should give a valid token.
                 throw error;
             }
 
             if (data?.token) {
                 await signInWithCustomToken(firebaseAuth, data.token);
-                // console.log("[ChatRuntime] Firebase Auth Synced!");
                 setIsFirebaseAuthReady(true);
             }
         } catch (e) {

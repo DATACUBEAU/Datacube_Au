@@ -119,6 +119,61 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
+async function getAccessToken(opts?: { refresh?: boolean }): Promise<string | null> {
+  if (opts?.refresh) {
+    try {
+      await supabase.auth.refreshSession();
+    } catch {
+    }
+  }
+
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    if (error) return null;
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function invokeEdgeFunction<T = any>(
+  functionName: string,
+  options?: { body?: any; headers?: Record<string, string>; requireAuth?: boolean }
+): Promise<{ data: T | null; error: any | null }> {
+  const token = await getAccessToken();
+  if (options?.requireAuth && !token) {
+    return { data: null, error: { message: 'No active session', status: 401 } };
+  }
+  const headers = {
+    ...(options?.headers ?? {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+  };
+
+  let result = await supabase.functions.invoke(functionName, {
+    body: options?.body,
+    headers: Object.keys(headers).length ? headers : undefined,
+  });
+
+  const status = (result.error as any)?.context?.status ?? (result.error as any)?.status;
+  if (result.error && status === 401) {
+    const refreshed = await getAccessToken({ refresh: true });
+    if (options?.requireAuth && !refreshed) {
+      return { data: null, error: { message: 'No active session', status: 401 } };
+    }
+    const headers2 = {
+      ...(options?.headers ?? {}),
+      ...(refreshed ? { Authorization: `Bearer ${refreshed}` } : {}),
+    };
+
+    result = await supabase.functions.invoke(functionName, {
+      body: options?.body,
+      headers: Object.keys(headers2).length ? headers2 : undefined,
+    });
+  }
+
+  return { data: (result as any).data ?? null, error: (result as any).error ?? null };
+}
+
 /**
  * Returns a filter string for manual ownership filtering in Supabase queries.
  * Handles authenticated users only.
@@ -208,7 +263,11 @@ export async function updateUserActivity(
     };
 
     if (user?.id) {
-      // Try to upsert, but handle 409 gracefully or try manual check
+      try {
+        await supabase.from('users').upsert({ id: user.id }, { onConflict: 'id' });
+      } catch {
+      }
+
       const { error } = await supabase
         .from('au_user_activity')
         .upsert({ 
@@ -220,21 +279,42 @@ export async function updateUserActivity(
         }, { onConflict: 'user_id' });
         
       if (error) {
-          // If 409, it means conflict (likely duplicate key on insert if upsert failed to resolve).
-          // We can try a simple update instead.
-          if (error.code === '23505' || error.code === '409') { // 23505 is unique_violation
-              await supabase
-                  .from('au_user_activity')
-                  .update({
-                      last_active_at: new Date().toISOString(),
-                      user_agent: userAgent,
-                      is_pwa: isStandalone,
-                      metadata: metadata
-                  })
-                  .eq('user_id', user.id);
-          } else if (error.code !== '406') {
-             console.warn('[client] Activity update error:', error);
+        if (error.code === '23503') {
+          try {
+            await supabase.from('users').upsert({ id: user.id }, { onConflict: 'id' });
+          } catch {
           }
+
+          const retry = await supabase
+            .from('au_user_activity')
+            .upsert(
+              {
+                user_id: user.id,
+                last_active_at: new Date().toISOString(),
+                user_agent: userAgent,
+                is_pwa: isStandalone,
+                metadata: metadata,
+              },
+              { onConflict: 'user_id' }
+            );
+
+          if (!retry.error) return;
+          return;
+        }
+
+        if (error.code === '23505' || error.code === '409') {
+          await supabase
+            .from('au_user_activity')
+            .update({
+              last_active_at: new Date().toISOString(),
+              user_agent: userAgent,
+              is_pwa: isStandalone,
+              metadata: metadata,
+            })
+            .eq('user_id', user.id);
+        } else if (error.code !== '406') {
+          console.warn('[client] Activity update error:', error);
+        }
       }
     }
   } catch (e) {
