@@ -410,7 +410,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               : 'Sign in requires an internet connection. Please reconnect to continue.'}
           </div>
           <div className="flex justify-center">
-            <Button asChild disabled={!isOnline}>
+            <Button asChild disabled={!isOnline} className="w-full sm:w-auto">
               <Link href="/login">Go to Login</Link>
             </Button>
           </div>
