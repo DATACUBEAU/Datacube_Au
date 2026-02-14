@@ -1,5 +1,5 @@
 
-import { supabase, getEffectiveOwnershipConditions, decodeJWT, applyOwnershipFilter } from '@/lib/supabase-client/client';
+import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
 import { safeFetch } from './safe-fetch';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
@@ -29,7 +29,6 @@ export async function initiateUpload(
     jobId: string;
     documentId: string;
     parentId?: string;
-    guestSessionId?: string;
     metadata?: any;
   },
   accessToken?: string
@@ -109,8 +108,8 @@ export async function uploadDocument(
 }
 
 /**
- * Lists documents for the current user or guest session.
- * Mirrors RLS: USING (auth.uid() = user_id OR guest_session_id = ...)
+ * Lists documents for the current user.
+ * Mirrors RLS: USING (auth.uid() = user_id)
  */
 export async function listDocuments(user: User | null): Promise<AuDocumentRow[]> {
   const conditions = await getEffectiveOwnershipConditions(user);
@@ -136,8 +135,7 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
  */
 export async function deleteDocument(user: User | null, documentId: string): Promise<{ ok: boolean }> {
   const { data: { session } } = await supabase.auth.getSession();
-  const guestToken = typeof window !== 'undefined' ? localStorage.getItem('guest_token') : null;
-  const accessToken = session?.access_token || guestToken || undefined;
+  const accessToken = session?.access_token;
 
   const url = `${SUPABASE_URL}/functions/v1/document-management`;
   

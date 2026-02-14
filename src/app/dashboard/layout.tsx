@@ -233,7 +233,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const { isGeneratingKnowledge, isGeneratingPredictions } = useStore();
   const unreadCount = useUnreadCount();
 
-  const isAnonymous = (user as any)?.is_anonymous ?? !user?.email;
+  const isAnonymous = false;
 
   const handleGoogleSignIn = useCallback(async () => {
     setIsLoadingGoogle(true);
@@ -268,12 +268,10 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     setIsLoadingGoogle(false);
   };
 
-  const userDisplayName = isAnonymous
-    ? 'Guest'
-    : (user?.user_metadata?.full_name as string | undefined) ??
+  const userDisplayName = (user?.user_metadata?.full_name as string | undefined) ??
       (user?.user_metadata?.name as string | undefined) ??
       'User';
-  const userEmail = isAnonymous ? 'Anonymous User' : user?.email || '';
+  const userEmail = user?.email || '';
   const userInitial =
     userDisplayName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || 'G';
 
@@ -301,9 +299,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     try {
       // 1. Call wipe-user action in Edge Function
       const { data: { session } } = await supabase.auth.getSession();
-      const guestToken = typeof window !== 'undefined' ? localStorage.getItem('guest_token') : null;
       const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
-      const accessToken = session?.access_token || guestToken || undefined;
+      const accessToken = session?.access_token;
 
       await fetch(`${SUPABASE_URL}/functions/v1/document-management`, {
         method: 'POST',
@@ -323,7 +320,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         localStorage.removeItem(`au_assistant_progress_${user.id}`);
         localStorage.removeItem(`au_assistant_settings_${user.id}`);
       }
-      localStorage.removeItem('guest_token');
 
       // 3. Final sign out
       await supabase.auth.signOut();
@@ -405,12 +401,16 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex min-h-dvh items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4 rounded-lg border bg-card p-6 text-center">
-          <div className="font-headline text-2xl font-semibold">Sign in to continue</div>
+          <div className="font-headline text-2xl font-semibold">
+             {isOnline ? 'Sign in to continue' : 'You are offline'}
+          </div>
           <div className="text-sm text-muted-foreground">
-            You need an account (or a guest session) to access the dashboard.
+            {isOnline 
+              ? 'You need an account to access the dashboard.' 
+              : 'Sign in requires an internet connection. Please reconnect to continue.'}
           </div>
           <div className="flex justify-center">
-            <Button asChild>
+            <Button asChild disabled={!isOnline}>
               <Link href="/login">Go to Login</Link>
             </Button>
           </div>

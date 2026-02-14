@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { supabase, decodeJWT, getGuestToken } from '@/lib/supabase-client/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { DirectMessageListener } from './direct-message-listener';
 import { BroadcastListener } from './broadcast-listener';
 import { useActivity } from '@/hooks/use-activity';
@@ -14,7 +14,7 @@ import { ToastAction } from '@/components/ui/toast';
  * Handles the logic of identifying if the user is authenticated or a guest.
  */
 export function GlobalListeners() {
-  const [ids, setIds] = useState<{ userId?: string; guestId?: string }>({});
+  const [ids, setIds] = useState<{ userId?: string }>({});
   const { toast } = useToast();
   const router = useRouter();
   
@@ -43,11 +43,7 @@ export function GlobalListeners() {
       if (session?.user) {
         setIds({ userId: session.user.id });
       } else {
-        const guestToken = getGuestToken();
-        if (guestToken) {
-          const decoded = decodeJWT(guestToken);
-          setIds({ guestId: decoded?.guest_session_id || decoded?.sub });
-        }
+        setIds({});
       }
     };
 
@@ -58,14 +54,7 @@ export function GlobalListeners() {
       if (session?.user) {
         setIds({ userId: session.user.id });
       } else {
-        // Fallback to guest if logged out
-        const guestToken = getGuestToken();
-        if (guestToken) {
-          const decoded = decodeJWT(guestToken);
-          setIds({ guestId: decoded?.guest_session_id || decoded?.sub });
-        } else {
-          setIds({});
-        }
+        setIds({});
       }
     });
 
@@ -77,8 +66,8 @@ export function GlobalListeners() {
   return (
     <>
       <BroadcastListener />
-      {(ids.userId || ids.guestId) && (
-        <DirectMessageListener userId={ids.userId} guestId={ids.guestId} />
+      {ids.userId && (
+        <DirectMessageListener userId={ids.userId} />
       )}
     </>
   );

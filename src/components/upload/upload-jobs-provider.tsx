@@ -8,9 +8,6 @@ import {
 } from '@/lib/upload/file-types';
 import { 
   supabase, 
-  getGuestToken, 
-  decodeJWT, 
-  ensureGuestSession,
   getEffectiveOwnershipConditions,
   applyOwnershipFilter
 } from '@/lib/supabase-client/client';
@@ -114,15 +111,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       } catch (e) {
         console.error('[upload-jobs] Error getting session:', e);
       }
-
-      try {
-        const { data: anonData, error: anonError } = await supabase.auth.signInAnonymously();
-        if (anonError) throw anonError;
-        return anonData.session;
-      } catch (err: any) {
-        console.error('[upload-jobs] CRITICAL: Failed to establish any session:', err);
-        throw err;
-      }
+      return null;
     }, []);
 
   const mergeJobs = useCallback((remoteJobs: UploadJobRow[]) => {
@@ -181,10 +170,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       ];
 
       if (useSafeSelection) {
-        const safeConditions = fullConditions
-          .split(',')
-          .filter(c => !c.trim().startsWith('guest_session_id'))
-          .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
+        const safeConditions = fullConditions;
 
         const query = supabase
           .from('au_worker_jobs')
@@ -199,7 +185,6 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           mergeJobs(data.map((j: any) => ({ 
             ...j, 
             error: j.error || null,
-            guest_session_id: j.guest_session_id || null 
           })) as UploadJobRow[]);
         }
         return;
@@ -216,16 +201,12 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
       if (error) {
         const errorMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
-        const isMissingGuestSession = errorMsg.includes('guest_session_id') || errorMsg.includes('column "guest_session_id"');
         const isMissingErrorCol = isMissingUploadJobsErrorColumn(error);
 
-        if (isMissingErrorCol || isMissingGuestSession) {
+        if (isMissingErrorCol) {
           setUseSafeSelection(true);
           
-          const safeConditions = fullConditions
-            .split(',')
-            .filter(c => !c.trim().startsWith('guest_session_id'))
-            .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
+          const safeConditions = fullConditions;
           
           const query2 = supabase
             .from('au_worker_jobs')
@@ -240,7 +221,6 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
             mergeJobs(data2.map((j: any) => ({ 
               ...j, 
               error: null,
-              guest_session_id: null 
             })) as UploadJobRow[]);
             return;
           }
@@ -302,11 +282,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       let conditions = fullConditions;
       if (useSafeSelection) {
         delete (safePatch as any).error;
-        delete (safePatch as any).guest_session_id;
-        conditions = fullConditions
-          .split(',')
-          .filter(c => !c.trim().startsWith('guest_session_id'))
-          .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
+        conditions = fullConditions;
       }
 
       const query = supabase
@@ -320,23 +296,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       if (!error) return;
 
       const errorMsg = error.message || '';
-      const isMissingGuest = errorMsg.includes('guest_session_id') || error.code === '42703';
       const isMissingErrorCol = isMissingUploadJobsErrorColumn(error);
 
-      if ((Object.prototype.hasOwnProperty.call(safePatch, 'error') && isMissingErrorCol) || isMissingGuest) {
+      if (Object.prototype.hasOwnProperty.call(safePatch, 'error') && isMissingErrorCol) {
         setUseSafeSelection(true);
         const nextPatch = { ...(safePatch as any) };
         if (isMissingErrorCol) {
           delete nextPatch.error;
-        }
-
-        let retryConditions = conditions;
-        if (isMissingGuest) {
-          delete nextPatch.guest_session_id;
-          retryConditions = conditions
-            .split(',')
-            .filter(c => !c.startsWith('guest_session_id'))
-            .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
         }
 
         const retryQuery = supabase
@@ -344,7 +310,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           .update(nextPatch)
           .eq('id', jobId);
         
-        applyOwnershipFilter(retryQuery, retryConditions);
+        applyOwnershipFilter(retryQuery, conditions);
         await retryQuery;
       }
     },
@@ -368,18 +334,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (!file) throw new Error('Missing file data. Retry upload.');
 
         const { data: { session: currentSession } } = await supabase.auth.getSession();
-        let accessToken = currentSession?.access_token || getGuestToken();
+        let accessToken = currentSession?.access_token;
         
         if (accessToken === 'undefined' || accessToken === 'null') {
-          accessToken = null;
+          accessToken = undefined;
         }
 
-        let guestSessionId = job.guest_session_id;
-        if (!currentSession?.user && !guestSessionId) {
-          guestSessionId = await ensureGuestSession();
-        }
-
-        const effectiveUserId = currentSession?.user?.id || guestSessionId;
+        const effectiveUserId = currentSession?.user?.id;
         if (!effectiveUserId) throw new Error('Could not determine owner ID. Please sign in or refresh.');
 
         // Use dynamic limit
@@ -412,7 +373,6 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
                 jobId: job.id,
                 documentId: job.document_id,
                 parentId: effectiveParentId,
-                guestSessionId: guestSessionId || undefined
             },
             accessToken || undefined
         );
@@ -480,24 +440,11 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           setIsThrottled(true);
         }
 
-        const isGuestError = errorMsg.includes('invalid_guest_session') || 
-                            errorMsg.includes('invalid guest_session_id') || 
-                            errorMsg.includes('foreign key');
-        
         const isRetryable = errorMsg.includes('storage_error') || 
                            errorMsg.includes('server_error') ||
                            e.status >= 500;
 
-        if (isGuestError && retryAttempt === 0) {
-          console.warn('[upload-jobs] Session invalid, retrying once after recovery...');
-          try {
-            await ensureGuestSession();
-            runningRef.current.delete(job.id);
-            return runUpload(job, retryAttempt + 1);
-          } catch (retryErr) {
-            updateJobLocal(job.id, { status: 'failed', error: 'Please refresh or sign in.' });
-          }
-        } else if (isRetryable && retryAttempt < 3) {
+        if (isRetryable && retryAttempt < 3) {
           const delay = Math.pow(2, retryAttempt) * 1000;
           console.warn(`[upload-jobs] Retryable error, attempt ${retryAttempt + 1} in ${delay}ms:`, errorMsg);
           
@@ -514,11 +461,11 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         runningRef.current.delete(job.id);
       }
     },
-    [updateJobLocal, updateJobRow, user, ensureGuestSession, maxUploadSize]
+    [updateJobLocal, updateJobRow, user, maxUploadSize]
   );
 
   useEffect(() => {
-    if (!user && !getGuestToken()) return;
+    if (!user) return;
 
     const active = jobs.filter((j) => isActiveStatus(j.status));
     active.forEach((j) => {
@@ -535,22 +482,8 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       const { data: sessionData } = await supabase.auth.getSession();
       const authUser = sessionData.session?.user ?? null;
       
-      let guestSessionId = null;
-      const guestToken = getGuestToken();
-      if (guestToken) {
-        try {
-          const decoded = decodeJWT(guestToken);
-          guestSessionId = decoded?.guest_session_id || decoded?.sub;
-        } catch (e) {}
-      }
-
-      if (!authUser?.id && !guestSessionId) {
-        try {
-          guestSessionId = await ensureGuestSession();
-        } catch (e: any) {
-          console.error('[upload-jobs] ERROR: Failed to establish guest session:', e);
-          throw new Error(`Guest session failed: ${e.message || 'Check connection'}`);
-        }
+      if (!authUser?.id) {
+        throw new Error('Authentication required to upload.');
       }
 
       const createdJobs: UploadJobRow[] = [];
@@ -569,7 +502,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         const jobId = createId();
         const docId = createId();
         const safeFileName = normalizeFileName(file.name);
-        const effectiveUserId = authUser?.id || guestSessionId;
+        const effectiveUserId = authUser.id;
         
         const nowIso = new Date().toISOString();
         const job: UploadJobRow = {
@@ -577,8 +510,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           document_id: docId,
           document_type: input.documentType,
           parent_id: input.parentId ?? null,
-          user_id: effectiveUserId || null,
-          guest_session_id: guestSessionId,
+          user_id: effectiveUserId,
           label: input.label ?? null,
           file_name: safeFileName,
           mime_type: file.type || null,
@@ -607,7 +539,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [ensureAuthenticatedSession, user, maxUploadSize]
+    [user, maxUploadSize]
   );
 
   const cancelJob = useCallback(

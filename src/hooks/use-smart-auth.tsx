@@ -2,14 +2,13 @@
 
 import { useEffect, useState, createContext, useContext, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
-import { getGuestToken } from '@/lib/supabase-client/client';
 
 interface SmartUser {
   id: string;
   email?: string | null;
   full_name?: string | null;
   avatar_url?: string | null;
-  provider: 'supabase' | 'guest';
+  provider: 'supabase';
 }
 
 interface SmartAuthContextType {
@@ -43,15 +42,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
             provider: 'supabase',
           });
         } else {
-          const guestToken = getGuestToken();
-          if (guestToken) {
-            setUser({
-              id: 'guest',
-              provider: 'guest',
-            });
-          } else {
-            setUser(null);
-          }
+          setUser(null);
         }
       } finally {
         if (mounted) setIsLoading(false);
@@ -98,7 +89,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const getToken = useCallback(async () => {
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) return data.session.access_token;
-    return getGuestToken();
+    return null;
   }, []);
 
   const value = useMemo(

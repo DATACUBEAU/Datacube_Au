@@ -1,132 +1,126 @@
-# 🧊 DataCube AU
+# Datacube AU
 
-DataCube AU is an advanced, AI-powered document analysis and knowledge management platform. It transforms scattered notes, textbooks, and study materials into an intelligent, searchable knowledge base using state-of-the-art Retrieval-Augmented Generation (RAG) technology.
+Datacube AU is a comprehensive educational platform built with Next.js, designed to provide advanced document management, AI-powered study assistance, and exam preparation tools. The platform integrates seamlessly with Supabase for backend services and Firebase for real-time features.
 
-[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)](https://nextjs.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-38B2AC?style=flat-square&logo=tailwind-css)](https://tailwindcss.com/)
-[![Supabase](https://img.shields.io/badge/Supabase-Backend-3ECF8E?style=flat-square&logo=supabase)](https://supabase.com/)
-[![PWA](https://img.shields.io/badge/PWA-Ready-orange?style=flat-square)](https://web.dev/progressive-web-apps/)
+## 🚀 Features
 
----
+-   **Smart Authentication**: Secure user authentication via Supabase Auth, with seamless Firebase integration for real-time services.
+-   **Document Management**: robust system for uploading, organizing, and managing study materials.
+-   **AI Assistant (RAG)**: Retrieval-Augmented Generation powered chat interface for querying documents and getting intelligent answers.
+-   **Exam Tools**: Features for generating practice exams and predicting exam topics.
+-   **Real-time Communication**: Direct messaging and broadcast system using Firestore.
+-   **PWA Support**: Fully functional Progressive Web App with offline capabilities.
+-   **Responsive UI**: Modern, accessible interface built with Tailwind CSS and Shadcn UI.
 
-## ✨ Key Features
+## 🛠 Tech Stack
 
-- **🧠 Intelligent RAG Pipeline**: Seamlessly ingest documents, chunk them, and generate embeddings for high-precision semantic search and context-aware chat.
-- **💬 AU Chat Assistant**: Interact with your documents through a natural language interface. Ask questions, get summaries, and extract insights instantly.
-- **📝 Exam Generator**: Automatically generate practice exams and quizzes based on your uploaded study materials.
-- **🗺️ Knowledge Mapping**: Visualize concepts and their relationships through generated knowledge maps and prompt starters.
-- **🚀 Production-Ready Infrastructure**:
-  - **Supabase Edge Functions** for scalable, serverless backend logic.
-  - **Dedicated RAG Worker** for heavy lifting document ingestion and processing.
-  - **Vector Database** for efficient similarity searches.
-- **📱 PWA Support**: Installable on mobile and desktop for a native-like experience.
-- **👤 Guest Session System**: Try out the platform's core features without mandatory initial registration.
-
-## 🛠️ Tech Stack
-
-### Frontend
-- **Framework**: [Next.js 15+](https://nextjs.org/) (App Router)
-- **Styling**: [Tailwind CSS](https://tailwindcss.com/)
-- **UI Components**: [Radix UI](https://www.radix-ui.com/), [Shadcn UI](https://ui.shadcn.com/)
-- **Animations**: [Framer Motion](https://www.framer.com/motion/)
-- **Icons**: [Lucide React](https://lucide.dev/)
-- **State Management**: [Zustand](https://zustand-demo.pmnd.rs/)
-- **Forms**: [React Hook Form](https://react-hook-form.com/) + [Zod](https://zod.dev/)
-
-### Backend & Infrastructure
-- **Database & Auth**: [Supabase](https://supabase.com/)
-- **Serverless**: Supabase Edge Functions (Deno)
-- **RAG Ingestion**: Node.js Worker with OpenAI/OpenRouter
-- **Storage**: Supabase Storage for document management
-- **Search**: pgvector for vector similarity search
-
----
+-   **Frontend**: [Next.js 14](https://nextjs.org/) (App Router), [React](https://react.dev/), [TypeScript](https://www.typescriptlang.org/)
+-   **Styling**: [Tailwind CSS](https://tailwindcss.com/), [Shadcn UI](https://ui.shadcn.com/)
+-   **Backend / Database**: [Supabase](https://supabase.com/) (PostgreSQL, Auth, Edge Functions, Storage)
+-   **Real-time / NoSQL**: [Firebase](https://firebase.google.com/) (Firestore)
+-   **State Management**: React Context & Hooks
+-   **Testing**: Playwright
 
 ## 📂 Project Structure
 
-```text
-.
+```
+Datacube-Au/
+├── public/                 # Static assets (images, icons, PWA files)
+├── rag-worker/             # RAG (Retrieval-Augmented Generation) worker service
+│   ├── src/                # Worker source code
+│   └── ...
 ├── src/
-│   ├── app/              # Next.js App Router (Dashboard, Login, API routes)
-│   ├── components/       # Reusable UI & Feature components
-│   ├── hooks/            # Custom React hooks (API, Auth, UI)
-│   ├── lib/              # Core logic, Supabase client, API wrappers
-│   └── pages_legacy/     # Legacy pages (migration in progress)
-├── backend/
-│   ├── supabase/         # Migrations and Edge Functions
-│   └── rag-worker/       # Background worker for document ingestion
-├── public/               # Static assets and PWA manifests
-└── shared/               # Shared types and schemas
+│   ├── app/                # Next.js App Router pages and API routes
+│   │   ├── api/            # Backend API endpoints (Next.js)
+│   │   ├── dashboard/      # Main application dashboard
+│   │   ├── login/          # Authentication pages
+│   │   └── ...
+│   ├── components/         # Reusable React components
+│   │   ├── ui/             # UI primitives (buttons, inputs, etc.)
+│   │   ├── providers/      # Context providers
+│   │   └── ...
+│   ├── hooks/              # Custom React hooks
+│   ├── lib/                # Utility functions and API clients
+│   │   ├── supabase-client/# Supabase configuration
+│   │   ├── firebase/       # Firebase configuration
+│   │   └── ...
+│   └── ...
+├── tests/                  # End-to-end and integration tests
+├── .env.local              # Local environment variables (gitignored)
+├── next.config.ts          # Next.js configuration
+├── package.json            # Project dependencies and scripts
+├── tailwind.config.ts      # Tailwind CSS configuration
+└── tsconfig.json           # TypeScript configuration
 ```
 
----
-
-## 🚀 Getting Started
+## 🏁 Getting Started
 
 ### Prerequisites
-- Node.js 20+
-- Supabase CLI
-- Git
+
+-   Node.js (v18 or higher recommended)
+-   pnpm (recommended) or npm
+-   Supabase project
+-   Firebase project
 
 ### Installation
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/Fabian121-ux/Datacube_Au.git
-   cd Datacube_Au
-   ```
+1.  **Clone the repository**
+    ```bash
+    git clone https://github.com/your-org/datacube-au.git
+    cd datacube-au
+    ```
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
+2.  **Install dependencies**
+    ```bash
+    npm install
+    # or
+    pnpm install
+    ```
 
-3. **Set up Environment Variables**:
-   Create a `.env.local` file in the root and add your Supabase credentials:
-   ```env
-   NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
-   ```
+3.  **Environment Setup**
+    Create a `.env.local` file in the root directory and add your Supabase and Firebase credentials:
 
-4. **Run the development server**:
-   ```bash
-   npm run dev
-   ```
+    ```env
+    # Supabase
+    NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
----
+    # Firebase
+    NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
+    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
+    NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
+    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+    NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+    ```
 
-## 🏗️ Backend Setup (Supabase)
+4.  **Run the development server**
+    ```bash
+    npm run dev
+    # or
+    pnpm dev
+    ```
 
-1. **Initialize Supabase**:
-   ```bash
-   npx supabase --workdir backend init
-   ```
+    Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-2. **Run Migrations**:
-   ```bash
-   npx supabase --workdir backend db push
-   ```
+## 📜 Scripts
 
-3. **Deploy Edge Functions**:
-   ```bash
-   npx supabase --workdir backend functions deploy
-   ```
-
-   Alternatively:
-   ```bash
-   cd backend
-   npx supabase functions deploy
-   ```
-
----
-
-## 📜 License
-
-This project is private and all rights are reserved.
-
----
+-   `npm run dev`: Starts the development server.
+-   `npm run build`: Builds the application for production.
+-   `npm run start`: Starts the production server.
+-   `npm run lint`: Runs ESLint to check for code quality issues.
+-   `npm run test`: Runs the test suite.
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome! Please follow these steps:
+
+1.  Fork the project.
+2.  Create your feature branch (`git checkout -b feature/AmazingFeature`).
+3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
+4.  Push to the branch (`git push origin feature/AmazingFeature`).
+5.  Open a Pull Request.
+
+## 📄 License
+
+[MIT](LICENSE)

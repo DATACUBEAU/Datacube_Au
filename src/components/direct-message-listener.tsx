@@ -11,12 +11,12 @@ import { supabase } from '@/lib/supabase-client/client';
  * Targeted listener for direct messages sent from the Conex admin panel (via Firestore).
  * Handles Supabase -> Firebase Auth Exchange to ensure permission to read.
  */
-export function DirectMessageListener({ userId, guestId }: { userId?: string; guestId?: string }) {
+export function DirectMessageListener({ userId }: { userId?: string }) {
   const { toast } = useToast();
   const processedRef = useRef(new Set<string>());
 
   useEffect(() => {
-    const targetId = userId || guestId;
+    const targetId = userId;
     if (!targetId) return;
 
     // 1. Perform Auth Exchange (if needed)
@@ -27,7 +27,7 @@ export function DirectMessageListener({ userId, guestId }: { userId?: string; gu
 
         try {
             const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return false;
+            if (!session?.user) return false;
 
             const { data, error } = await supabase.functions.invoke('get-firebase-token');
             
@@ -77,15 +77,24 @@ export function DirectMessageListener({ userId, guestId }: { userId?: string; gu
                 }
             });
         }, (error) => {
-             // Suppress permission errors if auth hasn't finished syncing or if user is truly blocked
-             if (error.code !== 'permission-denied') {
+             if (error.code === 'permission-denied') {
+                 // Listener is automatically cancelled by Firestore SDK on error
+                 console.warn("Firestore permission denied.");
+                 toast({
+                     title: 'Session Expired',
+                     description: 'Please sign in again to view messages.',
+                     variant: 'destructive'
+                 });
+             } else {
                  console.error("Firestore listener error:", error);
              }
         });
     });
 
-    return () => unsubscribe();
-  }, [userId, guestId, toast]);
+    return () => {
+        if (unsubscribe) unsubscribe();
+    };
+  }, [userId, toast]);
 
   return null;
 }

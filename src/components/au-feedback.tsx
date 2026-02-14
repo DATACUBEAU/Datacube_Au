@@ -35,22 +35,8 @@ export function FeedbackSection({ sectionName }: FeedbackSectionProps) {
     setIsSubmitting(true);
 
     try {
-      const guestToken = typeof window !== 'undefined' ? localStorage.getItem('guest_token') : null;
-      let guestSessionId = null;
-
-      if (guestToken) {
-        try {
-          const { decodeJWT } = await import('@/lib/supabase-client/client');
-          const decoded = decodeJWT(guestToken);
-          guestSessionId = decoded?.guest_session_id || decoded?.sub;
-        } catch (e) {
-          console.error("Failed to decode guest token", e);
-        }
-      }
-
       const { error } = await supabase.from('au_feedback').insert([{
         user_id: user?.id || null,
-        guest_session_id: guestSessionId,
         section: sectionName,
         rating: feedbackType,
         comment: finalReason,

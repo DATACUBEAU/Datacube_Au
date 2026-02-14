@@ -57,19 +57,7 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
     }
   }
 
-  const guestToken = getGuestToken();
-  const currentAuth = headers.get('Authorization');
   const anonKey = publicEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  
-  const validGuestToken = guestToken && guestToken !== 'undefined' && guestToken !== 'null' ? guestToken : null;
-
-  // Only inject guest token if it's an anonymous request or missing auth
-  const isAnonOrMissing = !currentAuth || currentAuth === `Bearer ${anonKey}`;
-  const isNotAuth = !url.includes('/auth/v1/');
-  
-  if (validGuestToken && isAnonOrMissing && isNotAuth) {
-    headers.set('Authorization', `Bearer ${validGuestToken}`);
-  }
   
   if (!headers.has('apikey') && anonKey) {
     headers.set('apikey', anonKey);
@@ -131,78 +119,18 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
-
-
-// Guest token functionality
-export function getGuestToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  const token = localStorage.getItem('guest_token');
-  if (!token) return null;
-
-  // Check expiration
-  const decoded = decodeJWT(token);
-  if (decoded?.exp) {
-    const now = Math.floor(Date.now() / 1000);
-    // Add 10 second buffer
-    if (decoded.exp < now + 10) {
-      console.warn('[client] Guest token expired, clearing');
-      localStorage.removeItem('guest_token');
-      return null;
-    }
-  }
-  
-  return token;
-}
-
-export function setGuestToken(token: string): void {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('guest_token', token);
-}
-
-export function clearGuestToken(): void {
-  if (typeof window === 'undefined') return;
-  localStorage.removeItem('guest_token');
-}
-
-export function decodeJWT(token: string): any {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    return JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Returns a filter string for manual ownership filtering in Supabase queries.
- * Handles both authenticated users and guest sessions.
+ * Handles authenticated users only.
  */
 export async function getEffectiveOwnershipConditions(user: User | null): Promise<string> {
   // Prioritize authenticated user ID. 
-  // If the user is logged in (including anonymously), we prefer their user_id.
-  // This prevents 400 errors from ORing user_id and guest_session_id when both are present.
   if (user?.id) {
     return `user_id.eq.${user.id}`;
   }
 
-  // Fallback to guest session if no user is present
-  const guestToken = getGuestToken();
-  if (guestToken) {
-    try {
-      const decoded = decodeJWT(guestToken);
-      const guestId = decoded?.guest_session_id || decoded?.sub;
-      if (guestId) {
-        return `guest_session_id.eq.${guestId}`;
-      }
-    } catch (e) {
-      console.warn('[client] Failed to decode guest token in ownership check');
-    }
-  }
-
-  // Fallback if no conditions found (though unlikely for a valid request)
-  // If we have no user and no guest token, we return a filter that matches nothing
-  // This is safer than returning a broad filter that might expose data.
+  // Fallback if no user is present
+  // We return a filter that matches nothing
   return 'id.eq.00000000-0000-0000-0000-000000000000'; 
 }
 
@@ -227,45 +155,6 @@ export function applyOwnershipFilter(query: any, conditions: string) {
   
   // Fallback to .or() if it doesn't match the .eq. pattern
   return query.or(trimmed);
-}
-
-export async function ensureGuestSession(): Promise<string> {
-  const token = getGuestToken();
-  if (token) {
-    const decoded = decodeJWT(token);
-    const guestId = decoded?.guest_session_id || decoded?.sub;
-    if (guestId) return guestId;
-  }
-
-  // If no token or invalid, create new via Edge Function
-  try {
-    const { safeFetch } = await import('@/lib/api/safe-fetch');
-    const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-    const response = await safeFetch(`${SUPABASE_URL}/functions/v1/guest-session`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(ANON_KEY ? { apikey: ANON_KEY, Authorization: `Bearer ${ANON_KEY}` } : {}),
-      },
-      body: JSON.stringify({}),
-    });
-
-    const data = await response.json();
-    const accessToken = (data as any)?.token || (data as any)?.access_token;
-    const sessionId = (data as any)?.session_id;
-
-    if (accessToken) {
-      setGuestToken(accessToken);
-      const decoded = decodeJWT(accessToken);
-      return decoded?.guest_session_id || decoded?.sub || sessionId || '';
-    }
-
-    if (sessionId) return String(sessionId);
-  } catch (e) {
-    console.error('[client] Failed to create guest session:', e);
-  }
-  return '';
 }
 
 /**
@@ -331,19 +220,6 @@ export async function updateUserActivity(
         
       if (error && error.code !== '406') {
           console.warn('[client] Activity update error:', error);
-      }
-    } else {
-      const guestId = await ensureGuestSession();
-      if (guestId) {
-        await supabase
-          .from('au_guest_sessions')
-          .update({ 
-            last_active_at: new Date().toISOString(),
-            user_agent: userAgent,
-            is_pwa: isStandalone,
-            metadata: metadata
-          })
-          .eq('id', guestId);
       }
     }
   } catch (e) {

@@ -64,10 +64,6 @@ export default function SettingsPage() {
   const [user] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
-  const isAnonymous = useMemo(() => {
-    if (!user) return true;
-    return (user as any).is_anonymous ?? !user.email;
-  }, [user]);
 
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
@@ -86,7 +82,6 @@ export default function SettingsPage() {
   const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
   const [signOutStep, setSignOutStep] = useState<'idle' | 'warning' | 'final' | 'processing'>('idle');
-  const [showGuestSignInDisabledDialog, setShowGuestSignInDisabledDialog] = useState(false);
 
   // Billing State
   const [tier, setTier] = useState<string>('free');
@@ -278,10 +273,6 @@ export default function SettingsPage() {
   };
 
   const handleGoogleSignIn = async () => {
-    if (isAnonymous) {
-      setShowGuestSignInDisabledDialog(true);
-      return;
-    }
     setIsLoadingGoogle(true);
     setShowAuthPopup(true);
     
@@ -335,9 +326,8 @@ export default function SettingsPage() {
     try {
       // 1. Call wipe-user action in Edge Function
       const { data: { session } } = await supabase.auth.getSession();
-      const guestToken = typeof window !== 'undefined' ? localStorage.getItem('guest_token') : null;
       const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
-      const accessToken = session?.access_token || guestToken || undefined;
+      const accessToken = session?.access_token;
 
       await fetch(`${SUPABASE_URL}/functions/v1/document-management`, {
         method: 'POST',
@@ -357,7 +347,6 @@ export default function SettingsPage() {
         localStorage.removeItem(`au_assistant_progress_${user.id}`);
         localStorage.removeItem(`au_assistant_settings_${user.id}`);
       }
-      localStorage.removeItem('guest_token');
 
       // 3. Final sign out
       await supabase.auth.signOut();
@@ -371,7 +360,7 @@ export default function SettingsPage() {
   };
 
   const handleSaveChanges = async () => {
-    if (!user || isAnonymous) return;
+    if (!user) return;
     
     setIsSaving(true);
     const oldDisplayName = currentDisplayName;
@@ -421,31 +410,6 @@ export default function SettingsPage() {
 
       <div className="mx-auto grid w-full max-w-4xl items-start gap-6">
         <div className="grid gap-6">
-          {isAnonymous ? (
-             <Card>
-                <CardHeader>
-                    <CardTitle className="font-headline">Create an Account</CardTitle>
-                    <CardDescription>
-                        You are currently using a temporary guest account. Sign in to save your documents and access them from any device.
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <Button
-                      onClick={handleGoogleSignIn}
-                      disabled={isLoadingGoogle}
-                      aria-disabled={isAnonymous}
-                      className={`w-full sm:w-auto ${isAnonymous ? 'opacity-60 cursor-not-allowed' : ''}`}
-                    >
-                        {isLoadingGoogle ? (
-                            <Icons.google className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
-                        ) : (
-                            <Icons.google className="mr-2 h-4 w-4" aria-hidden="true" />
-                        )}
-                        Authenticate with Google
-                    </Button>
-                </CardContent>
-            </Card>
-          ) : (
             <Card>
                 <CardHeader>
                 <CardTitle className="font-headline">Profile</CardTitle>
@@ -489,7 +453,6 @@ export default function SettingsPage() {
                 </Button>
                 </CardFooter>
             </Card>
-          )}
           
           <Card>
             <CardHeader>
@@ -851,23 +814,6 @@ export default function SettingsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      <Dialog open={showGuestSignInDisabledDialog} onOpenChange={setShowGuestSignInDisabledDialog}>
-        <DialogContent className="sm:max-w-[500px]">
-          <DialogHeader>
-            <DialogTitle className="font-headline">Sign-in is disabled in Guest mode</DialogTitle>
-            <DialogDescription>
-              For security reasons and future-proofing, guest sessions are locked and can’t be linked to Google yet.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="text-sm text-muted-foreground">
-            This prevents account-mixups and protects your data while we finalize the upgrade flow.
-          </div>
-          <DialogFooter>
-            <Button onClick={() => setShowGuestSignInDisabledDialog(false)}>Ok</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Sign Out & Deletion Flow */}
       <AnimatePresence mode="wait">

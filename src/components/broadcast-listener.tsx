@@ -6,7 +6,6 @@ import { Bell, X, Info, Sparkles, Megaphone, Send, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { supabase } from '@/lib/supabase-client/client';
-import { decodeJWT, ensureGuestSession, getGuestToken } from '@/lib/supabase-client/client';
 import { db } from '@/lib/firebase/client';
 import { collection, query, where, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
@@ -24,7 +23,6 @@ type PopupMessage = {
   content: string;
   expires_at?: string | null;
   user_id?: string | null;
-  guest_session_id?: string | null;
   is_read?: boolean;
 };
 
@@ -105,18 +103,9 @@ export function BroadcastListener() {
     const setupDmListener = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       const userId = session?.user?.id;
+      if (!userId) return;
 
-      let guestId: string | undefined;
-      const guestToken = getGuestToken();
-      if (guestToken) {
-        const decoded = decodeJWT(guestToken);
-        guestId = decoded?.guest_session_id || decoded?.sub;
-      }
-
-      const targetId = userId || guestId;
-      if (!targetId) return;
-
-      const threadId = `support_${targetId}`;
+      const threadId = `support_${userId}`;
       const qDM = query(
         collection(db, `support_threads/${threadId}/messages`),
         where('role', '==', 'admin'), // Only show admin messages
