@@ -83,7 +83,11 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
             if (!session) return;
 
             // Call Edge Function to get custom token
-            const { data, error } = await supabase.functions.invoke('get-firebase-token');
+            const { data, error } = await supabase.functions.invoke('get-firebase-token', {
+                headers: {
+                    Authorization: `Bearer ${session.access_token}`
+                }
+            });
             
             if (error) throw error;
 
@@ -210,13 +214,17 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
     try {
         const { supabase } = await import('@/lib/supabase-client/client'); // Dynamic import
         const sb = supabase; // Get client
+        const { data: { session } } = await sb.auth.getSession();
         
         const { data, error } = await sb.functions.invoke('enqueue-chat-job', {
             body: {
                 ...payload,
                 client_message_id: messageId,
                 job_id: jobRef.id // Pass the Firestore Job ID so function can update it
-            }
+            },
+            headers: session ? {
+                Authorization: `Bearer ${session.access_token}`
+            } : undefined
         });
 
         if (error) throw error;
@@ -284,8 +292,13 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
       try {
           const { supabase } = await import('@/lib/supabase-client/client');
           const sb = supabase;
+          const { data: { session } } = await sb.auth.getSession();
+
           await sb.functions.invoke('support-mark-read', {
-              body: { viewer: 'user' }
+              body: { viewer: 'user' },
+              headers: session ? {
+                  Authorization: `Bearer ${session.access_token}`
+              } : undefined
           });
           // Optimistic update
           setUnreadSupport(0);
@@ -301,8 +314,13 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
       try {
           const { supabase } = await import('@/lib/supabase-client/client');
           const sb = supabase;
+          const { data: { session } } = await sb.auth.getSession();
+
           await sb.functions.invoke('support-mark-read', {
-              body: { viewer: 'user', scope: 'broadcasts', version: activeBroadcastVersion }
+              body: { viewer: 'user', scope: 'broadcasts', version: activeBroadcastVersion },
+              headers: session ? {
+                  Authorization: `Bearer ${session.access_token}`
+              } : undefined
           });
           setUnreadBroadcasts(0);
       } catch (err) {

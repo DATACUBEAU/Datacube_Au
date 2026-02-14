@@ -29,7 +29,11 @@ export function DirectMessageListener({ userId }: { userId?: string }) {
             const { data: { session } } = await supabase.auth.getSession();
             if (!session?.user) return false;
 
-            const { data, error } = await supabase.functions.invoke('get-firebase-token');
+            const { data, error } = await supabase.functions.invoke('get-firebase-token', {
+                headers: {
+                    Authorization: `Bearer ${session.access_token}`
+                }
+            });
             
             if (!error && data?.token) {
                 await signInWithCustomToken(firebaseAuth, data.token);
