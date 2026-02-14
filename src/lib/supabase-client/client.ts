@@ -208,6 +208,7 @@ export async function updateUserActivity(
     };
 
     if (user?.id) {
+      // Try to upsert, but handle 409 gracefully or try manual check
       const { error } = await supabase
         .from('au_user_activity')
         .upsert({ 
@@ -218,8 +219,22 @@ export async function updateUserActivity(
           metadata: metadata
         }, { onConflict: 'user_id' });
         
-      if (error && error.code !== '406') {
-          console.warn('[client] Activity update error:', error);
+      if (error) {
+          // If 409, it means conflict (likely duplicate key on insert if upsert failed to resolve).
+          // We can try a simple update instead.
+          if (error.code === '23505' || error.code === '409') { // 23505 is unique_violation
+              await supabase
+                  .from('au_user_activity')
+                  .update({
+                      last_active_at: new Date().toISOString(),
+                      user_agent: userAgent,
+                      is_pwa: isStandalone,
+                      metadata: metadata
+                  })
+                  .eq('user_id', user.id);
+          } else if (error.code !== '406') {
+             console.warn('[client] Activity update error:', error);
+          }
       }
     }
   } catch (e) {

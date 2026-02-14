@@ -80,16 +80,25 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
         try {
             // console.log("[ChatRuntime] Syncing Firebase Auth...");
             const { data: { session } } = await supabase.auth.getSession();
-            if (!session) return;
+            if (!session) {
+                console.warn("[ChatRuntime] No session found during syncAuth");
+                return;
+            }
 
             // Call Edge Function to get custom token
+            // console.log("[ChatRuntime] Invoking get-firebase-token...");
             const { data, error } = await supabase.functions.invoke('get-firebase-token', {
                 headers: {
                     Authorization: `Bearer ${session.access_token}`
                 }
             });
             
-            if (error) throw error;
+            if (error) {
+                console.error("[ChatRuntime] get-firebase-token error details:", error);
+                // If 401, maybe token is expired? Refresh?
+                // The getSession() above should give a valid token.
+                throw error;
+            }
 
             if (data?.token) {
                 await signInWithCustomToken(firebaseAuth, data.token);
