@@ -167,13 +167,10 @@ export default function SubscriptionPage() {
           const mode = isAutoRenew ? 'subscription' : 'one_time';
           const channels = isAutoRenew ? ['card'] : ['bank_transfer', 'card'];
 
-          const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/paystack-initiate`, {
+          const { data, error: invokeError } = await invokeEdgeFunction<any>('paystack-initiate', {
               method: 'POST',
-              headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ 
+              requireAuth: true,
+              body: { 
                   email: user?.email,
                   planType,
                   channels,
@@ -182,10 +179,11 @@ export default function SubscriptionPage() {
                       success: `${returnUrl}?success=true`,
                       cancel: `${returnUrl}?cancelled=true`
                   }
-              }) 
+              }
           });
 
-          const { url, error } = await res.json();
+          if (invokeError) throw new Error(invokeError.message || "Failed to initiate payment");
+          const { url, error } = data || {};
           if (error) throw new Error(error);
           
           if (url) {
@@ -211,19 +209,14 @@ export default function SubscriptionPage() {
 
       setIsCancelling(true);
       try {
-          const { data: { session } } = await supabase.auth.getSession();
-          const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/paystack-cancel-subscription`, {
+          const { data, error } = await invokeEdgeFunction('paystack-cancel-subscription', {
               method: 'POST',
-              headers: {
-                  'Authorization': `Bearer ${session?.access_token}`,
-                  'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ reason: cancelReason })
+              requireAuth: true,
+              body: { reason: cancelReason }
           });
 
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || 'Failed to cancel');
-
+          if (error) throw new Error(error.message || 'Failed to cancel');
+          
           toast({ title: "Subscription Canceled", description: "Your plan will not renew." });
           setIsCancelDialogOpen(false);
           fetchBillingStatus();

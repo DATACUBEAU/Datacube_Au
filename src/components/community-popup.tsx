@@ -14,13 +14,13 @@ import { Button } from '@/components/ui/button';
 import { MessageCircle } from 'lucide-react';
 
 export function CommunityPopup() {
-  const { isOpen, markAsSeen } = useCommunityPopup();
+  const { isOpen, markAsSeen, markAsJoined } = useCommunityPopup();
 
   const handleJoin = () => {
     // Open WhatsApp link
     window.open('https://chat.whatsapp.com/D7GGljLQitlFHRoEbBQsYO', '_blank');
-    // Mark as seen immediately (user clicked join)
-    markAsSeen();
+    // Mark as joined
+    markAsJoined();
   };
 
   if (!isOpen) return null;
@@ -37,11 +37,11 @@ export function CommunityPopup() {
             Join our WhatsApp community for updates, important info, and announcements directly from the team.
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter className="flex-col sm:flex-col gap-2 pt-4">
-          <Button onClick={handleJoin} className="w-full bg-green-600 hover:bg-green-700 text-white">
+        <DialogFooter className="flex-col sm:flex-row gap-2 pt-4">
+          <Button onClick={handleJoin} className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white">
             Join Community
           </Button>
-          <Button variant="ghost" onClick={() => markAsSeen()} className="w-full">
+          <Button variant="ghost" onClick={() => markAsSeen()} className="w-full sm:w-auto">
             Not now
           </Button>
         </DialogFooter>

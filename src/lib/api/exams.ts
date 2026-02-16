@@ -15,7 +15,7 @@ export async function generatePracticeExam(
   pastQuestionsContent?: string,
   accessToken?: string
 ): Promise<GeneratePracticeExamOutput> {
-  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/exam-generator`, {
+  const response = await safeFetch(`/api/proxy/exam-generator`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -40,7 +40,7 @@ export async function generatePredictions(
   accessToken?: string
 ): Promise<GenerateExamPredictionsOutput> {
   // Updated to point to the correct 'prediction-engine' function
-  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/prediction-engine`, {
+  const response = await safeFetch(`/api/proxy/prediction-engine`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

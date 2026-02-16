@@ -1,5 +1,5 @@
 
-import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
+import { supabase, invokeEdgeFunction, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
 import { safeFetch } from './safe-fetch';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
@@ -35,19 +35,13 @@ export async function initiateUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string }> {
-  const headers: Record<string, string> = {
-    'apikey': SUPABASE_ANON_KEY || ''
-  };
-  if (accessToken && accessToken !== 'undefined') {
-    headers['Authorization'] = `Bearer ${accessToken}`;
-  }
-
-  const { data, error } = await supabase.functions.invoke('document-upload', {
+  const { data, error } = await invokeEdgeFunction('document-upload', {
+    method: 'POST',
+    requireAuth: true,
     body: {
       action: 'initiate',
       ...metadata
-    },
-    headers
+    }
   });
 
   if (error) {
@@ -74,19 +68,13 @@ export async function completeUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; jobId: string }> {
-  const headers: Record<string, string> = {
-    'apikey': SUPABASE_ANON_KEY || ''
-  };
-  if (accessToken && accessToken !== 'undefined') {
-    headers['Authorization'] = `Bearer ${accessToken}`;
-  }
-
-  const { data, error } = await supabase.functions.invoke('document-upload', {
+  const { data, error } = await invokeEdgeFunction('document-upload', {
+    method: 'POST',
+    requireAuth: true,
     body: {
       action: 'complete',
       ...metadata
-    },
-    headers
+    }
   });
 
   if (error) {
@@ -146,27 +134,20 @@ export async function deleteDocument(user: User | null, documentId: string): Pro
     }
   }
 
-  const { data: { session } } = await supabase.auth.getSession();
-  const accessToken = session?.access_token;
-
-  const url = `${SUPABASE_URL}/functions/v1/document-management`;
-  
-  const headers: Record<string, string> = {
-    'apikey': SUPABASE_ANON_KEY || '',
-    'Content-Type': 'application/json',
-  };
-  if (accessToken && accessToken !== 'undefined') {
-    headers['Authorization'] = `Bearer ${accessToken}`;
-  }
-
-  return await safeFetch(url, {
+  const { data, error } = await invokeEdgeFunction('document-management', {
     method: 'POST',
-    headers,
-    body: JSON.stringify({
+    requireAuth: true,
+    body: {
       action: 'delete',
       documentId
-    }),
+    }
   });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return data;
 }
 
 /**

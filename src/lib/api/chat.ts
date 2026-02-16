@@ -150,7 +150,7 @@ export async function sendChatMessage(
       };
   }
 
-  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/${endpoint}`, {
+  const response = await safeFetch(`/api/proxy/${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -222,7 +222,7 @@ export async function sendChatMessageStream(
     };
   }
 
-  const res = await fetch(`${supabaseUrl}/functions/v1/${endpoint}`, {
+  const res = await fetch(`/api/proxy/${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -294,7 +294,7 @@ export async function generatePromptStarters(
   userIdea?: string,
   accessToken?: string
 ): Promise<string[]> {
-  const response = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-prompt-starters`, {
+  const response = await safeFetch(`/api/proxy/generate-prompt-starters`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -324,7 +324,7 @@ export async function getAvailableModels(accessToken?: string): Promise<string[]
   }
 
   try {
-    const response = await safeFetch(`${SUPABASE_URL}/functions/v1/au-chat`, {
+    const response = await safeFetch(`/api/proxy/au-chat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

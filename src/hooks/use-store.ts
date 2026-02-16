@@ -135,7 +135,7 @@ export const useStore = create<AppState>()(
         
         try {
           // Use Supabase Edge Function directly for consistency
-          const response = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-knowledge`, {
+          const response = await safeFetch(`/api/proxy/generate-knowledge`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -176,7 +176,7 @@ export const useStore = create<AppState>()(
 
         try {
           // Use Supabase Edge Function directly for consistency
-          const response = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-exam-predictions`, {
+          const response = await safeFetch(`/api/proxy/generate-exam-predictions`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

@@ -125,25 +125,22 @@ export default function SettingsPage() {
   const handleStripeCheckout = async (planType: 'weekly' | 'monthly') => {
       setIsLoadingBilling(true);
       try {
-          const { data: { session } } = await supabase.auth.getSession();
-          const token = session?.access_token;
-          const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/stripe-checkout`, {
+          const { data, error } = await invokeEdgeFunction('stripe-checkout', {
               method: 'POST',
-              headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ 
+              requireAuth: true,
+              body: { 
                   email: user?.email,
                   planType,
                   redirectUrls: {
                       success: window.location.href,
                       cancel: window.location.href
                   }
-              }) 
+              }
           });
-          const { url, error } = await res.json();
-          if (error) throw new Error(error);
+          
+          if (error) throw new Error(error.message);
+          const { url, error: funcError } = data || {};
+          if (funcError) throw new Error(funcError);
           if (url) window.location.href = url;
       } catch (e: any) {
           toast({ variant: 'destructive', title: 'Billing Error', description: e.message });
@@ -155,36 +152,22 @@ export default function SettingsPage() {
   const handlePaystackCheckout = async (planType: 'weekly' | 'monthly') => {
       setIsLoadingBilling(true);
       try {
-          const { data: { session } } = await supabase.auth.getSession();
-          const token = session?.access_token;
           const origin = window.location.origin;
-          const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/paystack-initiate`, {
+          const { data, error: invokeError } = await invokeEdgeFunction<any>('paystack-initiate', {
               method: 'POST',
-              headers: {
-                  'Authorization': `Bearer ${token}`,
-                  'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ 
+              requireAuth: true,
+              body: { 
                   email: user?.email,
                   planType,
                   redirectUrls: {
                       success: `${origin}/dashboard/settings/subscription?success=true`,
                       cancel: `${origin}/dashboard/settings/subscription?cancelled=true`
                   }
-              }) 
+              }
           });
           
-          if (!res.ok) {
-              const errorText = await res.text();
-              try {
-                  const errorJson = JSON.parse(errorText);
-                  throw new Error(errorJson.error || errorText);
-              } catch {
-                  throw new Error(errorText || `Request failed with status ${res.status}`);
-              }
-          }
-
-          const { url } = await res.json();
+          if (invokeError) throw new Error(invokeError.message || "Request failed");
+          const { url } = data || {};
           if (url) window.location.href = url;
       } catch (e: any) {
           toast({ variant: 'destructive', title: 'Payment Error', description: e.message });
@@ -197,16 +180,14 @@ export default function SettingsPage() {
 
       setIsLoadingBilling(true);
       try {
-          const { data: { session } } = await supabase.auth.getSession();
-          const token = session?.access_token;
-          const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/stripe-portal`, {
+          const { data, error } = await invokeEdgeFunction('stripe-portal', {
               method: 'POST',
-              headers: {
-                  'Authorization': `Bearer ${token}`,
-              }
+              requireAuth: true
           });
-          const { url, error } = await res.json();
-          if (error) throw new Error(error);
+          
+          if (error) throw new Error(error.message);
+          const { url, error: funcError } = data || {};
+          if (funcError) throw new Error(funcError);
           if (url) window.location.href = url;
       } catch (e: any) {
           toast({ variant: 'destructive', title: 'Portal Error', description: e.message });
@@ -330,18 +311,10 @@ export default function SettingsPage() {
     
     try {
       // 1. Call wipe-user action in Edge Function
-      const { data: { session } } = await supabase.auth.getSession();
-      const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
-      const accessToken = session?.access_token;
-
-      await fetch(`${SUPABASE_URL}/functions/v1/document-management`, {
+      await invokeEdgeFunction('document-management', {
         method: 'POST',
-        headers: {
-          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-          'Content-Type': 'application/json',
-          ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {})
-        },
-        body: JSON.stringify({ action: 'wipe-user' })
+        requireAuth: true,
+        body: { action: 'wipe-user' }
       });
 
       // Cool animation delay

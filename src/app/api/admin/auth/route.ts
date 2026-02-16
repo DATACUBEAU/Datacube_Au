@@ -36,7 +36,10 @@ export async function POST(req: Request) {
     }
 
     // 2. Proxy Request to Edge Function (admin-handler)
-    const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-handler`, {
+    const functionUrl = `${SUPABASE_URL}/functions/v1/admin-handler`;
+    console.log('[API /api/admin/auth] Proxying to:', functionUrl);
+
+    const res = await fetch(functionUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -45,7 +48,25 @@ export async function POST(req: Request) {
       body: JSON.stringify(body)
     });
 
-    const data = await res.json();
+    let data;
+    const contentType = res.headers.get('content-type');
+    if (contentType && contentType.includes('application/json')) {
+      try {
+        data = await res.json();
+      } catch (e) {
+        console.error('[API /api/admin/auth] Failed to parse JSON body:', e);
+        data = { error: 'Invalid JSON response from upstream' };
+      }
+    } else {
+      const text = await res.text();
+      console.error('[API /api/admin/auth] Non-JSON response from Edge Function:', text);
+      try {
+          data = JSON.parse(text);
+      } catch (e) {
+          // Use the text as error message if not JSON
+          data = { error: text || `Edge Function returned status ${res.status}` };
+      }
+    }
 
     // 3. Handle Result & Update Logs
     if (!res.ok) {

@@ -1,6 +1,6 @@
 import { analytics } from './firebase/client';
 import { logEvent as firebaseLogEvent } from 'firebase/analytics';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 
 export const logEvent = async (name: string, params: Record<string, any> = {}, tier?: string) => {
   // 1. Firebase Analytics (Client Side)
@@ -15,24 +15,17 @@ export const logEvent = async (name: string, params: Record<string, any> = {}, t
 
   // 2. Internal Log (Edge Function)
   try {
-    const { data: { session } } = await supabase.auth.getSession();
-    const token = session?.access_token;
-    
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    if (!supabaseUrl) return;
-
-    await fetch(`${supabaseUrl}/functions/v1/log-event`, {
+    // Fire and forget - use invokeEdgeFunction which handles proxy/CORS
+    invokeEdgeFunction('log-event', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': token ? `Bearer ${token}` : '',
-        },
-        body: JSON.stringify({
+        body: {
             name,
             params,
             tier
-        })
-    });
+        },
+        requireAuth: false // Optional auth
+    }).catch(e => console.error("Internal Log Error (Background):", e));
+    
   } catch (e) {
       console.error("Internal Log Error:", e);
   }

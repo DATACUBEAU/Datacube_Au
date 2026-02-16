@@ -174,7 +174,8 @@ export async function invokeEdgeFunction<T = any>(
     headers.set('Content-Type', 'application/json');
     headers.set('Authorization', `Bearer ${accessToken ?? anonKey}`);
 
-    const url = `${supabaseUrl}/functions/v1/${functionName}`;
+    // Use local proxy to avoid CORS issues
+    const url = `/api/proxy/${functionName}`;
 
     let res: Response;
     try {
