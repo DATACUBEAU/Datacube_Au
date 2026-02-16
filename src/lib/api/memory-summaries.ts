@@ -47,10 +47,10 @@ export async function upsertMemorySummary(args: { scope: MemorySummaryScope; sum
         scope,
         doc_id: scope === 'doc' ? docId : null,
         summary: args.summary,
-        pinned_facts: pinnedFacts,
+        pinned_facts: args.pinnedFacts,
         updated_at: new Date().toISOString(),
       } as any,
-      { onConflict: 'user_id,scope,doc_key' as any }
+      { onConflict: 'user_id,scope,doc_id' }
     );
 
   return !error;

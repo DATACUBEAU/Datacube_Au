@@ -11,11 +11,9 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Trash2, HardDrive, CloudOff, Info } from "lucide-react";
+import { Trash2, Info } from "lucide-react";
 import { LocalChatStorage } from "@/lib/storage/local-chat";
-import { MemoryLedger } from "@/lib/firebase/memory";
 import { useToast } from "@/hooks/use-toast";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface GlobalHistoryPromptProps {
   userId: string;
@@ -36,16 +34,19 @@ export function GlobalHistoryPrompt({ userId, onClearComplete }: GlobalHistoryPr
       console.log(`[GlobalHistory] Full Reset Step 1: Removed ${removedCount} keys`, removedKeys);
     }
 
-    // 2. Reset memory (Firestore)
+    // 2. Reset memory (Server summary + local working memory)
     try {
-        await MemoryLedger.resetGlobalMemory(userId);
+        const { clearWorkingMemory, globalMemoryKey } = await import('@/lib/memory/working-memory');
+        const { deleteMemorySummary } = await import('@/lib/api/memory-summaries');
+        await clearWorkingMemory(globalMemoryKey(userId));
+        await deleteMemorySummary({ scope: 'global' });
         if (process.env.NODE_ENV === 'development') {
-          console.log(`[GlobalHistory] Full Reset Step 2: Firestore Memory Reset SUCCESS`);
+          console.log(`[GlobalHistory] Full Reset Step 2: Hybrid Memory Reset SUCCESS`);
         }
         
         toast({ title: "Full Reset Complete", description: "Device history and cloud memory have been cleared." });
     } catch (error) {
-        console.error(`[GlobalHistory] Full Reset Step 2: Firestore Memory Reset FAILED`, error);
+        console.error(`[GlobalHistory] Full Reset Step 2: Hybrid Memory Reset FAILED`, error);
         toast({ variant: "destructive", title: "Cloud Reset Failed", description: "Could not reset cloud memory. Check connection." });
     }
     

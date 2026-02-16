@@ -1,4 +1,5 @@
 import { safeFetch } from './safe-fetch';
+import { supabase } from '@/lib/supabase-client/client';
 
 /**
  * Centralized utility for all admin-related API requests.
@@ -14,10 +15,22 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   const url = endpoint.startsWith('http') ? endpoint : `${SUPABASE_URL}/functions/v1/${endpoint}`;
 
   const headers = new Headers(options.headers || {});
+  
+  // 1. Default API Key
   if (ANON_KEY) {
     if (!headers.has('apikey')) headers.set('apikey', ANON_KEY);
-    if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${ANON_KEY}`);
   }
+
+  // 2. Authorization: Prefer User Session, fallback to Anon
+  if (!headers.has('Authorization')) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+          headers.set('Authorization', `Bearer ${session.access_token}`);
+      } else if (ANON_KEY) {
+          headers.set('Authorization', `Bearer ${ANON_KEY}`);
+      }
+  }
+
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   
   if (!headers.has('X-Admin-Token') && adminToken) {

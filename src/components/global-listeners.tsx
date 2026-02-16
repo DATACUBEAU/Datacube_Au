@@ -2,12 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
-import { DirectMessageListener } from './direct-message-listener';
-import { BroadcastListener } from './broadcast-listener';
 import { useActivity } from '@/hooks/use-activity';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { ToastAction } from '@/components/ui/toast';
+import { CommunityPopup } from '@/components/community-popup';
 
 /**
  * Global component to mount all real-time listeners (Broadcasts, Direct Messages).
@@ -20,7 +19,7 @@ export function GlobalListeners() {
   
   // Track user activity and presence
   useActivity();
-
+  
   useEffect(() => {
       const handleLimitReached = (e: any) => {
           const detail = e.detail;
@@ -63,12 +62,5 @@ export function GlobalListeners() {
     };
   }, []);
 
-  return (
-    <>
-      <BroadcastListener />
-      {ids.userId && (
-        <DirectMessageListener userId={ids.userId} />
-      )}
-    </>
-  );
+  return <CommunityPopup />;
 }

@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Lock, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, MessageCircle, Send, UserMinus, Search, Filter, UserPlus, ChevronRight, Menu, FolderTree, Crown } from 'lucide-react';
+import { Shield, Lock, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, Send, UserMinus, Search, Menu, FolderTree, Crown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -17,11 +17,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useToast } from '@/hooks/use-toast';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { supabase } from '@/lib/supabase-client/client';
-import { db } from '@/lib/firebase/client';
-import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, where, getDocs, writeBatch } from 'firebase/firestore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
-import { logOnce, runOnce } from '@/lib/log/dedupe';
 
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
@@ -50,7 +47,7 @@ const AdminBilling = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [toast]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
 
@@ -280,7 +277,7 @@ const AdminManualPayments = ({ token }: { token: string }) => {
         } finally {
             setLoading(false);
         }
-    }, [token]);
+    }, []);
 
     useEffect(() => { fetchPayments(); }, [fetchPayments]);
 
@@ -400,7 +397,7 @@ const AdminUsage = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     fetchData();
@@ -529,7 +526,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token, selectedKey?.service]); // Depend on selectedKey.service
+  }, [selectedKey?.service]); // Depend on selectedKey.service
 
   useEffect(() => {
     if (!selectedKey) return;
@@ -627,22 +624,6 @@ const AdminRegistry = ({ token }: { token: string }) => {
       });
       if (res.ok) {
         toast({ title: 'Success', description: 'Model added successfully.' });
-        fetchRegistry();
-      }
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
-    }
-  };
-
-  const handleDeleteModel = async (modelId: string) => {
-    if (!confirm(`Delete model ${modelId}?`)) return;
-    try {
-      const res = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'delete_model', modelId })
-      });
-      if (res.ok) {
-        toast({ title: 'Deleted', description: 'Model removed.' });
         fetchRegistry();
       }
     } catch (e: any) {
@@ -992,78 +973,7 @@ const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data
   );
 };
 
-const AdminBroadcast = ({ token }: { token: string }) => {
-  const [title, setTitle] = useState('');
-  const [content, setContent] = useState('');
-  const [expiresIn, setExpiresIn] = useState('1'); // hours
-  const [loading, setLoading] = useState(false);
-  const { toast } = useToast();
-
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      // Use Edge Function for Broadcasts
-      const { error } = await supabase.functions.invoke('broadcast-send', {
-          body: {
-              title,
-              content,
-              expires_in_minutes: parseInt(expiresIn) * 60
-          }
-      });
-
-      if (error) throw error;
-
-      toast({ title: 'Broadcast Sent', description: 'Message will appear for all users.' });
-      setTitle('');
-      setContent('');
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Create New Broadcast</CardTitle>
-          <CardDescription>This message will pop up for all active users.</CardDescription>
-        </CardHeader>
-        <form onSubmit={handleSend}>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <Label>Title</Label>
-              <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="System Maintenance, New Feature..." required />
-            </div>
-            <div className="space-y-2">
-              <Label>Message Content</Label>
-              <textarea 
-                className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                value={content} 
-                onChange={(e) => setContent(e.target.value)} 
-                placeholder="Type your message here..." 
-                required 
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Expiration (Hours)</Label>
-              <Input type="number" value={expiresIn} onChange={(e) => setExpiresIn(e.target.value)} min="1" />
-            </div>
-          </CardContent>
-          <CardFooter>
-            <Button type="submit" className="w-full gap-2" disabled={loading}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <><MessageSquare className="h-4 w-4" /> Broadcast Message</>}
-            </Button>
-          </CardFooter>
-        </form>
-      </Card>
-    </div>
-  );
-};
-
-const AdminUsers = ({ token }: { token: string }) => {
+const AdminUsers = () => {
   const [users, setUsers] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -1084,211 +994,7 @@ const AdminUsers = ({ token }: { token: string }) => {
     return () => clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    setPage(1);
-  }, [searchQuery, filterStatus]);
-
-  const fetchUsers = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'list_users',
-          q: searchQuery,
-          type: filterStatus,
-          page,
-          pageSize
-        })
-      });
-      if (res.ok) {
-        setUsers((res as any).users || []);
-        setTotal((res as any).total || 0);
-      }
-    } catch (e) {
-      console.error('[AdminUsers] fetch error:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, [token, searchQuery, filterStatus, page, pageSize]);
-
-  const fetchMessages = useCallback(async (user: any) => {
-    // Legacy Supabase Fetch (Optional: Keep for history if migrated, but we are switching to Firebase)
-    // For now, we will rely on the real-time listener below.
-    setLoadingMsgs(true);
-    setMessages([]); // Clear previous messages
-    
-    // We don't fetch once, we subscribe. The useEffect handles subscription.
-    // Just simulate loading end.
-    setTimeout(() => setLoadingMsgs(false), 500);
-  }, []);
-
-  const deleteUser = async (userId: string) => {
-    if (!confirm('Are you sure you want to permanently delete this user? This cannot be undone.')) return;
-    
-    try {
-      const res = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'delete_user', userId })
-      });
-      if (res.ok) {
-        toast({ title: 'User Deleted', description: 'The user has been removed from Auth and Activity.' });
-        fetchUsers();
-      }
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
-    }
-  };
-
-  const exportUsersCsv = async () => {
-    try {
-      const res = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'export_users_csv',
-          q: searchQuery,
-          type: filterStatus,
-        })
-      });
-      if (!res.ok || !(res as any).csv) throw new Error((res as any).error || 'Export failed');
-
-      const blob = new Blob([(res as any).csv], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = (res as any).filename || 'users_export.csv';
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e: any) {
-      toast({ title: 'Error', description: e.message, variant: 'destructive' });
-    }
-  };
-
-  const sendMessage = async () => {
-    if (!selectedUser || !msgContent) return;
-    setSending(true);
-    try {
-      const targetId = selectedUser.user_id;
-      
-      // Use Edge Function
-      const { error } = await supabase.functions.invoke('support-admin-send', {
-          body: { owner_id: targetId, content: msgContent }
-      });
-
-      if (error) throw error;
-
-      toast({ title: "Success", description: "Message sent." });
-      setMsgContent('');
-      // Listener will auto-update UI
-    } catch (e: any) {
-      console.error('[AdminUsers] sendMessage error:', e);
-      toast({ title: "Error", description: e.message || "Failed to send message.", variant: "destructive" });
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const clearChat = async () => {
-    if (!selectedUser) return;
-    if (!confirm('Clear all messages for this user? This cannot be undone.')) return;
-    
-    setSending(true);
-    try {
-        const targetId = selectedUser.user_id;
-        const threadId = `support_${targetId}`;
-        const q = query(collection(db, `support_threads/${threadId}/messages`));
-        const snapshot = await getDocs(q);
-        
-        const batch = writeBatch(db);
-        snapshot.docs.forEach((doc) => {
-            batch.delete(doc.ref);
-        });
-        
-        await batch.commit();
-        toast({ title: 'Success', description: 'Chat history cleared.' });
-        // Listener updates automatically
-    } catch (e: any) {
-        console.error(e);
-        toast({ title: 'Error', description: e.message, variant: 'destructive' });
-    } finally {
-        setSending(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchUsers();
-    
-    // Subscribe to real-time updates for activity
-    let refreshTimer: any = null;
-
-    const scheduleRefresh = () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchUsers(), 400);
-    };
-
-    const channel = supabase
-      .channel('conex-activity-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_activity' }, scheduleRefresh)
-      .subscribe();
-
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      supabase.removeChannel(channel);
-    };
-  }, [fetchUsers]);
-
-  useEffect(() => {
-    if (!selectedUser) return;
-
-    setLoadingMsgs(true);
-    const targetId = selectedUser.user_id;
-    
-    // Firestore Listener
-    const threadId = `support_${targetId}`;
-    const q = query(
-      collection(db, `support_threads/${threadId}/messages`), 
-      orderBy('created_at', 'asc')
-    );
-
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-        const msgs = snapshot.docs.map(doc => {
-            const d = doc.data();
-            return {
-                id: doc.id,
-                ...d,
-                // Normalize legacy fields if needed
-                sender_type: d.role === 'admin' ? 'admin' : 'user',
-                // Handle Firestore timestamp
-                created_at: d.created_at?.toDate ? d.created_at.toDate().toISOString() : (d.created_at || new Date().toISOString())
-            };
-        });
-        setMessages(msgs);
-        setLoadingMsgs(false);
-    }, (error) => {
-        if ((error as any)?.code === 'permission-denied') {
-          unsubscribe();
-          logOnce('warn', 'conex-firestore-permission-denied', 'Firestore permission denied (conex support thread)', error);
-          runOnce('conex-firestore-permission-toast', () => {
-            toast({
-              title: 'Permission denied',
-              description: 'Admin messaging is unavailable in this session.',
-              variant: 'destructive',
-              duration: 6000,
-            });
-          });
-          setLoadingMsgs(false);
-          return;
-        }
-        logOnce('error', 'conex-firestore-listener-error', 'Firestore listener error (conex support thread)', error);
-        setLoadingMsgs(false);
-    });
-      
-    return () => unsubscribe();
-  }, [selectedUser]);
-
   const allUsers = users;
-
-  if (loading && allUsers.length === 0) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
   const getBrowserName = (ua?: string) => {
     if (!ua) return '';
@@ -1325,6 +1031,169 @@ const AdminUsers = ({ token }: { token: string }) => {
     if (s) return 'Desktop / Laptop';
     return 'Unknown Device';
   };
+
+  const fetchUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'list_users',
+          q: searchQuery,
+          type: filterStatus === 'auth' ? 'auth' : 'all',
+          provider: 'all',
+          sortBy: 'last_active_at',
+          sortDir: 'desc',
+          page,
+          pageSize
+        })
+      });
+      if (res.ok) {
+        const data = (res as any).data || res;
+        setUsers(data.users || []);
+        setTotal(data.total || 0);
+      } else {
+        throw new Error((res as any).error || 'Failed to load users');
+      }
+    } catch (e: any) {
+      console.error('[AdminUsers] list error:', e);
+      toast({ title: 'Error', description: 'Failed to load users.', variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  }, [searchQuery, filterStatus, page, pageSize, toast]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadMessages = async () => {
+      if (!selectedUser?.user_id) {
+        setMessages([]);
+        setLoadingMsgs(false);
+        return;
+      }
+      setLoadingMsgs(true);
+      try {
+        const { data, error } = await supabase
+          .from('au_messages')
+          .select('*')
+          .eq('user_id', selectedUser.user_id)
+          .order('created_at', { ascending: true })
+          .limit(200);
+        if (error) throw error;
+        if (!cancelled) setMessages(data || []);
+      } catch (e: any) {
+        console.error('[AdminUsers] messages error:', e);
+        if (!cancelled) {
+          toast({ title: 'Error', description: 'Failed to load messages.', variant: 'destructive' });
+          setMessages([]);
+        }
+      } finally {
+        if (!cancelled) setLoadingMsgs(false);
+      }
+    };
+    loadMessages();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedUser?.user_id, toast]);
+
+  const exportUsersCsv = useCallback(async () => {
+    try {
+      const res = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'export_users_csv',
+          q: searchQuery,
+          type: filterStatus === 'auth' ? 'auth' : 'all',
+          provider: 'all',
+          sortBy: 'last_active_at',
+          sortDir: 'desc'
+        })
+      });
+      if (!res.ok) throw new Error((res as any).error || 'Export failed');
+      const data = (res as any).data || res;
+      const csv = data.csv || '';
+      const filename = data.filename || `users_export_${new Date().toISOString().slice(0, 10)}.csv`;
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      console.error('[AdminUsers] export error:', e);
+      toast({ title: 'Error', description: 'Failed to export users.', variant: 'destructive' });
+    }
+  }, [searchQuery, filterStatus, toast]);
+
+  const clearChat = useCallback(async () => {
+    if (!selectedUser?.user_id) return;
+    try {
+      const { error } = await supabase.from('au_messages').delete().eq('user_id', selectedUser.user_id);
+      if (error) throw error;
+      setMessages([]);
+      toast({ title: 'Cleared', description: 'User messages cleared.' });
+    } catch (e: any) {
+      console.error('[AdminUsers] clear error:', e);
+      toast({ title: 'Error', description: 'Failed to clear messages.', variant: 'destructive' });
+    }
+  }, [selectedUser?.user_id, toast]);
+
+  const deleteUser = useCallback(async (userId: string) => {
+    try {
+      const res = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'delete_user', userId })
+      });
+      if (!res.ok) throw new Error((res as any).error || 'Delete failed');
+      setUsers(prev => prev.filter(u => u.user_id !== userId));
+      if (selectedUser?.user_id === userId) {
+        setSelectedUser(null);
+        setMessages([]);
+      }
+      toast({ title: 'User deleted', description: 'User account removed.' });
+    } catch (e: any) {
+      console.error('[AdminUsers] delete error:', e);
+      toast({ title: 'Error', description: 'Failed to delete user.', variant: 'destructive' });
+    }
+  }, [selectedUser?.user_id, toast]);
+
+  const sendMessage = useCallback(async () => {
+    if (!selectedUser?.user_id || !msgContent.trim()) return;
+    setSending(true);
+    try {
+      const res = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'send_user_notification',
+          targetUserId: selectedUser.user_id,
+          title: 'Admin Message',
+          content: msgContent.trim()
+        })
+      });
+      if (!res.ok) throw new Error((res as any).error || 'Send failed');
+      const now = new Date().toISOString();
+      setMessages(prev => [
+        ...prev,
+        { id: crypto.randomUUID(), sender_type: 'admin', content: msgContent.trim(), created_at: now }
+      ]);
+      setMsgContent('');
+    } catch (e: any) {
+      console.error('[AdminUsers] send error:', e);
+      toast({ title: 'Error', description: 'Failed to send message.', variant: 'destructive' });
+    } finally {
+      setSending(false);
+    }
+  }, [selectedUser?.user_id, msgContent, toast]);
+
+  if (loading && allUsers.length === 0) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 lg:h-[800px] h-auto">
@@ -1591,7 +1460,7 @@ const AdminActivity = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token, toast]);
+  }, [toast]);
 
   useEffect(() => {
     fetchEvents();
@@ -1738,7 +1607,7 @@ const AdminFeedback = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     fetchFeedback();
@@ -1834,7 +1703,7 @@ const AdminAlerts = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     fetchConfigs();
@@ -1918,7 +1787,7 @@ const AdminLogs = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   const clearLogs = async () => {
     if (!confirm('Are you sure you want to wipe all debug logs?')) return;
@@ -2023,7 +1892,7 @@ const AdminHealth = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   const reloadSchema = async () => {
     setReloading(true);
@@ -2085,7 +1954,12 @@ const AdminHealth = ({ token }: { token: string }) => {
 };
 
 export default function ConexPage() {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
+  const [puzzle, setPuzzle] = useState(() => {
+    const a = Math.floor(Math.random() * 10) + 1;
+    const b = Math.floor(Math.random() * 10) + 1;
+    return { a, b, val: '' };
+  });
   const [answer, setAnswer] = useState('');
   const [accessKey, setAccessKey] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -2111,20 +1985,35 @@ export default function ConexPage() {
     }
   }, []);
 
+  const handlePuzzle = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (parseInt(puzzle.val) === puzzle.a + puzzle.b) {
+      setStep(1);
+      setError(null);
+    } else {
+      setError('Incorrect. Access denied.');
+      setPuzzle(prev => ({ ...prev, val: '' }));
+    }
+  };
+
   const handleStep1 = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchAdmin('admin-handler', {
+      const res = await fetch('/api/admin/auth', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'auth', step: 1, answer })
       });
+      const data = await res.json();
       if (res.ok) {
-        setSessionId((res as any).sessionId);
+        setSessionId(data.sessionId);
         setStep(2);
-        localStorage.setItem('conex_session_id', (res as any).sessionId);
+        localStorage.setItem('conex_session_id', data.sessionId);
         localStorage.setItem('conex_auth_step', '2');
+      } else {
+        throw new Error(data.error || 'Authentication failed');
       }
     } catch (e: any) {
       setError(e.message);
@@ -2138,16 +2027,20 @@ export default function ConexPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetchAdmin('admin-handler', {
+      const res = await fetch('/api/admin/auth', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'auth', step: 2, accessKey, sessionId })
       });
+      const data = await res.json();
       if (res.ok) {
-        setAdminToken((res as any).adminToken);
+        setAdminToken(data.adminToken);
         setStep(3);
-        localStorage.setItem('conex_admin_token', (res as any).adminToken);
+        localStorage.setItem('conex_admin_token', data.adminToken);
         localStorage.setItem('conex_auth_step', '3');
         toast({ title: 'Welcome, Admin', description: 'System access granted.' });
+      } else {
+        throw new Error(data.error || 'Access denied');
       }
     } catch (e: any) {
       setError(e.message);
@@ -2168,7 +2061,6 @@ export default function ConexPage() {
     { value: 'billing', label: 'Billing', icon: Crown },
     { value: 'registry', label: 'Registry', icon: Database },
     { value: 'users', label: 'Users', icon: Users },
-    { value: 'broadcast', label: 'Broadcast', icon: MessageSquare },
     { value: 'activity', label: 'Activity', icon: Activity },
     { value: 'feedback', label: 'Feedback', icon: Star },
     { value: 'alerts', label: 'Alerts', icon: Mail },
@@ -2282,22 +2174,10 @@ export default function ConexPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>User Management</CardTitle>
-                  <CardDescription>Monitor active users and send individual messages.</CardDescription>
+                  <CardDescription>Monitor active users.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminUsers token={adminToken} />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="broadcast">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Global Broadcast</CardTitle>
-                  <CardDescription>Send messages to all active users.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                   <AdminBroadcast token={adminToken} />
+                  <AdminUsers />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -2382,6 +2262,52 @@ export default function ConexPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
       <AnimatePresence mode="wait">
+        {step === 0 && (
+          <motion.div
+            key="step0"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="w-full max-w-md"
+          >
+            <Card className="border-primary/20 shadow-xl">
+              <CardHeader className="text-center">
+                <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
+                  <Shield className="h-6 w-6 text-primary" />
+                </div>
+                <CardTitle className="text-2xl font-headline tracking-tighter uppercase">Security Check</CardTitle>
+                <CardDescription>Prove you are human.</CardDescription>
+              </CardHeader>
+              <form onSubmit={handlePuzzle}>
+                <CardContent className="space-y-4">
+                  <div className="space-y-2 text-center">
+                    <Label className="text-lg font-medium">What is {puzzle.a} + {puzzle.b}?</Label>
+                    <Input 
+                      type="number"
+                      value={puzzle.val} 
+                      onChange={(e) => setPuzzle(prev => ({ ...prev, val: e.target.value }))}
+                      placeholder="?"
+                      className="text-center text-lg py-6 font-mono"
+                      autoFocus
+                    />
+                  </div>
+                  {error && (
+                    <div className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-md justify-center">
+                      <AlertCircle className="h-4 w-4" />
+                      <span>{error}</span>
+                    </div>
+                  )}
+                </CardContent>
+                <CardFooter>
+                  <Button type="submit" className="w-full h-12 text-lg font-bold uppercase tracking-tighter">
+                    Verify
+                  </Button>
+                </CardFooter>
+              </form>
+            </Card>
+          </motion.div>
+        )}
+
         {step === 1 && (
           <motion.div
             key="step1"

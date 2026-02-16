@@ -1,7 +1,5 @@
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { getAnalytics, isSupported } from 'firebase/analytics';
-import { getAuth } from 'firebase/auth';
-import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -23,13 +21,4 @@ if (typeof window !== 'undefined') {
   analytics = isSupported().then((yes) => (yes ? getAnalytics(app) : null));
 }
 
-const auth = getAuth(app);
-
-// Initialize Firestore with modern persistence settings (Multi-Tab support)
-const db = initializeFirestore(app, {
-  localCache: persistentLocalCache({
-    tabManager: persistentMultipleTabManager()
-  })
-});
-
-export { app, analytics, auth, db };
+export { app, analytics };

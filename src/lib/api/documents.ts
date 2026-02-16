@@ -3,6 +3,8 @@ import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from 
 import { safeFetch } from './safe-fetch';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
+import { clearDocWorkingMemory } from '@/lib/memory/working-memory';
+import { deleteMemorySummary } from '@/lib/api/memory-summaries';
 
 export type { AuDocumentRow, AuDocumentType };
 
@@ -134,6 +136,16 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
  * Calls the document-management Edge Function which handles RLS-safe deletion.
  */
 export async function deleteDocument(user: User | null, documentId: string): Promise<{ ok: boolean }> {
+  // 1. Clear Local Memory & Server Memory Summary
+  if (user?.id) {
+    try {
+      await clearDocWorkingMemory(user.id, documentId);
+      await deleteMemorySummary({ scope: 'doc', docId: documentId });
+    } catch (e) {
+      console.warn('[deleteDocument] Memory cleanup warning:', e);
+    }
+  }
+
   const { data: { session } } = await supabase.auth.getSession();
   const accessToken = session?.access_token;
 

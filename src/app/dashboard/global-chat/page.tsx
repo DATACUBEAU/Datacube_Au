@@ -65,6 +65,8 @@ import { useFeatureFlag } from '@/components/feature-flag-provider';
 import { GlobalHistoryPrompt } from '@/components/global-history-prompt';
 
 import { useAuChat } from '@/hooks/api/use-au-chat';
+import { useAuDocuments } from '@/hooks/api/use-au-documents';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
 import { OfflineGuard } from '@/components/offline-guard';
 
@@ -151,6 +153,9 @@ export default function GlobalChatPage() {
     stopGeneration,
     clearChat: clearProviderChat
   } = useAuChat(selectedDocId);
+
+  const { documents } = useAuDocuments();
+  const [referencedDocId, setReferencedDocId] = useState<string | undefined>(undefined);
 
   // Sync AU State with Global Background Animation
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
@@ -298,13 +303,12 @@ export default function GlobalChatPage() {
   }, [currentChatHistory, showScrollButton]);
 
 
-  const { enqueueMessage, isJobPending, connectionStatus } = useChatRuntime();
-  const isGlobalPending = isJobPending(GLOBAL_CHAT_ID);
+  const { connectionStatus } = useChatRuntime();
 
   const handleSendMessage = async (e: React.FormEvent, messageContent?: string, overrideMode?: 'short' | 'mid' | 'detailed') => {
     e.preventDefault();
     const currentInput = (messageContent || input).trim();
-    if (!currentInput || isResponding || isGlobalPending) return;
+    if (!currentInput || isResponding) return;
     if (!user) return;
 
     const validation = validateQuery(currentInput);
@@ -315,48 +319,16 @@ export default function GlobalChatPage() {
 
     setInput('');
 
-    // Add Optimistic Message locally immediately
-    const optimisticMsg = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        content: currentInput,
-        createdAt: new Date().toISOString()
-    };
-    // Note: useAuChat handles local state, but we should probably push to it or let the provider handle it?
-    // For now, we rely on the provider writing to Firestore and useAuChat (if it listened to Firestore) updating.
-    // BUT useAuChat listens to LocalStorage/API.
-    
-    // TEMPORARY HYBRID: We use enqueue, but we manually update local state for immediate feedback
-    // actually, useAuChat 'sendMessage' does the API call. We want to REPLACE that.
-    
-    // 1. Update UI immediately
-    setCurrentChatHistory(prev => [...prev, optimisticMsg as any]);
-
-    // 2. Enqueue Job
+    // 2. Send Message via API
     try {
-      await enqueueMessage({
-          chat_type: 'global',
-          thread_id: GLOBAL_CHAT_ID,
-          user_input: currentInput,
-          // memory_pack: ... (Optional, Global Chat function fetches it if not provided? No, it expects it in body usually)
-          // We need to fetch memory pack? Or let the Edge Function fetch it?
-          // The current Global Chat expects 'memory_pack' in body. 
-          // If we don't send it, it might fail or use empty.
-          // Ideally, the Edge Function should fetch it if missing.
-          // For now, we skip it to save bandwidth and assume the backend handles it or we accept empty memory for background jobs.
-          // UPDATE: Global Chat index.ts reads memory_pack from body.
-          // We should probably fetch it here if we want personalization.
+      await sendMessage(currentInput, {
+        summaryMode: overrideMode || summaryMode,
+        browsingMode,
+        referenceDocId: referencedDocId
       });
-      
-      toast({ title: "Message Queued", description: "AU is thinking..." });
-      
     } catch (error: any) {
       console.error("[GlobalChatPage] Message error:", error);
-      toast({
-        variant: 'destructive',
-        title: 'AU Chat Issue',
-        description: "Error communicating with AU Global.",
-      });
+      // Toast is handled by useAuChat mostly, but we can keep a fallback
     }
   };
 

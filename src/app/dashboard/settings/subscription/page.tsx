@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock } from 'lucide-react';
@@ -50,51 +50,7 @@ export default function SubscriptionPage() {
     monthly: { amount: number; compare_at: number; label: string };
   }>(PRICING);
 
-  // Initial Load & URL Check
-  useEffect(() => {
-    if (!user) return;
-
-    fetchBillingStatus();
-
-    // Check for Paystack return
-    const reference = searchParams.get('reference');
-    const success = searchParams.get('success');
-    
-    if (reference) {
-        setPaymentState('confirming');
-        verifyPayment(reference);
-    } else if (success === 'true') {
-        setPaymentState('confirming');
-        startPolling();
-    }
-    
-    if (searchParams.get('cancelled') === 'true') {
-        setPaymentState('error');
-    }
-
-    return () => stopPolling();
-  }, [user, searchParams]);
-
-  const verifyPayment = async (ref: string) => {
-      try {
-          const { data, error } = await invokeEdgeFunction<any>(`paystack-verify?reference=${encodeURIComponent(ref)}`, {
-              method: 'GET',
-              requireAuth: true,
-              timeoutMs: 10000,
-              silent: true,
-          });
-          if (!error && data?.status === 'success') {
-              setPaymentState('success');
-              fetchBillingStatus();
-              return;
-          }
-      } catch (e) {
-          console.error("Verification failed", e);
-      }
-      startPolling();
-  };
-
-  const fetchBillingStatus = async () => {
+  const fetchBillingStatus = useCallback(async () => {
       try {
           const { data, error } = await invokeEdgeFunction<any>('billing-status', {
               method: 'GET',
@@ -122,9 +78,16 @@ export default function SubscriptionPage() {
           console.error("Failed to fetch billing status", e);
       }
       return null;
-  };
+  }, []);
 
-  const startPolling = () => {
+  const stopPolling = useCallback(() => {
+      if (pollTimerRef.current) {
+          clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+      }
+  }, []);
+
+  const startPolling = useCallback(() => {
       setPollCount(0);
       if (pollTimerRef.current) clearInterval(pollTimerRef.current);
       
@@ -144,14 +107,51 @@ export default function SubscriptionPage() {
               stopPolling();
           }
       }, 3000);
-  };
+  }, [fetchBillingStatus, stopPolling]);
 
-  const stopPolling = () => {
-      if (pollTimerRef.current) {
-          clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
+  const verifyPayment = useCallback(async (ref: string) => {
+      try {
+          const { data, error } = await invokeEdgeFunction<any>(`paystack-verify?reference=${encodeURIComponent(ref)}`, {
+              method: 'GET',
+              requireAuth: true,
+              timeoutMs: 10000,
+              silent: true,
+          });
+          if (!error && data?.status === 'success') {
+              setPaymentState('success');
+              fetchBillingStatus();
+              return;
+          }
+      } catch (e) {
+          console.error("Verification failed", e);
       }
-  };
+      startPolling();
+  }, [fetchBillingStatus, startPolling]);
+
+  // Initial Load & URL Check
+  useEffect(() => {
+    if (!user) return;
+
+    fetchBillingStatus();
+
+    // Check for Paystack return
+    const reference = searchParams.get('reference');
+    const success = searchParams.get('success');
+    
+    if (reference) {
+        setPaymentState('confirming');
+        verifyPayment(reference);
+    } else if (success === 'true') {
+        setPaymentState('confirming');
+        startPolling();
+    }
+    
+    if (searchParams.get('cancelled') === 'true') {
+        setPaymentState('error');
+    }
+
+    return () => stopPolling();
+  }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
 
   const handlePaystack = async (planType: 'weekly' | 'monthly') => {
       setLoadingPlan(planType);

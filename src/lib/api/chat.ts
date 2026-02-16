@@ -58,7 +58,7 @@ export type AppContext = {
 };
 
 export type RecentSnippet = {
-  mode: 'turns' | 'summary';
+  mode: 'turns' | 'summary' | 'hybrid';
   turns?: { role: 'user' | 'assistant'; content: string }[];
   summary?: string;
 };
@@ -73,7 +73,8 @@ export type ChatRequest = {
   thread_id?: string;
   app_context?: AppContext;
   memory_pack?: MemoryPack;
-  recent_snippet?: RecentSnippet;
+  recent_snippet?: RecentSnippet; // Primary memory (Global or Doc)
+  secondary_snippet?: RecentSnippet; // Secondary memory (e.g. Doc memory when in Global)
 
   // AU Chat Specific
   chat_type_au?: 'au_rag'; // Alternative to 'chat_type' if needed to disambiguate types
@@ -126,6 +127,7 @@ export async function sendChatMessage(
           app_context: request.app_context,
           memory_pack: request.memory_pack,
           recent_snippet: request.recent_snippet,
+          secondary_snippet: request.secondary_snippet,
           // Legacy Fallback
           messages: request.messages 
       };
@@ -199,6 +201,7 @@ export async function sendChatMessageStream(
       app_context: request.app_context,
       memory_pack: request.memory_pack,
       recent_snippet: request.recent_snippet,
+      secondary_snippet: request.secondary_snippet,
       model: request.model,
       stream: true,
     };

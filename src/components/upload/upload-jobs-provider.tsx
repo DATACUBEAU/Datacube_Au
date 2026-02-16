@@ -231,7 +231,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     } catch (err) {
       console.error('[upload-jobs] Unexpected error in refreshJobs:', err);
     }
-  }, [user?.id, useSafeSelection, mergeJobs]);
+  }, [user, useSafeSelection, mergeJobs]);
 
   useEffect(() => {
     refreshJobs();
@@ -539,7 +539,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [user, maxUploadSize]
+    [maxUploadSize]
   );
 
   const cancelJob = useCallback(

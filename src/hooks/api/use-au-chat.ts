@@ -5,8 +5,8 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
-import { getMemorySummary } from '@/lib/api/memory-summaries';
-import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, sweepExpiredDocWorkingMemory } from '@/lib/memory/working-memory';
+import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summaries';
+import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, sweepExpiredDocWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
 
 const AUTO_CLEAR_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -139,6 +139,7 @@ export function useAuChat(selectedDocId: string | null) {
       guide?: string; 
       summaryMode?: 'short' | 'mid' | 'detailed' | null;
       browsingMode?: boolean;
+      referenceDocId?: string;
     }
   ) => {
     if (!selectedDocId || !user) return;
@@ -222,12 +223,29 @@ export function useAuChat(selectedDocId: string | null) {
       } else {
           const existing = await loadWorkingMemory(memoryKey);
           const recentTurns = existing?.turns?.slice(-8).map(t => ({ role: t.role, content: t.text })) ?? [];
-          const recentSnippet =
-            existing?.summary
-              ? { mode: 'summary' as const, summary: existing.summary }
-              : { mode: 'turns' as const, turns: recentTurns };
+          const recentSnippet = {
+            mode: 'hybrid' as const,
+            summary: existing?.summary,
+            turns: recentTurns
+          };
 
           let streamedText = '';
+
+          let secondarySnippet: any | undefined;
+          if (options?.referenceDocId && user?.id) {
+              try {
+                  const { loadWorkingMemory, docMemoryKey } = await import('@/lib/memory/working-memory');
+                  const docKey = docMemoryKey(user.id, options.referenceDocId);
+                  const docMem = await loadWorkingMemory(docKey);
+                  if (docMem) {
+                     secondarySnippet = {
+                        mode: 'hybrid',
+                        summary: docMem.summary,
+                        turns: docMem.turns?.slice(-5).map((t: any) => ({ role: t.role, content: t.text })) || []
+                     };
+                  }
+              } catch (e) { console.error('Failed to load secondary memory', e); }
+          }
 
           const done = await sendChatMessageStream(
             {
@@ -235,6 +253,7 @@ export function useAuChat(selectedDocId: string | null) {
               doc_id: scope === 'doc' ? selectedDocId : undefined,
               user_input: content,
               recent_snippet: recentSnippet as any,
+              secondary_snippet: secondarySnippet,
               memory_pack: scope === 'global' ? { global_digest: existing?.summary || '' } : undefined,
               guide: options?.guide,
               summaryMode: options?.summaryMode,
@@ -255,11 +274,27 @@ export function useAuChat(selectedDocId: string | null) {
 
           result = { answer: done.answer, citations: (done as any).citations, thought: (done as any).thought } as any;
 
-          await appendTurn(
+          const turnResult = await appendTurn(
             memoryKey,
             { id: loadingId, ts: Date.now(), role: 'assistant', text: done.answer },
             scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
           );
+
+          // --- SYNC TO SERVER (Long-term Memory) ---
+          if ((turnResult.payload.turnsSinceServerSync ?? 0) >= 10) {
+            upsertMemorySummary({
+              scope: scope as any,
+              docId: scope === 'doc' ? selectedDocId : undefined,
+              summary: turnResult.payload.summary,
+              pinnedFacts: turnResult.payload.pinnedFacts
+            }).then(success => {
+              if (success) {
+                // Reset counter locally
+                const next = { ...turnResult.payload, turnsSinceServerSync: 0, serverUpdatedAt: Date.now() };
+                saveWorkingMemory(memoryKey, next, scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId });
+              }
+            });
+          }
 
           // --- OPTIMIZATION: Save to Local Cache ---
           try {
@@ -307,7 +342,7 @@ export function useAuChat(selectedDocId: string | null) {
         setAuThinkingSteps([]); // Clear steps after done
       }, 3000);
     }
-  }, [selectedDocId, user, session, history, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep]);
+  }, [selectedDocId, user, session, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
@@ -384,7 +419,7 @@ export function useAuChat(selectedDocId: string | null) {
           setAuAnimationState('idle');
         }, 3000);
     }
-  }, [selectedDocId, user, session, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus]);
+  }, [selectedDocId, user, session, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep]);
 
   const fetchPrompts = useCallback(async (title: string, content: string, idea?: string) => {
     try {

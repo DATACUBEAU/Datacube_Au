@@ -158,7 +158,7 @@ export async function saveWorkingMemory(
   next.lastUpdatedAt = now;
 
   if (scope === 'doc') {
-    const ttl = typeof opts.ttlMs === 'number' ? opts.ttlMs : DOC_TTL_MS;
+    const ttl = opts?.ttlMs ?? DOC_TTL_MS;
     next.expiresAt = now + ttl;
   }
 

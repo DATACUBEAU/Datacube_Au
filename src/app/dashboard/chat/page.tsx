@@ -287,9 +287,10 @@ export default function ChatPage() {
       const { LocalChatStorage } = await import('@/lib/storage/local-chat');
       LocalChatStorage.clearThread('global', user.id, 'global');
       
-      // Reset Firestore Memory
-      const { MemoryLedger } = await import('@/lib/firebase/memory');
-      await MemoryLedger.resetGlobalMemory(user.id);
+      const { clearWorkingMemory, globalMemoryKey } = await import('@/lib/memory/working-memory');
+      const { deleteMemorySummary } = await import('@/lib/api/memory-summaries');
+      await clearWorkingMemory(globalMemoryKey(user.id));
+      await deleteMemorySummary({ scope: 'global' });
       
       setCurrentChatHistory([]);
       toast({ title: "History Cleared", description: "Global chat memory has been reset." });

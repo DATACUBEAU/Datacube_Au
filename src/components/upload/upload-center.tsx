@@ -221,7 +221,7 @@ export default function UploadCenter() {
         if (inputRef.current) inputRef.current.value = '';
       }
     },
-    [supportsUploads, user, needsParent, parentId, label, docType, enqueueUploads, toast]
+    [supportsUploads, user, needsParent, parentId, label, docType, enqueueUploads, toast, maxUploadSize]
   );
 
   const onFilesChanged = useCallback(

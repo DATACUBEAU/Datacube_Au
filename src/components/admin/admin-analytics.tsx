@@ -55,7 +55,7 @@ export const AdminAnalytics = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     fetchData();

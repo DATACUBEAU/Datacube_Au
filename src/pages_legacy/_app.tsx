@@ -19,12 +19,6 @@ export default function App({ Component, pageProps }: AppProps) {
         <link rel="manifest" href="/manifest.webmanifest" />
         <link rel="icon" href="/icon.png" />
         <link rel="apple-touch-icon" href="/icon.png" />
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link
-          rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&family=Space+Grotesk:wght@400;700&family=Source+Code+Pro:wght@400;600&display=swap"
-        />
       </Head>
       <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
         <ServiceWorkerRegister />

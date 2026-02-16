@@ -289,10 +289,10 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     setShowWhatsappDialog(false);
   };
 
-  const startSignOutFlow = () => {
+  const startSignOutFlow = useCallback(() => {
     setSignOutStep('warning');
     setShowSignOutPopup(true);
-  };
+  }, []);
 
   const proceedToFinalWarning = () => {
     setSignOutStep('final');
@@ -383,7 +383,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       },
     ].filter(Boolean) as Array<any>;
     return items;
-  }, [isAnonymous, router, isLoadingGoogle, isSigningOut, handleGoogleSignIn, startSignOutFlow]);
+  }, [isAnonymous, isLoadingGoogle, isSigningOut, handleGoogleSignIn, startSignOutFlow]);
 
   const currentPageTitle = navItems.find((item) => item.href === pathname)?.label || 'DataCube AU';
 
