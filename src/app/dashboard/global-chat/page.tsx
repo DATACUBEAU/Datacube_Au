@@ -227,8 +227,8 @@ export default function GlobalChatPage() {
     handleSendMessage({ preventDefault: () => {} } as React.FormEvent, userMessage.content, mode);
   };
 
-  const clearChat = () => {
-    clearProviderChat();
+  const clearChat = async () => {
+    await clearProviderChat();
     toast({ title: "Hot Reload", description: "Reloading to clear all states..." });
     setTimeout(() => {
         window.location.reload();

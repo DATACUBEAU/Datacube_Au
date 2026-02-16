@@ -2024,6 +2024,10 @@ export default function ConexPage() {
 
   const handleStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!sessionId || sessionId === 'undefined') {
+        setError("Invalid Session. Please refresh and try again.");
+        return;
+    }
     setLoading(true);
     setError(null);
     try {

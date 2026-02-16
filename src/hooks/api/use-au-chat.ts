@@ -116,11 +116,11 @@ export function useAuChat(selectedDocId: string | null) {
       });
   }, [selectedDocId, user?.id]);
 
-  const clearChat = useCallback(() => {
+  const clearChat = useCallback(async () => {
     setHistory([]);
     if (!user?.id || !selectedDocId) return;
     const key = selectedDocId === 'global' ? globalMemoryKey(user.id) : docMemoryKey(user.id, selectedDocId);
-    clearWorkingMemory(key).catch(() => {});
+    await clearWorkingMemory(key).catch(() => {});
   }, [user?.id, selectedDocId]);
 
   const expiresAt = session?.expires_at ? session.expires_at * 1000 : undefined;
