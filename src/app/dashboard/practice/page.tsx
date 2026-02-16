@@ -423,9 +423,7 @@ export default function PracticePage() {
       <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
         <Info className="h-3 w-3" />
         <span>
-          {user?.is_anonymous 
-            ? "Guest mode self-destruct in 24 hours." 
-            : "Generated exams are cached for 3 days to save you time."}
+          Generated exams are cached for 3 days to save you time.
         </span>
       </div>
     </main>

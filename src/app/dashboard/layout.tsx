@@ -39,6 +39,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Sidebar,
   SidebarContent,
@@ -133,7 +134,6 @@ const SidebarFooterMenu = ({
   userInitial,
   userDisplayName,
   userEmail,
-  isAnonymous,
   onOpenGuide,
 }: {
   footerItems: Array<any>;
@@ -141,7 +141,6 @@ const SidebarFooterMenu = ({
   userInitial: string;
   userDisplayName: string;
   userEmail: string;
-  isAnonymous: boolean;
   onOpenGuide: () => void;
 }) => (
   <SidebarFooter className="p-2">
@@ -186,7 +185,7 @@ const SidebarFooterMenu = ({
         <SidebarMenuButton asChild size="lg" className="h-auto py-2">
           <Link href="/dashboard/settings">
             <Avatar className="size-8">
-              <AvatarImage src={!isAnonymous ? '' : ''} alt="User Avatar" />
+              <AvatarImage src={''} alt="User Avatar" />
               <AvatarFallback>{userInitial}</AvatarFallback>
             </Avatar>
             <div className="flex flex-col">
@@ -237,7 +236,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const clearUpgradeBlock = useStore((s) => s.clearUpgradeBlock);
   const unreadCount = useUnreadCount();
 
-  const isAnonymous = false;
+  const isAuthenticated = !!user;
 
   const handleGoogleSignIn = useCallback(async () => {
     setIsLoadingGoogle(true);
@@ -359,7 +358,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         label: 'Contact Fabian',
         onClick: () => setShowWhatsappDialog(true),
       },
-      !isAnonymous && {
+      isAuthenticated && {
         key: 'signout',
         icon: () => (
           <motion.div animate={isSigningOut ? { x: [0, -4, 4, -4, 4, 0], opacity: [1, 0.5, 1] } : {}} transition={{ duration: 0.5, repeat: isSigningOut ? Infinity : 0 }}>
@@ -369,7 +368,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         label: 'Sign Out',
         onClick: startSignOutFlow,
       },
-      isAnonymous && {
+      !isAuthenticated && {
         key: 'signin',
         icon: () => (
           <motion.div animate={isLoadingGoogle ? { rotate: 360 } : {}} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}>
@@ -381,24 +380,18 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       },
     ].filter(Boolean) as Array<any>;
     return items;
-  }, [isAnonymous, isLoadingGoogle, isSigningOut, handleGoogleSignIn, startSignOutFlow]);
+  }, [isAuthenticated, isLoadingGoogle, isSigningOut, handleGoogleSignIn, startSignOutFlow]);
 
   const currentPageTitle = navItems.find((item) => item.href === pathname)?.label || 'DataCube AU';
 
   useEffect(() => {
     if (!isUserLoading && user) {
       updateUserActivity(user, { isOnline });
-      
       const activityInterval = setInterval(() => updateUserActivity(user, { isOnline }), 60 * 1000);
       return () => clearInterval(activityInterval);
     }
-  }, [user, isUserLoading, isAnonymous, toast, isOnline]);
+  }, [user, isUserLoading, toast, isOnline]);
 
-  useEffect(() => {
-    if (!isUserLoading && user) {
-      updateUserActivity(user, { isOnline });
-    }
-  }, [isOnline, user, isUserLoading]);
 
   useEffect(() => {
     const handler = (event: any) => {
@@ -424,22 +417,24 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   if (isUserLoading) return <PageLoader />;
   if (!user) {
     return (
-      <div className="flex min-h-screen w-full items-center justify-center p-6">
-        <div className="w-full max-w-md space-y-4 rounded-lg border bg-card p-6 text-center">
-          <div className="font-headline text-2xl font-semibold">
-             {isOnline ? 'Sign in to continue' : 'You are offline'}
-          </div>
-          <div className="text-sm text-muted-foreground">
-            {isOnline 
-              ? 'You need an account to access the dashboard.' 
-              : 'Sign in requires an internet connection. Please reconnect to continue.'}
-          </div>
-          <div className="flex justify-center">
-            <Button asChild disabled={!isOnline} className="w-full sm:w-auto">
-              <Link href="/login">Go to Login</Link>
+      <div className="min-h-dvh flex items-center justify-center px-4">
+        <Card className="max-w-md w-full">
+          <CardHeader>
+            <CardTitle>{isOnline ? 'Sign in required' : 'You are offline'}</CardTitle>
+            <CardDescription>
+              {isOnline
+                ? 'Sign in to access uploads, chat, and your documents.'
+                : 'Reconnect to the internet to sign in and use AU features.'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Button className="w-full" onClick={handleGoogleSignIn} disabled={!isOnline || isLoadingGoogle}>
+              {isLoadingGoogle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Icons.google className="mr-2 h-4 w-4" />}
+              Continue with Google
             </Button>
-          </div>
-        </div>
+            <Button className="w-full" variant="outline" onClick={() => router.push('/')}>Back to home</Button>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -674,7 +669,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               userInitial={userInitial}
               userDisplayName={userDisplayName}
               userEmail={userEmail}
-              isAnonymous={isAnonymous}
               onOpenGuide={() => setIsSiteGuideOpen(true)}
             />
           </Sidebar>
@@ -715,24 +709,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
             <main className="flex-1 overflow-y-auto">
               <div className="mx-auto max-w-7xl relative">
-                <AnimatePresence>
-                  {!isOnline && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="overflow-hidden"
-                    >
-                      <div className="flex items-center justify-center gap-2 bg-yellow-500/20 text-yellow-800 dark:text-yellow-300 py-2 text-sm font-medium">
-                        <WifiOff className="h-4 w-4" />
-                        <span>
-                          Offline Mode: AU features are disabled. Queued actions will sync when you're back online.
-                        </span>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
                 {children}
               </div>
               <InactivityPolicyBanner />

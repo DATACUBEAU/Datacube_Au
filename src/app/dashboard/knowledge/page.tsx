@@ -79,7 +79,7 @@ export default function KnowledgePage() {
     return apiDocuments.filter(d => d.parent_id === selectedDocId).length;
   }, [apiDocuments, selectedDocId]);
 
-  const ttlMs = user?.is_anonymous ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+  const ttlMs = 7 * 24 * 60 * 60 * 1000;
   const selectedDocExpiresAt = useMemo(() => {
     if (!selectedDoc) return null;
     const exp = selectedDoc.expires_at;
@@ -488,9 +488,7 @@ export default function KnowledgePage() {
         <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
           <Info className="h-3 w-3" />
           <span>
-            {user?.is_anonymous 
-              ? "Guest mode self-destruct in 24 hours." 
-              : "Documents auto-delete after 7 days. Generated materials are cached for 3 days."}
+            Documents auto-delete after 7 days. Generated materials are cached for 3 days.
           </span>
         </div>
       </main>

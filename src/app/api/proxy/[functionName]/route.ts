@@ -69,27 +69,24 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     if (!response.ok) {
       const ct = response.headers.get('content-type') || '';
-      const isEventStream = ct.includes('text/event-stream') || (req.headers.get('accept') || '').includes('text/event-stream');
+      const isEventStream = ct.includes('text/event-stream');
       if (!isEventStream) {
         const raw = await response.text().catch(() => '');
         const lower = raw.toLowerCase();
 
-        const isUnauthorized = lower.includes('unauthorized');
-        if (isUnauthorized) {
+        const isRegisteredOnly =
+          lower.includes('registered user account required') ||
+          lower.includes('registered account required') ||
+          lower.includes('registered user required');
+        const isUnauthorized = lower.includes('unauthorized') || lower.includes('invalid jwt') || lower.includes('jwt expired');
+        const isForbidden = lower.includes('forbidden') || lower.includes('insufficient') || lower.includes('not allowed');
+
+        if (isRegisteredOnly || isUnauthorized) {
           return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
         }
 
-        if (functionName === 'global-chat') {
-          const isRegisteredOnly =
-            lower.includes('registered user account required') ||
-            lower.includes('registered account required') ||
-            lower.includes('registered user required');
-          if (isRegisteredOnly) {
-            return NextResponse.json(
-              { error: 'forbidden', message: 'Registered user account required' },
-              { status: 403, headers: corsHeaders() }
-            );
-          }
+        if (isForbidden) {
+          return NextResponse.json({ error: 'forbidden' }, { status: 403, headers: corsHeaders() });
         }
 
         const responseHeaders = new Headers(response.headers);

@@ -651,7 +651,7 @@ export default function ChatPage() {
   }, [handleScroll]);
 
   const fetchPromptStarters = useCallback(async () => {
-    if (!selectedDocId || !selectedDocName || !user || !canChat || fetchingPromptsRef.current) return;
+    if (!selectedDocId || !selectedDocName || !user || !session?.access_token || !canChat || fetchingPromptsRef.current) return;
     fetchingPromptsRef.current = true;
     setIsFetchingPrompts(true);
     setPromptStarters([]);
@@ -663,7 +663,7 @@ export default function ChatPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session!.access_token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ 
           messages: [{ 
@@ -729,6 +729,10 @@ export default function ChatPage() {
       logOnce('warn', 'chat:enhance_prompt:blocked', '[chat] Prompt studio blocked (auth/online)');
       return;
     }
+    if (!session?.access_token) {
+      logOnce('warn', 'chat:enhance_prompt:no_token', '[chat] Prompt studio blocked (no access token)');
+      return;
+    }
     
     setIsGenerating(true);
     setGeneratedPrompts([]);
@@ -743,7 +747,7 @@ export default function ChatPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session!.access_token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({ 
           documentTitle,
@@ -1257,7 +1261,7 @@ export default function ChatPage() {
                     <span className="ml-2">
                       • {new Date(selectedDoc.expiresAt).getTime() <= now
                         ? 'Expired'
-                        : `${user?.is_anonymous ? 'Self-destructs in ' : 'Expires in '}${formatDistanceStrict(new Date(now), new Date(selectedDoc.expiresAt))}`}
+                        : `Expires in ${formatDistanceStrict(new Date(now), new Date(selectedDoc.expiresAt))}`}
                     </span>
                   ) : null}
                 </span>

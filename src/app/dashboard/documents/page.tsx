@@ -58,7 +58,6 @@ interface DocumentData {
 
 const FAILED_AUTO_DELETE_MS = 60 * 60 * 1000; // 1 hour
 const AUTH_DOCUMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const GUEST_DOCUMENT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export default function DocumentsPage() {
   const [user] = useSupabaseUser();

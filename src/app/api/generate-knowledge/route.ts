@@ -16,10 +16,12 @@ export async function POST(req: Request) {
   try {
     const authorization = req.headers.get('authorization') ?? undefined;
     const body = await req.json();
+    const apikey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
 
     const res = await fetch(`${functionsBaseUrl()}/generate-knowledge`, {
       method: 'POST',
       headers: {
+        apikey,
         'Content-Type': 'application/json',
         ...(authorization ? { Authorization: authorization } : {}),
       },
@@ -40,4 +42,3 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
-
