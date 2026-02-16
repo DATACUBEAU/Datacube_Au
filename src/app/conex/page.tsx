@@ -21,10 +21,12 @@ import { db } from '@/lib/firebase/client';
 import { collection, addDoc, query, orderBy, onSnapshot, serverTimestamp, where, getDocs, writeBatch } from 'firebase/firestore';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
+import { logOnce, runOnce } from '@/lib/log/dedupe';
 
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
+  const [auConfig, setAuConfig] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
@@ -37,6 +39,12 @@ const AdminBilling = ({ token }: { token: string }) => {
         body: JSON.stringify({ action: 'get_conex_config' })
       });
       if (res.ok) setConfig((res as any).config || {});
+
+      const auRes = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'get_au_config' })
+      });
+      if (auRes.ok) setAuConfig((auRes as any).config || {});
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
@@ -49,6 +57,12 @@ const AdminBilling = ({ token }: { token: string }) => {
   const handleSave = async (newConfig: any) => {
     setSaving(true);
     try {
+      const auSave = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'update_au_config', config: auConfig })
+      });
+      if (!auSave.ok) throw new Error((auSave as any).error || 'Failed to update AU config');
+
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'update_conex_config', config: newConfig })
@@ -56,6 +70,7 @@ const AdminBilling = ({ token }: { token: string }) => {
       if (res.ok) {
           toast({ title: 'Saved', description: 'Billing configuration updated.' });
           setConfig(newConfig);
+          fetchConfig();
       }
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
@@ -110,22 +125,43 @@ const AdminBilling = ({ token }: { token: string }) => {
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <Label>Billing Enabled</Label>
-                                    <Switch checked={config.billing_enabled} onCheckedChange={(c) => setConfig({...config, billing_enabled: c})} />
+                                    <Switch checked={!!auConfig.billing_enabled} onCheckedChange={(c) => setAuConfig({ ...auConfig, billing_enabled: c })} />
                                 </div>
-                            </CardContent>
-                        </Card>
 
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Access Control</CardTitle>
-                                <CardDescription>Manage who can access the platform.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="flex items-center justify-between">
-                                <div>
-                                    <Label>Guest Access</Label>
-                                    <p className="text-xs text-muted-foreground">Allow unauthenticated users to try the app.</p>
+                                <div className="grid grid-cols-2 gap-4 pt-2">
+                                  <div className="space-y-2">
+                                    <Label>Free Chat Daily Limit</Label>
+                                    <Input
+                                      type="number"
+                                      value={auConfig.free_chat_daily_limit ?? 10}
+                                      onChange={(e) => setAuConfig({ ...auConfig, free_chat_daily_limit: Number(e.target.value) })}
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Free Exam Daily Limit</Label>
+                                    <Input
+                                      type="number"
+                                      value={auConfig.free_exam_daily_limit ?? 2}
+                                      onChange={(e) => setAuConfig({ ...auConfig, free_exam_daily_limit: Number(e.target.value) })}
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Free Upload Daily Limit</Label>
+                                    <Input
+                                      type="number"
+                                      value={auConfig.free_upload_daily_limit ?? 3}
+                                      onChange={(e) => setAuConfig({ ...auConfig, free_upload_daily_limit: Number(e.target.value) })}
+                                    />
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label>Free Max Upload MB</Label>
+                                    <Input
+                                      type="number"
+                                      value={auConfig.free_max_upload_mb ?? 10}
+                                      onChange={(e) => setAuConfig({ ...auConfig, free_max_upload_mb: Number(e.target.value) })}
+                                    />
+                                  </div>
                                 </div>
-                                <Switch checked={config.guest_access_enabled} onCheckedChange={(c) => setConfig({...config, guest_access_enabled: c})} />
                             </CardContent>
                         </Card>
 
@@ -336,7 +372,7 @@ const AdminUsage = ({ token }: { token: string }) => {
   const [usage, setUsage] = useState<any[]>([]);
   const [stats, setStats] = useState({ totalCalls: 0, failedCalls: 0, successfulCalls: 0 });
   const [loading, setLoading] = useState(true);
-  const [totalUsers, setTotalUsers] = useState({ authenticated: 0, guests: 0 });
+  const [totalUsers, setTotalUsers] = useState(0);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -357,10 +393,7 @@ const AdminUsage = ({ token }: { token: string }) => {
         body: JSON.stringify({ action: 'get_users' })
       });
       if (usersRes.ok) {
-        setTotalUsers({
-          authenticated: (usersRes as any).users.authenticated?.length || 0,
-          guests: (usersRes as any).users.guests?.length || 0
-        });
+        setTotalUsers((usersRes as any).users.authenticated?.length || 0);
       }
     } catch (e) {
       console.error('[AdminUsage] fetch error:', e);
@@ -385,8 +418,7 @@ const AdminUsage = ({ token }: { token: string }) => {
             </div>
             <div>
               <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Total Users</p>
-              <p className="text-2xl font-bold">{totalUsers.authenticated + totalUsers.guests}</p>
-              <p className="text-[10px] text-muted-foreground">{totalUsers.authenticated} Auth / {totalUsers.guests} Guests</p>
+              <p className="text-2xl font-bold">{totalUsers}</p>
             </div>
           </CardContent>
         </Card>
@@ -451,10 +483,10 @@ const AdminUsage = ({ token }: { token: string }) => {
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger className="cursor-help underline decoration-dotted underline-offset-4">
-                          {u.user_id ? u.user_id.slice(0, 8) : u.guest_session_id?.slice(0, 8)}...
+                          {(u.user_id || 'Anonymous').slice(0, 8)}...
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p className="font-mono text-[10px]">{u.user_id || u.guest_session_id}</p>
+                          <p className="font-mono text-[10px]">{u.user_id || 'Anonymous'}</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -1042,7 +1074,7 @@ const AdminUsers = ({ token }: { token: string }) => {
   const [sending, setSending] = useState(false);
   const [loadingMsgs, setLoadingMsgs] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'auth' | 'guest'>('all');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'auth'>('all');
   const [page, setPage] = useState(1);
   const pageSize = 50;
   const { toast } = useToast();
@@ -1136,7 +1168,7 @@ const AdminUsers = ({ token }: { token: string }) => {
     if (!selectedUser || !msgContent) return;
     setSending(true);
     try {
-      const targetId = selectedUser.user_id; // Works for Auth and Guest
+      const targetId = selectedUser.user_id;
       
       // Use Edge Function
       const { error } = await supabase.functions.invoke('support-admin-send', {
@@ -1186,7 +1218,7 @@ const AdminUsers = ({ token }: { token: string }) => {
   useEffect(() => {
     fetchUsers();
     
-    // Subscribe to real-time updates for activity and guest sessions
+    // Subscribe to real-time updates for activity
     let refreshTimer: any = null;
 
     const scheduleRefresh = () => {
@@ -1197,7 +1229,6 @@ const AdminUsers = ({ token }: { token: string }) => {
     const channel = supabase
       .channel('conex-activity-updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_activity' }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_guest_sessions' }, scheduleRefresh)
       .subscribe();
 
     return () => {
@@ -1234,7 +1265,21 @@ const AdminUsers = ({ token }: { token: string }) => {
         setMessages(msgs);
         setLoadingMsgs(false);
     }, (error) => {
-        console.error("Firestore listener error:", error);
+        if ((error as any)?.code === 'permission-denied') {
+          unsubscribe();
+          logOnce('warn', 'conex-firestore-permission-denied', 'Firestore permission denied (conex support thread)', error);
+          runOnce('conex-firestore-permission-toast', () => {
+            toast({
+              title: 'Permission denied',
+              description: 'Admin messaging is unavailable in this session.',
+              variant: 'destructive',
+              duration: 6000,
+            });
+          });
+          setLoadingMsgs(false);
+          return;
+        }
+        logOnce('error', 'conex-firestore-listener-error', 'Firestore listener error (conex support thread)', error);
         setLoadingMsgs(false);
     });
       
@@ -1311,14 +1356,6 @@ const AdminUsers = ({ token }: { token: string }) => {
               >
                 Auth
               </Button>
-              <Button 
-                variant={filterStatus === 'guest' ? 'default' : 'outline'} 
-                size="sm" 
-                onClick={() => setFilterStatus('guest')}
-                className="rounded-full px-3 text-xs"
-              >
-                Guest
-              </Button>
             </div>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm" onClick={exportUsersCsv} className="h-8 px-2 text-[11px] gap-1">
@@ -1345,7 +1382,7 @@ const AdminUsers = ({ token }: { token: string }) => {
                     const isOnline = isRecent || (isSemiRecent && connectionSaysOnline);
                     
                     const initials = (u.full_name || u.email || 'G').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase();
-                    const displayName = u.type === 'Guest' ? (u.full_name || 'Guest User') : (u.full_name || u.email || 'Unnamed User');
+                    const displayName = u.full_name || u.email || 'Unnamed User';
                     const ua = u.device_info?.browser || u.device_info?.userAgent || u.user_agent || '';
                     const browserType = getBrowserType(ua);
                     const detectedDevice = getDetectedDevice(u, ua);
@@ -1458,7 +1495,7 @@ const AdminUsers = ({ token }: { token: string }) => {
                       {(selectedUser.full_name || selectedUser.email || 'G')[0].toUpperCase()}
                    </div>
                    <div className="flex flex-col min-w-0">
-                      <span className="text-xs font-semibold truncate">{selectedUser.type === 'Guest' ? (selectedUser.full_name || 'Guest') : (selectedUser.full_name || selectedUser.email || 'Unnamed User')}</span>
+                      <span className="text-xs font-semibold truncate">{selectedUser.full_name || selectedUser.email || 'Unnamed User'}</span>
                       <span className="text-[9px] text-muted-foreground truncate font-mono">{selectedUser.user_id}</span>
                    </div>
                 </div>
@@ -1712,7 +1749,7 @@ const AdminFeedback = ({ token }: { token: string }) => {
       + ["Date,User,Section,Rating,Comment"].join(",") + "\n"
       + feedback.map(f => [
           new Date(f.created_at).toLocaleString(),
-          f.user_id || f.guest_session_id || 'Anonymous',
+          f.user_id || 'Anonymous',
           f.section,
           f.rating,
           `"${f.comment?.replace(/"/g, '""') || ''}"`
@@ -1769,7 +1806,7 @@ const AdminFeedback = ({ token }: { token: string }) => {
                     </Badge>
                   </td>
                   <td className="p-2 text-xs italic">{f.comment || '-'}</td>
-                  <td className="p-2 text-xs font-mono text-muted-foreground">{f.user_id?.slice(0,8) || f.guest_session_id?.slice(0,8) || 'Anon'}...</td>
+                  <td className="p-2 text-xs font-mono text-muted-foreground">{f.user_id?.slice(0,8) || 'Anon'}...</td>
                 </tr>
               ))
             )}

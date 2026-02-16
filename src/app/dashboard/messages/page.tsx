@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { supabase } from '@/lib/supabase-client/client';
+import { invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { db } from '@/lib/firebase/client';
 import { collection, query, where, onSnapshot, orderBy, limit, doc } from 'firebase/firestore';
 import { Loader2, Bell, Inbox, Send, Reply } from 'lucide-react';
@@ -17,6 +17,8 @@ import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { logOnce, runOnce } from '@/lib/log/dedupe';
+import { useStore } from '@/hooks/use-store';
 
 export default function MessagesPage() {
   const [user, loadingUser] = useSupabaseUser();
@@ -27,7 +29,9 @@ export default function MessagesPage() {
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
-  const { markSupportRead, markBroadcastsRead } = useChatRuntime();
+  const { markSupportRead, markBroadcastsRead, firebaseAuthStatus } = useChatRuntime();
+  const firebaseSyncPaused = useStore((s) => s.firebaseSyncPaused);
+  const setFirebaseSyncPaused = useStore((s) => s.setFirebaseSyncPaused);
 
   // Broadcast Reply State
   const [replyBroadcast, setReplyBroadcast] = useState<any>(null);
@@ -51,6 +55,15 @@ export default function MessagesPage() {
     markSupportRead();
     markBroadcastsRead();
 
+    if (firebaseAuthStatus !== 'ready') {
+        setLoading(false);
+        return;
+    }
+    if (firebaseSyncPaused) {
+        setLoading(false);
+        return;
+    }
+
     // 2. Subscribe to Support Messages
     const threadId = `support_${user.id}`;
     const msgsRef = collection(db, `support_threads/${threadId}/messages`);
@@ -62,7 +75,14 @@ export default function MessagesPage() {
         setLoading(false);
         setTimeout(scrollToBottom, 100);
     }, (err) => {
-        console.error("Firestore Msg Error:", err);
+        if ((err as any)?.code === 'permission-denied') {
+            unsubMsgs();
+            logOnce('warn', 'messages-support-permission-denied', 'Firestore permission denied (support messages)', err);
+            runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+            setLoading(false);
+            return;
+        }
+        logOnce('error', 'messages-support-listener-error', 'Firestore support listener error', err);
         setLoading(false);
     });
 
@@ -78,20 +98,31 @@ export default function MessagesPage() {
     const unsubBroadcasts = onSnapshot(qBroadcasts, (snapshot) => {
         const br = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
         setBroadcasts(br);
+    }, (err) => {
+        if ((err as any)?.code === 'permission-denied') {
+            unsubBroadcasts();
+            logOnce('warn', 'messages-broadcasts-permission-denied', 'Firestore permission denied (broadcasts)', err);
+            runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+            setLoading(false);
+            return;
+        }
+        logOnce('error', 'messages-broadcasts-listener-error', 'Firestore broadcasts listener error', err);
     });
 
     return () => {
         unsubMsgs();
         unsubBroadcasts();
     };
-  }, [user, loadingUser, markSupportRead, markBroadcastsRead]);
+  }, [user, loadingUser, markSupportRead, markBroadcastsRead, firebaseAuthStatus, firebaseSyncPaused, setFirebaseSyncPaused, toast]);
 
   const handleSendMessage = async () => {
     if (!inputText.trim() || !user) return;
     
     setSending(true);
     try {
-        const { error } = await supabase.functions.invoke('support-send', {
+        const { error } = await invokeEdgeFunction('support-send', {
+            requireAuth: true,
+            silent: false,
             body: { content: inputText }
         });
 
@@ -108,7 +139,9 @@ export default function MessagesPage() {
       if (!replyText.trim() || !replyBroadcast) return;
       setSendingReply(true);
       try {
-          const { error } = await supabase.functions.invoke('broadcast-reply', {
+          const { error } = await invokeEdgeFunction('broadcast-reply', {
+              requireAuth: true,
+              silent: false,
               body: { broadcast_id: replyBroadcast.id, content: replyText }
           });
           if (error) throw error;

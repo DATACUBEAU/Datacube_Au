@@ -50,7 +50,6 @@ export type AppContext = {
   current_page?: string;
   last_pages?: string[];
   session_flags?: {
-    is_guest?: boolean;
     free_pressure_mode_enabled?: boolean;
   };
   timestamps?: {
@@ -166,6 +165,121 @@ export async function sendChatMessage(
   
   const result = await response.json();
   return result;
+}
+
+export type ChatStreamDeltaEvent = { type: 'delta'; text: string };
+export type ChatStreamDoneEvent = { type: 'done'; answer: string; thought?: string; citations?: any[]; requestId?: string };
+export type ChatStreamErrorEvent = { type: 'error'; error: string; details?: any; isThrottled?: boolean; requestId?: string };
+export type ChatStreamEvent = ChatStreamDeltaEvent | ChatStreamDoneEvent | ChatStreamErrorEvent;
+
+export async function sendChatMessageStream(
+  request: ChatRequest,
+  accessToken: string | undefined,
+  handlers: {
+    onEvent: (event: ChatStreamEvent) => void;
+  },
+  opts?: { signal?: AbortSignal }
+): Promise<ChatStreamDoneEvent> {
+  const isGlobal = request.selectedDocId === 'global' || request.chat_type === 'global';
+  const endpoint = isGlobal ? 'global-chat' : 'au-chat';
+
+  const supabaseUrl = SUPABASE_URL?.replace(/\/$/, '');
+  if (!supabaseUrl) throw new Error('Missing SUPABASE URL');
+
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!anonKey) throw new Error('Missing SUPABASE anon key');
+
+  let payload: any = {};
+
+  if (isGlobal) {
+    payload = {
+      chat_type: 'global',
+      thread_id: request.thread_id || 'global',
+      user_input: request.user_input || '',
+      app_context: request.app_context,
+      memory_pack: request.memory_pack,
+      recent_snippet: request.recent_snippet,
+      model: request.model,
+      stream: true,
+    };
+  } else {
+    payload = {
+      chat_type: 'au_rag',
+      thread_id: request.thread_id,
+      doc_id: request.doc_id || request.selectedDocId,
+      user_input: request.user_input || '',
+      retrieval: request.retrieval,
+      recent_snippet: request.recent_snippet,
+      au_handoff_hint: request.au_handoff_hint,
+      guide: request.guide,
+      summaryMode: request.summaryMode,
+      action: request.action,
+      model: request.model,
+      stream: true,
+    };
+  }
+
+  const res = await fetch(`${supabaseUrl}/functions/v1/${endpoint}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      apikey: anonKey,
+      Authorization: accessToken ? `Bearer ${accessToken}` : `Bearer ${anonKey}`,
+    },
+    body: JSON.stringify(payload),
+    signal: opts?.signal,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Chat stream failed: ${res.status} ${res.statusText} ${text}`.trim());
+  }
+
+  if (!res.body) throw new Error('Missing response body');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalDone: ChatStreamDoneEvent | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data:')) continue;
+      const raw = trimmed.slice(5).trim();
+      if (!raw) continue;
+      let evt: ChatStreamEvent | null = null;
+      try {
+        evt = JSON.parse(raw) as ChatStreamEvent;
+      } catch {
+        continue;
+      }
+
+      handlers.onEvent(evt);
+
+      if (evt.type === 'error') {
+        throw new Error(evt.error || 'Chat stream error');
+      }
+
+      if (evt.type === 'done') {
+        finalDone = evt;
+      }
+    }
+  }
+
+  if (!finalDone) {
+    throw new Error('Stream ended without done event');
+  }
+
+  return finalDone;
 }
 
 /**

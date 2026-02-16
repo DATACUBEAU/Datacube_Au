@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
 
 export const runtime = 'edge';
 
@@ -9,14 +8,8 @@ function requiredEnv(key: string): string {
   return value;
 }
 
-function createRequestClient(authorization?: string) {
-  const url = requiredEnv('NEXT_PUBLIC_SUPABASE_URL');
-  const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-  return createClient(url, anonKey, {
-    global: {
-      headers: authorization ? { Authorization: authorization } : {},
-    },
-  });
+function functionsBaseUrl(): string {
+  return `${requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '')}/functions/v1`;
 }
 
 export async function POST(req: Request) {
@@ -24,13 +17,27 @@ export async function POST(req: Request) {
     const authorization = req.headers.get('authorization') ?? undefined;
     const body = await req.json();
 
-    const supabase = createRequestClient(authorization);
-    const { data, error } = await supabase.functions.invoke('generate-prompt-starters', { body });
-    if (error) return NextResponse.json({ error: error.message }, { status: 502 });
+    const res = await fetch(`${functionsBaseUrl()}/generate-prompt-starters`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(authorization ? { Authorization: authorization } : {}),
+      },
+      body: JSON.stringify(body),
+    });
 
-    return NextResponse.json(data);
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = { error: text || 'Unknown error' };
+    }
+
+    return NextResponse.json(json, { status: res.status });
   } catch (error: any) {
     console.error('[API /api/generate-prompt-starters] Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+

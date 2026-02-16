@@ -28,19 +28,13 @@ export async function listAuDocumentsForUser(user: User | null) {
       fullError: error
     });
 
-    if (errorMsg.includes('guest_session_id') || errorCode === '42703') {
-      console.warn('[documents] Missing guest_session_id or columns in au_documents, retrying safe');
-      const retryConditions = conditions
-        .split(',')
-        .filter(c => !c.startsWith('guest_session_id'))
-        .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
-
+    if (errorCode === '42703') {
       const retryQuery = supabase
         .from('au_documents')
         .select(SAFE_DOC_COLUMNS)
         .order('created_at', { ascending: false });
       
-      applyOwnershipFilter(retryQuery, retryConditions);
+      applyOwnershipFilter(retryQuery, conditions);
       const { data: retryData, error: retryError } = await retryQuery;
       
       if (!retryError) {
@@ -96,14 +90,8 @@ export async function listCompletedAuDocumentsForUser(user: User | null, documen
       fullError: error
     });
 
-    if (errorMsg.includes('guest_session_id') || errorCode === '42703') {
-      console.warn('[documents] Missing columns in au_documents (completed), retrying safe');
-      const retryConditions = conditions
-        .split(',')
-        .filter(c => !c.startsWith('guest_session_id'))
-        .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
-
-      const { data: retryData, error: retryError } = await buildQuery(retryConditions);
+    if (errorCode === '42703') {
+      const { data: retryData, error: retryError } = await buildQuery(conditions);
       if (!retryError) {
         data = retryData;
         error = null;
@@ -132,24 +120,16 @@ export async function getAuDocumentChunksText(user: User | null, documentId: str
   let { data, error } = await query;
 
   if (error) {
-    const errorMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
     const errorCode = error.code || 'unknown';
-    const isMissingGuest = errorMsg.includes('guest_session_id') || errorCode === '42703';
 
-    if (isMissingGuest) {
-      console.warn('[documents] Missing guest_session_id in au_document_chunks, retrying without it');
-      const retryConditions = conditions
-        .split(',')
-        .filter(c => !c.startsWith('guest_session_id'))
-        .join(',') || 'id.neq.00000000-0000-0000-0000-000000000000';
-
+    if (errorCode === '42703') {
       const retryQuery = supabase
         .from('au_document_chunks')
         .select('text, chunk_index')
         .eq('document_id', documentId)
         .order('chunk_index', { ascending: true });
 
-      applyOwnershipFilter(retryQuery, retryConditions);
+      applyOwnershipFilter(retryQuery, conditions);
       const { data: retryData, error: retryError } = await retryQuery;
       
       if (!retryError) {
@@ -193,14 +173,8 @@ export async function countPastQuestionsForParent(user: User | null, parentId: s
   let { count, error } = await buildCountQuery(conditions);
 
   if (error) {
-    const errorMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
-    if (errorMsg.includes('guest_session_id') || error.code === '42703') {
-      const retryConditions = conditions
-        .split(',')
-        .filter(c => !c.startsWith('guest_session_id'))
-        .join(',') || 'id.eq.00000000-0000-0000-0000-000000000000';
-      
-      const { count: retryCount, error: retryError } = await buildCountQuery(retryConditions);
+    if (error.code === '42703') {
+      const { count: retryCount, error: retryError } = await buildCountQuery(conditions);
       if (!retryError) {
         count = retryCount;
         error = null;

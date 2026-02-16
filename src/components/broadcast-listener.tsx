@@ -5,10 +5,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, X, Info, Sparkles, Megaphone, Send, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { db } from '@/lib/firebase/client';
 import { collection, query, where, orderBy, onSnapshot, limit } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useFirebaseAuthSync } from '@/hooks/use-firebase-auth-sync';
+import { logOnce, runOnce } from '@/lib/log/dedupe';
+import { useStore } from '@/hooks/use-store';
 
 interface BroadcastMessage {
   id: string;
@@ -35,23 +39,38 @@ const toPopupMessage = (val: unknown): PopupMessage | null => {
 };
 
 export function BroadcastListener() {
+  const [user] = useSupabaseUser();
   const [message, setMessage] = useState<PopupMessage | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [reply, setReply] = useState('');
   const [isSending, setIsSending] = useState(false);
   const { toast } = useToast();
+  const firebaseSyncPaused = useStore((s) => s.firebaseSyncPaused);
+  const setFirebaseSyncPaused = useStore((s) => s.setFirebaseSyncPaused);
+  const { status: firebaseStatus } = useFirebaseAuthSync(user?.id, {
+    onFailedOnce: () => {
+      runOnce('broadcast-firebase-auth-failed-toast', () => {
+        toast({
+          variant: 'destructive',
+          title: 'Session expired',
+          description: 'Please sign in again to view announcements.',
+          duration: 6000,
+        });
+      });
+    },
+  });
 
   const handleSendReply = async () => {
     if (!reply.trim() || !message) return;
     setIsSending(true);
     try {
-      // Use Edge Function for Reply (Secure)
-      const { error } = await supabase.functions.invoke('broadcast-reply', {
+      const { error } = await invokeEdgeFunction('broadcast-reply', {
+        requireAuth: true,
+        silent: false,
         body: {
-          broadcastId: message.id, // Or parent message ID if this is a thread
+          broadcast_id: message.id,
           content: reply,
-          // The edge function will handle user/guest identification via token
-        }
+        },
       });
 
       if (error) throw error;
@@ -60,15 +79,18 @@ export function BroadcastListener() {
       setReply('');
       handleDismiss();
     } catch (e: any) {
-      console.error('Reply failed:', e);
-      toast({ title: 'Error', description: e.message || "Failed to send reply", variant: 'destructive' });
+      logOnce('error', 'broadcast-reply-failed', 'Broadcast reply failed', e);
+      toast({ title: 'Error', description: e?.message || "Failed to send reply", variant: 'destructive' });
     } finally {
       setIsSending(false);
     }
   };
 
   useEffect(() => {
-    // 1. Broadcast Listener (Firestore)
+    if (!user?.id) return;
+    if (firebaseStatus !== 'ready') return;
+    if (firebaseSyncPaused) return;
+
     const qBroadcast = query(
       collection(db, 'broadcasts'), 
       orderBy('created_at', 'desc'), 
@@ -94,64 +116,57 @@ export function BroadcastListener() {
         }
       });
     }, (error) => {
-      console.warn("Broadcast listener error:", error);
+      if ((error as any)?.code === 'permission-denied') {
+        unsubBroadcast();
+        logOnce('warn', 'broadcast-listener-permission-denied', 'Firestore permission denied (broadcast listener)', error);
+        runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+        return;
+      }
+      logOnce('warn', 'broadcast-listener-error', 'Broadcast listener error', error);
     });
 
-    // 2. Direct Message Listener (Firestore)
-    let unsubDM: (() => void) | undefined;
+    const threadId = `support_${user.id}`;
+    const qDM = query(
+      collection(db, `support_threads/${threadId}/messages`),
+      where('role', '==', 'admin'),
+      orderBy('created_at', 'desc'),
+      limit(1)
+    );
 
-    const setupDmListener = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      const userId = session?.user?.id;
-      if (!userId) return;
+    const unsubDM = onSnapshot(qDM, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const d = change.doc.data();
+          if (sessionStorage.getItem(`au_msg_seen_${change.doc.id}`)) return;
 
-      const threadId = `support_${userId}`;
-      const qDM = query(
-        collection(db, `support_threads/${threadId}/messages`),
-        where('role', '==', 'admin'), // Only show admin messages
-        orderBy('created_at', 'desc'),
-        limit(1)
-      );
+          const msg: PopupMessage = {
+            id: change.doc.id,
+            title: 'Support Message',
+            content: d.content || '',
+            expires_at: null,
+            is_read: false,
+          };
 
-      unsubDM = onSnapshot(qDM, (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          if (change.type === 'added') {
-            const d = change.doc.data();
-            // Avoid showing old messages on reload (optional, but good UX)
-            // For now, simple logic: if it's new to the listener, show it.
-            // Better: Check timestamp vs now, or use a "read" flag on client.
-            
-            // Simple dedupe via session storage
-            if (sessionStorage.getItem(`au_msg_seen_${change.doc.id}`)) return;
-
-            const msg: PopupMessage = {
-              id: change.doc.id,
-              title: 'Support Message',
-              content: d.content || '',
-              expires_at: null,
-              is_read: false
-            };
-
-            setMessage(msg);
-            setIsVisible(true);
-            toast({ title: "New Message", description: "You have a new message from Support." });
-          }
-        });
-      }, (error) => {
-        // Suppress permission denied errors if auth is still syncing
-        if (error.code !== 'permission-denied') {
-           console.warn("DM listener error:", error);
+          setMessage(msg);
+          setIsVisible(true);
+          toast({ title: "New Message", description: "You have a new message from Support." });
         }
       });
-    };
-
-    setupDmListener().catch(console.error);
+    }, (error) => {
+      if ((error as any)?.code === 'permission-denied') {
+        unsubDM();
+        logOnce('warn', 'broadcast-dm-permission-denied', 'Firestore permission denied (broadcast DM)', error);
+        runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+        return;
+      }
+      logOnce('warn', 'broadcast-dm-listener-error', 'DM listener error', error);
+    });
 
     return () => {
       unsubBroadcast();
-      if (unsubDM) unsubDM();
+      unsubDM();
     };
-  }, [toast]);
+  }, [toast, user?.id, firebaseStatus, firebaseSyncPaused, setFirebaseSyncPaused]);
 
   useEffect(() => {
     const interval = setInterval(() => {

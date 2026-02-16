@@ -22,6 +22,7 @@ import { UploadCloud, X, RefreshCw, CheckCircle2, AlertTriangle, Loader2, Info }
 import { TruncatedText } from '@/components/TruncatedText';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
 import { OfflineGuard } from '@/components/offline-guard';
+import { useStore } from '@/hooks/use-store';
 
 // Use both MIME types and extensions for better browser compatibility
 const ACCEPT = 'application/pdf,.pdf,text/plain,.txt,text/markdown,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx';
@@ -53,6 +54,7 @@ export default function UploadCenter() {
   const { toast } = useToast();
   const [user] = useSupabaseUser();
   const isOnline = useOnlineStatus();
+  const upgradeBlocked = useStore((s) => s.upgradeBlocked);
   const { 
     jobs, 
     activeJobs,
@@ -84,7 +86,7 @@ export default function UploadCenter() {
   const [isDragging, setIsDragging] = useState(false);
   const [reattachJobId, setReattachJobId] = useState<string | null>(null);
 
-  const supportsUploads = Boolean(user) && isOnline;
+  const supportsUploads = Boolean(user) && isOnline && !upgradeBlocked;
 
   const loadParents = useCallback(async () => {
     if (!user) return;
@@ -354,16 +356,6 @@ export default function UploadCenter() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {user?.is_anonymous && (
-          <Alert variant="default" className="bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-900">
-            <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <AlertTitle className="text-amber-800 dark:text-amber-400">Guest Mode</AlertTitle>
-            <AlertDescription className="text-amber-700 dark:text-amber-500">
-              Guest mode self-destruct in 24 hours. 
-              Sign in to keep them for 7 days.
-            </AlertDescription>
-          </Alert>
-        )}
         <input ref={inputRef} type="file" multiple accept={ACCEPT} onChange={onFilesChanged} className="hidden" />
         <input ref={retryFileInputRef} type="file" accept={ACCEPT} onChange={onRetryFileSelected} className="hidden" />
 

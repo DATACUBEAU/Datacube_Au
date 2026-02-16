@@ -1,10 +1,17 @@
 const https = require('https');
 
-const supabaseUrl = 'https://dhmukdeljiwvvwjdcxgn.supabase.co';
-const serviceKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobXVrZGVsaml3dnZ3amRjeGduIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTIwNjAyOCwiZXhwIjoyMDgwNzgyMDI4fQ.3lrr0S4UH-9mccuIZAxn1TH82d-SezY19ny8OTaiS2o';
+const supabaseUrl = process.env.SUPABASE_URL;
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const migrationToken = process.env.MIGRATION_TOKEN;
+
+if (!supabaseUrl || !serviceKey || !migrationToken) {
+  throw new Error('Missing SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, or MIGRATION_TOKEN in environment');
+}
+
+const hostname = new URL(supabaseUrl).hostname;
 
 const options = {
-  hostname: 'dhmukdeljiwvvwjdcxgn.supabase.co',
+  hostname,
   port: 443,
   path: '/functions/v1/apply-migration',
   method: 'POST',
@@ -12,7 +19,7 @@ const options = {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${serviceKey}`,
     'apikey': serviceKey,
-    'X-Migration-Token': 'super-secret-migration-token'
+    'X-Migration-Token': migrationToken
   }
 };
 

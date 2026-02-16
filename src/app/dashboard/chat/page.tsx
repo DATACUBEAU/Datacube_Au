@@ -185,6 +185,7 @@ export default function ChatPage() {
   // Sync AU State with Global Background Animation
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
   const auAnimationState = useStore(state => state.auAnimationState);
+  const upgradeBlocked = useStore(state => state.upgradeBlocked);
   
 
 
@@ -1281,7 +1282,7 @@ export default function ChatPage() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    disabled={isLoading || !selectedDocId || !isOnline}
+                    disabled={isLoading || !selectedDocId || !isOnline || upgradeBlocked}
                     className={`absolute left-1.5 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 transition-all duration-300 hover:scale-110 ${summaryMode ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary'}`}
                   >
                     {summaryMode === 'short' ? <Scissors className="h-5 w-5" /> :
@@ -1318,7 +1319,7 @@ export default function ChatPage() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
-                disabled={isLoading || !selectedDocId || !isOnline}
+                disabled={isLoading || !selectedDocId || !isOnline || upgradeBlocked}
               />
             </div>
 
@@ -1326,7 +1327,7 @@ export default function ChatPage() {
               type={isResponding ? "button" : "submit"} 
               size="icon" 
               className={`h-12 w-12 shrink-0 rounded-full transition-all ${isResponding ? 'bg-destructive hover:bg-destructive/90' : ''}`}
-              disabled={(!input.trim() || !selectedDocId || !isOnline) && !isResponding}
+              disabled={((!input.trim() || !selectedDocId || !isOnline || upgradeBlocked) && !isResponding)}
               onClick={(e) => {
                   if (isResponding) {
                       e.preventDefault();

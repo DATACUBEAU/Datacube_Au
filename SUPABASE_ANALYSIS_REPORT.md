@@ -1,7 +1,7 @@
 # Supabase System Analysis Report
 **Generated:** 2026-01-04  
 **Project:** DataCube AU  
-**Supabase Project:** dhmukdeljiwvvwjdcxgn.supabase.co
+**Supabase Project:** <SUPABASE_URL>
 
 ---
 

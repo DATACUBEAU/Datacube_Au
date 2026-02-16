@@ -6,7 +6,7 @@
 
 The file `.env.local` contains:
 ```
-SUPABASE_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+SUPABASE_SERVICE_ROLE_KEY=<redacted>
 ```
 
 **Immediate Actions Required:**

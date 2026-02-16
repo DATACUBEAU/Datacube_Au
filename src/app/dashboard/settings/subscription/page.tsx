@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
@@ -54,15 +54,6 @@ export default function SubscriptionPage() {
   useEffect(() => {
     if (!user) return;
 
-    if (user.is_anonymous) {
-        toast({ 
-            title: "Account Required", 
-            description: "You must create an account to upgrade your plan.",
-            variant: "destructive" 
-        });
-        return;
-    }
-
     fetchBillingStatus();
 
     // Check for Paystack return
@@ -86,18 +77,16 @@ export default function SubscriptionPage() {
 
   const verifyPayment = async (ref: string) => {
       try {
-          const { data: { session } } = await supabase.auth.getSession();
-          const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/paystack-verify?reference=${ref}`, {
-             headers: { 'Authorization': `Bearer ${session?.access_token}` }
+          const { data, error } = await invokeEdgeFunction<any>(`paystack-verify?reference=${encodeURIComponent(ref)}`, {
+              method: 'GET',
+              requireAuth: true,
+              timeoutMs: 10000,
+              silent: true,
           });
-          
-          if (res.ok) {
-            const data = await res.json();
-            if (data.status === 'success') {
-                setPaymentState('success');
-                fetchBillingStatus();
-                return;
-            }
+          if (!error && data?.status === 'success') {
+              setPaymentState('success');
+              fetchBillingStatus();
+              return;
           }
       } catch (e) {
           console.error("Verification failed", e);
@@ -107,15 +96,13 @@ export default function SubscriptionPage() {
 
   const fetchBillingStatus = async () => {
       try {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (!session) return;
-
-          const res = await fetch(`${process.env.NEXT_PUBLIC_SUPABASE_URL}/functions/v1/billing-status`, {
-              headers: { 'Authorization': `Bearer ${session.access_token}` }
+          const { data, error } = await invokeEdgeFunction<any>('billing-status', {
+              method: 'GET',
+              requireAuth: true,
+              timeoutMs: 10000,
+              silent: true,
           });
-          
-          if (res.ok) {
-              const data = await res.json();
+          if (!error && data) {
               setTier(data.tier || 'free');
               setExpiry(data.tier_expires_at);
               setSubscription(data.subscription);
@@ -167,15 +154,6 @@ export default function SubscriptionPage() {
   };
 
   const handlePaystack = async (planType: 'weekly' | 'monthly') => {
-      if (user?.is_anonymous) {
-          toast({ 
-              title: "Account Required", 
-              description: "Please sign in or create an account to subscribe.",
-              variant: "destructive" 
-          });
-          return;
-      }
-
       setLoadingPlan(planType);
       
       try {
@@ -260,6 +238,57 @@ export default function SubscriptionPage() {
   const formatDate = (dateStr: string) => {
       if (!dateStr) return '';
       return new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  };
+
+  // --- Usage Meter ---
+  const LimitBar = ({ label, used, limit }: any) => {
+    const percent = Math.min(100, (used / limit) * 100);
+    const isLimit = used >= limit;
+    return (
+        <div>
+            <div className="flex justify-between text-sm mb-1.5">
+                <span className="font-medium text-gray-700">{label}</span>
+                <span className={cn("font-mono text-xs", isLimit ? "text-red-600 font-bold" : "text-gray-500")}>
+                    {used} / {limit}
+                </span>
+            </div>
+            <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                <div 
+                    className={cn("h-full transition-all duration-500", isLimit ? "bg-red-500" : "bg-purple-600")} 
+                    style={{ width: `${percent}%` }} 
+                />
+            </div>
+        </div>
+    );
+  };
+
+  const UsageMeter = () => {
+    const [usage, setUsage] = useState<any>(null);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        invokeEdgeFunction<any>('usage-status', { method: 'GET', silent: true })
+            .then(({ data }) => setUsage(data))
+            .catch((e) => console.error(e))
+            .finally(() => setLoading(false));
+    }, []);
+
+    if (loading) return null;
+    if (!usage || !usage.billingEnabled || usage.isPro) return null;
+
+    return (
+        <div className="bg-white rounded-3xl shadow-xl p-6 border border-gray-100 mb-8 max-w-4xl mx-auto">
+            <div className="flex items-center gap-2 mb-4">
+                <ShieldCheck className="h-5 w-5 text-purple-600" />
+                <h2 className="text-lg font-bold text-gray-900">Daily Free Limits</h2>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <LimitBar label="Chat Messages" used={usage.usage.chat} limit={usage.limits.chat} />
+                <LimitBar label="Exam Generations" used={usage.usage.exam} limit={usage.limits.exam} />
+                <LimitBar label="Document Uploads" used={usage.usage.upload} limit={usage.limits.upload} />
+            </div>
+        </div>
+    );
   };
 
   // --- UI Components ---
@@ -448,6 +477,7 @@ export default function SubscriptionPage() {
 
         {/* Pricing Cards Grid */}
         <div className="container max-w-6xl mx-auto px-4 -mt-20 relative z-20">
+            <UsageMeter />
             {tier === 'pro' ? (
                 // Active Pro View
                 <div className="max-w-4xl mx-auto space-y-8">

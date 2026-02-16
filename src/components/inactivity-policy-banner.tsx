@@ -10,8 +10,8 @@ import { useRouter } from 'next/navigation';
 export function InactivityPolicyBanner() {
   const { session } = useSupabaseSession();
   const [isVisible, setIsVisible] = useState(false);
-  const [userType, setUserType] = useState<'guest' | 'auth'>('guest');
   const router = useRouter();
+  const isSignedIn = Boolean(session?.user);
 
   useEffect(() => {
     // Check if user has seen the policy
@@ -20,11 +20,6 @@ export function InactivityPolicyBanner() {
        setIsVisible(true);
     }
 
-    if (session?.user) {
-        setUserType('auth');
-    } else {
-        setUserType('guest');
-    }
   }, [session]);
 
   const handleDismiss = () => {
@@ -50,21 +45,21 @@ export function InactivityPolicyBanner() {
               Policy Update: Data Security Notice
             </AlertTitle>
             <AlertDescription className="text-red-700 dark:text-red-300 text-sm leading-relaxed">
-              {userType === 'guest' ? (
+              {isSignedIn ? (
                 <>
-                  Policy Update: Inactive guest accounts will be automatically deleted after <strong>24 HOURS</strong> to ensure data security. 
-                  Sign in with Google to secure your data permanently.
+                  Policy Update: Inactive accounts will be automatically deleted after <strong>14 DAYS</strong> to ensure data security.
+                  Sign in regularly to keep your account active.
                 </>
               ) : (
                 <>
-                  Policy Update: Inactive accounts will be automatically deleted after <strong>14 DAYS</strong> to ensure data security. 
-                  Sign in regularly to keep your account active.
+                  Policy Update: Inactive accounts will be automatically deleted after <strong>14 DAYS</strong> to ensure data security.
+                  Sign in to keep your account active.
                 </>
               )}
             </AlertDescription>
           </div>
           <div className="flex flex-col gap-2 min-w-[140px]">
-            {userType === 'guest' && (
+            {!isSignedIn && (
               <Button onClick={handleSignIn} size="sm" className="w-full bg-red-600 hover:bg-red-700 text-white border-none shadow-md">
                 <LogIn className="mr-2 h-4 w-4" />
                 Sign In Now

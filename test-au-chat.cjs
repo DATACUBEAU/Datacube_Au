@@ -1,21 +1,31 @@
 const { createClient } = require('@supabase/supabase-js');
 const https = require('https');
 
+const supabaseUrl = process.env.SUPABASE_URL;
+const anonKey = process.env.SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const accessToken = process.env.SUPABASE_ACCESS_TOKEN;
+
+if (!supabaseUrl || !anonKey || !accessToken) {
+  throw new Error('Missing SUPABASE_URL, SUPABASE_ANON_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY), or SUPABASE_ACCESS_TOKEN in environment');
+}
+
 const data = JSON.stringify({
   messages: [{ role: 'user', content: 'hello' }],
   useRAG: false
 });
 
+const hostname = new URL(supabaseUrl).hostname;
+
 const options = {
-  hostname: 'dhmukdeljiwvvwjdcxgn.supabase.co',
+  hostname,
   port: 443,
   path: '/functions/v1/au-chat',
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
     'Content-Length': data.length,
-    'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobXVrZGVsaml3dnZ3amRjeGduIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTIwNjAyOCwiZXhwIjoyMDgwNzgyMDI4fQ.3lrr0S4UH-9mccuIZAxn1TH82d-SezY19ny8OTaiS2o',
-    'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobXVrZGVsaml3dnZ3amRjeGduIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUyMDYwMjgsImV4cCI6MjA4MDc4MjAyOH0.4Wh-klBrFqFcOWmfLWcOcdnjGTyZ1GuFbnqbFuAsOkI',
+    'Authorization': `Bearer ${accessToken}`,
+    'apikey': anonKey,
     'Origin': 'http://localhost:3000'
   }
 };

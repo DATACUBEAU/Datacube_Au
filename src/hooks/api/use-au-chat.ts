@@ -1,12 +1,12 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { sendChatMessage, generatePromptStarters, getAvailableModels, type ChatMessage } from '@/lib/api/chat';
+import { sendChatMessage, sendChatMessageStream, generatePromptStarters, getAvailableModels, type ChatMessage } from '@/lib/api/chat';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
-import { LocalChatStorage } from '@/lib/storage/local-chat';
-import { MemoryLedger } from '@/lib/firebase/memory';
+import { getMemorySummary } from '@/lib/api/memory-summaries';
+import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, sweepExpiredDocWorkingMemory } from '@/lib/memory/working-memory';
 
 const AUTO_CLEAR_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -92,39 +92,35 @@ export function useAuChat(selectedDocId: string | null) {
 
   // --- PERSISTENCE: Load history on mount or doc change ---
   useEffect(() => {
-    if (selectedDocId && user?.id) {
-      // Determine Type
-      const type = selectedDocId === 'global' ? 'global' : 'au';
-      
-      // Auto-Cleanup for AU
-      if (type === 'au') {
-          LocalChatStorage.cleanupExpiredAUChats(user.id);
-      }
-
-      // Load Transcript from LocalStorage
-      const savedMessages = LocalChatStorage.loadTranscript(type, user.id, selectedDocId);
-      setHistory(savedMessages);
-      setIsInitialized(true);
-    } else if (!selectedDocId) {
+    if (!selectedDocId || !user?.id) {
       setHistory([]);
       setIsInitialized(true);
+      return;
     }
-  }, [selectedDocId, user?.id]);
 
-  // --- PERSISTENCE: Save history on change ---
-  useEffect(() => {
-    if (selectedDocId && user?.id && history.length > 0) {
-      const type = selectedDocId === 'global' ? 'global' : 'au';
-      LocalChatStorage.saveTranscript(type, user.id, selectedDocId, history);
+    const key = selectedDocId === 'global' ? globalMemoryKey(user.id) : docMemoryKey(user.id, selectedDocId);
+
+    if (selectedDocId !== 'global') {
+      sweepExpiredDocWorkingMemory().catch(() => {});
     }
-  }, [history, selectedDocId, user?.id]);
+
+    loadWorkingMemory(key)
+      .then(payload => {
+        const messages = payload?.turns?.map(t => ({ id: t.id, role: t.role, content: t.text } as ChatMessage)) ?? [];
+        setHistory(messages);
+        setIsInitialized(true);
+      })
+      .catch(() => {
+        setHistory([]);
+        setIsInitialized(true);
+      });
+  }, [selectedDocId, user?.id]);
 
   const clearChat = useCallback(() => {
     setHistory([]);
-    if (user?.id && selectedDocId) {
-      const type = selectedDocId === 'global' ? 'global' : 'au';
-      LocalChatStorage.clearThread(type, user.id, selectedDocId);
-    }
+    if (!user?.id || !selectedDocId) return;
+    const key = selectedDocId === 'global' ? globalMemoryKey(user.id) : docMemoryKey(user.id, selectedDocId);
+    clearWorkingMemory(key).catch(() => {});
   }, [user?.id, selectedDocId]);
 
   const expiresAt = session?.expires_at ? session.expires_at * 1000 : undefined;
@@ -156,6 +152,14 @@ export function useAuChat(selectedDocId: string | null) {
     setHistory(prev => [...prev, userMessage, { id: loadingId, role: 'assistant', content: '', isLoading: true } as any]);
     setIsResponding(true);
     setAuAnimationState('thinking');
+
+    const scope = selectedDocId === 'global' ? 'global' : 'doc';
+    const memoryKey = scope === 'global' ? globalMemoryKey(user.id) : docMemoryKey(user.id, selectedDocId);
+    appendTurn(
+      memoryKey,
+      { id: userMessage.id, ts: Date.now(), role: 'user', text: userMessage.content },
+      scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
+    ).catch(() => {});
     
     // Initialize Thinking Steps
     const steps = generateThinkingSteps(content, 'chat');
@@ -210,33 +214,52 @@ export function useAuChat(selectedDocId: string | null) {
           // Simulate brief network delay for UX smoothness
           await new Promise(resolve => setTimeout(resolve, 800));
           result = cachedResult;
+          await appendTurn(
+            memoryKey,
+            { id: loadingId, ts: Date.now(), role: 'assistant', text: String((cachedResult as any)?.answer || '') },
+            scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
+          );
       } else {
-          // Prepare Context
-          const type = selectedDocId === 'global' ? 'global' : 'au';
-          const contextMessages = LocalChatStorage.getRollingContext(type, user.id, selectedDocId, 6); // Last 6 turns
-          
-          // Prepare Memory Pack (if Global)
-          let memoryPack = undefined;
-          if (type === 'global') {
-              memoryPack = await MemoryLedger.getMemoryPack(user.id);
-          }
+          const existing = await loadWorkingMemory(memoryKey);
+          const recentTurns = existing?.turns?.slice(-8).map(t => ({ role: t.role, content: t.text })) ?? [];
+          const recentSnippet =
+            existing?.summary
+              ? { mode: 'summary' as const, summary: existing.summary }
+              : { mode: 'turns' as const, turns: recentTurns };
 
-          result = await sendChatMessage({
-            messages: [...contextMessages, userMessage], // Send context + current
-            selectedDocId,
-            guide: options?.guide,
-            summaryMode: options?.summaryMode,
-            browsingMode: options?.browsingMode,
-            model: selectedModel === 'auto' ? undefined : selectedModel,
-            memory: memoryPack // Inject memory
-          }, session?.access_token, { signal: abortControllerRef.current?.signal, clientMessageId: userMessage.id });
+          let streamedText = '';
 
-          // Update Activity (if AU)
-          if (type === 'au') {
-              // We fire and forget this update
-              MemoryLedger.updateAuActivity(user.id, selectedDocId, 'Document Chat'); // We should ideally get doc title here
-              MemoryLedger.touchAuThread(user.id, selectedDocId);
-          }
+          const done = await sendChatMessageStream(
+            {
+              selectedDocId,
+              doc_id: scope === 'doc' ? selectedDocId : undefined,
+              user_input: content,
+              recent_snippet: recentSnippet as any,
+              memory_pack: scope === 'global' ? { global_digest: existing?.summary || '' } : undefined,
+              guide: options?.guide,
+              summaryMode: options?.summaryMode,
+              browsingMode: options?.browsingMode,
+              model: selectedModel === 'auto' ? undefined : selectedModel,
+            },
+            session?.access_token,
+            {
+              onEvent: (evt) => {
+                if (evt.type === 'delta') {
+                  streamedText += evt.text;
+                  setHistory(prev => prev.map(m => m.id === loadingId ? { ...m, content: streamedText } as any : m));
+                }
+              }
+            },
+            { signal: abortControllerRef.current?.signal }
+          );
+
+          result = { answer: done.answer, citations: (done as any).citations, thought: (done as any).thought } as any;
+
+          await appendTurn(
+            memoryKey,
+            { id: loadingId, ts: Date.now(), role: 'assistant', text: done.answer },
+            scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
+          );
 
           // --- OPTIMIZATION: Save to Local Cache ---
           try {

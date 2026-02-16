@@ -14,15 +14,32 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   const url = endpoint.startsWith('http') ? endpoint : `${SUPABASE_URL}/functions/v1/${endpoint}`;
 
   const headers = new Headers(options.headers || {});
-  headers.set('Authorization', `Bearer ${ANON_KEY}`);
-  headers.set('Content-Type', 'application/json');
+  if (ANON_KEY) {
+    if (!headers.has('apikey')) headers.set('apikey', ANON_KEY);
+    if (!headers.has('Authorization')) headers.set('Authorization', `Bearer ${ANON_KEY}`);
+  }
+  if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   
-  if (adminToken) {
+  if (!headers.has('X-Admin-Token') && adminToken) {
     headers.set('X-Admin-Token', adminToken);
   }
 
-  return safeFetch(url, {
+  const res = await safeFetch(url, {
     ...options,
     headers,
   });
+
+  try {
+    const ct = res.headers.get('content-type') || '';
+    if (ct.includes('application/json')) {
+      const json = await res.clone().json().catch(() => null);
+      if (json && typeof json === 'object') {
+        Object.assign(res as any, json);
+        (res as any).data = json;
+      }
+    }
+  } catch {
+  }
+
+  return res;
 }

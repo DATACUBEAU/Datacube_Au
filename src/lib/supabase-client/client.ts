@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
 
 const publicEnv = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -136,42 +137,94 @@ async function getAccessToken(opts?: { refresh?: boolean }): Promise<string | nu
   }
 }
 
+async function sleep(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function computeBackoffMs(attemptIndex: number, baseMs = 600, maxMs = 8000): number {
+  const exp = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, attemptIndex - 1)));
+  const jitter = Math.floor(Math.random() * 200);
+  return exp + jitter;
+}
+
 export async function invokeEdgeFunction<T = any>(
   functionName: string,
-  options?: { body?: any; headers?: Record<string, string>; requireAuth?: boolean }
-): Promise<{ data: T | null; error: any | null }> {
-  const token = await getAccessToken();
-  if (options?.requireAuth && !token) {
-    return { data: null, error: { message: 'No active session', status: 401 } };
+  options?: {
+    body?: any;
+    headers?: Record<string, string>;
+    requireAuth?: boolean;
+    timeoutMs?: number;
+    method?: 'POST' | 'GET';
+    silent?: boolean;
   }
-  const headers = {
-    ...(options?.headers ?? {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+): Promise<{ data: T | null; error: any | null }> {
+  const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
+  const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  const method = options?.method ?? 'POST';
+  const timeoutMs = options?.timeoutMs ?? 10000;
+  const silent = options?.silent ?? true;
+
+  const attemptOnce = async (accessToken: string | null) => {
+    if (options?.requireAuth && !accessToken) {
+      return { data: null as T | null, error: { message: 'No active session', status: 401 } };
+    }
+
+    const headers = new Headers(options?.headers ?? {});
+    headers.set('apikey', anonKey);
+    headers.set('Content-Type', 'application/json');
+    headers.set('Authorization', `Bearer ${accessToken ?? anonKey}`);
+
+    const url = `${supabaseUrl}/functions/v1/${functionName}`;
+
+    let res: Response;
+    try {
+      res = await safeFetch(url, {
+        method,
+        headers,
+        body: method === 'POST' ? JSON.stringify(options?.body ?? {}) : undefined,
+        timeout: timeoutMs,
+        silent,
+      });
+    } catch (e: any) {
+      if (e instanceof OfflineError) {
+        return { data: null as T | null, error: { message: 'Offline', status: 0 } };
+      }
+      return { data: null as T | null, error: { message: e?.message || 'Network error', status: 0 } };
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+    const isJson = contentType.includes('application/json');
+    const payload = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null);
+
+    if (res.ok) return { data: payload as T, error: null };
+
+    const message =
+      (payload && typeof payload === 'object' ? (payload as any).error : null) ||
+      res.statusText ||
+      'Request failed';
+
+    return { data: null as T | null, error: { message, status: res.status, details: payload } };
   };
 
-  let result = await supabase.functions.invoke(functionName, {
-    body: options?.body,
-    headers: Object.keys(headers).length ? headers : undefined,
-  });
+  const accessToken1 = await getAccessToken();
+  const maxAttempts = 3;
 
-  const status = (result.error as any)?.context?.status ?? (result.error as any)?.status;
-  if (result.error && status === 401) {
-    const refreshed = await getAccessToken({ refresh: true });
-    if (options?.requireAuth && !refreshed) {
-      return { data: null, error: { message: 'No active session', status: 401 } };
-    }
-    const headers2 = {
-      ...(options?.headers ?? {}),
-      ...(refreshed ? { Authorization: `Bearer ${refreshed}` } : {}),
-    };
+  for (let i = 0; i < maxAttempts; i++) {
+    if (i > 0) await sleep(computeBackoffMs(i));
 
-    result = await supabase.functions.invoke(functionName, {
-      body: options?.body,
-      headers: Object.keys(headers2).length ? headers2 : undefined,
-    });
+    const accessToken =
+      i === 1 ? await getAccessToken({ refresh: true }) : i === 2 ? await getAccessToken({ refresh: true }) : accessToken1;
+
+    const result = await attemptOnce(accessToken);
+    const status = result.error?.status;
+
+    if (!result.error) return result;
+    if (status === 401 || status === 403) return result;
+    if (typeof status === 'number' && status > 0 && status < 500) return result;
   }
 
-  return { data: (result as any).data ?? null, error: (result as any).error ?? null };
+  const final = await attemptOnce(await getAccessToken({ refresh: true }));
+  return final;
 }
 
 /**
@@ -212,9 +265,6 @@ export function applyOwnershipFilter(query: any, conditions: string) {
   return query.or(trimmed);
 }
 
-/**
- * Updates the last_active_at timestamp and device info for the current user or guest.
- */
 export async function updateUserActivity(
   user: User | null,
   opts?: { isOnline?: boolean }
@@ -224,6 +274,7 @@ export async function updateUserActivity(
     const isInstalled = typeof window !== 'undefined' && (window.navigator as any).standalone || isStandalone;
     const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
     const isOnline = typeof opts?.isOnline === 'boolean' ? opts.isOnline : (typeof navigator !== 'undefined' ? navigator.onLine : true);
+    if (!isOnline) return;
 
     const { getDeviceInfo } = await import('@/lib/device/device-info');
     let deviceInfo: any = null;
@@ -263,11 +314,6 @@ export async function updateUserActivity(
     };
 
     if (user?.id) {
-      try {
-        await supabase.from('users').upsert({ id: user.id }, { onConflict: 'id' });
-      } catch {
-      }
-
       const { error } = await supabase
         .from('au_user_activity')
         .upsert({ 
@@ -279,42 +325,8 @@ export async function updateUserActivity(
         }, { onConflict: 'user_id' });
         
       if (error) {
-        if (error.code === '23503') {
-          try {
-            await supabase.from('users').upsert({ id: user.id }, { onConflict: 'id' });
-          } catch {
-          }
-
-          const retry = await supabase
-            .from('au_user_activity')
-            .upsert(
-              {
-                user_id: user.id,
-                last_active_at: new Date().toISOString(),
-                user_agent: userAgent,
-                is_pwa: isStandalone,
-                metadata: metadata,
-              },
-              { onConflict: 'user_id' }
-            );
-
-          if (!retry.error) return;
-          return;
-        }
-
-        if (error.code === '23505' || error.code === '409') {
-          await supabase
-            .from('au_user_activity')
-            .update({
-              last_active_at: new Date().toISOString(),
-              user_agent: userAgent,
-              is_pwa: isStandalone,
-              metadata: metadata,
-            })
-            .eq('user_id', user.id);
-        } else if (error.code !== '406') {
-          console.warn('[client] Activity update error:', error);
-        }
+        if (error.code === '23503') return;
+        if (error.code !== '406') console.warn('[client] Activity update error:', error);
       }
     }
   } catch (e) {

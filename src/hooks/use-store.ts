@@ -34,12 +34,60 @@ interface AppState {
   // Utility to clear data on doc selection change
   clearKnowledgeAndPredictions: () => void;
   rehydrateFromCache: (docId: string) => void;
+
+  // Upgrade Modal
+  upgradeModalOpen: boolean;
+  upgradeContext: any;
+  upgradeBlocked: boolean;
+  upgradeBlockedUntil: number | null;
+  lastUpgradeKey: string | null;
+  lastUpgradeShownAt: number;
+  setUpgradeModalOpen: (open: boolean, context?: any) => void;
+  clearUpgradeBlock: () => void;
+
+  firebaseSyncPaused: boolean;
+  firebaseSyncPausedReason: 'permission-denied' | 'auth-failed' | null;
+  setFirebaseSyncPaused: (paused: boolean, reason?: AppState['firebaseSyncPausedReason']) => void;
+  clearFirebaseSyncPaused: () => void;
 }
 
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       // Initial State
+      upgradeModalOpen: false,
+      upgradeContext: null,
+      upgradeBlocked: false,
+      upgradeBlockedUntil: null,
+      lastUpgradeKey: null,
+      lastUpgradeShownAt: 0,
+      setUpgradeModalOpen: (open, context) => {
+        const nextContext = context || null;
+        if (open) {
+          const key = nextContext ? JSON.stringify({ code: nextContext.code, reason: nextContext.reason, limit: nextContext.limit }) : null;
+          const now = Date.now();
+          const state = get();
+          if (state.upgradeModalOpen && state.lastUpgradeKey === key && now - state.lastUpgradeShownAt < 5000) return;
+          const blockedUntil = nextContext?.resetsAt ? new Date(nextContext.resetsAt).getTime() : null;
+          set({
+            upgradeModalOpen: true,
+            upgradeContext: nextContext,
+            upgradeBlocked: true,
+            upgradeBlockedUntil: blockedUntil,
+            lastUpgradeKey: key,
+            lastUpgradeShownAt: now,
+          });
+          return;
+        }
+        set({ upgradeModalOpen: false, upgradeContext: null });
+      },
+      clearUpgradeBlock: () => set({ upgradeBlocked: false, upgradeBlockedUntil: null, lastUpgradeKey: null, lastUpgradeShownAt: 0 }),
+
+      firebaseSyncPaused: false,
+      firebaseSyncPausedReason: null,
+      setFirebaseSyncPaused: (paused, reason) => set({ firebaseSyncPaused: paused, firebaseSyncPausedReason: paused ? (reason ?? 'permission-denied') : null }),
+      clearFirebaseSyncPaused: () => set({ firebaseSyncPaused: false, firebaseSyncPausedReason: null }),
+
       knowledgeData: null,
       isGeneratingKnowledge: false,
       predictionData: null,
@@ -170,4 +218,3 @@ export const useStore = create<AppState>()(
     }
   )
 );
-

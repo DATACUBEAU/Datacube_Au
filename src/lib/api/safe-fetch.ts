@@ -48,6 +48,19 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       signal: controller.signal,
     });
     
+    // Client-only: emit upgrade event (handled by dashboard listener)
+    if (typeof window !== 'undefined' && (response.status === 402 || response.status === 429)) {
+      try {
+        const clone = response.clone();
+        const body = await clone.json();
+        const context = body?.error?.code === 'UPGRADE_REQUIRED' ? body.error : body;
+        if (context?.code === 'UPGRADE_REQUIRED') {
+          window.dispatchEvent(new CustomEvent('au-upgrade-required', { detail: context }));
+        }
+      } catch {
+      }
+    }
+    
     return response;
   } catch (error: any) {
     if (error.name === 'AbortError') {

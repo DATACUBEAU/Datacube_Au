@@ -104,7 +104,7 @@ npx supabase functions deploy process-upload-job
 Check Edge Function logs show:
 - No syntax errors
 - Function deployed successfully
-- Endpoint: `https://dhmukdeljiwvvwjdcxgn.supabase.co/functions/v1/process-upload-job`
+- Endpoint: `${SUPABASE_URL}/functions/v1/process-upload-job`
 
 ---
 

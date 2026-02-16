@@ -16,15 +16,6 @@ export function normalizeFileName(name: string): string {
   return name.replace(/[^\w.\-]/g, '_');
 }
 
-export function validateGuestSessionId(id: string | null | undefined): { valid: boolean; error?: string } {
-  if (!id) return { valid: true }; // Allowed to be missing if user is authenticated
-  const uuidRegex = /^[0-9a-fA-F-]{36}$/;
-  if (!uuidRegex.test(id)) {
-    return { valid: false, error: 'Invalid guest session ID format.' };
-  }
-  return { valid: true };
-}
-
 export function validateFile(file: File, maxSizeBytes = 50 * 1024 * 1024): { valid: boolean; error?: string } {
   // 1. Filename validation
   if (!file.name || file.name.length > 255) {

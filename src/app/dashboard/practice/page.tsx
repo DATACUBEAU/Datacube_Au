@@ -32,6 +32,7 @@ import { TruncatedText } from '@/components/TruncatedText';
 import { Badge } from '@/components/ui/badge';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useAuExams } from '@/hooks/api/use-au-exams';
+import { useStore } from '@/hooks/use-store';
 
 
 type AnswerState = 'unanswered' | 'correct' | 'incorrect';
@@ -53,6 +54,7 @@ export default function PracticePage() {
   const { session } = useSupabaseSession();
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
+  const upgradeBlocked = useStore((s) => s.upgradeBlocked);
 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
   const { documents: allDocuments, loading: docsLoading } = useAuDocuments();
@@ -134,6 +136,10 @@ export default function PracticePage() {
     if (!selectedDocId || !user) {
         toast({ variant: 'destructive', title: 'Error', description: 'Please select a document first.' });
         return;
+    }
+
+    if (upgradeBlocked) {
+      return;
     }
     
      if (!isOnline) {
@@ -382,7 +388,7 @@ export default function PracticePage() {
               )}
             </SelectContent>
           </Select>
-          <Button onClick={() => triggerGeneration()} disabled={isGenerating || !selectedDocId || !isOnline}>
+          <Button onClick={() => triggerGeneration()} disabled={isGenerating || !selectedDocId || !isOnline || upgradeBlocked}>
             {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <SquarePen className="mr-2 h-4 w-4" />}
             <span>{questions.length > 0 && !isGenerating ? 'Restart Exam' : 'Generate Exam'}</span>
           </Button>

@@ -10,6 +10,9 @@ import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { useToast } from '@/hooks/use-toast';
 import { LocalChatStorage } from '@/lib/storage/local-chat';
 import { ChatMessage } from '@/lib/api/chat';
+import { useFirebaseAuthSync } from '@/hooks/use-firebase-auth-sync';
+import { logOnce, runOnce } from '@/lib/log/dedupe';
+import { useStore } from '@/hooks/use-store';
 
 // --- TYPES ---
 
@@ -33,6 +36,7 @@ interface ChatRuntimeContextType {
   markSupportRead: () => Promise<void>;
   markBroadcastsRead: () => Promise<void>;
   connectionStatus: 'connected' | 'reconnecting' | 'offline';
+  firebaseAuthStatus: 'idle' | 'pending' | 'ready' | 'failed';
 }
 
 interface EnqueuePayload {
@@ -56,51 +60,36 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
   const [activeBroadcastVersion, setActiveBroadcastVersion] = useState(0);
   const [lastSeenBroadcastVersion, setLastSeenBroadcastVersion] = useState(0);
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'reconnecting' | 'offline'>('connected');
-  const [isFirebaseAuthReady, setIsFirebaseAuthReady] = useState(false);
-
   const { toast } = useToast();
+  const firebaseSyncPaused = useStore((s) => s.firebaseSyncPaused);
+  const setFirebaseSyncPaused = useStore((s) => s.setFirebaseSyncPaused);
+  const { status: firebaseAuthStatus } = useFirebaseAuthSync(user?.id, {
+    onFailedOnce: () => {
+      runOnce('firebase-auth-failed-toast', () => {
+        toast({
+          variant: 'destructive',
+          title: 'Session expired',
+          description: 'Please sign in again to view messages and notifications.',
+          duration: 6000,
+        });
+      });
+    },
+  });
+  const isFirebaseAuthReady = firebaseAuthStatus === 'ready';
   
   // Ref to track notified jobs to avoid double toasts
   const notifiedJobsRef = useRef<Set<string>>(new Set());
 
-  // 0. Sync Supabase Auth -> Firebase Auth
   useEffect(() => {
-    if (!user) {
-        setIsFirebaseAuthReady(false);
-        return;
+    if (!user || firebaseSyncPaused) {
+      setActiveJobs([]);
+      return;
     }
-
-    const syncAuth = async () => {
-        // Check if already signed in with correct UID
-        if (firebaseAuth.currentUser?.uid === user.id) {
-            setIsFirebaseAuthReady(true);
-            return;
-        }
-
-        try {
-            const { data, error } = await invokeEdgeFunction<{ token?: string }>('get-firebase-token', { requireAuth: true });
-            
-            if (error) {
-                console.error("[ChatRuntime] get-firebase-token error details:", error);
-                throw error;
-            }
-
-            if (data?.token) {
-                await signInWithCustomToken(firebaseAuth, data.token);
-                setIsFirebaseAuthReady(true);
-            }
-        } catch (e) {
-            console.error("[ChatRuntime] Auth sync failed:", e);
-            // Retry logic could go here, but for now we rely on the provider re-mounting or user retry
-        }
-    };
-
-    syncAuth();
-  }, [user]);
+  }, [user, firebaseSyncPaused]);
 
   // 1. Subscribe to Active Jobs (queued/processing)
   useEffect(() => {
-    if (!user || !isFirebaseAuthReady) {
+    if (!user || !isFirebaseAuthReady || firebaseSyncPaused) {
         setActiveJobs([]);
         return;
     }
@@ -122,15 +111,21 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
       });
       setActiveJobs(jobs);
     }, (err) => {
-      console.warn("[ChatRuntime] Job listener error:", err);
+      if ((err as any)?.code === 'permission-denied') {
+        unsubscribe();
+        logOnce('warn', 'chat-jobs-permission-denied', 'Firestore permission denied (jobs listener)', err);
+        runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+        return;
+      }
+      logOnce('warn', 'chat-jobs-listener-error', 'Firestore jobs listener error', err);
     });
 
     return () => unsubscribe();
-  }, [user, isFirebaseAuthReady]);
+  }, [user, isFirebaseAuthReady, firebaseSyncPaused, setFirebaseSyncPaused]);
 
   // 2. Monitor Job Completion (Notification Logic)
   useEffect(() => {
-      if (!user || !isFirebaseAuthReady) return;
+      if (!user || !isFirebaseAuthReady || firebaseSyncPaused) return;
       
       // We also need to listen to RECENTLY completed jobs to show notifications
       // Since the main listener only gets active ones, we need a separate mechanism 
@@ -168,11 +163,17 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
               }
           });
       }, (error) => {
-        console.warn("Job completion listener error:", error);
+        if ((error as any)?.code === 'permission-denied') {
+          unsub();
+          logOnce('warn', 'chat-job-completion-permission-denied', 'Firestore permission denied (job completion)', error);
+          runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+          return;
+        }
+        logOnce('warn', 'chat-job-completion-listener-error', 'Job completion listener error', error);
       });
       
       return () => unsub();
-  }, [user, toast]);
+  }, [user, toast, isFirebaseAuthReady, firebaseSyncPaused, setFirebaseSyncPaused]);
 
   // 3. Enqueue Action
   const enqueueMessage = useCallback(async (payload: EnqueuePayload) => {
@@ -205,19 +206,14 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
 
     // C. Call Edge Function
     try {
-        const { supabase } = await import('@/lib/supabase-client/client'); // Dynamic import
-        const sb = supabase; // Get client
-        const { data: { session } } = await sb.auth.getSession();
-        
-        const { data, error } = await sb.functions.invoke('enqueue-chat-job', {
+        const { error } = await invokeEdgeFunction('enqueue-chat-job', {
+            requireAuth: true,
+            silent: false,
             body: {
                 ...payload,
                 client_message_id: messageId,
-                job_id: jobRef.id // Pass the Firestore Job ID so function can update it
-            },
-            headers: session ? {
-                Authorization: `Bearer ${session.access_token}`
-            } : undefined
+                job_id: jobRef.id
+            }
         });
 
         if (error) throw error;
@@ -241,7 +237,7 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
 
   // 4. Subscribe to Notification State & Broadcast Meta
   useEffect(() => {
-      if (!user) return;
+      if (!user || !isFirebaseAuthReady || firebaseSyncPaused) return;
 
       // A. Notification State
       const notifRef = doc(db, `users/${user.id}/notification_state/inbox`);
@@ -255,7 +251,13 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
               setLastSeenBroadcastVersion(0);
           }
       }, (error) => {
-          console.warn("Notification listener error:", error);
+          if ((error as any)?.code === 'permission-denied') {
+            unsubNotif();
+            logOnce('warn', 'notif-permission-denied', 'Firestore permission denied (notifications)', error);
+            runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+            return;
+          }
+          logOnce('warn', 'notif-listener-error', 'Notification listener error', error);
       });
 
       // B. Broadcast Meta (Global)
@@ -265,14 +267,20 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
               setActiveBroadcastVersion(doc.data().active_broadcast_version || 0);
           }
       }, (error) => {
-          console.warn("Broadcast meta listener error:", error);
+          if ((error as any)?.code === 'permission-denied') {
+            unsubMeta();
+            logOnce('warn', 'broadcast-meta-permission-denied', 'Firestore permission denied (broadcast meta)', error);
+            runOnce('firestore-sync-paused', () => setFirebaseSyncPaused(true, 'permission-denied'));
+            return;
+          }
+          logOnce('warn', 'broadcast-meta-listener-error', 'Broadcast meta listener error', error);
       });
 
       return () => {
           unsubNotif();
           unsubMeta();
       };
-  }, [user, isFirebaseAuthReady]);
+  }, [user, isFirebaseAuthReady, firebaseSyncPaused, setFirebaseSyncPaused]);
 
   // Compute derived unread broadcasts
   useEffect(() => {
@@ -283,15 +291,10 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
   const markSupportRead = useCallback(async () => {
       if (!user) return;
       try {
-          const { supabase } = await import('@/lib/supabase-client/client');
-          const sb = supabase;
-          const { data: { session } } = await sb.auth.getSession();
-
-          await sb.functions.invoke('support-mark-read', {
-              body: { viewer: 'user' },
-              headers: session ? {
-                  Authorization: `Bearer ${session.access_token}`
-              } : undefined
+          await invokeEdgeFunction('support-mark-read', {
+              requireAuth: true,
+              silent: true,
+              body: { viewer: 'user' }
           });
           // Optimistic update
           setUnreadSupport(0);
@@ -305,15 +308,10 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
       if (unreadBroadcasts === 0) return; // No op
 
       try {
-          const { supabase } = await import('@/lib/supabase-client/client');
-          const sb = supabase;
-          const { data: { session } } = await sb.auth.getSession();
-
-          await sb.functions.invoke('support-mark-read', {
-              body: { viewer: 'user', scope: 'broadcasts', version: activeBroadcastVersion },
-              headers: session ? {
-                  Authorization: `Bearer ${session.access_token}`
-              } : undefined
+          await invokeEdgeFunction('support-mark-read', {
+              requireAuth: true,
+              silent: true,
+              body: { viewer: 'user', scope: 'broadcasts', version: activeBroadcastVersion }
           });
           setUnreadBroadcasts(0);
       } catch (err) {
@@ -331,7 +329,8 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
         unreadBroadcasts,
         markSupportRead,
         markBroadcastsRead,
-        connectionStatus
+        connectionStatus,
+        firebaseAuthStatus
     }}>
       {children}
     </ChatRuntimeContext.Provider>

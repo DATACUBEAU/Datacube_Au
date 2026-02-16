@@ -34,21 +34,8 @@ function GoogleIcon(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-import { 
-  AlertDialog, 
-  AlertDialogAction, 
-  AlertDialogContent, 
-  AlertDialogDescription, 
-  AlertDialogFooter, 
-  AlertDialogHeader, 
-  AlertDialogTitle 
-} from '@/components/ui/alert-dialog';
-import { UserX } from 'lucide-react';
-
 export default function LoginPage() {
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
-  const [isLoadingGuest, setIsLoadingGuest] = useState(false);
-  const [showGuestDisabled, setShowGuestDisabled] = useState(false);
   const [user, userLoading] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
@@ -75,22 +62,6 @@ export default function LoginPage() {
     }
   };
 
-  const handleGuestSignIn = async () => {
-    setIsLoadingGuest(true);
-    try {
-      const { error } = await supabase.auth.signInAnonymously();
-      if (error) throw error;
-      router.push('/dashboard');
-    } catch (error: any) {
-      toast({
-        variant: 'destructive',
-        title: 'Guest Sign-in Failed',
-        description: error?.message || 'Could not sign in as guest.',
-      });
-      setIsLoadingGuest(false);
-    }
-  };
-
   if (userLoading || (!userLoading && user)) {
     return (
       <div className="flex h-dvh items-center justify-center">
@@ -98,8 +69,6 @@ export default function LoginPage() {
       </div>
     );
   }
-
-  const anyLoading = isLoadingGoogle || isLoadingGuest;
 
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-4">
@@ -114,50 +83,15 @@ export default function LoginPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
-          <Button onClick={handleGoogleSignIn} className="w-full" disabled={anyLoading}>
+          <Button onClick={handleGoogleSignIn} className="w-full" disabled={isLoadingGoogle}>
             {isLoadingGoogle ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <GoogleIcon className="mr-2" />}
             Sign in with Google
-          </Button>
-          <Button 
-            variant="secondary" 
-            onClick={() => setShowGuestDisabled(true)} 
-            className="w-full opacity-60 cursor-not-allowed"
-          >
-            {isLoadingGuest ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserX className="mr-2 h-4 w-4" />}
-            Continue as Guest (Disabled)
           </Button>
         </CardContent>
       </Card>
       <footer className="mt-8 text-center text-sm text-muted-foreground">
         By continuing, you agree to our Terms of Service and Privacy Policy.
       </footer>
-
-      {/* Guest Disabled Dialog */}
-      <AlertDialog open={showGuestDisabled} onOpenChange={setShowGuestDisabled}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="flex items-center gap-2 font-headline text-xl text-destructive">
-                <UserX className="h-5 w-5" />
-                Guest Mode Disabled
-            </AlertDialogTitle>
-            <AlertDialogDescription asChild className="text-base space-y-3">
-              <div className="mt-2">
-                <p>
-                  Access to Guest Mode is currently disabled for <strong>security reasons</strong> and to ensure <strong>future-proof</strong> stability of the application.
-                </p>
-                <p className="mt-3">
-                  We are working on a more secure way to provide anonymous access while protecting user data and system integrity. Please sign in with Google to continue.
-                </p>
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setShowGuestDisabled(false)}>
-                Got it
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

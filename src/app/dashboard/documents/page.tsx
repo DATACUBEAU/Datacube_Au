@@ -98,8 +98,7 @@ export default function DocumentsPage() {
   const cleanupInProgress = useMemo(() => new Set<string>(), []);
 
   const getComputedExpiresAt = (doc: DocumentData) => {
-    const ttlMs = user?.is_anonymous ? GUEST_DOCUMENT_TTL_MS : AUTH_DOCUMENT_TTL_MS;
-    return new Date(new Date(doc.createdAt).getTime() + ttlMs).toISOString();
+    return new Date(new Date(doc.createdAt).getTime() + AUTH_DOCUMENT_TTL_MS).toISOString();
   };
 
   useEffect(() => {
@@ -237,7 +236,6 @@ export default function DocumentsPage() {
   const daysLeft = (expires?: string) => {
     if (!expires) return "No expiry";
     const distance = formatDistanceToNowStrict(new Date(expires));
-    if (user?.is_anonymous) return `Guest mode self-destruct in ${distance}`;
     return `${distance} left`;
   };
 

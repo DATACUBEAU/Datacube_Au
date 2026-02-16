@@ -117,7 +117,6 @@ export default function PolicyPage() {
           </ul>
           <h2 className="font-headline text-xl font-semibold">Retention and Deletion</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
-            <li>Guest sessions and their associated data are deleted after 24 Hours.</li>
             <li>Inactive authenticated accounts and associated data are deleted after 14 days of inactivity.</li>
             <li>You may request deletion sooner via account settings.</li>
           </ul>
@@ -160,4 +159,3 @@ export default function PolicyPage() {
     </div>
   );
 }
-

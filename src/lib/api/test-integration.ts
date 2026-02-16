@@ -9,8 +9,8 @@ async function testIntegration() {
   try {
     // 1. Test Document Listing
     console.log('\n--- 1. Testing listDocuments ---');
-    const docs = await listDocuments(null); // Test as guest
-    console.log(`✅ Found ${docs.length} documents for guest.`);
+    const docs = await listDocuments(null);
+    console.log(`✅ Found ${docs.length} documents for unauthenticated session.`);
     if (docs.length > 0) {
       console.log('Sample Document:', {
         id: docs[0].id,

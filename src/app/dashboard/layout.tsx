@@ -73,6 +73,7 @@ import { SiteManualGuide } from '@/components/site-manual-guide';
 import { GlobalChatDevDialog } from '@/components/global-chat-dev-dialog';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { Badge } from '@/components/ui/badge';
+import { UpgradeModal } from "@/components/ui/upgrade-modal";
 
 type NavItem = {
   href: string;
@@ -231,6 +232,11 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
   const { isGeneratingKnowledge, isGeneratingPredictions } = useStore();
+  const setUpgradeModalOpen = useStore((s) => s.setUpgradeModalOpen);
+  const upgradeBlockedUntil = useStore((s) => s.upgradeBlockedUntil);
+  const clearUpgradeBlock = useStore((s) => s.clearUpgradeBlock);
+  const firebaseSyncPaused = useStore((s) => s.firebaseSyncPaused);
+  const clearFirebaseSyncPaused = useStore((s) => s.clearFirebaseSyncPaused);
   const unreadCount = useUnreadCount();
 
   const isAnonymous = false;
@@ -396,6 +402,33 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     }
   }, [isOnline, user, isUserLoading]);
 
+  useEffect(() => {
+    const handler = (event: any) => {
+      const detail = event?.detail;
+      if (detail?.code === 'UPGRADE_REQUIRED') {
+        setUpgradeModalOpen(true, detail);
+      }
+    };
+    window.addEventListener('au-upgrade-required', handler as any);
+    return () => window.removeEventListener('au-upgrade-required', handler as any);
+  }, [setUpgradeModalOpen]);
+
+  useEffect(() => {
+    if (!upgradeBlockedUntil) return;
+    const timer = setInterval(() => {
+      if (Date.now() >= upgradeBlockedUntil) {
+        clearUpgradeBlock();
+      }
+    }, 30_000);
+    return () => clearInterval(timer);
+  }, [upgradeBlockedUntil, clearUpgradeBlock]);
+
+  useEffect(() => {
+    if (!user) {
+      clearFirebaseSyncPaused();
+    }
+  }, [user, clearFirebaseSyncPaused]);
+
   if (isUserLoading) return <PageLoader />;
   if (!user) {
     return (
@@ -421,6 +454,32 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      {firebaseSyncPaused && (
+        <div className="fixed top-4 left-4 right-4 z-[120] flex justify-center">
+          <div className="w-full max-w-3xl rounded-lg border bg-card p-4 shadow-lg">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm font-medium">Sync paused — please re-login.</div>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  disabled={!isOnline}
+                  onClick={async () => {
+                    clearFirebaseSyncPaused();
+                    await supabase.auth.signOut().catch(() => {});
+                    router.push('/login');
+                  }}
+                >
+                  Re-login
+                </Button>
+                <Button size="sm" variant="outline" onClick={clearFirebaseSyncPaused}>
+                  Dismiss
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      <UpgradeModal />
       {/* Google Auth Popup */}
       <AnimatePresence>
         {showAuthPopup && (

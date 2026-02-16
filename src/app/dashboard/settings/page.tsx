@@ -35,7 +35,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PwaInstallButton from '@/components/pwa-install-button';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 
@@ -92,6 +92,7 @@ export default function SettingsPage() {
   const [manualPaymentStatus, setManualPaymentStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
   const [latestInvoiceUrl, setLatestInvoiceUrl] = useState<string | null>(null);
   const [billingConfig, setBillingConfig] = useState<any>(null);
+  const [usageStatus, setUsageStatus] = useState<any>(null);
 
   useEffect(() => {
     if (user?.id) {
@@ -107,13 +108,17 @@ export default function SettingsPage() {
         });
       
       // Fetch Config
-      supabase.from('au_conex_config')
+      supabase.from('au_config')
         .select('*')
-        .eq('id', 1)
-        .single()
+        .limit(1)
+        .maybeSingle()
         .then(({ data }) => {
             if (data) setBillingConfig(data);
         });
+
+      invokeEdgeFunction<any>('usage-status', { method: 'GET', requireAuth: true, silent: true })
+        .then(({ data }) => setUsageStatus(data))
+        .catch(() => setUsageStatus(null));
     }
   }, [user]);
 
@@ -462,6 +467,37 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
+              {usageStatus && usageStatus.billingEnabled && !usageStatus.isPro ? (
+                <div className="rounded-xl border bg-card p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="font-semibold">Daily Free Limits</div>
+                    <Badge variant="outline">Resets daily</Badge>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {[
+                      { label: 'Chat', used: usageStatus.usage?.chat ?? 0, limit: usageStatus.limits?.chat ?? 0 },
+                      { label: 'Exams', used: usageStatus.usage?.exam ?? 0, limit: usageStatus.limits?.exam ?? 0 },
+                      { label: 'Uploads', used: usageStatus.usage?.upload ?? 0, limit: usageStatus.limits?.upload ?? 0 },
+                    ].map((m) => (
+                      <div key={m.label}>
+                        <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                          <span>{m.label}</span>
+                          <span className="font-mono">{m.used} / {m.limit}</span>
+                        </div>
+                        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary"
+                            style={{ width: `${m.limit ? Math.min(100, (m.used / m.limit) * 100) : 0}%` }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="pt-3 text-xs text-muted-foreground">
+                    Hit the limit? AU will prompt you to upgrade.
+                  </div>
+                </div>
+              ) : null}
               {tier === 'pro' ? (
                   <div className="p-6 rounded-xl border-2 border-primary bg-primary/5">
                       <div className="flex justify-between items-start mb-6">

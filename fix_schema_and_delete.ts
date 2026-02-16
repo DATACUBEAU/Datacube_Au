@@ -1,8 +1,12 @@
 
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = 'https://dhmukdeljiwvvwjdcxgn.supabase.co';
-const supabaseServiceKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRobXVrZGVsaml3dnZ3amRjeGduIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTIwNjAyOCwiZXhwIjoyMDgwNzgyMDI4fQ.3lrr0S4UH-9mccuIZAxn1TH82d-SezY19ny8OTaiS2o';
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in environment');
+}
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -12,9 +16,7 @@ async function main() {
   // Try to use a common RPC name for running SQL if it exists
   // If not, we'll have to rely on the migrations being applied correctly via CLI
   const sqlCommands = [
-    `ALTER TABLE public.au_upload_jobs ADD COLUMN IF NOT EXISTS guest_session_id UUID REFERENCES public.au_guest_sessions(id) ON DELETE CASCADE;`,
     `ALTER TABLE public.au_upload_jobs ADD COLUMN IF NOT EXISTS error text;`,
-    `CREATE INDEX IF NOT EXISTS au_upload_jobs_guest_session_id_idx ON au_upload_jobs(guest_session_id);`
   ];
 
   for (const sql of sqlCommands) {
@@ -60,9 +62,6 @@ async function main() {
   const { data, error } = await supabase.from('au_upload_jobs').select('*').limit(1);
   if (error) {
     console.error('Schema Error on au_upload_jobs:', error.message);
-    if (error.message.includes('column "guest_session_id" does not exist')) {
-      console.error('CONFIRMED: guest_session_id is missing.');
-    }
     if (error.message.includes('column "error" does not exist')) {
       console.error('CONFIRMED: error column is missing.');
     }

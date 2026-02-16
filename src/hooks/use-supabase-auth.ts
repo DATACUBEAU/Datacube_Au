@@ -51,11 +51,6 @@ export function useSupabaseUser() {
       if (mounted.current) {
           console.warn("[Auth] Check failed or timed out:", e);
           setError(e);
-          // If we have cached data, keep it even on error
-          if (!cachedUser) {
-              // Fallback to anonymous/guest logic if implemented elsewhere, 
-              // or just stop loading to show "Sign In" state
-          }
       }
     } finally {
       if (mounted.current) setLoading(false);

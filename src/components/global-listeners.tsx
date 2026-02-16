@@ -11,7 +11,7 @@ import { ToastAction } from '@/components/ui/toast';
 
 /**
  * Global component to mount all real-time listeners (Broadcasts, Direct Messages).
- * Handles the logic of identifying if the user is authenticated or a guest.
+ * Handles the logic of identifying if the user is authenticated.
  */
 export function GlobalListeners() {
   const [ids, setIds] = useState<{ userId?: string }>({});

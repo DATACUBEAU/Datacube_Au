@@ -99,6 +99,7 @@ export default function PredictionsPage() {
   const { session } = useSupabaseSession();
   const isOnline = useOnlineStatus();
   const { toast } = useToast();
+  const upgradeBlocked = useStore((s) => s.upgradeBlocked);
 
   const [selectedPastQuestionsId, setSelectedPastQuestionsId] = useState<string | null>(null);
   const [selectedTextbookId, setSelectedTextbookId] = useState<string | null>(null);
@@ -208,7 +209,7 @@ export default function PredictionsPage() {
   };
 
   const triggerGetPredictions = async () => {
-    if (!selectedPastQuestionsId || !user || isGeneratingPredictions) return;
+    if (!selectedPastQuestionsId || !user || isGeneratingPredictions || upgradeBlocked) return;
 
     // Check if selected document is completed
     const pqDoc = pastQuestionsDocs.find(d => d.id === selectedPastQuestionsId);
@@ -314,7 +315,7 @@ export default function PredictionsPage() {
             </div>
 
             <div className="flex items-end">
-              <Button onClick={triggerGetPredictions} disabled={!selectedPastQuestionsId || isGeneratingPredictions || !isOnline} className="w-full lg:w-auto">
+              <Button onClick={triggerGetPredictions} disabled={!selectedPastQuestionsId || isGeneratingPredictions || !isOnline || upgradeBlocked} className="w-full lg:w-auto">
                 {isGeneratingPredictions ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <BrainCircuit className="mr-2 h-4 w-4" aria-hidden="true" />}
                 Generate Briefing
               </Button>

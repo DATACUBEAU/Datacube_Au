@@ -98,7 +98,7 @@ export function useAuDocuments(pollInterval = 0) {
   }, [user, toast, documents]);
 
   useEffect(() => {
-    // Only use polling if explicitly requested (e.g., for guest sessions or if realtime fails)
+    // Only use polling if explicitly requested (e.g., if realtime fails)
     if (pollInterval > 0) {
       const interval = setInterval(fetchDocs, pollInterval);
       return () => clearInterval(interval);
