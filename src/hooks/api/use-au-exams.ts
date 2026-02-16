@@ -4,11 +4,14 @@ import { getDocumentText } from '@/lib/api/documents';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
 import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '@shared/schemas';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { logOnce } from '@/lib/log/dedupe';
 
 export function useAuExams(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
   const { toast } = useToast();
+  const { isOnline } = useNetworkStatus();
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [examData, setExamData] = useState<GeneratePracticeExamOutput | null>(null);
@@ -16,6 +19,15 @@ export function useAuExams(selectedDocId: string | null) {
 
   const startExamGeneration = useCallback(async (pastQuestionIds: string[] = []) => {
     if (!selectedDocId || !user) return;
+    if (!isOnline) {
+      logOnce('warn', 'exams:practice:offline', '[exams] Practice exam blocked (offline)');
+      return;
+    }
+    if (!session?.access_token) {
+      logOnce('warn', 'exams:practice:no_token', '[exams] Practice exam blocked (no access token)');
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate a practice exam.' });
+      return;
+    }
     
     setIsGenerating(true);
     try {
@@ -34,8 +46,7 @@ export function useAuExams(selectedDocId: string | null) {
 
       const result = await generatePracticeExam(
         documentContent,
-        pastQuestionsContent,
-        session?.access_token
+        pastQuestionsContent
       );
       setExamData(result);
       toast({ title: 'Practice exam generated!' });
@@ -48,10 +59,19 @@ export function useAuExams(selectedDocId: string | null) {
     } finally {
       setIsGenerating(false);
     }
-  }, [selectedDocId, user, session, toast]);
+  }, [selectedDocId, user, session?.access_token, toast, isOnline]);
 
   const startPredictionGeneration = useCallback(async (pastQuestionIds: string[]) => {
     if (!selectedDocId || !user || pastQuestionIds.length === 0) return;
+    if (!isOnline) {
+      logOnce('warn', 'exams:predictions:offline', '[exams] Predictions blocked (offline)');
+      return;
+    }
+    if (!session?.access_token) {
+      logOnce('warn', 'exams:predictions:no_token', '[exams] Predictions blocked (no access token)');
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate predictions.' });
+      return;
+    }
     
     setIsGenerating(true);
     try {
@@ -63,8 +83,7 @@ export function useAuExams(selectedDocId: string | null) {
 
       const result = await generatePredictions(
         documentContent,
-        pastQuestionsContent,
-        session?.access_token
+        pastQuestionsContent
       );
       setPredictions(result);
       toast({ title: 'Predictions generated!' });
@@ -77,7 +96,7 @@ export function useAuExams(selectedDocId: string | null) {
     } finally {
       setIsGenerating(false);
     }
-  }, [selectedDocId, user, session, toast]);
+  }, [selectedDocId, user, session?.access_token, toast, isOnline]);
 
   return {
     isGenerating,

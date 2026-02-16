@@ -38,6 +38,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { logOnce } from '@/lib/log/dedupe';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
@@ -56,7 +57,7 @@ import { Icons } from '@/components/icons';
 import { Input } from '@/components/ui/input';
 import InteractiveConceptMap from '@/components/interactive-concept-map';
 import { useOnlineStatus } from '@/hooks/use-online-status';
-import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { validateQuery } from '@/lib/upload/file-types';
 import { ThinkingProcess } from '@/components/thinking-process';
 import { useStore } from '@/hooks/use-store';
@@ -139,7 +140,9 @@ export default function GlobalChatPage() {
 
   const { toast } = useToast();
   const [user] = useSupabaseUser();
+  const { session } = useSupabaseSession();
   const isOnline = useOnlineStatus();
+  const canChat = isOnline && !!session?.access_token;
 
   // Hardcoded to 'global'
   const selectedDocId = GLOBAL_CHAT_ID;
@@ -312,6 +315,10 @@ export default function GlobalChatPage() {
     const currentInput = (messageContent || input).trim();
     if (!currentInput || isResponding) return;
     if (!user) return;
+    if (!canChat) {
+      logOnce('warn', 'global-chat:send:blocked', '[global-chat] Send blocked (auth/online)');
+      return;
+    }
 
     const validation = validateQuery(currentInput);
     if (!validation.valid) {
@@ -587,16 +594,25 @@ export default function GlobalChatPage() {
               <Textarea
                 id="message"
                 ref={textareaRef}
-                placeholder={!isOnline ? "You are offline." : "Ask Global Assistant..."}
+                placeholder={
+                  !isOnline
+                    ? "You are offline. Global chat is disabled."
+                    : !session?.access_token
+                      ? "Sign in to chat"
+                      : "Ask Global Assistant..."
+                }
                 className="flex-1 resize-none rounded-full border bg-secondary p-3 px-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
-                disabled={!isOnline}
+                disabled={!canChat}
               />
+              {!session?.access_token && isOnline && (
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in to chat</div>
+              )}
             </div>
             <OfflineGuard disabledReason="Offline: Global Chat unavailable">
-            <Button type={isResponding ? "button" : "submit"} size="icon" className={`h-12 w-12 shrink-0 rounded-full transition-all ${isResponding ? 'bg-destructive' : ''}`} disabled={(!input.trim()) && !isResponding} onClick={(e) => { if (isResponding) { e.preventDefault(); stopGeneration(); } }}>
+            <Button type={isResponding ? "button" : "submit"} size="icon" className={`h-12 w-12 shrink-0 rounded-full transition-all ${isResponding ? 'bg-destructive' : ''}`} disabled={((!input.trim() || !canChat) && !isResponding)} onClick={(e) => { if (isResponding) { e.preventDefault(); stopGeneration(); } }}>
               {isResponding ? <div className="relative flex items-center justify-center"><Square className="h-4 w-4 fill-current" /><span className="absolute inset-0 animate-ping rounded-full bg-destructive opacity-20"></span></div> : <Send className="h-5 w-5" />}
             </Button>
             </OfflineGuard>

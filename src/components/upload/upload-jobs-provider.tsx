@@ -17,6 +17,7 @@ import { deleteJobFile, getJobFile, putJobFile } from '@/lib/upload/idb';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from '@/hooks/use-toast';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 type UploadJobsContextValue = {
   jobs: UploadJobRow[];
@@ -63,6 +64,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
   const { toast } = useToast();
+  const { isOnline } = useNetworkStatus();
 
   const [jobs, setJobs] = useState<UploadJobRow[]>([]);
   const [isThrottled, setIsThrottled] = useState(false);
@@ -330,6 +332,9 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       controllersRef.current.set(job.id, controller);
 
       try {
+        if (!isOnline) throw new Error('Offline. Connect to the internet to upload.');
+        if (!session?.access_token) throw new Error('Sign in required to upload.');
+
         const file = await getJobFile(job.id);
         if (!file) throw new Error('Missing file data. Retry upload.');
 
@@ -342,6 +347,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
         const effectiveUserId = currentSession?.user?.id;
         if (!effectiveUserId) throw new Error('Could not determine owner ID. Please sign in or refresh.');
+        if (!accessToken) throw new Error('Sign in required to upload.');
 
         // Use dynamic limit
         if (file.size > maxUploadSize) {
@@ -461,11 +467,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         runningRef.current.delete(job.id);
       }
     },
-    [updateJobLocal, updateJobRow, user, maxUploadSize]
+    [isOnline, session?.access_token, updateJobLocal, updateJobRow, user, maxUploadSize]
   );
 
   useEffect(() => {
     if (!user) return;
+    if (!isOnline) return;
+    if (!session?.access_token) return;
 
     const active = jobs.filter((j) => isActiveStatus(j.status));
     active.forEach((j) => {
@@ -475,10 +483,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         runUpload(j);
       }
     });
-  }, [jobs, runUpload, user]);
+  }, [isOnline, jobs, runUpload, session?.access_token, user]);
 
   const enqueueUploads = useCallback(
     async (inputs: CreateUploadJobInput[]) => {
+      if (!isOnline) throw new Error('Offline. Connect to the internet to upload.');
+      if (!session?.access_token) throw new Error('Authentication required to upload.');
+
       const { data: sessionData } = await supabase.auth.getSession();
       const authUser = sessionData.session?.user ?? null;
       
@@ -539,7 +550,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [maxUploadSize]
+    [isOnline, maxUploadSize, session?.access_token]
   );
 
   const cancelJob = useCallback(

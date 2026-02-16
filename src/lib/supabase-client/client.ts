@@ -120,7 +120,7 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
-async function getAccessToken(opts?: { refresh?: boolean }): Promise<string | null> {
+export async function getSupabaseAccessToken(opts?: { refresh?: boolean }): Promise<string | null> {
   if (opts?.refresh) {
     try {
       await supabase.auth.refreshSession();
@@ -163,16 +163,20 @@ export async function invokeEdgeFunction<T = any>(
   const method = options?.method ?? 'POST';
   const timeoutMs = options?.timeoutMs ?? 10000;
   const silent = options?.silent ?? true;
+  const requireAuth = options?.requireAuth ?? true;
 
   const attemptOnce = async (accessToken: string | null) => {
-    if (options?.requireAuth && !accessToken) {
+    if (requireAuth && !accessToken) {
+      return { data: null as T | null, error: { message: 'No active session', status: 401 } };
+    }
+    if (!accessToken) {
       return { data: null as T | null, error: { message: 'No active session', status: 401 } };
     }
 
     const headers = new Headers(options?.headers ?? {});
     headers.set('apikey', anonKey);
     headers.set('Content-Type', 'application/json');
-    headers.set('Authorization', `Bearer ${accessToken ?? anonKey}`);
+    headers.set('Authorization', `Bearer ${accessToken}`);
 
     // Use local proxy to avoid CORS issues
     const url = `/api/proxy/${functionName}`;
@@ -207,24 +211,31 @@ export async function invokeEdgeFunction<T = any>(
     return { data: null as T | null, error: { message, status: res.status, details: payload } };
   };
 
-  const accessToken1 = await getAccessToken();
+  const accessToken1 = await getSupabaseAccessToken();
   const maxAttempts = 3;
+  let refreshedAfter401 = false;
 
   for (let i = 0; i < maxAttempts; i++) {
     if (i > 0) await sleep(computeBackoffMs(i));
 
     const accessToken =
-      i === 1 ? await getAccessToken({ refresh: true }) : i === 2 ? await getAccessToken({ refresh: true }) : accessToken1;
+      i === 1 ? await getSupabaseAccessToken({ refresh: true }) : i === 2 ? await getSupabaseAccessToken({ refresh: true }) : accessToken1;
 
     const result = await attemptOnce(accessToken);
     const status = result.error?.status;
 
     if (!result.error) return result;
+    if (status === 401 && requireAuth && !refreshedAfter401) {
+      refreshedAfter401 = true;
+      const refreshed = await attemptOnce(await getSupabaseAccessToken({ refresh: true }));
+      if (!refreshed.error) return refreshed;
+      return refreshed;
+    }
     if (status === 401 || status === 403) return result;
     if (typeof status === 'number' && status > 0 && status < 500) return result;
   }
 
-  const final = await attemptOnce(await getAccessToken({ refresh: true }));
+  const final = await attemptOnce(await getSupabaseAccessToken({ refresh: true }));
   return final;
 }
 

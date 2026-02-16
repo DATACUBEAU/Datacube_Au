@@ -235,8 +235,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const setUpgradeModalOpen = useStore((s) => s.setUpgradeModalOpen);
   const upgradeBlockedUntil = useStore((s) => s.upgradeBlockedUntil);
   const clearUpgradeBlock = useStore((s) => s.clearUpgradeBlock);
-  const firebaseSyncPaused = useStore((s) => s.firebaseSyncPaused);
-  const clearFirebaseSyncPaused = useStore((s) => s.clearFirebaseSyncPaused);
   const unreadCount = useUnreadCount();
 
   const isAnonymous = false;
@@ -423,12 +421,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     return () => clearInterval(timer);
   }, [upgradeBlockedUntil, clearUpgradeBlock]);
 
-  useEffect(() => {
-    if (!user) {
-      clearFirebaseSyncPaused();
-    }
-  }, [user, clearFirebaseSyncPaused]);
-
   if (isUserLoading) return <PageLoader />;
   if (!user) {
     return (
@@ -454,31 +446,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {firebaseSyncPaused && (
-        <div className="fixed top-4 left-4 right-4 z-[120] flex justify-center">
-          <div className="w-full max-w-3xl rounded-lg border bg-card p-4 shadow-lg">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="text-sm font-medium">Sync paused — please re-login.</div>
-              <div className="flex gap-2">
-                <Button
-                  size="sm"
-                  disabled={!isOnline}
-                  onClick={async () => {
-                    clearFirebaseSyncPaused();
-                    await supabase.auth.signOut().catch(() => {});
-                    router.push('/login');
-                  }}
-                >
-                  Re-login
-                </Button>
-                <Button size="sm" variant="outline" onClick={clearFirebaseSyncPaused}>
-                  Dismiss
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
       <UpgradeModal />
       {/* Google Auth Popup */}
       <AnimatePresence>

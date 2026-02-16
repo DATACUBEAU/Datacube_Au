@@ -38,6 +38,7 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 import {
   Dialog,
@@ -61,9 +62,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function SettingsPage() {
-  const [user] = useSupabaseUser();
+  const [user, session] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
+  const { isOnline } = useNetworkStatus();
 
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
@@ -95,7 +97,7 @@ export default function SettingsPage() {
   const [usageStatus, setUsageStatus] = useState<any>(null);
 
   useEffect(() => {
-    if (user?.id) {
+    if (user?.id && session?.access_token && isOnline) {
       // Fetch Profile
       supabase.from('au_user_profiles')
         .select('tier, tier_expires_at, latest_invoice_url')
@@ -120,9 +122,17 @@ export default function SettingsPage() {
         .then(({ data }) => setUsageStatus(data))
         .catch(() => setUsageStatus(null));
     }
-  }, [user]);
+  }, [isOnline, session?.access_token, user]);
 
   const handleStripeCheckout = async (planType: 'weekly' | 'monthly') => {
+      if (!isOnline) {
+        toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+        return;
+      }
+      if (!session?.access_token) {
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
+        return;
+      }
       setIsLoadingBilling(true);
       try {
           const { data, error } = await invokeEdgeFunction('stripe-checkout', {
@@ -150,6 +160,14 @@ export default function SettingsPage() {
   };
 
   const handlePaystackCheckout = async (planType: 'weekly' | 'monthly') => {
+      if (!isOnline) {
+        toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+        return;
+      }
+      if (!session?.access_token) {
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
+        return;
+      }
       setIsLoadingBilling(true);
       try {
           const origin = window.location.origin;
@@ -177,6 +195,14 @@ export default function SettingsPage() {
   };
 
   const handlePortal = async () => {
+      if (!isOnline) {
+        toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+        return;
+      }
+      if (!session?.access_token) {
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
+        return;
+      }
 
       setIsLoadingBilling(true);
       try {

@@ -26,8 +26,11 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {
           headers.set('Authorization', `Bearer ${session.access_token}`);
-      } else if (ANON_KEY) {
-          headers.set('Authorization', `Bearer ${ANON_KEY}`);
+      } else {
+          return new Response(JSON.stringify({ error: 'unauthorized' }), {
+            status: 401,
+            headers: { 'Content-Type': 'application/json' },
+          });
       }
   }
 

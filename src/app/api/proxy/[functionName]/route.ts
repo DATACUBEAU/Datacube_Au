@@ -1,5 +1,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
+import { extractSupabaseAuthorization } from '@/app/api/proxy/_supabase-auth';
 
 export const runtime = 'edge';
 
@@ -13,67 +14,92 @@ function functionsBaseUrl(): string {
   return `${requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '')}/functions/v1`;
 }
 
+function corsHeaders(): HeadersInit {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, apikey',
+  };
+}
+
 async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ functionName: string }> }) {
   const { functionName } = await params;
-  const url = new URL(req.url);
-  const searchParams = url.searchParams;
-  
-  // Construct target URL
-  const targetUrl = new URL(`${functionsBaseUrl()}/${functionName}`);
-  searchParams.forEach((value, key) => {
-    targetUrl.searchParams.append(key, value);
-  });
-
-  // Prepare headers
-  const headers = new Headers();
-  const authHeader = req.headers.get('authorization');
-  if (authHeader) {
-    headers.set('Authorization', authHeader);
-  }
-  
-  // Forward Content-Type if present
-  const contentType = req.headers.get('content-type');
-  if (contentType) {
-    headers.set('Content-Type', contentType);
-  }
-  
-  // Forward Accept if present (crucial for streaming)
-  const accept = req.headers.get('accept');
-  if (accept) {
-    headers.set('Accept', accept);
-  }
-
-  // Forward apikey if present
-  const apikey = req.headers.get('apikey');
-  if (apikey) {
-    headers.set('apikey', apikey);
-  } else {
-    // Fallback to env var if not provided
-    headers.set('apikey', requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'));
-  }
-
-  // Handle body
-  let body: BodyInit | null = null;
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    body = req.body;
-  }
 
   try {
+    const url = new URL(req.url);
+    const searchParams = url.searchParams;
+
+    const targetUrl = new URL(`${functionsBaseUrl()}/${functionName}`);
+    searchParams.forEach((value, key) => {
+      targetUrl.searchParams.append(key, value);
+    });
+
+    const headers = new Headers();
+    const auth = extractSupabaseAuthorization(req);
+    if (!auth.authorizationHeader) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
+    }
+    headers.set('Authorization', auth.authorizationHeader);
+
+    const contentType = req.headers.get('content-type');
+    if (contentType) headers.set('Content-Type', contentType);
+
+    const accept = req.headers.get('accept');
+    if (accept) headers.set('Accept', accept);
+
+    const apikey = req.headers.get('apikey');
+    if (apikey) {
+      headers.set('apikey', apikey);
+    } else {
+      headers.set('apikey', requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'));
+    }
+
+    let body: BodyInit | null = null;
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      body = req.body;
+    }
+
     const response = await fetch(targetUrl.toString(), {
       method: req.method,
       headers,
       body,
       // @ts-ignore - duplex is needed for streaming body in some environments but Next.js edge runtime handles it
-      duplex: 'half', 
+      duplex: 'half',
     });
 
-    // Create response with appropriate headers
+    if (!response.ok) {
+      const ct = response.headers.get('content-type') || '';
+      const isEventStream = ct.includes('text/event-stream') || (req.headers.get('accept') || '').includes('text/event-stream');
+      if (!isEventStream) {
+        const raw = await response.text().catch(() => '');
+        const lower = raw.toLowerCase();
+
+        const isUnauthorized = lower.includes('unauthorized');
+        if (isUnauthorized) {
+          return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
+        }
+
+        if (functionName === 'global-chat') {
+          const isRegisteredOnly =
+            lower.includes('registered user account required') ||
+            lower.includes('registered account required') ||
+            lower.includes('registered user required');
+          if (isRegisteredOnly) {
+            return NextResponse.json(
+              { error: 'forbidden', message: 'Registered user account required' },
+              { status: 403, headers: corsHeaders() }
+            );
+          }
+        }
+
+        const responseHeaders = new Headers(response.headers);
+        Object.entries(corsHeaders()).forEach(([k, v]) => responseHeaders.set(k, String(v)));
+        return new Response(raw, { status: response.status, statusText: response.statusText, headers: responseHeaders });
+      }
+    }
+
     const responseHeaders = new Headers(response.headers);
-    
-    // Ensure CORS headers are set on the response from our proxy (Next.js handles this automatically usually, but good to be safe)
-    responseHeaders.set('Access-Control-Allow-Origin', '*');
-    responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    responseHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
+    Object.entries(corsHeaders()).forEach(([k, v]) => responseHeaders.set(k, String(v)));
 
     return new Response(response.body, {
       status: response.status,
@@ -82,10 +108,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     });
   } catch (error: any) {
     console.error(`[Proxy] Error calling function ${functionName}:`, error);
-    return NextResponse.json(
-      { error: error.message || 'Internal Server Error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500, headers: corsHeaders() });
   }
 }
 
@@ -100,10 +123,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ function
 export async function OPTIONS(req: NextRequest) {
   return new NextResponse(null, {
     status: 200,
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept',
-    },
+    headers: corsHeaders(),
   });
 }

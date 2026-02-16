@@ -48,7 +48,6 @@ const HeaderPwaInstallButton = () => {
 
     // Listen for the install prompt
     const handleBeforeInstallPrompt = (event: BeforeInstallPromptEvent) => {
-      event.preventDefault();
       setInstallPrompt(event);
     };
 

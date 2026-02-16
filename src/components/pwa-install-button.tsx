@@ -65,8 +65,6 @@ const PwaInstallButton = () => {
     // This event is fired by the browser when the PWA is installable.
     // It will fire again if the user uninstalls the app.
     const handleBeforeInstallPrompt = (event: BeforeInstallPromptEvent) => {
-      // Prevent the default browser install prompt from appearing.
-      event.preventDefault();
       // Store the event so we can trigger it later on a button click.
       setInstallPrompt(event);
     };

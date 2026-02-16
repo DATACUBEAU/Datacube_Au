@@ -1,6 +1,7 @@
 
 import { safeFetch } from '@/lib/api/safe-fetch';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
+import { getSupabaseAccessToken, invokeEdgeFunction } from '@/lib/supabase-client/client';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -101,7 +102,6 @@ const DEFAULT_MODEL_IDS: string[] = [];
  */
 export async function sendChatMessage(
   request: ChatRequest,
-  accessToken?: string,
   opts?: { signal?: AbortSignal; clientMessageId?: string }
 ): Promise<RagBasedQuestionAnsweringOutput & { thought?: string }> {
   // ROUTING LOGIC:
@@ -150,23 +150,18 @@ export async function sendChatMessage(
       };
   }
 
-  const response = await safeFetch(`/api/proxy/${endpoint}`, {
+  const { data, error } = await invokeEdgeFunction<RagBasedQuestionAnsweringOutput & { thought?: string }>(endpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    signal: opts?.signal,
-    body: JSON.stringify(payload),
-    timeout: 120_000 // safeFetch options are merged into the second argument
+    requireAuth: true,
+    timeoutMs: 120_000,
+    silent: true,
+    body: payload,
+    headers: opts?.signal ? {} : {},
   });
 
-  if (!response.ok) {
-      throw new Error(`Chat request failed: ${response.statusText}`);
-  }
-  
-  const result = await response.json();
-  return result;
+  if (error) throw error;
+  if (!data) throw { message: 'Chat request failed', status: 500 };
+  return data;
 }
 
 export type ChatStreamDeltaEvent = { type: 'delta'; text: string };
@@ -176,7 +171,6 @@ export type ChatStreamEvent = ChatStreamDeltaEvent | ChatStreamDoneEvent | ChatS
 
 export async function sendChatMessageStream(
   request: ChatRequest,
-  accessToken: string | undefined,
   handlers: {
     onEvent: (event: ChatStreamEvent) => void;
   },
@@ -184,9 +178,6 @@ export async function sendChatMessageStream(
 ): Promise<ChatStreamDoneEvent> {
   const isGlobal = request.selectedDocId === 'global' || request.chat_type === 'global';
   const endpoint = isGlobal ? 'global-chat' : 'au-chat';
-
-  const supabaseUrl = SUPABASE_URL?.replace(/\/$/, '');
-  if (!supabaseUrl) throw new Error('Missing SUPABASE URL');
 
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!anonKey) throw new Error('Missing SUPABASE anon key');
@@ -222,16 +213,21 @@ export async function sendChatMessageStream(
     };
   }
 
-  const res = await fetch(`/api/proxy/${endpoint}`, {
+  const accessToken = await getSupabaseAccessToken({ refresh: true });
+  if (!accessToken) throw { message: 'No active session', status: 401 };
+
+  const res = await safeFetch(`/api/proxy/${endpoint}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
       apikey: anonKey,
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      Authorization: `Bearer ${accessToken}`,
     },
     body: JSON.stringify(payload),
     signal: opts?.signal,
+    timeout: 120_000,
+    silent: true,
   });
 
   if (!res.ok) {
@@ -291,51 +287,40 @@ export async function sendChatMessageStream(
 export async function generatePromptStarters(
   documentTitle: string,
   documentContent: string,
-  userIdea?: string,
-  accessToken?: string
+  userIdea?: string
 ): Promise<string[]> {
-  const response = await safeFetch(`/api/proxy/generate-prompt-starters`, {
+  const { data, error } = await invokeEdgeFunction<any>('generate-prompt-starters', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    body: JSON.stringify({
+    requireAuth: true,
+    timeoutMs: 30_000,
+    silent: true,
+    body: {
       documentTitle,
-      documentContent: documentContent.substring(0, 10000), // Efficiency limit
+      documentContent: documentContent.substring(0, 10000),
       userIdea,
-    }),
-    timeout: 30_000,
-    silent: true
+    },
   });
-  
-  const result = await response.json();
-  return (result as any).prompts || [];
+
+  if (error) throw error;
+  return (data as any)?.prompts || [];
 }
 
 /**
  * Fetches the list of available models from the backend.
  */
-export async function getAvailableModels(accessToken?: string): Promise<string[]> {
+export async function getAvailableModels(): Promise<string[]> {
   if (!SUPABASE_URL) return DEFAULT_MODEL_IDS;
 
-  if (!accessToken) {
-    return DEFAULT_MODEL_IDS;
-  }
-
   try {
-    const response = await safeFetch(`/api/proxy/au-chat`, {
+    const { data, error } = await invokeEdgeFunction<any>('au-chat', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${accessToken}`,
-      },
-      body: JSON.stringify({ action: 'get_models' }),
-      silent: true
+      requireAuth: true,
+      silent: true,
+      body: { action: 'get_models' },
     });
+    if (error) return DEFAULT_MODEL_IDS;
 
-    const result = await response.json();
-    const models = (result as any)?.models;
+    const models = (data as any)?.models;
     if (Array.isArray(models)) {
       if (models.every((m) => typeof m === 'string')) return models;
       if (models.every((m) => m && typeof m === 'object' && typeof (m as any).id === 'string')) {

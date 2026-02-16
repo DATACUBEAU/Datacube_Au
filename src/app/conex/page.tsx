@@ -413,6 +413,7 @@ const AdminUsage = ({ token }: { token: string }) => {
   const [stats, setStats] = useState({ totalCalls: 0, failedCalls: 0, successfulCalls: 0 });
   const [loading, setLoading] = useState(true);
   const [totalUsers, setTotalUsers] = useState(0);
+  const { toast } = useToast();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -427,20 +428,23 @@ const AdminUsage = ({ token }: { token: string }) => {
         if ((usageRes as any).stats) setStats((usageRes as any).stats);
       }
 
-      // Fetch Users Count using the centralized fetchAdmin utility
       const usersRes = await fetchAdmin('admin-handler', {
         method: 'POST',
-        body: JSON.stringify({ action: 'get_users' })
+        body: JSON.stringify({ action: 'list_users', page: 1, pageSize: 1 })
       });
       if (usersRes.ok) {
-        setTotalUsers((usersRes as any).users.authenticated?.length || 0);
+        const data = (usersRes as any).data || usersRes;
+        setTotalUsers(Number(data.total || 0));
+      } else {
+        throw new Error((usersRes as any).error || 'Failed to load users');
       }
     } catch (e) {
       console.error('[AdminUsage] fetch error:', e);
+      toast({ title: 'Error', description: 'Failed to load usage dashboard.', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [toast]);
 
   useEffect(() => {
     fetchData();
@@ -548,6 +552,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
   const [keys, setKeys] = useState<any[]>([]);
   const [models, setModels] = useState<any[]>([]);
   const [selectedKey, setSelectedKey] = useState<any>(null);
+  const [registrySource, setRegistrySource] = useState<'free' | 'pro'>('free');
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
@@ -563,6 +568,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
       if (res.ok) {
         setKeys((res as any).keys || []);
         setModels((res as any).models || []);
+        setRegistrySource(((res as any).registrySource === 'pro' ? 'pro' : 'free') as any);
       }
     } catch (e) {
       console.error('[AdminRegistry] fetch error:', e);
@@ -575,6 +581,12 @@ const AdminRegistry = ({ token }: { token: string }) => {
     if (!selectedKey) return;
     const updated = keys.find((k: any) => k.service === selectedKey.service);
     if (updated && updated !== selectedKey) setSelectedKey(updated);
+  }, [keys, selectedKey]);
+
+  useEffect(() => {
+    if (selectedKey || keys.length === 0) return;
+    const preferred = keys.find((k: any) => String(k?.metadata?.tier || '').toLowerCase() === 'free') || keys[0];
+    setSelectedKey(preferred);
   }, [keys, selectedKey]);
   
   useEffect(() => {
@@ -648,7 +660,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
-        body: JSON.stringify({ action: 'update_model', model })
+        body: JSON.stringify({ action: 'update_model', model, registry: registrySource })
       });
       if (res.ok) {
         toast({ title: 'Success', description: 'Model updated.' });
@@ -663,7 +675,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
-        body: JSON.stringify({ action: 'update_model', model })
+        body: JSON.stringify({ action: 'update_model', model, registry: registrySource })
       });
       if (res.ok) {
         toast({ title: 'Success', description: 'Model added successfully.' });
@@ -714,7 +726,12 @@ const AdminRegistry = ({ token }: { token: string }) => {
                     </div>
                     <div className="flex justify-between items-end">
                          <span className="text-[10px] font-mono text-muted-foreground">{k.key_value || 'No Key'}</span>
-                         <Badge variant="secondary" className="text-[9px] h-4">{k.provider_type}</Badge>
+                         <div className="flex items-center gap-1">
+                           <Badge variant="secondary" className="text-[9px] h-4">{k.provider_type}</Badge>
+                           <Badge variant="outline" className="text-[9px] h-4 uppercase">
+                             {String(k?.metadata?.tier || 'free')}
+                           </Badge>
+                         </div>
                     </div>
                     {/* Mini Usage Bar (Mock for now, or use last_used_at) */}
                     <div className="mt-2 text-[9px] text-muted-foreground flex justify-between">
@@ -769,8 +786,8 @@ const AdminRegistry = ({ token }: { token: string }) => {
                          <h3 className="font-medium flex items-center gap-2"><Database className="h-4 w-4" /> Attached Models</h3>
                          
                          {/* Registry Indicator */}
-                         <Badge variant={selectedKey.service === 'openrouter_primary' ? 'default' : 'secondary'} className="ml-2 text-[10px] h-5">
-                             Registry: {selectedKey.service === 'openrouter_primary' ? 'PRO' : 'FREE'}
+                         <Badge variant={registrySource === 'pro' ? 'default' : 'secondary'} className="ml-2 text-[10px] h-5">
+                             Registry: {registrySource.toUpperCase()}
                          </Badge>
                          
                          <div className="flex items-center gap-2">

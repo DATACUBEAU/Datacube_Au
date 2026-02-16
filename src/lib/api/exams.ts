@@ -1,5 +1,5 @@
-import { safeFetch } from '@/lib/api/safe-fetch';
 import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '@shared/schemas';
+import { invokeEdgeFunction } from '@/lib/supabase-client/client';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -10,25 +10,17 @@ if (!SUPABASE_URL) {
 /**
  * Generates a practice exam based on document content.
  */
-export async function generatePracticeExam(
-  documentContent: string,
-  pastQuestionsContent?: string,
-  accessToken?: string
-): Promise<GeneratePracticeExamOutput> {
-  const response = await safeFetch(`/api/proxy/exam-generator`, {
+export async function generatePracticeExam(documentContent: string, pastQuestionsContent?: string): Promise<GeneratePracticeExamOutput> {
+  const { data, error } = await invokeEdgeFunction<GeneratePracticeExamOutput>('exam-generator', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    body: JSON.stringify({ documentContent, pastQuestionsContent }),
+    requireAuth: true,
+    timeoutMs: 120_000,
+    silent: true,
+    body: { documentContent, pastQuestionsContent },
   });
-
-  if (!response.ok) {
-      throw new Error(`Exam generation failed: ${response.statusText}`);
-  }
-
-  return response.json();
+  if (error) throw error;
+  if (!data) throw { message: 'Exam generation failed', status: 500 };
+  return data;
 }
 
 /**
@@ -36,22 +28,16 @@ export async function generatePracticeExam(
  */
 export async function generatePredictions(
   documentContent: string,
-  pastQuestionsContent: string,
-  accessToken?: string
+  pastQuestionsContent: string
 ): Promise<GenerateExamPredictionsOutput> {
-  // Updated to point to the correct 'prediction-engine' function
-  const response = await safeFetch(`/api/proxy/prediction-engine`, {
+  const { data, error } = await invokeEdgeFunction<GenerateExamPredictionsOutput>('prediction-engine', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    },
-    body: JSON.stringify({ pastQuestionsContent, mainTextbookContent: documentContent }),
+    requireAuth: true,
+    timeoutMs: 120_000,
+    silent: true,
+    body: { pastQuestionsContent, mainTextbookContent: documentContent },
   });
-
-  if (!response.ok) {
-      throw new Error(`Prediction generation failed: ${response.statusText}`);
-  }
-
-  return response.json();
+  if (error) throw error;
+  if (!data) throw { message: 'Prediction generation failed', status: 500 };
+  return data;
 }

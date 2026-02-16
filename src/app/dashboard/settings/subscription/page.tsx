@@ -15,6 +15,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { OfflineGuard } from '@/components/offline-guard';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 const PRICING = {
   weekly: { amount: 1900, compare_at: 2500, label: 'Save 24%' },
@@ -22,10 +23,11 @@ const PRICING = {
 } as const;
 
 export default function SubscriptionPage() {
-  const [user] = useSupabaseUser();
+  const [user, session] = useSupabaseUser();
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
+  const { isOnline } = useNetworkStatus();
   
   const [tier, setTier] = useState<string>('free');
   const [expiry, setExpiry] = useState<string | null>(null);
@@ -51,6 +53,8 @@ export default function SubscriptionPage() {
   }>(PRICING);
 
   const fetchBillingStatus = useCallback(async () => {
+      if (!isOnline) return null;
+      if (!session?.access_token) return null;
       try {
           const { data, error } = await invokeEdgeFunction<any>('billing-status', {
               method: 'GET',
@@ -78,7 +82,7 @@ export default function SubscriptionPage() {
           console.error("Failed to fetch billing status", e);
       }
       return null;
-  }, []);
+  }, [isOnline, session?.access_token]);
 
   const stopPolling = useCallback(() => {
       if (pollTimerRef.current) {
@@ -110,6 +114,8 @@ export default function SubscriptionPage() {
   }, [fetchBillingStatus, stopPolling]);
 
   const verifyPayment = useCallback(async (ref: string) => {
+      if (!isOnline) return;
+      if (!session?.access_token) return;
       try {
           const { data, error } = await invokeEdgeFunction<any>(`paystack-verify?reference=${encodeURIComponent(ref)}`, {
               method: 'GET',
@@ -154,12 +160,17 @@ export default function SubscriptionPage() {
   }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
 
   const handlePaystack = async (planType: 'weekly' | 'monthly') => {
+      if (!isOnline) {
+          toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+          return;
+      }
+      if (!session?.access_token) {
+          toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
+          return;
+      }
       setLoadingPlan(planType);
       
       try {
-          const { data: { session } } = await supabase.auth.getSession();
-          const token = session?.access_token;
-          
           const returnUrl = `${window.location.origin}/dashboard/settings/subscription`;
           
           // If Auto-renew: Subscription Mode, Card only
@@ -202,6 +213,14 @@ export default function SubscriptionPage() {
   };
 
   const handleCancelSubscription = async () => {
+      if (!isOnline) {
+          toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+          return;
+      }
+      if (!session?.access_token) {
+          toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
+          return;
+      }
       if (!cancelReason || cancelReason.length < 10) {
           toast({ variant: 'destructive', title: 'Reason too short', description: 'Please provide a reason (min 10 chars).' });
           return;

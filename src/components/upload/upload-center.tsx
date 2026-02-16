@@ -52,7 +52,7 @@ function statusLabel(status: string) {
 
 export default function UploadCenter() {
   const { toast } = useToast();
-  const [user] = useSupabaseUser();
+  const [user, session] = useSupabaseUser();
   const isOnline = useOnlineStatus();
   const upgradeBlocked = useStore((s) => s.upgradeBlocked);
   const { 
@@ -86,7 +86,7 @@ export default function UploadCenter() {
   const [isDragging, setIsDragging] = useState(false);
   const [reattachJobId, setReattachJobId] = useState<string | null>(null);
 
-  const supportsUploads = Boolean(user) && isOnline && !upgradeBlocked;
+  const supportsUploads = Boolean(session?.access_token) && Boolean(user) && isOnline && !upgradeBlocked;
 
   const loadParents = useCallback(async () => {
     if (!user) return;
@@ -135,16 +135,16 @@ export default function UploadCenter() {
       toast({
         variant: 'destructive',
         title: 'Upload unavailable',
-        description: !user ? 'Sign in to upload files.' : 'Connect to the internet to upload.',
+        description: !session?.access_token ? 'Sign in to upload.' : 'Connect to the internet to upload.',
       });
       return;
     }
     inputRef.current?.click();
-  }, [supportsUploads, toast, user]);
+  }, [supportsUploads, toast, session?.access_token]);
 
   const addFiles = useCallback(
     async (files: File[]) => {
-      if (!supportsUploads || !user) {
+      if (!supportsUploads || !user || !session?.access_token) {
         return;
       }
 
@@ -221,7 +221,7 @@ export default function UploadCenter() {
         if (inputRef.current) inputRef.current.value = '';
       }
     },
-    [supportsUploads, user, needsParent, parentId, label, docType, enqueueUploads, toast, maxUploadSize]
+    [supportsUploads, user, session?.access_token, needsParent, parentId, label, docType, enqueueUploads, toast, maxUploadSize]
   );
 
   const onFilesChanged = useCallback(
@@ -358,6 +358,20 @@ export default function UploadCenter() {
       <CardContent className="space-y-4">
         <input ref={inputRef} type="file" multiple accept={ACCEPT} onChange={onFilesChanged} className="hidden" />
         <input ref={retryFileInputRef} type="file" accept={ACCEPT} onChange={onRetryFileSelected} className="hidden" />
+
+        {!session?.access_token ? (
+          <Alert>
+            <Info className="h-4 w-4" aria-hidden="true" />
+            <AlertTitle>Sign in required</AlertTitle>
+            <AlertDescription>Sign in to upload.</AlertDescription>
+          </Alert>
+        ) : !isOnline ? (
+          <Alert>
+            <Info className="h-4 w-4" aria-hidden="true" />
+            <AlertTitle>Offline</AlertTitle>
+            <AlertDescription>Connect to the internet to upload.</AlertDescription>
+          </Alert>
+        ) : null}
 
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           <div className="md:col-span-1">

@@ -58,6 +58,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Icons } from '@/components/icons';
 import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
+import { logOnce } from '@/lib/log/dedupe';
 import type { RagBasedQuestionAnsweringOutput } from '@/app/actions';
 import InteractiveConceptMap from '@/components/interactive-concept-map';
 import { useOnlineStatus } from '@/hooks/use-online-status';
@@ -160,6 +161,7 @@ export default function ChatPage() {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
   const isOnline = useOnlineStatus();
+  const canChat = isOnline && !!session?.access_token;
 
   const [now, setNow] = useState(() => Date.now());
 
@@ -303,7 +305,7 @@ export default function ChatPage() {
   const greetingAttemptedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
-    if (selectedDocId && user && !isResponding && !isFetchingPrompts && !isSwitchingDocs && isInitialized) {
+    if (selectedDocId && user && canChat && !isResponding && !isFetchingPrompts && !isSwitchingDocs && isInitialized) {
         // Check if we already greeted for this doc
         const greetedKey = getGreetedKey(selectedDocId);
         const hasGreeted = localStorage.getItem(greetedKey);
@@ -649,21 +651,19 @@ export default function ChatPage() {
   }, [handleScroll]);
 
   const fetchPromptStarters = useCallback(async () => {
-    if (!selectedDocId || !selectedDocName || !user || !isOnline || fetchingPromptsRef.current) return;
+    if (!selectedDocId || !selectedDocName || !user || !canChat || fetchingPromptsRef.current) return;
     fetchingPromptsRef.current = true;
     setIsFetchingPrompts(true);
     setPromptStarters([]);
     try {
       const documentContent = await getDocumentContent(selectedDocId);
       if (!documentContent) return;
-      
-      const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-      
-      const result = await safeFetch(`${SUPABASE_URL}/functions/v1/au-chat`, {
+
+      const result = await safeFetch(`/api/proxy/au-chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          Authorization: `Bearer ${session!.access_token}`,
         },
         body: JSON.stringify({ 
           messages: [{ 
@@ -691,13 +691,13 @@ export default function ChatPage() {
       localStorage.setItem(getLocalStorageKey(user.id, selectedDocId), JSON.stringify(prompts));
     } catch (error) {
       // Silent fail for prompts is better than crashing or noisy toasts
-      console.warn("[fetchPromptStarters] Failed to generate prompts", error);
+      logOnce('warn', 'chat:prompt_starters:failed', '[fetchPromptStarters] Failed to generate prompts', error);
       setPromptStarters([]);
     } finally {
       setIsFetchingPrompts(false);
       fetchingPromptsRef.current = false;
     }
-  }, [selectedDocId, selectedDocName, user, session, getDocumentContent, isOnline]);
+  }, [selectedDocId, selectedDocName, user, session?.access_token, getDocumentContent, canChat]);
 
   const PROMPT_GENERATED_KEY = (userId: string, docId: string) => `au_prompt_generated_${userId}_${docId}`;
 
@@ -716,15 +716,19 @@ export default function ChatPage() {
     if (storedPrompts) {
       setPromptStarters(JSON.parse(storedPrompts));
       localStorage.setItem(generatedKey, 'true');
-    } else if (isOnline) {
+    } else if (canChat) {
       fetchPromptStarters().finally(() => {
         localStorage.setItem(generatedKey, 'true');
       });
     }
-  }, [selectedDocId, user, isOnline, fetchPromptStarters]);
+  }, [selectedDocId, user, canChat, fetchPromptStarters]);
 
   const handleEnhancePrompt = async () => {
     if (!promptStudioInput.trim() || !selectedDocId || isGenerating || !user) return;
+    if (!canChat) {
+      logOnce('warn', 'chat:enhance_prompt:blocked', '[chat] Prompt studio blocked (auth/online)');
+      return;
+    }
     
     setIsGenerating(true);
     setGeneratedPrompts([]);
@@ -735,14 +739,11 @@ export default function ChatPage() {
     try {
       const documentContent = await getDocumentContent(selectedDocId);
       const documentTitle = selectedDocName || 'Current Document';
-
-      const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
-
-      const result = await safeFetch(`${SUPABASE_URL}/functions/v1/generate-prompt-starters`, {
+      const result = await safeFetch(`/api/proxy/generate-prompt-starters`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {}),
+          Authorization: `Bearer ${session!.access_token}`,
         },
         body: JSON.stringify({ 
           documentTitle,
@@ -785,6 +786,10 @@ export default function ChatPage() {
     if (!currentInput || isResponding) return;
 
     if (!user || !selectedDocId) return;
+    if (!canChat) {
+      logOnce('warn', 'chat:send:blocked', '[chat] Send blocked (auth/online)');
+      return;
+    }
 
     // Validate query before sending
     const validation = validateQuery(currentInput);
@@ -1287,7 +1292,7 @@ export default function ChatPage() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    disabled={isLoading || !selectedDocId || !isOnline || upgradeBlocked}
+                    disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked}
                     className={`absolute left-1.5 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 transition-all duration-300 hover:scale-110 ${summaryMode ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary'}`}
                   >
                     {summaryMode === 'short' ? <Scissors className="h-5 w-5" /> :
@@ -1319,20 +1324,31 @@ export default function ChatPage() {
               <Textarea
                 id="message"
                 ref={textareaRef}
-                placeholder={!isOnline ? "You are offline. AU chat is disabled." : (selectedDocId ? "Message AU..." : "Please select a document to start chatting.")}
+                placeholder={
+                  !selectedDocId
+                    ? "Please select a document to start chatting."
+                    : !isOnline
+                      ? "You are offline. AU chat is disabled."
+                      : !session?.access_token
+                        ? "Sign in to chat"
+                        : "Message AU..."
+                }
                 className="flex-1 resize-none rounded-full border bg-secondary p-3 pl-12 pr-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
-                disabled={isLoading || !selectedDocId || !isOnline || upgradeBlocked}
+                disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked}
               />
+              {selectedDocId && !session?.access_token && isOnline && (
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in to chat</div>
+              )}
             </div>
 
             <Button 
               type={isResponding ? "button" : "submit"} 
               size="icon" 
               className={`h-12 w-12 shrink-0 rounded-full transition-all ${isResponding ? 'bg-destructive hover:bg-destructive/90' : ''}`}
-              disabled={((!input.trim() || !selectedDocId || !isOnline || upgradeBlocked) && !isResponding)}
+              disabled={((!input.trim() || !selectedDocId || !canChat || upgradeBlocked) && !isResponding)}
               onClick={(e) => {
                   if (isResponding) {
                       e.preventDefault();

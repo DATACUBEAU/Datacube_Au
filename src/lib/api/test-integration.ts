@@ -36,7 +36,7 @@ async function testIntegration() {
       // 3. Test Exam Generation
       console.log(`\n--- 3. Testing generatePracticeExam for doc: ${targetDoc.id} ---`);
       try {
-        const examResult = await generatePracticeExam(targetDoc.id);
+        const examResult = await generatePracticeExam('');
         console.log(`✅ Exam generated with ${examResult.questions.length} questions.`);
       } catch (e: any) {
         console.warn('⚠️ Exam test failed (expected if text content is empty or restricted):', e.message);

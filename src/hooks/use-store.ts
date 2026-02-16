@@ -4,6 +4,7 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 import type { GenerateKnowledgeOutput, GeneratePredictionsOutput } from '@/app/actions';
 import { toast } from '@/hooks/use-toast';
 import { safeFetch } from '@/lib/api/safe-fetch';
+import { invokeEdgeFunction } from '@/lib/supabase-client/client';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
@@ -44,11 +45,6 @@ interface AppState {
   lastUpgradeShownAt: number;
   setUpgradeModalOpen: (open: boolean, context?: any) => void;
   clearUpgradeBlock: () => void;
-
-  firebaseSyncPaused: boolean;
-  firebaseSyncPausedReason: 'permission-denied' | 'auth-failed' | null;
-  setFirebaseSyncPaused: (paused: boolean, reason?: AppState['firebaseSyncPausedReason']) => void;
-  clearFirebaseSyncPaused: () => void;
 }
 
 export const useStore = create<AppState>()(
@@ -82,11 +78,6 @@ export const useStore = create<AppState>()(
         set({ upgradeModalOpen: false, upgradeContext: null });
       },
       clearUpgradeBlock: () => set({ upgradeBlocked: false, upgradeBlockedUntil: null, lastUpgradeKey: null, lastUpgradeShownAt: 0 }),
-
-      firebaseSyncPaused: false,
-      firebaseSyncPausedReason: null,
-      setFirebaseSyncPaused: (paused, reason) => set({ firebaseSyncPaused: paused, firebaseSyncPausedReason: paused ? (reason ?? 'permission-denied') : null }),
-      clearFirebaseSyncPaused: () => set({ firebaseSyncPaused: false, firebaseSyncPausedReason: null }),
 
       knowledgeData: null,
       isGeneratingKnowledge: false,
@@ -134,18 +125,16 @@ export const useStore = create<AppState>()(
         set({ isGeneratingKnowledge: true, knowledgeData: null });
         
         try {
-          // Use Supabase Edge Function directly for consistency
-          const response = await safeFetch(`/api/proxy/generate-knowledge`, {
+          const { data, error } = await invokeEdgeFunction<GenerateKnowledgeOutput>('generate-knowledge', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-            },
-            body: JSON.stringify({ documentContent: docContent, pastQuestionsContent: pastQuestionsContent || '' }),
+            requireAuth: true,
+            timeoutMs: 120_000,
+            silent: false,
+            body: { documentContent: docContent, pastQuestionsContent: pastQuestionsContent || '' },
           });
-
-          if (!response.ok) throw new Error('Failed to generate knowledge');
-          const result = await response.json();
+          if (error) throw error;
+          if (!data) throw new Error('Failed to generate knowledge');
+          const result = data;
 
           set({ knowledgeData: result });
 
@@ -175,18 +164,16 @@ export const useStore = create<AppState>()(
         set({ isGeneratingPredictions: true, predictionData: null });
 
         try {
-          // Use Supabase Edge Function directly for consistency
-          const response = await safeFetch(`/api/proxy/generate-exam-predictions`, {
+          const { data, error } = await invokeEdgeFunction<GeneratePredictionsOutput>('generate-exam-predictions', {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
-            },
-            body: JSON.stringify({ pastQuestionsContent, mainTextbookContent }),
+            requireAuth: true,
+            timeoutMs: 120_000,
+            silent: false,
+            body: { pastQuestionsContent, mainTextbookContent },
           });
-
-          if (!response.ok) throw new Error('Failed to generate predictions');
-          const result = await response.json();
+          if (error) throw error;
+          if (!data) throw new Error('Failed to generate predictions');
+          const result = data;
 
           set({ predictionData: result });
           

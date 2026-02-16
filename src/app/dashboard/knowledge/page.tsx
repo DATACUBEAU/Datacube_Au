@@ -149,6 +149,10 @@ export default function KnowledgePage() {
         toast({ variant: 'destructive', title: 'You are offline', description: 'This action requires an internet connection.' });
         return;
     }
+    if (!session?.access_token) {
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate knowledge materials.' });
+      return;
+    }
 
     try {
         const documentContent = await getAuDocumentChunksText(user, selectedDocId);
@@ -162,7 +166,7 @@ export default function KnowledgePage() {
           pastQuestionsContent = contents.join('\n\n---\n\n');
         }
 
-        await generateKnowledge(selectedDocId, documentContent, session?.access_token, pastQuestionsContent);
+        await generateKnowledge(selectedDocId, documentContent, session.access_token, pastQuestionsContent);
 
     } catch (error: any) {
       console.error('Failed to prepare for study material generation:', error);

@@ -37,7 +37,6 @@ const PwaInstallButton = () => {
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: BeforeInstallPromptEvent) => {
-      event.preventDefault();
       setInstallPrompt(event);
       if (!window.matchMedia('(display-mode: standalone)').matches) {
         setCanInstall(true);

@@ -47,7 +47,6 @@ Run the deployment script from the project root:
 
     ```bash
     # From backend/supabase
-    supabase functions deploy firebase-auth-exchange --no-verify-jwt
     supabase functions deploy api-documents --no-verify-jwt
     supabase functions deploy document-upload --no-verify-jwt
     supabase functions deploy document-management --no-verify-jwt
@@ -65,7 +64,6 @@ Run the deployment script from the project root:
     *   Ensure all functions listed above are "Healthy".
 3.  **Frontend Test**:
     *   Login with Google.
-    *   Check the Network tab for a call to `firebase-auth-exchange`.
     *   Verify you receive a token and can load the dashboard.
 
 ## Rollback Procedure

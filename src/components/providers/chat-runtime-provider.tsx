@@ -1,7 +1,6 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 // --- TYPES ---
@@ -26,13 +25,11 @@ interface ChatRuntimeContextType {
   markSupportRead: () => Promise<void>;
   markBroadcastsRead: () => Promise<void>;
   connectionStatus: 'connected' | 'reconnecting' | 'offline';
-  firebaseAuthStatus: 'idle' | 'pending' | 'ready' | 'failed';
 }
 
 const ChatRuntimeContext = createContext<ChatRuntimeContextType | undefined>(undefined);
 
 export function ChatRuntimeProvider({ children }: { children: React.ReactNode }) {
-  const [user] = useSupabaseUser();
   const { isOnline } = useNetworkStatus();
   const [activeJobs, setActiveJobs] = useState<ChatJob[]>([]);
   
@@ -73,8 +70,7 @@ export function ChatRuntimeProvider({ children }: { children: React.ReactNode })
         unreadBroadcasts,
         markSupportRead,
         markBroadcastsRead,
-        connectionStatus,
-        firebaseAuthStatus: 'ready' // Mock ready since we removed Firebase Auth
+        connectionStatus
     }}>
       {children}
     </ChatRuntimeContext.Provider>

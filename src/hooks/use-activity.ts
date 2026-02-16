@@ -5,6 +5,7 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { updateUserActivity } from '@/lib/supabase-client/client';
 import { usePathname } from 'next/navigation';
 import { useOnlineStatus } from '@/hooks/use-online-status';
+import { logEvent } from '@/lib/analytics';
 
 export function useActivity() {
   const [user] = useSupabaseUser();
@@ -14,7 +15,8 @@ export function useActivity() {
 
   const ping = useCallback(async () => {
     await updateUserActivity(user ?? null, { isOnline });
-  }, [user, isOnline]);
+    await logEvent('presence_ping', { path: pathname, isOnline });
+  }, [user, isOnline, pathname]);
 
   // Heartbeat & Presence
   useEffect(() => {
@@ -33,6 +35,7 @@ export function useActivity() {
   // Log navigation changes
   useEffect(() => {
     ping().catch(() => {});
+    logEvent('page_view', { path: pathname }).catch(() => {});
   }, [pathname, ping]);
 
   return { ping };

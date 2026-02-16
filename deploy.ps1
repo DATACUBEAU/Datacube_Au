@@ -43,8 +43,6 @@ $Functions = @(
     "exam-generator",
     "prediction-engine",
     "memory-compact",
-    "firebase-auth-exchange",
-    "get-firebase-token",
     "api-documents",
     "document-upload",
     "document-management",

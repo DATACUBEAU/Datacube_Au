@@ -6,62 +6,54 @@ import { Button } from '@/components/ui/button';
 import { Loader2, RefreshCw, Database, HardDrive, Activity } from 'lucide-react';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 export const AdminAnalytics = ({ token }: { token: string }) => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-
-  // Mock data generator for now, as backend aggregation might be heavy
-  const generateMockData = () => {
-    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    return {
-      storage: days.map(d => ({ name: d, size: Math.floor(Math.random() * 500) + 100 })),
-      rows: days.map(d => ({ name: d, count: Math.floor(Math.random() * 5000) + 1000 })),
-      apiCalls: days.map(d => ({ name: d, calls: Math.floor(Math.random() * 1000) + 50 })),
-      stats: {
-        totalStorage: '1.2 GB',
-        totalRows: '15,430',
-        activeConnections: 12
-      }
-    };
-  };
+  const [error, setError] = useState<string | null>(null);
+  const { isOnline } = useNetworkStatus();
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      // Try to fetch real data
+      if (!isOnline) {
+        setError('Offline');
+        setData(null);
+        return;
+      }
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_analytics' })
       });
 
-      if (res.ok) {
-          const resultData = await res.json();
-          if (resultData.analytics) {
-             setData(resultData.analytics);
-          } else if (resultData.data?.analytics) {
-             setData(resultData.data.analytics);
-          } else {
-             // Fallback if structure doesn't match
-             setData(generateMockData());
-          }
-      } else {
-        // Fallback to mock
-        setData(generateMockData());
+      if (!res.ok) {
+        const payload = (res as any).data || (await res.json().catch(() => null));
+        const msg = (payload && typeof payload === 'object' ? payload.error : null) || 'Failed to load analytics';
+        throw new Error(msg);
       }
-    } catch (e) {
-      console.error('Analytics fetch failed, using mock', e);
-      setData(generateMockData());
+      
+      const payload = (res as any).data || (await res.json().catch(() => null));
+      const analytics = payload?.analytics || payload?.data?.analytics;
+      if (!analytics) throw new Error('Analytics payload missing');
+      setData(analytics);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Analytics fetch failed';
+      setError(msg);
+      setData(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isOnline]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
+  if (error) return <div className="p-6 text-sm text-destructive">{error}</div>;
+  if (!data) return <div className="p-6 text-sm text-muted-foreground">No analytics available.</div>;
 
   return (
     <div className="space-y-6">

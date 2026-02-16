@@ -1,14 +1,13 @@
 # Datacube AU
 
-Datacube AU is a comprehensive educational platform built with Next.js, designed to provide advanced document management, AI-powered study assistance, and exam preparation tools. The platform integrates seamlessly with Supabase for backend services and Firebase for real-time features.
+Datacube AU is a comprehensive educational platform built with Next.js, designed to provide advanced document management, AI-powered study assistance, and exam preparation tools. The platform integrates with Supabase for backend services.
 
 ## 🚀 Features
 
--   **Smart Authentication**: Secure user authentication via Supabase Auth, with seamless Firebase integration for real-time services.
+-   **Smart Authentication**: Secure user authentication via Supabase Auth.
 -   **Document Management**: robust system for uploading, organizing, and managing study materials.
 -   **AI Assistant (RAG)**: Retrieval-Augmented Generation powered chat interface for querying documents and getting intelligent answers.
 -   **Exam Tools**: Features for generating practice exams and predicting exam topics.
--   **Real-time Communication**: Direct messaging and broadcast system using Firestore.
 -   **PWA Support**: Fully functional Progressive Web App with offline capabilities.
 -   **Responsive UI**: Modern, accessible interface built with Tailwind CSS and Shadcn UI.
 
@@ -17,7 +16,6 @@ Datacube AU is a comprehensive educational platform built with Next.js, designed
 -   **Frontend**: [Next.js 14](https://nextjs.org/) (App Router), [React](https://react.dev/), [TypeScript](https://www.typescriptlang.org/)
 -   **Styling**: [Tailwind CSS](https://tailwindcss.com/), [Shadcn UI](https://ui.shadcn.com/)
 -   **Backend / Database**: [Supabase](https://supabase.com/) (PostgreSQL, Auth, Edge Functions, Storage)
--   **Real-time / NoSQL**: [Firebase](https://firebase.google.com/) (Firestore)
 -   **State Management**: React Context & Hooks
 -   **Testing**: Playwright
 
@@ -42,7 +40,6 @@ Datacube-Au/
 │   ├── hooks/              # Custom React hooks
 │   ├── lib/                # Utility functions and API clients
 │   │   ├── supabase-client/# Supabase configuration
-│   │   ├── firebase/       # Firebase configuration
 │   │   └── ...
 │   └── ...
 ├── tests/                  # End-to-end and integration tests
@@ -60,7 +57,6 @@ Datacube-Au/
 -   Node.js (v18 or higher recommended)
 -   pnpm (recommended) or npm
 -   Supabase project
--   Firebase project
 
 ### Installation
 
@@ -78,20 +74,13 @@ Datacube-Au/
     ```
 
 3.  **Environment Setup**
-    Create a `.env.local` file in the root directory and add your Supabase and Firebase credentials:
+    Create a `.env.local` file in the root directory and add your Supabase credentials:
 
     ```env
     # Supabase
     NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
     NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 
-    # Firebase
-    NEXT_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
-    NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
-    NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
-    NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project.appspot.com
-    NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
-    NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
     ```
 
 4.  **Run the development server**

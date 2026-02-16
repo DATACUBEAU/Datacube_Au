@@ -8,6 +8,8 @@ import { nanoid } from 'nanoid';
 import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summaries';
 import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, sweepExpiredDocWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
 import { supabase } from '@/lib/supabase-client/client';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { logOnce } from '@/lib/log/dedupe';
 
 const AUTO_CLEAR_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -29,6 +31,7 @@ export function useAuChat(selectedDocId: string | null) {
   const setAuThinkingStatus = useStore(state => state.setAuThinkingStatus);
   const setAuThinkingSteps = useStore(state => state.setAuThinkingSteps);
   const updateAuThinkingStep = useStore(state => state.updateAuThinkingStep);
+  const { isOnline } = useNetworkStatus();
   
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [isResponding, setIsResponding] = useState(false);
@@ -133,12 +136,13 @@ export function useAuChat(selectedDocId: string | null) {
   // ... (Load Models & Persistence Effects) ...
   useEffect(() => {
     if (!user) return;
+    if (!isOnline) return;
+    if (!session?.access_token) return;
 
-    ensureAccessToken()
-      .then((token) => getAvailableModels(token ?? undefined))
+    getAvailableModels()
       .then(models => setAvailableModels(models))
       .catch(err => console.error("Failed to load models:", err));
-  }, [user, ensureAccessToken]);
+  }, [isOnline, session?.access_token, user]);
 
   // --- PERSISTENCE: Load history on mount or doc change ---
   useEffect(() => {
@@ -193,14 +197,14 @@ export function useAuChat(selectedDocId: string | null) {
     }
   ) => {
     if (!selectedDocId || !user) return;
+    if (!isOnline) {
+      logOnce('warn', 'chat:send:offline', '[chat] Send blocked (offline)');
+      return;
+    }
 
     const accessToken = await ensureAccessToken();
     if (!accessToken) {
-      toast({
-        variant: 'destructive',
-        title: 'Sign in required',
-        description: 'Please sign in again to use chat.',
-      });
+      logOnce('warn', 'chat:send:no_token', '[chat] Send blocked (no access token)');
       return;
     }
 
@@ -320,7 +324,6 @@ export function useAuChat(selectedDocId: string | null) {
               browsingMode: options?.browsingMode,
               model: selectedModel === 'auto' ? undefined : selectedModel,
             },
-            accessToken,
             {
               onEvent: (evt) => {
                 if (evt.type === 'delta') {
@@ -402,18 +405,18 @@ export function useAuChat(selectedDocId: string | null) {
         setAuThinkingSteps([]); // Clear steps after done
       }, 3000);
     }
-  }, [selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, toast]);
+  }, [selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
+    if (!isOnline) {
+      logOnce('warn', 'chat:greet:offline', '[chat] scanAndGreet blocked (offline)');
+      return;
+    }
 
     const accessToken = await ensureAccessToken();
     if (!accessToken) {
-      toast({
-        variant: 'destructive',
-        title: 'Sign in required',
-        description: 'Please sign in again to use chat.',
-      });
+      logOnce('warn', 'chat:greet:no_token', '[chat] scanAndGreet blocked (no access token)');
       return;
     }
     
@@ -456,7 +459,7 @@ export function useAuChat(selectedDocId: string | null) {
             selectedDocId,
             action: 'scan_and_greet',
             model: selectedModel === 'auto' ? undefined : selectedModel
-        }, accessToken, { signal: abortControllerRef.current?.signal });
+        }, { signal: abortControllerRef.current?.signal });
 
         if (thinkingInterval) clearInterval(thinkingInterval);
         setAuAnimationState('responding');
@@ -489,7 +492,7 @@ export function useAuChat(selectedDocId: string | null) {
           setAuAnimationState('idle');
         }, 3000);
     }
-  }, [selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, toast]);
+  }, [selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline]);
 
   const setHistoryPersisted = useCallback((next: ChatMessage[]) => {
     setHistory(next);
@@ -506,8 +509,16 @@ export function useAuChat(selectedDocId: string | null) {
 
   const fetchPrompts = useCallback(async (title: string, content: string, idea?: string) => {
     try {
+      if (!isOnline) {
+        logOnce('warn', 'chat:prompts:offline', '[chat] Prompt generation blocked (offline)');
+        return [];
+      }
+      if (!session?.access_token) {
+        logOnce('warn', 'chat:prompts:no_token', '[chat] Prompt generation blocked (no access token)');
+        return [];
+      }
       if (idea) {
-        return await generatePromptStarters(title, content, idea, session?.access_token);
+        return await generatePromptStarters(title, content, idea);
       }
 
       // Smart suggestion: Scan chat history and document patterns
@@ -521,7 +532,7 @@ export function useAuChat(selectedDocId: string | null) {
             content: `Based on the document "${title}" and the recent chat history:\n${historyContext}\n\nGenerate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
           }],
           selectedDocId: selectedDocId!
-        }, session?.access_token);
+        });
 
         const parsed = JSON.parse(result.answer);
         if (Array.isArray(parsed)) return parsed;
@@ -529,12 +540,12 @@ export function useAuChat(selectedDocId: string | null) {
         // Fallback to legacy
       }
 
-      return await generatePromptStarters(title, content, undefined, session?.access_token);
+      return await generatePromptStarters(title, content);
     } catch (err: any) {
       console.error('[useAuChat] Prompt generation failed:', err);
       return [];
     }
-  }, [selectedDocId, session, history]);
+  }, [selectedDocId, session?.access_token, history, isOnline]);
 
   return {
     history,

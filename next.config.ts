@@ -11,14 +11,6 @@ const withPWA = withPWAInit({
     clientsClaim: true,
     runtimeCaching: [
       {
-        urlPattern: /^https:\/\/firestore\.googleapis\.com\/google\.firestore\.v1\.Firestore\/Listen\/channel/i,
-        handler: 'NetworkOnly',
-        options: {
-          cacheName: 'firestore-channel-no-cache',
-          backgroundSync: undefined,
-        },
-      },
-      {
         urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
         handler: 'NetworkOnly',
         options: { cacheName: 'supabase-no-cache' },
@@ -27,11 +19,6 @@ const withPWA = withPWAInit({
         urlPattern: /^https:\/\/.*\.googleapis\.com\/.*/i,
         handler: 'NetworkOnly',
         options: { cacheName: 'google-apis-no-cache' },
-      },
-      {
-        urlPattern: /^https:\/\/firebase\.googleapis\.com\/.*/i,
-        handler: 'NetworkOnly',
-        options: { cacheName: 'firebase-no-cache' },
       },
       {
         urlPattern: ({ url }: { url: URL }) => url.origin !== self.location.origin,
