@@ -173,6 +173,8 @@ export default function ChatPage() {
   const { 
     history: currentChatHistory, 
     setHistory: setCurrentChatHistory,
+    setHistoryPersisted,
+    deleteMessagePersisted,
     isResponding,
     sendMessage,
     stopGeneration,
@@ -344,7 +346,7 @@ export default function ChatPage() {
     if (userMessage.role !== 'user') return;
     
     const newHistory = currentChatHistory.slice(0, index);
-    setCurrentChatHistory(newHistory);
+    setHistoryPersisted(newHistory);
     
     if (mode) {
       setSummaryMode(mode);
@@ -361,7 +363,7 @@ export default function ChatPage() {
 
 
   const deleteMessage = (messageId: string) => {
-    setCurrentChatHistory(prev => prev.filter(m => m.id !== messageId));
+    deleteMessagePersisted(messageId);
   };
 
   const editMessage = (messageId: string, newContent: string) => {
@@ -795,7 +797,6 @@ export default function ChatPage() {
       return;
     }
 
-    setInput('');
     setPromptStarters([]);
     
     // Construct message with reply context if present
@@ -807,12 +808,15 @@ export default function ChatPage() {
     }
 
     try {
-      await sendMessage(finalMessage, {
+      const res = await sendMessage(finalMessage, {
         guide: guideText !== defaultGuideText ? guideText : undefined,
         summaryMode: overrideMode || summaryMode,
         browsingMode
       });
-      setGeneratedPrompts([]);
+      if (res) {
+        setInput('');
+        setGeneratedPrompts([]);
+      }
     } catch (error: any) {
       console.error("[ChatPage] Message error:", error);
       

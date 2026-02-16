@@ -228,7 +228,7 @@ export async function sendChatMessageStream(
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
       apikey: anonKey,
-      Authorization: accessToken ? `Bearer ${accessToken}` : `Bearer ${anonKey}`,
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify(payload),
     signal: opts?.signal,

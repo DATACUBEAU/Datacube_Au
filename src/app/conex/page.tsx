@@ -24,6 +24,7 @@ import { AdminAnalytics } from '@/components/admin/admin-analytics';
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
   const [auConfig, setAuConfig] = useState<any>({});
+  const [flags, setFlags] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
@@ -42,6 +43,13 @@ const AdminBilling = ({ token }: { token: string }) => {
         body: JSON.stringify({ action: 'get_au_config' })
       });
       if (auRes.ok) setAuConfig((auRes as any).config || {});
+
+      const flagsRes = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'get_feature_flags' })
+      });
+      if (flagsRes.ok) setFlags((flagsRes as any).flags || []);
+
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
@@ -50,6 +58,21 @@ const AdminBilling = ({ token }: { token: string }) => {
   }, [toast]);
 
   useEffect(() => { fetchConfig(); }, [fetchConfig]);
+
+  const toggleFlag = async (key: string, current: boolean) => {
+    try {
+        const res = await fetchAdmin('admin-handler', {
+            method: 'POST',
+            body: JSON.stringify({ action: 'update_feature_flag', key, is_enabled: !current })
+        });
+        if (res.ok) {
+            toast({ title: 'Updated', description: `Flag ${key} updated.` });
+            fetchConfig();
+        }
+    } catch (e: any) {
+        toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    }
+  };
 
   const handleSave = async (newConfig: any) => {
     setSaving(true);
@@ -158,6 +181,26 @@ const AdminBilling = ({ token }: { token: string }) => {
                                       onChange={(e) => setAuConfig({ ...auConfig, free_max_upload_mb: Number(e.target.value) })}
                                     />
                                   </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Pro Tier Features</CardTitle>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <Label>100MB Upload Limit</Label>
+                                        <p className="text-xs text-muted-foreground">
+                                            Allow Pro users to upload files up to 100MB (Default: 50MB).
+                                        </p>
+                                    </div>
+                                    <Switch 
+                                        checked={flags.find(f => f.key === 'pro_upload_100mb')?.is_enabled ?? false} 
+                                        onCheckedChange={() => toggleFlag('pro_upload_100mb', flags.find(f => f.key === 'pro_upload_100mb')?.is_enabled ?? false)} 
+                                    />
                                 </div>
                             </CardContent>
                         </Card>
@@ -1970,16 +2013,41 @@ export default function ConexPage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { toast } = useToast();
 
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  const resetConexAuth = (opts?: { message?: string }) => {
+    localStorage.removeItem('conex_admin_token');
+    localStorage.removeItem('conex_session_id');
+    localStorage.removeItem('conex_auth_step');
+    setAdminToken(null);
+    setSessionId(null);
+    setAccessKey('');
+    setAnswer('');
+    setStep(0);
+    if (opts?.message) setError(opts.message);
+  };
+
   // Handle persistence on refresh
   useEffect(() => {
     const savedToken = localStorage.getItem('conex_admin_token');
     const savedSession = localStorage.getItem('conex_session_id');
     const savedStep = localStorage.getItem('conex_auth_step');
 
-    if (savedToken && savedStep === '3') {
+    if (savedStep === '3') {
+      if (!savedToken || savedToken === 'undefined' || !uuidRegex.test(savedToken)) {
+        resetConexAuth({ message: 'Session expired. Please log in again.' });
+        return;
+      }
       setAdminToken(savedToken);
       setStep(3);
-    } else if (savedSession && savedStep === '2') {
+      return;
+    }
+
+    if (savedStep === '2') {
+      if (!savedSession || savedSession === 'undefined' || !uuidRegex.test(savedSession)) {
+        resetConexAuth({ message: 'Session expired. Please restart access.' });
+        return;
+      }
       setSessionId(savedSession);
       setStep(2);
     }
@@ -2008,9 +2076,13 @@ export default function ConexPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setSessionId(data.sessionId);
+        const nextSessionId = String(data.sessionId || '');
+        if (!uuidRegex.test(nextSessionId)) {
+          throw new Error('Auth session could not be created. Please try again.');
+        }
+        setSessionId(nextSessionId);
         setStep(2);
-        localStorage.setItem('conex_session_id', data.sessionId);
+        localStorage.setItem('conex_session_id', nextSessionId);
         localStorage.setItem('conex_auth_step', '2');
       } else {
         throw new Error(data.error || 'Authentication failed');
@@ -2024,9 +2096,9 @@ export default function ConexPage() {
 
   const handleStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionId || sessionId === 'undefined') {
-        setError("Invalid Session. Please refresh and try again.");
-        return;
+    if (!sessionId || sessionId === 'undefined' || !uuidRegex.test(sessionId)) {
+      resetConexAuth({ message: 'Invalid session. Please restart access.' });
+      return;
     }
     setLoading(true);
     setError(null);
@@ -2038,9 +2110,13 @@ export default function ConexPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setAdminToken(data.adminToken);
+        const nextAdminToken = String(data.adminToken || '');
+        if (!uuidRegex.test(nextAdminToken)) {
+          throw new Error('Admin token missing. Please try again.');
+        }
+        setAdminToken(nextAdminToken);
         setStep(3);
-        localStorage.setItem('conex_admin_token', data.adminToken);
+        localStorage.setItem('conex_admin_token', nextAdminToken);
         localStorage.setItem('conex_auth_step', '3');
         toast({ title: 'Welcome, Admin', description: 'System access granted.' });
       } else {
@@ -2054,9 +2130,7 @@ export default function ConexPage() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('conex_admin_token');
-    localStorage.removeItem('conex_session_id');
-    localStorage.removeItem('conex_auth_step');
+    resetConexAuth();
     window.location.reload();
   };
 

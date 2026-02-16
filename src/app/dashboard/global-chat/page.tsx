@@ -148,6 +148,8 @@ export default function GlobalChatPage() {
   const { 
     history: currentChatHistory, 
     setHistory: setCurrentChatHistory,
+    setHistoryPersisted,
+    deleteMessagePersisted,
     isResponding,
     sendMessage,
     stopGeneration,
@@ -220,7 +222,7 @@ export default function GlobalChatPage() {
     if (userMessage.role !== 'user') return;
     
     const newHistory = currentChatHistory.slice(0, index);
-    setCurrentChatHistory(newHistory);
+    setHistoryPersisted(newHistory);
     
     if (mode) setSummaryMode(mode);
 
@@ -236,7 +238,7 @@ export default function GlobalChatPage() {
   };
 
   const deleteMessage = (messageId: string) => {
-    setCurrentChatHistory(prev => prev.filter(m => m.id !== messageId));
+    deleteMessagePersisted(messageId);
   };
 
   const handleSummaryAction = async (type: 'short' | 'mid' | 'detailed') => {
@@ -317,15 +319,14 @@ export default function GlobalChatPage() {
       return;
     }
 
-    setInput('');
-
     // 2. Send Message via API
     try {
-      await sendMessage(currentInput, {
+      const res = await sendMessage(currentInput, {
         summaryMode: overrideMode || summaryMode,
         browsingMode,
         referenceDocId: referencedDocId
       });
+      if (res) setInput('');
     } catch (error: any) {
       console.error("[GlobalChatPage] Message error:", error);
       // Toast is handled by useAuChat mostly, but we can keep a fallback
@@ -418,7 +419,7 @@ export default function GlobalChatPage() {
         <GlobalHistoryPrompt 
           userId={user.id} 
           onClearComplete={() => {
-            setCurrentChatHistory([]);
+            setHistoryPersisted([]);
             toast({ title: "History Refreshed", description: "Chat interface cleared." });
           }}
         />

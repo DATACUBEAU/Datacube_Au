@@ -1,12 +1,13 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { sendChatMessage, sendChatMessageStream, generatePromptStarters, getAvailableModels, type ChatMessage } from '@/lib/api/chat';
-import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
 import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summaries';
 import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, sweepExpiredDocWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
+import { supabase } from '@/lib/supabase-client/client';
 
 const AUTO_CLEAR_MS = 3 * 24 * 60 * 60 * 1000;
 
@@ -22,8 +23,7 @@ const simpleHash = (str: string) => {
 };
 
 export function useAuChat(selectedDocId: string | null) {
-  const [user] = useSupabaseUser();
-  const { session } = useSupabaseSession();
+  const [user, session] = useSupabaseUser();
   const { toast } = useToast();
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
   const setAuThinkingStatus = useStore(state => state.setAuThinkingStatus);
@@ -38,6 +38,55 @@ export function useAuChat(selectedDocId: string | null) {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [isInitialized, setIsInitialized] = useState(false);
+
+  const ensureAccessToken = useCallback(async (): Promise<string | null> => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const expiresAtMs = data.session?.expires_at ? data.session.expires_at * 1000 : undefined;
+      const shouldRefresh = typeof expiresAtMs === 'number' && expiresAtMs < Date.now() + 60_000;
+      if (shouldRefresh) {
+        await supabase.auth.refreshSession();
+      }
+      const { data: data2 } = await supabase.auth.getSession();
+      return data2.session?.access_token ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const persistHistory = useCallback(async (nextHistory: ChatMessage[]) => {
+    if (!selectedDocId || !user?.id) return;
+    const scope = selectedDocId === 'global' ? 'global' : 'doc';
+    const key = scope === 'global' ? globalMemoryKey(user.id) : docMemoryKey(user.id, selectedDocId);
+    const current = await loadWorkingMemory(key).catch(() => null);
+
+    const byId = new Map<string, any>();
+    const existingTurns = current?.turns ?? [];
+    for (const t of existingTurns) byId.set(t.id, t);
+
+    const turns = nextHistory
+      .filter((m) => !m.isLoading && (m.role === 'user' || m.role === 'assistant'))
+      .map((m) => {
+        const prev = byId.get(m.id);
+        return { id: m.id, ts: typeof prev?.ts === 'number' ? prev.ts : Date.now(), role: m.role, text: m.content };
+      });
+
+    const nextPayload: WorkingMemoryPayload = {
+      turns,
+      summary: current?.summary ?? '',
+      pinnedFacts: current?.pinnedFacts ?? [],
+      lastUpdatedAt: current?.lastUpdatedAt ?? Date.now(),
+      expiresAt: current?.expiresAt,
+      serverUpdatedAt: current?.serverUpdatedAt,
+      turnsSinceServerSync: current?.turnsSinceServerSync,
+    };
+
+    await saveWorkingMemory(
+      key,
+      nextPayload,
+      scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
+    );
+  }, [selectedDocId, user?.id]);
 
   // Helper: Generate Dynamic Thinking Steps
   const generateThinkingSteps = (content: string, type: 'chat' | 'scan' = 'chat') => {
@@ -85,10 +134,11 @@ export function useAuChat(selectedDocId: string | null) {
   useEffect(() => {
     if (!user) return;
 
-    getAvailableModels(session?.access_token)
+    ensureAccessToken()
+      .then((token) => getAvailableModels(token ?? undefined))
       .then(models => setAvailableModels(models))
       .catch(err => console.error("Failed to load models:", err));
-  }, [user, session]);
+  }, [user, ensureAccessToken]);
 
   // --- PERSISTENCE: Load history on mount or doc change ---
   useEffect(() => {
@@ -143,6 +193,16 @@ export function useAuChat(selectedDocId: string | null) {
     }
   ) => {
     if (!selectedDocId || !user) return;
+
+    const accessToken = await ensureAccessToken();
+    if (!accessToken) {
+      toast({
+        variant: 'destructive',
+        title: 'Sign in required',
+        description: 'Please sign in again to use chat.',
+      });
+      return;
+    }
 
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
@@ -260,7 +320,7 @@ export function useAuChat(selectedDocId: string | null) {
               browsingMode: options?.browsingMode,
               model: selectedModel === 'auto' ? undefined : selectedModel,
             },
-            session?.access_token,
+            accessToken,
             {
               onEvent: (evt) => {
                 if (evt.type === 'delta') {
@@ -342,10 +402,20 @@ export function useAuChat(selectedDocId: string | null) {
         setAuThinkingSteps([]); // Clear steps after done
       }, 3000);
     }
-  }, [selectedDocId, user, session, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep]);
+  }, [selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, toast]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
+
+    const accessToken = await ensureAccessToken();
+    if (!accessToken) {
+      toast({
+        variant: 'destructive',
+        title: 'Sign in required',
+        description: 'Please sign in again to use chat.',
+      });
+      return;
+    }
     
     abortControllerRef.current = new AbortController();
     setIsResponding(true);
@@ -386,7 +456,7 @@ export function useAuChat(selectedDocId: string | null) {
             selectedDocId,
             action: 'scan_and_greet',
             model: selectedModel === 'auto' ? undefined : selectedModel
-        }, session?.access_token, { signal: abortControllerRef.current?.signal });
+        }, accessToken, { signal: abortControllerRef.current?.signal });
 
         if (thinkingInterval) clearInterval(thinkingInterval);
         setAuAnimationState('responding');
@@ -419,7 +489,20 @@ export function useAuChat(selectedDocId: string | null) {
           setAuAnimationState('idle');
         }, 3000);
     }
-  }, [selectedDocId, user, session, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep]);
+  }, [selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, toast]);
+
+  const setHistoryPersisted = useCallback((next: ChatMessage[]) => {
+    setHistory(next);
+    persistHistory(next).catch(() => {});
+  }, [persistHistory]);
+
+  const deleteMessagePersisted = useCallback((messageId: string) => {
+    setHistory((prev) => {
+      const next = prev.filter((m) => m.id !== messageId);
+      persistHistory(next).catch(() => {});
+      return next;
+    });
+  }, [persistHistory]);
 
   const fetchPrompts = useCallback(async (title: string, content: string, idea?: string) => {
     try {
@@ -456,6 +539,8 @@ export function useAuChat(selectedDocId: string | null) {
   return {
     history,
     setHistory,
+    setHistoryPersisted,
+    deleteMessagePersisted,
     isResponding,
     sendMessage,
     stopGeneration,
