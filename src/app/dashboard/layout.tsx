@@ -218,7 +218,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
 
-  const [user, isUserLoading] = useSupabaseUser();
+  const [user, , isUserLoading] = useSupabaseUser();
   const [showWhatsappDialog, setShowWhatsappDialog] = useState(false);
   const [showGlobalChatDevDialog, setShowGlobalChatDevDialog] = useState(false);
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
@@ -432,7 +432,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   if (isUserLoading) return <PageLoader />;
   if (!user) {
     return (
-      <div className="flex min-h-dvh items-center justify-center p-6">
+      <div className="flex min-h-screen w-full items-center justify-center p-6">
         <div className="w-full max-w-md space-y-4 rounded-lg border bg-card p-6 text-center">
           <div className="font-headline text-2xl font-semibold">
              {isOnline ? 'Sign in to continue' : 'You are offline'}

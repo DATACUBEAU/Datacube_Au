@@ -41,7 +41,7 @@ export default function LoginPage() {
   const { signInWithGoogle, isLoading: isSmartLoading } = useSmartAuth();
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
   
-  const [user, isUserLoading] = useSupabaseUser();
+  const [user, , isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
 

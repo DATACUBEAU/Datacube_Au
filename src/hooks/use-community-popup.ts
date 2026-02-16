@@ -3,7 +3,7 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase } from '@/lib/supabase-client/client';
 
 export function useCommunityPopup() {
-  const [user, loading] = useSupabaseUser();
+  const [user, , loading] = useSupabaseUser();
   const [isOpen, setIsOpen] = useState(false);
   const [hasChecked, setHasChecked] = useState(false);
 

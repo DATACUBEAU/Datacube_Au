@@ -36,7 +36,7 @@ function GoogleIcon(props: React.SVGProps<SVGSVGElement>) {
 
 export default function LoginPage() {
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
-  const [user, userLoading] = useSupabaseUser();
+  const [user, , userLoading] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
 
