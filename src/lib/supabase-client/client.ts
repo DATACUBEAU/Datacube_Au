@@ -120,18 +120,67 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
-export async function getSupabaseAccessToken(opts?: { refresh?: boolean }): Promise<string | null> {
-  if (opts?.refresh) {
-    try {
-      await supabase.auth.refreshSession();
-    } catch {
-    }
-  }
-
+function supabaseProjectRefFromUrl(url: string): string | null {
   try {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) return null;
-    return data.session?.access_token ?? null;
+    const u = new URL(url);
+    const host = u.hostname;
+    if (!host.endsWith('.supabase.co')) return null;
+    const ref = host.replace('.supabase.co', '');
+    return ref || null;
+  } catch {
+    return null;
+  }
+}
+
+function tokenProjectRefFromAccessToken(accessToken: string): string | null {
+  try {
+    const parts = accessToken.split('.');
+    if (parts.length < 2) return null;
+    const payloadRaw = parts[1];
+    const base64 = payloadRaw.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonText =
+      typeof atob === 'function'
+        ? atob(base64)
+        : typeof Buffer !== 'undefined'
+          ? Buffer.from(base64, 'base64').toString('utf8')
+          : '';
+    if (!jsonText) return null;
+    const payloadJson = JSON.parse(jsonText);
+    const iss = typeof payloadJson?.iss === 'string' ? payloadJson.iss : '';
+    const match = iss.match(/^https:\/\/([a-z0-9]+)\.supabase\.co\b/i);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getSupabaseAccessToken(opts?: { refresh?: boolean }): Promise<string | null> {
+  try {
+    const { data: first, error: firstError } = await supabase.auth.getSession();
+    if (firstError) return null;
+
+    const firstSession = first.session;
+    if (!firstSession?.access_token) return null;
+
+    const expiresAtMs = typeof firstSession.expires_at === 'number' ? firstSession.expires_at * 1000 : null;
+    const shouldRefresh = !!opts?.refresh || (typeof expiresAtMs === 'number' && expiresAtMs <= Date.now() + 60_000);
+
+    if (shouldRefresh) {
+      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+      if (refreshError) return null;
+      if (!refreshed.session?.access_token) return null;
+    }
+
+    const { data: final, error: finalError } = await supabase.auth.getSession();
+    if (finalError) return null;
+    const token = final.session?.access_token ?? null;
+    if (!token) return null;
+
+    const expectedRef = supabaseProjectRefFromUrl(requiredEnv('NEXT_PUBLIC_SUPABASE_URL'));
+    const tokenRef = tokenProjectRefFromAccessToken(token);
+    if (expectedRef && tokenRef && expectedRef !== tokenRef) return null;
+
+    return token;
   } catch {
     return null;
   }

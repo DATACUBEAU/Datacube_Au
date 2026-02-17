@@ -7,7 +7,7 @@ import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
 import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summaries';
 import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, sweepExpiredDocWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
-import { supabase } from '@/lib/supabase-client/client';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { logOnce } from '@/lib/log/dedupe';
 
@@ -43,18 +43,7 @@ export function useAuChat(selectedDocId: string | null) {
   const [isInitialized, setIsInitialized] = useState(false);
 
   const ensureAccessToken = useCallback(async (): Promise<string | null> => {
-    try {
-      const { data } = await supabase.auth.getSession();
-      const expiresAtMs = data.session?.expires_at ? data.session.expires_at * 1000 : undefined;
-      const shouldRefresh = typeof expiresAtMs === 'number' && expiresAtMs < Date.now() + 60_000;
-      if (shouldRefresh) {
-        await supabase.auth.refreshSession();
-      }
-      const { data: data2 } = await supabase.auth.getSession();
-      return data2.session?.access_token ?? null;
-    } catch {
-      return null;
-    }
+    return await getSupabaseAccessToken({ refresh: true });
   }, []);
 
   const persistHistory = useCallback(async (nextHistory: ChatMessage[]) => {
@@ -205,6 +194,12 @@ export function useAuChat(selectedDocId: string | null) {
     const accessToken = await ensureAccessToken();
     if (!accessToken) {
       logOnce('warn', 'chat:send:no_token', '[chat] Send blocked (no access token)');
+      toast({
+        variant: 'destructive',
+        title: 'Session expired',
+        description: 'Please sign in again to continue chatting.',
+        duration: 3000,
+      });
       return;
     }
 
@@ -392,7 +387,12 @@ export function useAuChat(selectedDocId: string | null) {
         setAuAnimationState('idle');
         return;
       }
-      console.error('[useAuChat] Message error:', err);
+      const msg = String(err?.message || '');
+      if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
+        logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', err);
+      } else {
+        console.error('[useAuChat] Message error:', err);
+      }
       setHistory(prev => prev.filter(m => m.id !== loadingId));
       setAuAnimationState('error');
       throw err;
@@ -405,7 +405,7 @@ export function useAuChat(selectedDocId: string | null) {
         setAuThinkingSteps([]); // Clear steps after done
       }, 3000);
     }
-  }, [selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline]);
+  }, [selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, toast]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;

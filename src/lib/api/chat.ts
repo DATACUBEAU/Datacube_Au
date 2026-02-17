@@ -216,19 +216,29 @@ export async function sendChatMessageStream(
   const accessToken = await getSupabaseAccessToken({ refresh: true });
   if (!accessToken) throw { message: 'No active session', status: 401 };
 
-  const res = await safeFetch(`/api/proxy/${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'text/event-stream',
-      apikey: anonKey,
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(payload),
-    signal: opts?.signal,
-    timeout: 120_000,
-    silent: true,
-  });
+  const doRequest = async (token: string) => {
+    return await safeFetch(`/api/proxy/${endpoint}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        apikey: anonKey,
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+      signal: opts?.signal,
+      timeout: 120_000,
+      silent: true,
+    });
+  };
+
+  let res = await doRequest(accessToken);
+  if (res.status === 401) {
+    const refreshedToken = await getSupabaseAccessToken({ refresh: true });
+    if (refreshedToken && refreshedToken !== accessToken) {
+      res = await doRequest(refreshedToken);
+    }
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');

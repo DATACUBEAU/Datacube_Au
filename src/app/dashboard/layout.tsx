@@ -417,9 +417,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   if (isUserLoading) return <PageLoader />;
   if (!user) {
     return (
-      <div className="min-h-dvh flex items-center justify-center px-4">
-        <Card className="max-w-md w-full">
-          <CardHeader>
+      <div className="min-h-dvh w-full flex items-center justify-center px-4 sm:px-6 lg:px-8">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
             <CardTitle>{isOnline ? 'Sign in required' : 'You are offline'}</CardTitle>
             <CardDescription>
               {isOnline

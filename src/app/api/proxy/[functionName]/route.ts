@@ -37,7 +37,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     const headers = new Headers();
     const auth = extractSupabaseAuthorization(req);
     if (!auth.authorizationHeader) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
+      return NextResponse.json(
+        { error: 'unauthorized', reason: auth.hadAuthInput ? 'invalid_token' : 'missing_token' },
+        { status: 401, headers: corsHeaders() }
+      );
     }
     headers.set('Authorization', auth.authorizationHeader);
 

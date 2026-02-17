@@ -104,12 +104,19 @@ export function useSupabaseSession() {
         if (error) throw error;
         
         if (data.session) {
-            setSession(data.session);
-            cachedSession = data.session;
-            cachedUser = data.session.user;
+          setSession(data.session);
+          cachedSession = data.session;
+          cachedUser = data.session.user;
+        } else {
+          setSession(null);
+          cachedSession = null;
+          cachedUser = null;
         }
       } catch (error) {
         console.warn('Error fetching session:', error);
+        if (!cachedSession) {
+          setSession(null);
+        }
       } finally {
         setLoading(false);
       }
