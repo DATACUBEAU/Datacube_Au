@@ -115,19 +115,19 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
     <NetworkStatusContext.Provider value={{ isOnline, lastCheckedAt, checkNow: checkHealth }}>
       {children}
       
-      {/* Global Offline Banner */}
+      {/* Global Offline Floating Indicator */}
       <AnimatePresence>
         {!isOnline && (
           <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="bg-yellow-500/90 text-yellow-950 text-xs font-bold text-center overflow-hidden backdrop-blur-sm z-[100] fixed top-0 left-0 right-0"
+            initial={{ y: 100, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 100, opacity: 0 }}
+            className="fixed bottom-6 left-1/2 -translate-x-1/2 md:left-6 md:translate-x-0 z-[100] flex items-center gap-3 px-4 py-2.5 rounded-full bg-zinc-900/95 text-zinc-100 shadow-xl backdrop-blur-md border border-white/10"
           >
-            <div className="py-1 flex items-center justify-center gap-2">
-              <WifiOff className="h-3 w-3" />
-              <span>Offline Mode — You are browsing a cached version. Some features are unavailable.</span>
+            <div className="bg-red-500/20 p-1.5 rounded-full">
+              <WifiOff className="h-3.5 w-3.5 text-red-400" />
             </div>
+            <span className="text-xs font-medium pr-1">You are offline</span>
           </motion.div>
         )}
       </AnimatePresence>
