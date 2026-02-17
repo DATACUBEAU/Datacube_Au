@@ -66,6 +66,7 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { safeFetch } from '@/lib/api/safe-fetch';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { validateQuery } from '@/lib/upload/file-types';
 import { cn } from '@/lib/utils';
 import { TruncatedText } from '@/components/TruncatedText';
@@ -659,21 +660,41 @@ export default function ChatPage() {
       const documentContent = await getDocumentContent(selectedDocId);
       if (!documentContent) return;
 
-      const result = await safeFetch(`/api/proxy/au-chat`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ 
-          messages: [{ 
-            role: 'user', 
-            content: `Based on the document "${selectedDocName}", generate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
-          }],
-          useRAG: true,
-          selectedDocId
-        }),
-      });
+      const accessToken = await getSupabaseAccessToken({ refresh: true });
+      if (!accessToken) {
+        toast({
+          variant: 'destructive',
+          title: 'Session expired',
+          description: 'Please sign in again to continue chatting.',
+          duration: 3000,
+        });
+        return;
+      }
+
+      const doRequest = async (token: string) =>
+        safeFetch(`/api/proxy/au-chat`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ 
+            messages: [{ 
+              role: 'user', 
+              content: `Based on the document "${selectedDocName}", generate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
+            }],
+            useRAG: true,
+            selectedDocId
+          }),
+        });
+
+      let result = await doRequest(accessToken);
+      if (result.status === 401) {
+        const refreshed = await getSupabaseAccessToken({ refresh: true });
+        if (refreshed && refreshed !== accessToken) {
+          result = await doRequest(refreshed);
+        }
+      }
 
       const data = await result.json();
       let prompts: string[] = [];
@@ -743,18 +764,38 @@ export default function ChatPage() {
     try {
       const documentContent = await getDocumentContent(selectedDocId);
       const documentTitle = selectedDocName || 'Current Document';
-      const result = await safeFetch(`/api/proxy/generate-prompt-starters`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({ 
-          documentTitle,
-          documentContent: documentContent.substring(0, 10000), // Limit content for efficiency
-          userIdea: promptStudioInput,
-        }),
-      });
+      const accessToken = await getSupabaseAccessToken({ refresh: true });
+      if (!accessToken) {
+        toast({
+          variant: 'destructive',
+          title: 'Session expired',
+          description: 'Please sign in again to continue chatting.',
+          duration: 3000,
+        });
+        return;
+      }
+
+      const doRequest = async (token: string) =>
+        safeFetch(`/api/proxy/generate-prompt-starters`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ 
+            documentTitle,
+            documentContent: documentContent.substring(0, 10000), // Limit content for efficiency
+            userIdea: promptStudioInput,
+          }),
+        });
+
+      let result = await doRequest(accessToken);
+      if (result.status === 401) {
+        const refreshed = await getSupabaseAccessToken({ refresh: true });
+        if (refreshed && refreshed !== accessToken) {
+          result = await doRequest(refreshed);
+        }
+      }
       
       const data = await result.json();
       const prompts = data.prompts || [];

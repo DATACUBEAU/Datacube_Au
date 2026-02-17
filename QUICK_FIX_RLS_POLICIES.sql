@@ -43,6 +43,25 @@ CREATE POLICY "Users can view own chunks"
   FOR SELECT
   USING (auth.uid() = user_id);
 
+DROP POLICY IF EXISTS "Users can insert own activity" ON au_user_activity;
+CREATE POLICY "Users can insert own activity"
+  ON au_user_activity
+  FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can update own activity" ON au_user_activity;
+CREATE POLICY "Users can update own activity"
+  ON au_user_activity
+  FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users can view own activity" ON au_user_activity;
+CREATE POLICY "Users can view own activity"
+  ON au_user_activity
+  FOR SELECT
+  USING (auth.uid() = user_id);
+
 -- ============================================
 -- Verify policies
 -- ============================================

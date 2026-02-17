@@ -53,8 +53,16 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       if (mounted) setIsLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       syncFromSession().catch(() => {});
+      // Ensure user consistency on sign-in
+      if (event === 'SIGNED_IN' && session?.user) {
+        supabase.rpc('ensure_user_consistency').then(({ error }) => {
+            if (error) {
+              console.error('Consistency check failed:', error);
+            }
+        });
+      }
     });
 
     return () => {

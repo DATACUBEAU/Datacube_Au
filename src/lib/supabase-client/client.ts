@@ -375,19 +375,36 @@ export async function updateUserActivity(
     };
 
     if (user?.id) {
-      const { error } = await supabase
-        .from('au_user_activity')
-        .upsert({ 
-          user_id: user.id, 
-          last_active_at: new Date().toISOString(),
-          user_agent: userAgent,
-          is_pwa: isStandalone,
-          metadata: metadata
-        }, { onConflict: 'user_id' });
-        
-      if (error) {
-        if (error.code === '23503') return;
-        if (error.code !== '406') console.warn('[client] Activity update error:', error);
+      const accessToken = await getSupabaseAccessToken({ refresh: true });
+      if (!accessToken) return;
+
+      const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
+      const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+      const payload = { 
+        user_id: user.id, 
+        last_active_at: new Date().toISOString(),
+        user_agent: userAgent,
+        is_pwa: isStandalone,
+        metadata: metadata
+      };
+
+      const response = await safeFetch(`${supabaseUrl}/rest/v1/au_user_activity?on_conflict=user_id`, {
+        method: 'POST',
+        headers: {
+          apikey: anonKey,
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify(payload),
+        timeout: 8000,
+        silent: true,
+      });
+
+      if (!response.ok) {
+        const raw = await response.text().catch(() => '');
+        if (response.status === 406) return;
+        console.warn('[client] Activity update error:', { status: response.status, body: raw });
       }
     }
   } catch (e) {
