@@ -2,6 +2,7 @@
 
 import { useEffect, useState, createContext, useContext, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
+import { Session, User } from '@supabase/supabase-js';
 
 interface SmartUser {
   id: string;
@@ -13,6 +14,7 @@ interface SmartUser {
 
 interface SmartAuthContextType {
   user: SmartUser | null;
+  session: Session | null;
   isLoading: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -23,6 +25,7 @@ const SmartAuthContext = createContext<SmartAuthContextType | undefined>(undefin
 
 export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<SmartUser | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -30,15 +33,17 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
     const syncFromSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const { data } = await supabase.auth.getSession();
         if (!mounted) return;
+        
+        setSession(data.session);
 
-        if (session?.user) {
+        if (data.session?.user) {
           setUser({
-            id: session.user.id,
-            email: session.user.email,
-            full_name: session.user.user_metadata?.full_name || session.user.user_metadata?.name,
-            avatar_url: session.user.user_metadata?.avatar_url,
+            id: data.session.user.id,
+            email: data.session.user.email,
+            full_name: data.session.user.user_metadata?.full_name || data.session.user.user_metadata?.name,
+            avatar_url: data.session.user.user_metadata?.avatar_url,
             provider: 'supabase',
           });
         } else {
@@ -54,7 +59,22 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      syncFromSession().catch(() => {});
+      if (mounted) {
+        setSession(session);
+        if (session?.user) {
+           setUser({
+            id: session.user.id,
+            email: session.user.email,
+            full_name: session.user.user_metadata?.full_name || session.user.user_metadata?.name,
+            avatar_url: session.user.user_metadata?.avatar_url,
+            provider: 'supabase',
+          });
+        } else {
+          setUser(null);
+        }
+        setIsLoading(false);
+      }
+      
       // Ensure user consistency on sign-in
       if (event === 'SIGNED_IN' && session?.user) {
         supabase.rpc('ensure_user_consistency').then(({ error }) => {
@@ -91,24 +111,30 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     await supabase.auth.signOut();
     setUser(null);
+    setSession(null);
     setIsLoading(false);
   }, []);
 
   const getToken = useCallback(async () => {
+    // If we have a session in state, use it (it's kept up to date by the listener)
+    if (session?.access_token) return session.access_token;
+    
+    // Fallback to fetching fresh
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) return data.session.access_token;
     return null;
-  }, []);
+  }, [session]);
 
   const value = useMemo(
     () => ({
       user,
+      session,
       isLoading,
       signInWithGoogle,
       signOut,
       getToken,
     }),
-    [user, isLoading, signInWithGoogle, signOut, getToken]
+    [user, session, isLoading, signInWithGoogle, signOut, getToken]
   );
 
   return (

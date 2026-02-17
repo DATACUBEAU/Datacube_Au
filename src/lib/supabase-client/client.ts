@@ -156,26 +156,16 @@ function tokenProjectRefFromAccessToken(accessToken: string): string | null {
 
 export async function getSupabaseAccessToken(opts?: { refresh?: boolean }): Promise<string | null> {
   try {
-    const { data: first, error: firstError } = await supabase.auth.getSession();
-    if (firstError) return null;
-
-    const firstSession = first.session;
-    if (!firstSession?.access_token) return null;
-
-    const expiresAtMs = typeof firstSession.expires_at === 'number' ? firstSession.expires_at * 1000 : null;
-    const shouldRefresh = !!opts?.refresh || (typeof expiresAtMs === 'number' && expiresAtMs <= Date.now() + 60_000);
-
-    if (shouldRefresh) {
-      const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError) return null;
-      if (!refreshed.session?.access_token) return null;
-    }
-
-    const { data: final, error: finalError } = await supabase.auth.getSession();
-    if (finalError) return null;
-    const token = final.session?.access_token ?? null;
+    // We rely on the auto-refresh mechanism of the client.
+    // Manual refresh calls are removed to prevent 429 errors.
+    
+    const { data, error } = await supabase.auth.getSession();
+    if (error) return null;
+    
+    const token = data.session?.access_token ?? null;
     if (!token) return null;
 
+    // Security check: ensure token matches project
     const expectedRef = supabaseProjectRefFromUrl(requiredEnv('NEXT_PUBLIC_SUPABASE_URL'));
     const tokenRef = tokenProjectRefFromAccessToken(token);
     if (expectedRef && tokenRef && expectedRef !== tokenRef) return null;
@@ -218,14 +208,16 @@ export async function invokeEdgeFunction<T = any>(
     if (requireAuth && !accessToken) {
       return { data: null as T | null, error: { message: 'No active session', status: 401 } };
     }
-    if (!accessToken) {
+    if (!accessToken && requireAuth) { // Double check consistency
       return { data: null as T | null, error: { message: 'No active session', status: 401 } };
     }
 
     const headers = new Headers(options?.headers ?? {});
     headers.set('apikey', anonKey);
     headers.set('Content-Type', 'application/json');
-    headers.set('Authorization', `Bearer ${accessToken}`);
+    if (accessToken) {
+        headers.set('Authorization', `Bearer ${accessToken}`);
+    }
 
     // Use local proxy to avoid CORS issues
     const url = `/api/proxy/${functionName}`;
@@ -260,32 +252,20 @@ export async function invokeEdgeFunction<T = any>(
     return { data: null as T | null, error: { message, status: res.status, details: payload } };
   };
 
-  const accessToken1 = await getSupabaseAccessToken();
-  const maxAttempts = 3;
-  let refreshedAfter401 = false;
-
-  for (let i = 0; i < maxAttempts; i++) {
-    if (i > 0) await sleep(computeBackoffMs(i));
-
-    const accessToken =
-      i === 1 ? await getSupabaseAccessToken({ refresh: true }) : i === 2 ? await getSupabaseAccessToken({ refresh: true }) : accessToken1;
-
-    const result = await attemptOnce(accessToken);
-    const status = result.error?.status;
-
-    if (!result.error) return result;
-    if (status === 401 && requireAuth && !refreshedAfter401) {
-      refreshedAfter401 = true;
-      const refreshed = await attemptOnce(await getSupabaseAccessToken({ refresh: true }));
-      if (!refreshed.error) return refreshed;
-      return refreshed;
-    }
-    if (status === 401 || status === 403) return result;
-    if (typeof status === 'number' && status > 0 && status < 500) return result;
+  // Simple retry logic relying on auto-refresh
+  let accessToken = await getSupabaseAccessToken();
+  
+  // First attempt
+  let result = await attemptOnce(accessToken);
+  
+  // If 401, wait a bit and try again (maybe background refresh happened)
+  if (result.error?.status === 401 && requireAuth) {
+      await sleep(1000); // Wait for potential background refresh
+      accessToken = await getSupabaseAccessToken();
+      result = await attemptOnce(accessToken);
   }
 
-  const final = await attemptOnce(await getSupabaseAccessToken({ refresh: true }));
-  return final;
+  return result;
 }
 
 /**
@@ -375,7 +355,7 @@ export async function updateUserActivity(
     };
 
     if (user?.id) {
-      const accessToken = await getSupabaseAccessToken({ refresh: true });
+      const accessToken = await getSupabaseAccessToken();
       if (!accessToken) return;
 
       const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');

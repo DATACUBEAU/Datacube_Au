@@ -43,7 +43,7 @@ export function useAuChat(selectedDocId: string | null) {
   const [isInitialized, setIsInitialized] = useState(false);
 
   const ensureAccessToken = useCallback(async (): Promise<string | null> => {
-    return await getSupabaseAccessToken({ refresh: true });
+    return await getSupabaseAccessToken();
   }, []);
 
   const persistHistory = useCallback(async (nextHistory: ChatMessage[]) => {

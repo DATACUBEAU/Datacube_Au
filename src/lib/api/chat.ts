@@ -213,7 +213,7 @@ export async function sendChatMessageStream(
     };
   }
 
-  const accessToken = await getSupabaseAccessToken({ refresh: true });
+  const accessToken = await getSupabaseAccessToken();
   if (!accessToken) throw { message: 'No active session', status: 401 };
 
   const doRequest = async (token: string) => {

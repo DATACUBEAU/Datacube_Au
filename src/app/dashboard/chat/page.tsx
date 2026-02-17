@@ -660,7 +660,7 @@ export default function ChatPage() {
       const documentContent = await getDocumentContent(selectedDocId);
       if (!documentContent) return;
 
-      const accessToken = await getSupabaseAccessToken({ refresh: true });
+      const accessToken = await getSupabaseAccessToken();
       if (!accessToken) {
         toast({
           variant: 'destructive',
@@ -689,8 +689,11 @@ export default function ChatPage() {
         });
 
       let result = await doRequest(accessToken);
+      
+      // If 401, the token might be expired despite our checks.
+      // Since we rely on auto-refresh, we can try to get the session again once.
       if (result.status === 401) {
-        const refreshed = await getSupabaseAccessToken({ refresh: true });
+        const refreshed = await getSupabaseAccessToken();
         if (refreshed && refreshed !== accessToken) {
           result = await doRequest(refreshed);
         }
@@ -764,7 +767,7 @@ export default function ChatPage() {
     try {
       const documentContent = await getDocumentContent(selectedDocId);
       const documentTitle = selectedDocName || 'Current Document';
-      const accessToken = await getSupabaseAccessToken({ refresh: true });
+      const accessToken = await getSupabaseAccessToken();
       if (!accessToken) {
         toast({
           variant: 'destructive',
@@ -790,8 +793,10 @@ export default function ChatPage() {
         });
 
       let result = await doRequest(accessToken);
+      
+      // If 401, retry once with potentially refreshed token
       if (result.status === 401) {
-        const refreshed = await getSupabaseAccessToken({ refresh: true });
+        const refreshed = await getSupabaseAccessToken();
         if (refreshed && refreshed !== accessToken) {
           result = await doRequest(refreshed);
         }
