@@ -26,11 +26,15 @@ const withPWA = withPWAInit({
         options: { cacheName: 'external-no-cache' },
       },
       {
+        urlPattern: /\/api\/health$/i,
+        handler: 'NetworkOnly',
+      },
+      {
         urlPattern: ({ request }: { request: Request }) => request.mode === 'navigate',
         handler: 'NetworkFirst',
         options: {
           cacheName: 'html-cache',
-          networkTimeoutSeconds: 5,
+          networkTimeoutSeconds: 3, // Reduced from 5s for faster fallback
         },
       },
       {
@@ -38,8 +42,20 @@ const withPWA = withPWAInit({
         handler: 'NetworkFirst',
         options: {
           cacheName: 'next-rsc-cache',
+          networkTimeoutSeconds: 3, // Add timeout to avoid hanging on lie-fi
           expiration: {
-            maxEntries: 50,
+            maxEntries: 100, // Increased from 50
+            maxAgeSeconds: 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        urlPattern: /manifest\.webmanifest$/i,
+        handler: 'StaleWhileRevalidate',
+        options: {
+          cacheName: 'manifest-cache',
+          expiration: {
+            maxEntries: 1,
             maxAgeSeconds: 24 * 60 * 60,
           },
         },

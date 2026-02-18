@@ -89,17 +89,57 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
   // Use the original Request object if available to preserve body and other settings
   const fetchInput = input;
 
-  try {
-    const response = await fetch(fetchInput, newInit);
-    return response;
-  } catch (err: any) {
-    console.error(`[customFetch] Network error fetching ${url}:`, {
-      name: err?.name,
-      message: err?.message,
-      url: url
-    });
-    throw err;
+  // Retry logic with exponential backoff for 429 errors
+  const MAX_RETRIES = 3;
+  let attempt = 0;
+
+  while (attempt <= MAX_RETRIES) {
+    try {
+      const response = await fetch(fetchInput, newInit);
+      
+      // If success or not a 429, return immediately
+      if (response.status !== 429) {
+        return response;
+      }
+
+      // If 429, check if we have retries left
+      if (attempt >= MAX_RETRIES) {
+        console.warn(`[customFetch] Rate limit exceeded for ${url} after ${MAX_RETRIES} retries.`);
+        return response;
+      }
+
+      // Calculate backoff with jitter
+      // Base: 1s, 2s, 4s... + random jitter (0-500ms)
+      const baseDelay = 1000 * Math.pow(2, attempt);
+      const jitter = Math.floor(Math.random() * 500);
+      const delay = baseDelay + jitter;
+      
+      console.log(`[customFetch] 429 received. Retrying in ${delay}ms (Attempt ${attempt + 1}/${MAX_RETRIES})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      
+      attempt++;
+    } catch (err: any) {
+      // If network error, check if we have retries left
+      const isNetworkError = err.name !== 'AbortError'; // Fetch throws TypeError on network failure
+      
+      if (isNetworkError && attempt < MAX_RETRIES) {
+         const delay = 1000 * Math.pow(2, attempt);
+         console.warn(`[customFetch] Network error fetching ${url}. Retrying in ${delay}ms...`);
+         await new Promise(resolve => setTimeout(resolve, delay));
+         attempt++;
+         continue;
+      }
+
+      console.error(`[customFetch] Network error fetching ${url}:`, {
+        name: err?.name,
+        message: err?.message,
+        url: url
+      });
+      throw err;
+    }
   }
+
+  throw new Error('Unreachable code in customFetch');
 };
 
 export function createBrowserSupabaseClient(): SupabaseClient {
