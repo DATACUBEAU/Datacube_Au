@@ -16,7 +16,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
-import { supabase } from '@/lib/supabase-client/client';
+import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
 
@@ -2086,9 +2086,17 @@ export default function ConexPage() {
     setLoading(true);
     setError(null);
     try {
+      const accessToken = await getSupabaseAccessToken();
+      if (!accessToken) {
+        throw new Error('Sign in required. Please log in to your account first.');
+      }
+
       const res = await fetch('/api/admin/auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({ action: 'auth', step: 1, answer })
       });
       const data = await res.json();
@@ -2120,9 +2128,17 @@ export default function ConexPage() {
     setLoading(true);
     setError(null);
     try {
+      const accessToken = await getSupabaseAccessToken();
+      if (!accessToken) {
+        throw new Error('Sign in required. Please log in to your account first.');
+      }
+
       const res = await fetch('/api/admin/auth', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+        },
         body: JSON.stringify({ action: 'auth', step: 2, accessKey, sessionId })
       });
       const data = await res.json();
