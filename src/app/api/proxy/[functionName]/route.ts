@@ -102,11 +102,11 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         const isUnauthorized = lower.includes('unauthorized') || lower.includes('invalid jwt') || lower.includes('jwt expired');
         const isForbidden = lower.includes('forbidden') || lower.includes('insufficient') || lower.includes('not allowed');
 
-        if (response.status === 401 || (isUnauthorized && !isRegisteredOnly && !isForbidden)) {
+        if (response.status === 401 || (isUnauthorized && !isForbidden)) {
           return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
         }
 
-        if (response.status === 403 || isRegisteredOnly || isForbidden) {
+        if (response.status === 403 || isForbidden) {
           return NextResponse.json({ error: 'forbidden' }, { status: 403, headers: corsHeaders() });
         }
 
