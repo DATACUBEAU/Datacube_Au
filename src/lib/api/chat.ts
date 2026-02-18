@@ -59,7 +59,7 @@ export type AppContext = {
 };
 
 export type RecentSnippet = {
-  mode: 'turns' | 'summary' | 'hybrid';
+  mode: 'turns' | 'summary';
   turns?: { role: 'user' | 'assistant'; content: string }[];
   summary?: string;
 };

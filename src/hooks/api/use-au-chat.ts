@@ -282,11 +282,15 @@ export function useAuChat(selectedDocId: string | null) {
       } else {
           const existing = await loadWorkingMemory(memoryKey);
           const recentTurns = existing?.turns?.slice(-8).map(t => ({ role: t.role, content: t.text })) ?? [];
-          const recentSnippet = {
-            mode: 'hybrid' as const,
-            summary: existing?.summary,
-            turns: recentTurns
-          };
+          const recentSnippet = recentTurns.length > 0
+            ? {
+                mode: 'turns' as const,
+                turns: recentTurns,
+              }
+            : {
+                mode: 'summary' as const,
+                summary: existing?.summary || '',
+              };
 
           let streamedText = '';
 
@@ -297,11 +301,16 @@ export function useAuChat(selectedDocId: string | null) {
                   const docKey = docMemoryKey(user.id, options.referenceDocId);
                   const docMem = await loadWorkingMemory(docKey);
                   if (docMem) {
-                     secondarySnippet = {
-                        mode: 'hybrid',
-                        summary: docMem.summary,
-                        turns: docMem.turns?.slice(-5).map((t: any) => ({ role: t.role, content: t.text })) || []
-                     };
+                     const secondaryTurns = docMem.turns?.slice(-5).map((t: any) => ({ role: t.role, content: t.text })) || [];
+                     secondarySnippet = secondaryTurns.length > 0
+                       ? {
+                          mode: 'turns',
+                          turns: secondaryTurns
+                        }
+                       : {
+                          mode: 'summary',
+                          summary: docMem.summary || ''
+                        };
                   }
               } catch (e) { console.error('Failed to load secondary memory', e); }
           }
