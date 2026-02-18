@@ -2,7 +2,7 @@
 
 import { useEffect, useState, createContext, useContext, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
-import { Session, User } from '@supabase/supabase-js';
+import { Session } from '@supabase/supabase-js';
 
 interface SmartUser {
   id: string;
@@ -15,6 +15,8 @@ interface SmartUser {
 interface SmartAuthContextType {
   user: SmartUser | null;
   session: Session | null;
+  isAuthed: boolean;
+  isLoadingAuth: boolean;
   isLoading: boolean;
   signInWithGoogle: () => Promise<void>;
   signOut: () => Promise<void>;
@@ -125,16 +127,20 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     return null;
   }, [session]);
 
+  const isAuthed = !!session?.access_token && !!session?.user;
+
   const value = useMemo(
     () => ({
       user,
       session,
+      isAuthed,
+      isLoadingAuth: isLoading,
       isLoading,
       signInWithGoogle,
       signOut,
       getToken,
     }),
-    [user, session, isLoading, signInWithGoogle, signOut, getToken]
+    [user, session, isAuthed, isLoading, signInWithGoogle, signOut, getToken]
   );
 
   return (

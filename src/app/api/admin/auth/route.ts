@@ -1,5 +1,6 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 
 export const runtime = 'edge';
 
@@ -13,8 +14,13 @@ const supabaseAdmin = createClient(
   SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
 );
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   try {
+    const auth = await requireUserFromRequest(req);
+    if (!auth.ok) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+
     const ip = req.headers.get('x-forwarded-for') || 'unknown';
     const body = await req.json();
 
@@ -43,7 +49,8 @@ export async function POST(req: Request) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${auth.accessToken}`,
+        'apikey': SUPABASE_ANON_KEY,
       },
       body: JSON.stringify(body)
     });

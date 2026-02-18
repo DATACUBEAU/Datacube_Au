@@ -232,13 +232,7 @@ export async function sendChatMessageStream(
     });
   };
 
-  let res = await doRequest(accessToken);
-  if (res.status === 401) {
-    const refreshedToken = await getSupabaseAccessToken({ refresh: true });
-    if (refreshedToken && refreshedToken !== accessToken) {
-      res = await doRequest(refreshedToken);
-    }
-  }
+  const res = await doRequest(accessToken);
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');

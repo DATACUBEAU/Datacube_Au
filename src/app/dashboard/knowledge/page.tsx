@@ -166,7 +166,7 @@ export default function KnowledgePage() {
           pastQuestionsContent = contents.join('\n\n---\n\n');
         }
 
-        await generateKnowledge(selectedDocId, documentContent, session.access_token, pastQuestionsContent);
+        await generateKnowledge(selectedDocId, documentContent, pastQuestionsContent);
 
     } catch (error: any) {
       console.error('Failed to prepare for study material generation:', error);

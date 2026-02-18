@@ -7,26 +7,7 @@ import { GlobalListeners } from '@/components/global-listeners';
 import { SmartAuthProvider } from '@/hooks/use-smart-auth';
 import { NetworkStatusProvider } from '@/components/providers/network-status-provider';
 import { FeatureFlagProvider } from '@/components/feature-flag-provider';
-import { PT_Sans, Space_Grotesk, Source_Code_Pro } from 'next/font/google';
 import './globals.css';
-
-const ptSans = PT_Sans({
-  subsets: ['latin'],
-  weight: ['400', '700'],
-  variable: '--font-pt-sans',
-});
-
-const spaceGrotesk = Space_Grotesk({
-  subsets: ['latin'],
-  weight: ['400', '700'],
-  variable: '--font-space-grotesk',
-});
-
-const sourceCodePro = Source_Code_Pro({
-  subsets: ['latin'],
-  weight: ['400', '600'],
-  variable: '--font-source-code-pro',
-});
 
 const APP_NAME = 'DataCube AU';
 const APP_DESCRIPTION = 'Your personal LLM for your own data.';
@@ -64,7 +45,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" suppressHydrationWarning className={`${ptSans.variable} ${spaceGrotesk.variable} ${sourceCodePro.variable}`}>
+    <html lang="en" suppressHydrationWarning>
       <body className="font-body antialiased">
         <ThemeProvider
           attribute="class"

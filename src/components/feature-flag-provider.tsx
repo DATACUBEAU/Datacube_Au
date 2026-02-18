@@ -1,8 +1,10 @@
 
 'use client';
 
-import React, { createContext, useContext, ReactNode, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, ReactNode, useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { useSupabaseSession } from '@/hooks/use-supabase-auth';
 
 interface FeatureFlags {
   global_chat_enabled?: boolean;
@@ -23,11 +25,21 @@ const FeatureFlagContext = createContext<FeatureFlagContextType>({
   refreshFlags: async () => {},
 });
 
+let hasWarnedFeatureFlagFetch = false;
+let hasWarnedFeatureFlagRealtime = false;
+
 export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const [flags, setFlags] = useState<FeatureFlags>({});
   const [loading, setLoading] = useState(true);
+  const { isOnline } = useNetworkStatus();
+  const { session, loading: isLoadingAuth } = useSupabaseSession();
 
-  const fetchFlags = async () => {
+  const fetchFlags = useCallback(async () => {
+    if (!isOnline || !session?.access_token) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data, error } = await supabase
         .from('au_conex_config')
@@ -35,24 +47,37 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         .single();
       
       if (error) {
-        console.warn('[FeatureFlagProvider] Failed to fetch flags, using defaults.', error);
-        // Default to enabled if fetch fails to avoid locking users out during errors
+        if (!hasWarnedFeatureFlagFetch) {
+          console.warn('[FeatureFlagProvider] Failed to fetch flags, using defaults.', error);
+          hasWarnedFeatureFlagFetch = true;
+        }
         setFlags({ global_chat_enabled: true });
       } else if (data) {
         setFlags(data);
       }
     } catch (err) {
-      console.error('[FeatureFlagProvider] Error:', err);
+      if (!hasWarnedFeatureFlagFetch) {
+        console.warn('[FeatureFlagProvider] Error loading flags, using defaults.', err);
+        hasWarnedFeatureFlagFetch = true;
+      }
       setFlags({ global_chat_enabled: true });
     } finally {
       setLoading(false);
     }
-  };
+  }, [isOnline, session?.access_token]);
 
   useEffect(() => {
+    if (isLoadingAuth) {
+      return;
+    }
+
+    setLoading(true);
     fetchFlags();
 
-    // Subscribe to realtime updates
+    if (!isOnline || !session?.access_token) {
+      return;
+    }
+
     const channel = supabase
       .channel('conex-config-updates')
       .on(
@@ -62,12 +87,17 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
           setFlags((prev) => ({ ...prev, ...payload.new }));
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && !hasWarnedFeatureFlagRealtime) {
+          console.warn('[FeatureFlagProvider] Realtime unavailable; continuing with cached/default flags.');
+          hasWarnedFeatureFlagRealtime = true;
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [fetchFlags, isLoadingAuth, isOnline, session?.access_token]);
 
   const value = useMemo(() => ({
     flags,

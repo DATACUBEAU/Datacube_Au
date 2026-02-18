@@ -6,13 +6,19 @@ import { supabase } from '@/lib/supabase-client/client';
  * Automatically injects required Supabase and Admin authentication headers.
  */
 export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
-  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   
   // Retrieve the admin token from secure storage (using localStorage for persistence across refreshes)
   const adminToken = typeof window !== 'undefined' ? localStorage.getItem('conex_admin_token') : null;
 
-  const url = endpoint.startsWith('http') ? endpoint : `${SUPABASE_URL}/functions/v1/${endpoint}`;
+  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+    return new Response(JSON.stringify({ error: 'offline' }), {
+      status: 503,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const url = endpoint.startsWith('http') ? endpoint : `/api/proxy/${endpoint}`;
 
   const headers = new Headers(options.headers || {});
   
@@ -21,7 +27,7 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     if (!headers.has('apikey')) headers.set('apikey', ANON_KEY);
   }
 
-  // 2. Authorization: Prefer User Session, fallback to Anon
+  // 2. Authorization: Require an authenticated Supabase user session
   if (!headers.has('Authorization')) {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.access_token) {

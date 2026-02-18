@@ -1,6 +1,6 @@
 
 import { NextRequest, NextResponse } from 'next/server';
-import { extractSupabaseAuthorization } from '@/app/api/proxy/_supabase-auth';
+import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 
 export const runtime = 'edge';
 
@@ -18,12 +18,13 @@ function corsHeaders(): HeadersInit {
   return {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, apikey',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, apikey, x-admin-token',
   };
 }
 
 async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ functionName: string }> }) {
   const { functionName } = await params;
+  const requestId = crypto.randomUUID();
 
   try {
     const url = new URL(req.url);
@@ -35,20 +36,37 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     });
 
     const headers = new Headers();
-    const auth = extractSupabaseAuthorization(req);
-    if (!auth.authorizationHeader) {
+    const auth = await requireUserFromRequest(req);
+    if (!auth.ok) {
       return NextResponse.json(
-        { error: 'unauthorized', reason: auth.hadAuthInput ? 'invalid_token' : 'missing_token' },
+        { error: 'unauthorized' },
         { status: 401, headers: corsHeaders() }
       );
     }
-    headers.set('Authorization', auth.authorizationHeader);
+    headers.set('Authorization', `Bearer ${auth.accessToken}`);
 
     const contentType = req.headers.get('content-type');
     if (contentType) headers.set('Content-Type', contentType);
 
     const accept = req.headers.get('accept');
     if (accept) headers.set('Accept', accept);
+
+    const adminToken = req.headers.get('x-admin-token');
+    if (adminToken) headers.set('x-admin-token', adminToken);
+
+    const passthroughHeaders = [
+      'x-client-info',
+      'x-device-id',
+      'x-supabase-client-platform',
+      'tus-resumable',
+      'upload-length',
+      'upload-metadata',
+      'upload-offset',
+    ];
+    passthroughHeaders.forEach((name) => {
+      const value = req.headers.get(name);
+      if (value) headers.set(name, value);
+    });
 
     const apikey = req.headers.get('apikey');
     if (apikey) {
@@ -84,12 +102,20 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         const isUnauthorized = lower.includes('unauthorized') || lower.includes('invalid jwt') || lower.includes('jwt expired');
         const isForbidden = lower.includes('forbidden') || lower.includes('insufficient') || lower.includes('not allowed');
 
-        if (isRegisteredOnly || isUnauthorized) {
+        if (response.status === 401 || (isUnauthorized && !isRegisteredOnly && !isForbidden)) {
           return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
         }
 
-        if (isForbidden) {
+        if (response.status === 403 || isRegisteredOnly || isForbidden) {
           return NextResponse.json({ error: 'forbidden' }, { status: 403, headers: corsHeaders() });
+        }
+
+        if (response.status >= 500 && (isRegisteredOnly || isForbidden)) {
+          return NextResponse.json({ error: 'forbidden' }, { status: 403, headers: corsHeaders() });
+        }
+
+        if (response.status >= 500 && isUnauthorized) {
+          return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
         }
 
         const responseHeaders = new Headers(response.headers);
@@ -108,7 +134,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     });
   } catch (error: any) {
     console.error(`[Proxy] Error calling function ${functionName}:`, error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500, headers: corsHeaders() });
+    return NextResponse.json(
+      { error: 'internal_server_error', requestId },
+      { status: 500, headers: corsHeaders() }
+    );
   }
 }
 

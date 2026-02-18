@@ -237,7 +237,7 @@ export default function PredictionsPage() {
         return;
       }
 
-      await generatePredictions(pastQuestionsContent, session.access_token, mainTextbookContent);
+      await generatePredictions(pastQuestionsContent, mainTextbookContent);
 
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Prediction Failed', description: `Could not retrieve document content. ${err.message}` });

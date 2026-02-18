@@ -160,9 +160,9 @@ export default function ChatPage() {
   const { toast } = useToast();
   const router = useRouter();
   const [user] = useSupabaseUser();
-  const { session } = useSupabaseSession();
+  const { session, loading: isLoadingAuth } = useSupabaseSession();
   const isOnline = useOnlineStatus();
-  const canChat = isOnline && !!session?.access_token;
+  const canChat = isOnline && !!session?.access_token && !isLoadingAuth;
 
   const [now, setNow] = useState(() => Date.now());
 
@@ -688,16 +688,7 @@ export default function ChatPage() {
           }),
         });
 
-      let result = await doRequest(accessToken);
-      
-      // If 401, the token might be expired despite our checks.
-      // Since we rely on auto-refresh, we can try to get the session again once.
-      if (result.status === 401) {
-        const refreshed = await getSupabaseAccessToken();
-        if (refreshed && refreshed !== accessToken) {
-          result = await doRequest(refreshed);
-        }
-      }
+      const result = await doRequest(accessToken);
 
       const data = await result.json();
       let prompts: string[] = [];
@@ -792,15 +783,7 @@ export default function ChatPage() {
           }),
         });
 
-      let result = await doRequest(accessToken);
-      
-      // If 401, retry once with potentially refreshed token
-      if (result.status === 401) {
-        const refreshed = await getSupabaseAccessToken();
-        if (refreshed && refreshed !== accessToken) {
-          result = await doRequest(refreshed);
-        }
-      }
+      const result = await doRequest(accessToken);
       
       const data = await result.json();
       const prompts = data.prompts || [];
@@ -1378,19 +1361,27 @@ export default function ChatPage() {
                   !selectedDocId
                     ? "Please select a document to start chatting."
                     : !isOnline
-                      ? "You are offline. AU chat is disabled."
+                      ? "Offline mode"
                       : !session?.access_token
-                        ? "Sign in to chat"
+                        ? "Sign in required"
                         : "Message AU..."
                 }
                 className="flex-1 resize-none rounded-full border bg-secondary p-3 pl-12 pr-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (canChat) handleSendMessage(e);
+                  }
+                }}
                 disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked}
               />
+              {selectedDocId && !isOnline && (
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Offline mode</div>
+              )}
               {selectedDocId && !session?.access_token && isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in to chat</div>
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in required</div>
               )}
             </div>
 

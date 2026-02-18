@@ -1,11 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import { listDocuments, deleteDocument, type AuDocumentRow } from '@/lib/api/documents';
-import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase-client/client';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
+
+let hasWarnedDocumentsRealtime = false;
+let hasWarnedDocumentsFetch = false;
 
 export function useAuDocuments(pollInterval = 0) {
   const [user] = useSupabaseUser();
+  const { session, loading: isLoadingAuth } = useSupabaseSession();
+  const { isOnline } = useNetworkStatus();
   const [documents, setDocuments] = useState<AuDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
@@ -13,6 +19,16 @@ export function useAuDocuments(pollInterval = 0) {
   const { toast } = useToast();
 
   const fetchDocs = useCallback(async () => {
+    if (!user || !session?.access_token) {
+      setLoading(false);
+      setDocuments([]);
+      return;
+    }
+    if (!isOnline) {
+      setLoading(false);
+      return;
+    }
+
     try {
       const data = await listDocuments(user);
       setDocuments(data);
@@ -20,20 +36,32 @@ export function useAuDocuments(pollInterval = 0) {
     } catch (err: any) {
       if (err.name === 'AbortError') return;
       setError(err);
-      console.error('[useAuDocuments] Failed to fetch:', err);
+      if (!hasWarnedDocumentsFetch) {
+        console.warn('[useAuDocuments] Failed to fetch documents.', err);
+        hasWarnedDocumentsFetch = true;
+      }
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [isOnline, session?.access_token, user]);
 
   // Real-time subscription
   useEffect(() => {
-    if (!user) return;
+    if (isLoadingAuth) return;
+
+    if (!user || !session?.access_token) {
+      setLoading(false);
+      setDocuments([]);
+      return;
+    }
+    if (!isOnline) {
+      setLoading(false);
+      return;
+    }
 
     // Initial fetch
     fetchDocs();
 
-    // Set up Realtime Subscription
     const channel = supabase
       .channel('au_documents_changes')
       .on(
@@ -56,12 +84,17 @@ export function useAuDocuments(pollInterval = 0) {
           }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && !hasWarnedDocumentsRealtime) {
+          console.warn('[useAuDocuments] Realtime unavailable. Falling back to manual refresh/polling.');
+          hasWarnedDocumentsRealtime = true;
+        }
+      });
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [user, fetchDocs]);
+  }, [fetchDocs, isLoadingAuth, isOnline, session?.access_token, user]);
 
   const remove = useCallback(async (id: string) => {
     // 1. Optimistic Update: Immediately remove from UI
@@ -99,12 +132,12 @@ export function useAuDocuments(pollInterval = 0) {
   }, [user, toast, documents]);
 
   useEffect(() => {
-    // Only use polling if explicitly requested (e.g., if realtime fails)
-    if (pollInterval > 0) {
-      const interval = setInterval(fetchDocs, pollInterval);
-      return () => clearInterval(interval);
-    }
-  }, [fetchDocs, pollInterval]);
+    if (pollInterval <= 0) return;
+    if (!user || !session?.access_token || !isOnline) return;
+
+    const interval = setInterval(fetchDocs, pollInterval);
+    return () => clearInterval(interval);
+  }, [fetchDocs, isOnline, pollInterval, session?.access_token, user]);
 
   return { documents, loading, error, refresh: fetchDocs, remove, deletingIds };
 }

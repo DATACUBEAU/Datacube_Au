@@ -64,12 +64,12 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import HeaderPwaInstallButton from '@/components/header-pwa-install-button';
 import { AnimatePresence, motion } from 'framer-motion';
 import { updateUserActivity } from '@/lib/supabase-client/client';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { AUAssistant } from '@/components/au-assistant';
 import { InactivityPolicyBanner } from '@/components/inactivity-policy-banner';
 import { AuChatProvider } from '@/providers/au-chat-provider';
 import { ChatRuntimeProvider } from '@/components/providers/chat-runtime-provider';
-import { NetworkStatusProvider, useNetworkStatus } from '@/components/providers/network-status-provider';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { SiteManualGuide } from '@/components/site-manual-guide';
 import { GlobalChatDevDialog } from '@/components/global-chat-dev-dialog';
 import { useUnreadCount } from '@/hooks/use-unread-count';
@@ -201,15 +201,13 @@ const SidebarFooterMenu = ({
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
-    <NetworkStatusProvider>
-      <AuChatProvider>
-        <ChatRuntimeProvider>
-          <SidebarProvider>
-            <DashboardContent>{children}</DashboardContent>
-          </SidebarProvider>
-        </ChatRuntimeProvider>
-      </AuChatProvider>
-    </NetworkStatusProvider>
+    <AuChatProvider>
+      <ChatRuntimeProvider>
+        <SidebarProvider>
+          <DashboardContent>{children}</DashboardContent>
+        </SidebarProvider>
+      </ChatRuntimeProvider>
+    </AuChatProvider>
   );
 }
 
@@ -301,18 +299,11 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     
     try {
       // 1. Call wipe-user action in Edge Function
-      const { data: { session } } = await supabase.auth.getSession();
-      const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
-      const accessToken = session?.access_token;
-
-      await fetch(`${SUPABASE_URL}/functions/v1/document-management`, {
+      await invokeEdgeFunction('document-management', {
         method: 'POST',
-        headers: {
-          'apikey': process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-          'Content-Type': 'application/json',
-          ...(accessToken ? { 'Authorization': `Bearer ${accessToken}` } : {})
-        },
-        body: JSON.stringify({ action: 'wipe-user' })
+        requireAuth: true,
+        silent: true,
+        body: { action: 'wipe-user' },
       });
 
       // Cool animation delay

@@ -29,8 +29,8 @@ interface AppState {
   // Actions
   setKnowledgeData: (data: GenerateKnowledgeOutput) => void;
   setPredictionData: (data: GeneratePredictionsOutput) => void;
-  generateKnowledge: (docId: string, docContent: string, idToken?: string, pastQuestionsContent?: string) => Promise<void>;
-  generatePredictions: (pastQuestionsContent: string, idToken?: string, mainTextbookContent?: string) => Promise<void>;
+  generateKnowledge: (docId: string, docContent: string, pastQuestionsContent?: string) => Promise<void>;
+  generatePredictions: (pastQuestionsContent: string, mainTextbookContent?: string) => Promise<void>;
 
   // Utility to clear data on doc selection change
   clearKnowledgeAndPredictions: () => void;
@@ -119,7 +119,7 @@ export const useStore = create<AppState>()(
       },
 
       // Action to generate knowledge materials
-      generateKnowledge: async (docId: string, docContent: string, idToken?: string, pastQuestionsContent?: string) => {
+      generateKnowledge: async (docId: string, docContent: string, pastQuestionsContent?: string) => {
         if (get().isGeneratingKnowledge) return;
 
         set({ isGeneratingKnowledge: true, knowledgeData: null });
@@ -158,7 +158,7 @@ export const useStore = create<AppState>()(
       },
 
       // Action to generate exam predictions
-      generatePredictions: async (pastQuestionsContent: string, idToken?: string, mainTextbookContent?: string) => {
+      generatePredictions: async (pastQuestionsContent: string, mainTextbookContent?: string) => {
         if (get().isGeneratingPredictions) return;
 
         set({ isGeneratingPredictions: true, predictionData: null });

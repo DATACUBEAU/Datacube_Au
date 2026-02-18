@@ -140,9 +140,9 @@ export default function GlobalChatPage() {
 
   const { toast } = useToast();
   const [user] = useSupabaseUser();
-  const { session } = useSupabaseSession();
+  const { session, loading: isLoadingAuth } = useSupabaseSession();
   const isOnline = useOnlineStatus();
-  const canChat = isOnline && !!session?.access_token;
+  const canChat = isOnline && !!session?.access_token && !isLoadingAuth;
 
   // Hardcoded to 'global'
   const selectedDocId = GLOBAL_CHAT_ID;
@@ -596,19 +596,27 @@ export default function GlobalChatPage() {
                 ref={textareaRef}
                 placeholder={
                   !isOnline
-                    ? "You are offline. Global chat is disabled."
+                    ? "Offline mode"
                     : !session?.access_token
-                      ? "Sign in to chat"
+                      ? "Sign in required"
                       : "Ask Global Assistant..."
                 }
                 className="flex-1 resize-none rounded-full border bg-secondary p-3 px-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
                 value={input}
                 onChange={e => setInput(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(e); } }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (canChat) handleSendMessage(e);
+                  }
+                }}
                 disabled={!canChat}
               />
+              {!isOnline && (
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Offline mode</div>
+              )}
               {!session?.access_token && isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in to chat</div>
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in required</div>
               )}
             </div>
             <OfflineGuard disabledReason="Offline: Global Chat unavailable">

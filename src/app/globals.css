@@ -4,9 +4,9 @@
 
 @layer base {
   :root {
-    --font-body: var(--font-pt-sans);
-    --font-headline: var(--font-space-grotesk);
-    --font-code: var(--font-source-code-pro);
+    --font-body: var(--font-pt-sans, "PT Sans", "Segoe UI", sans-serif);
+    --font-headline: var(--font-space-grotesk, "Space Grotesk", "Segoe UI", sans-serif);
+    --font-code: var(--font-source-code-pro, "Source Code Pro", Consolas, monospace);
 
     --background: 220 40% 98%;
     --foreground: 224 71% 4%;

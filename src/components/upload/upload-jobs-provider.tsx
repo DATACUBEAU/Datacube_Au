@@ -62,7 +62,7 @@ function createId() {
 
 export function UploadJobsProvider({ children }: { children: React.ReactNode }) {
   const [user] = useSupabaseUser();
-  const { session } = useSupabaseSession();
+  const { session, loading: isLoadingAuth } = useSupabaseSession();
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
 
@@ -82,7 +82,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   // Fetch Limit on Load
   useEffect(() => {
     async function fetchLimit() {
-       if (!user) return;
+       if (!user || !isOnline) return;
        try {
            // 1. Get Tier
            const { data: profile } = await supabase.from("au_user_profiles").select("tier").eq("user_id", user.id).maybeSingle();
@@ -102,19 +102,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
        }
     }
     fetchLimit();
-  }, [user]);
-
-  const ensureAuthenticatedSession = useCallback(async () => {
-      try {
-        const { data, error } = await supabase.auth.getSession();
-        if (!error && data.session?.access_token) {
-          return data.session;
-        }
-      } catch (e) {
-        console.error('[upload-jobs] Error getting session:', e);
-      }
-      return null;
-    }, []);
+  }, [isOnline, user]);
 
   const mergeJobs = useCallback((remoteJobs: UploadJobRow[]) => {
     setJobs(currentJobs => {
@@ -162,6 +150,17 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const refreshJobs = useCallback(async () => {
+    if (isLoadingAuth) {
+      return;
+    }
+    if (!user || !session?.access_token) {
+      setJobs([]);
+      return;
+    }
+    if (!isOnline) {
+      return;
+    }
+
     try {
       const fullConditions = await getEffectiveOwnershipConditions(user);
       
@@ -233,10 +232,18 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     } catch (err) {
       console.error('[upload-jobs] Unexpected error in refreshJobs:', err);
     }
-  }, [user, useSafeSelection, mergeJobs]);
+  }, [isLoadingAuth, isOnline, session?.access_token, user, useSafeSelection, mergeJobs]);
 
   useEffect(() => {
+    if (isLoadingAuth) return;
+    if (!user || !session?.access_token) {
+      setJobs([]);
+      return;
+    }
+    if (!isOnline) return;
+
     refreshJobs();
+
     const interval = setInterval(() => {
       setJobs((currentJobs) => {
         const hasActive = currentJobs.some((j) => isActiveStatus(j.status));
@@ -247,7 +254,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       });
     }, 2000);
     return () => clearInterval(interval);
-  }, [refreshJobs]);
+  }, [isLoadingAuth, isOnline, refreshJobs, session?.access_token, user]);
 
   useEffect(() => {
     const PROCESSING_STUCK_MS = 10 * 60 * 1000;
@@ -473,6 +480,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     if (!user) return;
     if (!isOnline) return;
+    if (isLoadingAuth) return;
     if (!session?.access_token) return;
 
     const active = jobs.filter((j) => isActiveStatus(j.status));
@@ -483,11 +491,12 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         runUpload(j);
       }
     });
-  }, [isOnline, jobs, runUpload, session?.access_token, user]);
+  }, [isLoadingAuth, isOnline, jobs, runUpload, session?.access_token, user]);
 
   const enqueueUploads = useCallback(
     async (inputs: CreateUploadJobInput[]) => {
       if (!isOnline) throw new Error('Offline. Connect to the internet to upload.');
+      if (isLoadingAuth) throw new Error('Authentication is still loading. Please try again.');
       if (!session?.access_token) throw new Error('Authentication required to upload.');
 
       const { data: sessionData } = await supabase.auth.getSession();
@@ -550,7 +559,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [isOnline, maxUploadSize, session?.access_token]
+    [isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
   );
 
   const cancelJob = useCallback(

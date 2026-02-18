@@ -194,7 +194,7 @@ function tokenProjectRefFromAccessToken(accessToken: string): string | null {
   }
 }
 
-export async function getSupabaseAccessToken(opts?: { refresh?: boolean }): Promise<string | null> {
+export async function getSupabaseAccessToken(): Promise<string | null> {
   try {
     // We rely on the auto-refresh mechanism of the client.
     // Manual refresh calls are removed to prevent 429 errors.
@@ -214,16 +214,6 @@ export async function getSupabaseAccessToken(opts?: { refresh?: boolean }): Prom
   } catch {
     return null;
   }
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
-}
-
-function computeBackoffMs(attemptIndex: number, baseMs = 600, maxMs = 8000): number {
-  const exp = Math.min(maxMs, baseMs * Math.pow(2, Math.max(0, attemptIndex - 1)));
-  const jitter = Math.floor(Math.random() * 200);
-  return exp + jitter;
 }
 
 export async function invokeEdgeFunction<T = any>(
@@ -292,20 +282,8 @@ export async function invokeEdgeFunction<T = any>(
     return { data: null as T | null, error: { message, status: res.status, details: payload } };
   };
 
-  // Simple retry logic relying on auto-refresh
-  let accessToken = await getSupabaseAccessToken();
-  
-  // First attempt
-  let result = await attemptOnce(accessToken);
-  
-  // If 401, wait a bit and try again (maybe background refresh happened)
-  if (result.error?.status === 401 && requireAuth) {
-      await sleep(1000); // Wait for potential background refresh
-      accessToken = await getSupabaseAccessToken();
-      result = await attemptOnce(accessToken);
-  }
-
-  return result;
+  const accessToken = await getSupabaseAccessToken();
+  return attemptOnce(accessToken);
 }
 
 /**

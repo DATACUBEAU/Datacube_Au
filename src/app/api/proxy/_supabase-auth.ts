@@ -1,9 +1,27 @@
+import { createClient } from '@supabase/supabase-js';
 import type { NextRequest } from 'next/server';
 
-export type SupabaseAuthExtraction = {
-  authorizationHeader: string | null;
-  hadAuthInput: boolean;
+type AuthSuccess = {
+  ok: true;
+  accessToken: string;
+  userId: string;
+  source: 'header' | 'cookie';
 };
+
+type AuthFailure = {
+  ok: false;
+  status: 401;
+  error: 'unauthorized';
+  reason: 'missing_token' | 'invalid_token';
+};
+
+export type RequestAuthResult = AuthSuccess | AuthFailure;
+
+function requiredEnv(key: string): string {
+  const value = process.env[key];
+  if (!value) throw new Error(`Missing environment variable: ${key}`);
+  return value;
+}
 
 function safeJsonParse(value: string): any | null {
   try {
@@ -11,6 +29,18 @@ function safeJsonParse(value: string): any | null {
   } catch {
     return null;
   }
+}
+
+function normalizeBearerToken(raw: string | null): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const lower = trimmed.toLowerCase();
+  const token = lower.startsWith('bearer ') ? trimmed.slice('bearer '.length).trim() : trimmed;
+  if (!token) return null;
+  const tokenLower = token.toLowerCase();
+  if (tokenLower === 'undefined' || tokenLower === 'null') return null;
+  return token;
 }
 
 function extractAccessTokenFromCookieValue(rawValue: string): string | null {
@@ -46,36 +76,7 @@ function extractAccessTokenFromCookieValue(rawValue: string): string | null {
   return null;
 }
 
-function normalizeBearerHeader(value: string): { header: string | null; token: string | null } {
-  const trimmed = value.trim();
-  if (!trimmed) return { header: null, token: null };
-  const lower = trimmed.toLowerCase();
-  if (lower.startsWith('bearer ')) {
-    const token = trimmed.slice('bearer '.length).trim();
-    if (!token) return { header: null, token: null };
-    return { header: `Bearer ${token}`, token };
-  }
-  return { header: trimmed, token: null };
-}
-
-function isInvalidTokenLiteral(token: string): boolean {
-  const t = token.trim().toLowerCase();
-  return t === 'undefined' || t === 'null' || t === '';
-}
-
-export function extractSupabaseAuthorization(req: NextRequest): SupabaseAuthExtraction {
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-  const authHeader = req.headers.get('authorization');
-  if (authHeader && authHeader.trim()) {
-    const normalized = normalizeBearerHeader(authHeader);
-    const tokenToCheck = normalized.token ?? null;
-    if (tokenToCheck && (isInvalidTokenLiteral(tokenToCheck) || (!!anonKey && tokenToCheck === anonKey))) {
-      return { authorizationHeader: null, hadAuthInput: true };
-    }
-    return { authorizationHeader: normalized.header, hadAuthInput: true };
-  }
-
+function extractAccessTokenFromCookies(req: NextRequest): string | null {
   const cookies = req.cookies.getAll();
   for (const c of cookies) {
     const name = c.name.toLowerCase();
@@ -88,11 +89,49 @@ export function extractSupabaseAuthorization(req: NextRequest): SupabaseAuthExtr
     ) {
       const token = extractAccessTokenFromCookieValue(c.value);
       if (!token) continue;
-      if (isInvalidTokenLiteral(token)) return { authorizationHeader: null, hadAuthInput: true };
-      if (!!anonKey && token === anonKey) return { authorizationHeader: null, hadAuthInput: true };
-      return { authorizationHeader: `Bearer ${token}`, hadAuthInput: true };
+      const normalized = normalizeBearerToken(token);
+      if (normalized) return normalized;
     }
   }
+  return null;
+}
 
-  return { authorizationHeader: null, hadAuthInput: false };
+async function validateAccessToken(token: string): Promise<{ userId: string } | null> {
+  const supabase = createClient(
+    requiredEnv('NEXT_PUBLIC_SUPABASE_URL'),
+    requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+    {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    }
+  );
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user?.id) return null;
+  return { userId: data.user.id };
+}
+
+export async function requireUserFromRequest(req: NextRequest): Promise<RequestAuthResult> {
+  const headerToken = normalizeBearerToken(req.headers.get('authorization'));
+  const cookieToken = extractAccessTokenFromCookies(req);
+  const token = headerToken ?? cookieToken;
+
+  if (!token) {
+    return { ok: false, status: 401, error: 'unauthorized', reason: 'missing_token' };
+  }
+
+  const validation = await validateAccessToken(token);
+  if (!validation?.userId) {
+    return { ok: false, status: 401, error: 'unauthorized', reason: 'invalid_token' };
+  }
+
+  return {
+    ok: true,
+    accessToken: token,
+    userId: validation.userId,
+    source: headerToken ? 'header' : 'cookie',
+  };
 }
