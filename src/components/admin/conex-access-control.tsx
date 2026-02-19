@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
 import { CONEX_ROOT_ADMIN_USER_ID } from '@/lib/conex-rbac';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 
 type ConexUser = {
   user_id: string;
@@ -45,12 +46,23 @@ export function ConexAccessControl() {
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
+  const getAuthorizedHeaders = useCallback(async (base?: HeadersInit) => {
+    const token = await getSupabaseAccessToken();
+    if (!token) {
+      throw new Error('Session expired. Please sign in again.');
+    }
+    const headers = new Headers(base ?? {});
+    headers.set('Authorization', `Bearer ${token}`);
+    return headers;
+  }, []);
+
   const loadUsers = useCallback(async () => {
     setLoading(true);
     try {
+      const headers = await getAuthorizedHeaders({ Accept: 'application/json' });
       const res = await fetch('/conex/users', {
         method: 'GET',
-        headers: { Accept: 'application/json' },
+        headers,
         cache: 'no-store',
       });
       const payload = (await res.json().catch(() => null)) as ConexUsersResponse | { error?: string; message?: string } | null;
@@ -69,7 +81,7 @@ export function ConexAccessControl() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [getAuthorizedHeaders, toast]);
 
   useEffect(() => {
     loadUsers().catch(() => {});
@@ -91,9 +103,13 @@ export function ConexAccessControl() {
     async (user: ConexUser, enabled: boolean) => {
       setSavingUserId(user.user_id);
       try {
+        const headers = await getAuthorizedHeaders({
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        });
         const res = await fetch('/conex/users', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          headers,
           body: JSON.stringify({
             userId: user.user_id,
             tier: enabled ? 'admin' : 'free',
@@ -120,7 +136,7 @@ export function ConexAccessControl() {
         setSavingUserId(null);
       }
     },
-    [toast]
+    [getAuthorizedHeaders, toast]
   );
 
   return (
@@ -195,4 +211,3 @@ export function ConexAccessControl() {
     </Card>
   );
 }
-
