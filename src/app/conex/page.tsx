@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Lock, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, Send, UserMinus, Search, Menu, FolderTree, Crown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
+import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -2015,6 +2017,9 @@ const AdminHealth = ({ token }: { token: string }) => {
 };
 
 export default function ConexPage() {
+  const router = useRouter();
+  const [user, , isUserLoading] = useSupabaseUser();
+  const [isCheckingConexAccess, setIsCheckingConexAccess] = useState(true);
   const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
   const [puzzle, setPuzzle] = useState(() => {
     const a = Math.floor(Math.random() * 10) + 1;
@@ -2030,6 +2035,58 @@ export default function ConexPage() {
   const [activeTab, setActiveTab] = useState("access");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { toast } = useToast();
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const verifyConexAccess = async () => {
+      if (isUserLoading) return;
+
+      if (!user) {
+        router.replace('/login?redirectTo=/conex');
+        return;
+      }
+
+      const token = await getSupabaseAccessToken();
+      if (!token) {
+        router.replace('/login?redirectTo=/conex');
+        return;
+      }
+
+      try {
+        const res = await fetch('/conex/users', {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          cache: 'no-store',
+        });
+
+        if (cancelled) return;
+
+        if (res.ok) {
+          setIsCheckingConexAccess(false);
+          return;
+        }
+
+        if (res.status === 403) {
+          router.replace('/403');
+          return;
+        }
+
+        router.replace('/login?redirectTo=/conex');
+      } catch {
+        if (!cancelled) router.replace('/login?redirectTo=/conex');
+      }
+    };
+
+    verifyConexAccess();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isUserLoading, user, router]);
 
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -2181,6 +2238,14 @@ export default function ConexPage() {
     { value: 'analytics', label: 'Analytics', icon: Activity },
     { value: 'logs', label: 'Logs', icon: Terminal },
   ];
+
+  if (isUserLoading || isCheckingConexAccess) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
 
   if (step === 3 && adminToken) {
     return (

@@ -15,6 +15,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import {
   Dialog,
   DialogContent,
@@ -66,9 +67,18 @@ export default function LoginPage() {
         setIsResolvingRedirect(true);
 
         if (safeRedirectPath.startsWith('/conex')) {
+          const token = await getSupabaseAccessToken();
+          if (!token) {
+            setIsResolvingRedirect(false);
+            return;
+          }
+
           const res = await fetch('/conex/users', {
             method: 'GET',
-            headers: { Accept: 'application/json' },
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
             cache: 'no-store',
           });
 
@@ -85,9 +95,7 @@ export default function LoginPage() {
           }
 
           if (res.status === 401) {
-            // Session exists locally but cannot access server-protected route.
-            // Keep user on login page instead of infinite redirect loop.
-            setIsResolvingRedirect(false);
+            router.replace('/login?redirectTo=/conex');
             return;
           }
 

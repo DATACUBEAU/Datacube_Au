@@ -76,6 +76,5 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/conex', '/conex/:path*'],
+  matcher: ['/conex/users', '/conex/users/:path*'],
 };
-
