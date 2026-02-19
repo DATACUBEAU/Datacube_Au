@@ -40,6 +40,7 @@ import { useSmartAuth } from '@/hooks/use-smart-auth';
 export default function LoginPage() {
   const { signInWithGoogle, isLoading: isSmartLoading } = useSmartAuth();
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
+  const [isResolvingRedirect, setIsResolvingRedirect] = useState(false);
   
   const [user, , isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
@@ -56,10 +57,55 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isUserLoading) return;
-    if (user) {
-         // If user is already logged in, redirect to requested path (defaults to dashboard).
-         router.push(safeRedirectPath);
-    }
+    if (!user) return;
+
+    let cancelled = false;
+
+    const resolveRedirect = async () => {
+      try {
+        setIsResolvingRedirect(true);
+
+        if (safeRedirectPath.startsWith('/conex')) {
+          const res = await fetch('/conex/users', {
+            method: 'GET',
+            headers: { Accept: 'application/json' },
+            cache: 'no-store',
+          });
+
+          if (cancelled) return;
+
+          if (res.ok) {
+            router.replace(safeRedirectPath);
+            return;
+          }
+
+          if (res.status === 403) {
+            router.replace('/403');
+            return;
+          }
+
+          if (res.status === 401) {
+            // Session exists locally but cannot access server-protected route.
+            // Keep user on login page instead of infinite redirect loop.
+            setIsResolvingRedirect(false);
+            return;
+          }
+
+          router.replace('/dashboard');
+          return;
+        }
+
+        router.replace(safeRedirectPath);
+      } catch {
+        if (!cancelled) router.replace('/dashboard');
+      }
+    };
+
+    resolveRedirect();
+
+    return () => {
+      cancelled = true;
+    };
   }, [user, isUserLoading, router, safeRedirectPath]);
 
   const [showAuthPopup, setShowAuthPopup] = useState(false);
@@ -97,7 +143,7 @@ export default function LoginPage() {
     setIsLoadingGoogle(false);
   };
 
-  if (isUserLoading || (!isUserLoading && user)) {
+  if (isUserLoading || isResolvingRedirect) {
     return (
       <div className="flex h-dvh items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />
