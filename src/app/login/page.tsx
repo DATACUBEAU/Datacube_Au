@@ -73,7 +73,7 @@ export default function LoginPage() {
             return;
           }
 
-          const res = await fetch('/conex/users', {
+          const res = await fetch('/conex/users?mode=access', {
             method: 'GET',
             headers: {
               Accept: 'application/json',

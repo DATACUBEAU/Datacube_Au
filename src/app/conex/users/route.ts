@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
+import { hasConexAccess } from '@/lib/conex-rbac';
 import {
   ConexAccessError,
   buildConexDashboardUsers,
@@ -100,6 +101,29 @@ export async function GET(req: NextRequest) {
   if (!actorResult.ok) return actorResult.response;
 
   try {
+    const mode = req.nextUrl.searchParams.get('mode');
+    if (mode === 'access') {
+      // Fast-path: root admin by known identity.
+      if (hasConexAccess({ userId: actorResult.actor.userId, email: actorResult.actor.email, tier: null })) {
+        return NextResponse.json({ ok: true, access: true });
+      }
+
+      // Fallback: check tier from profile when service role is available.
+      try {
+        const repo = createConexUsersRepo();
+        const profile = await repo.getProfileByUserId(actorResult.actor.userId);
+        const allowed = hasConexAccess({
+          userId: actorResult.actor.userId,
+          email: actorResult.actor.email,
+          tier: profile?.tier ?? null,
+        });
+        if (allowed) return NextResponse.json({ ok: true, access: true });
+      } catch {
+      }
+
+      return NextResponse.json({ error: 'forbidden', access: false }, { status: 403 });
+    }
+
     const repo = createConexUsersRepo();
     const data = await listConexDashboardUsers(repo, actorResult.actor);
     return NextResponse.json(data);
@@ -137,4 +161,3 @@ export async function POST(req: NextRequest) {
     return toErrorResponse(error);
   }
 }
-

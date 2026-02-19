@@ -51,6 +51,11 @@ export async function middleware(req: NextRequest) {
   const auth = await requireUserFromRequest(req);
   if (!auth.ok) return unauthorizedResponse(req);
 
+  // Fast-path: known root admin identity can pass without DB lookup.
+  if (hasConexAccess({ userId: auth.userId, email: auth.email, tier: null })) {
+    return NextResponse.next();
+  }
+
   const supabase = getServiceClient();
   if (!supabase) return forbiddenResponse(req);
 
