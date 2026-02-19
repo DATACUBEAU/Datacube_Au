@@ -330,6 +330,9 @@ export async function getAvailableModels(): Promise<string[]> {
       if (models.every((m) => m && typeof m === 'object' && typeof (m as any).id === 'string')) {
         return models.map((m) => (m as any).id);
       }
+      if (models.every((m) => m && typeof m === 'object' && typeof (m as any).model_id === 'string')) {
+        return models.map((m) => (m as any).model_id);
+      }
     }
   } catch {
   }
