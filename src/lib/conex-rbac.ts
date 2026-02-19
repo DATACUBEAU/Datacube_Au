@@ -1,4 +1,5 @@
-export const CONEX_ROOT_ADMIN_EMAIL_FALLBACK = 'fabiansazzy1214@gmail.com';
+export const CONEX_ROOT_ADMIN_EMAIL = 'fabiansazzy1214@gmail.com';
+export const CONEX_ROOT_ADMIN_EMAIL_FALLBACK = 'fabiansazzy121@gmail.com';
 export const CONEX_ROOT_ADMIN_USER_ID = '05ad2f16-b3ce-48eb-bf24-41b407556ffd';
 
 export type ConexTier = 'admin' | 'free';
