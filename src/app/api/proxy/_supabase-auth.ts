@@ -5,6 +5,7 @@ type AuthSuccess = {
   ok: true;
   accessToken: string;
   userId: string;
+  email: string | null;
   source: 'header' | 'cookie';
 };
 
@@ -96,7 +97,7 @@ function extractAccessTokenFromCookies(req: NextRequest): string | null {
   return null;
 }
 
-async function validateAccessToken(token: string): Promise<{ userId: string } | null> {
+async function validateAccessToken(token: string): Promise<{ userId: string; email: string | null } | null> {
   const supabase = createClient(
     requiredEnv('NEXT_PUBLIC_SUPABASE_URL'),
     requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
@@ -111,7 +112,10 @@ async function validateAccessToken(token: string): Promise<{ userId: string } | 
 
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user?.id) return null;
-  return { userId: data.user.id };
+  return {
+    userId: data.user.id,
+    email: data.user.email ?? null,
+  };
 }
 
 export async function requireUserFromRequest(req: NextRequest): Promise<RequestAuthResult> {
@@ -132,6 +136,7 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
     ok: true,
     accessToken: token,
     userId: validation.userId,
+    email: validation.email,
     source: headerToken ? 'header' : 'cookie',
   };
 }

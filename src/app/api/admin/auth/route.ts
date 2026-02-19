@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
+import { hasConexAccess } from '@/lib/conex-rbac';
 
 export const runtime = 'edge';
 
@@ -19,6 +20,27 @@ export async function POST(req: NextRequest) {
     const auth = await requireUserFromRequest(req);
     if (!auth.ok) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from('au_user_profiles')
+      .select('user_id,tier')
+      .eq('user_id', auth.userId)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error('[API /api/admin/auth] Failed to read au_user_profiles:', profileError);
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    }
+
+    const allowed = hasConexAccess({
+      userId: auth.userId,
+      email: auth.email ?? null,
+      tier: profile?.tier ?? null,
+    });
+
+    if (!allowed) {
+      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
     }
 
     const ip = req.headers.get('x-forwarded-for') || 'unknown';

@@ -19,6 +19,7 @@ import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
+import { ConexAccessControl } from '@/components/admin/conex-access-control';
 
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
@@ -2026,7 +2027,7 @@ export default function ConexPage() {
   const [adminToken, setAdminToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("usage");
+  const [activeTab, setActiveTab] = useState("access");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { toast } = useToast();
 
@@ -2168,6 +2169,7 @@ export default function ConexPage() {
   };
 
   const navItems = [
+    { value: 'access', label: 'Access', icon: Shield },
     { value: 'usage', label: 'Usage', icon: LayoutDashboard },
     { value: 'billing', label: 'Billing', icon: Crown },
     { value: 'registry', label: 'Registry', icon: Database },
@@ -2237,13 +2239,17 @@ export default function ConexPage() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="hidden md:grid w-full grid-cols-9 mb-8">
+            <TabsList className="hidden md:grid w-full grid-cols-11 mb-8">
                 {navItems.map((item) => (
                     <TabsTrigger key={item.value} value={item.value} className="gap-2">
                         <item.icon className="h-4 w-4" /> {item.label}
                     </TabsTrigger>
                 ))}
             </TabsList>
+
+            <TabsContent value="access">
+              <ConexAccessControl />
+            </TabsContent>
             
             <TabsContent value="usage">
               <Card>
