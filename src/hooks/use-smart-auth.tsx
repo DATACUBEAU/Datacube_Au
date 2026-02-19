@@ -18,7 +18,7 @@ interface SmartAuthContextType {
   isAuthed: boolean;
   isLoadingAuth: boolean;
   isLoading: boolean;
-  signInWithGoogle: () => Promise<void>;
+  signInWithGoogle: (redirectPath?: string) => Promise<void>;
   signOut: () => Promise<void>;
   getToken: () => Promise<string | null>;
 }
@@ -93,10 +93,16 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const signInWithGoogle = useCallback(async () => {
+  const signInWithGoogle = useCallback(async (redirectPath?: string) => {
     setIsLoading(true);
+    const safePath =
+      typeof redirectPath === 'string' &&
+      redirectPath.startsWith('/') &&
+      !redirectPath.startsWith('//')
+        ? redirectPath
+        : '/dashboard';
     const redirectTo =
-      typeof window !== 'undefined' ? `${window.location.origin}/dashboard` : undefined;
+      typeof window !== 'undefined' ? `${window.location.origin}${safePath}` : undefined;
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',

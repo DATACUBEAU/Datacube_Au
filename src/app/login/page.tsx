@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/card';
 import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
@@ -44,14 +44,23 @@ export default function LoginPage() {
   const [user, , isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const redirectToParam = searchParams.get('redirectTo');
+  const safeRedirectPath =
+    typeof redirectToParam === 'string' &&
+    redirectToParam.startsWith('/') &&
+    !redirectToParam.startsWith('//')
+      ? redirectToParam
+      : '/dashboard';
 
   useEffect(() => {
     if (isUserLoading) return;
     if (user) {
-         // If user is already logged in, redirect to dashboard
-         router.push('/dashboard');
+         // If user is already logged in, redirect to requested path (defaults to dashboard).
+         router.push(safeRedirectPath);
     }
-  }, [user, isUserLoading, router]);
+  }, [user, isUserLoading, router, safeRedirectPath]);
 
   const [showAuthPopup, setShowAuthPopup] = useState(false);
   const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
@@ -64,7 +73,7 @@ export default function LoginPage() {
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
-      await signInWithGoogle();
+      await signInWithGoogle(safeRedirectPath);
       // No need to manually push to dashboard, useEffect will handle it when user state updates
     } catch (error: any) {
       setShowAuthPopup(false);
