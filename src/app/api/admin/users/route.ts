@@ -37,11 +37,27 @@ class ApiError extends Error {
   }
 }
 
+function getSupabaseUrl() {
+  return firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
+}
+
+function getSupabaseAnonKey() {
+  return firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+}
+
+function getSupabaseServiceRoleKey() {
+  return firstEnv('SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY');
+}
+
 function createServiceRoleClient() {
-  const supabaseUrl = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
-  const serviceRoleKey = firstEnv('SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY');
+  const supabaseUrl = getSupabaseUrl();
+  const serviceRoleKey = getSupabaseServiceRoleKey();
   if (!supabaseUrl || !serviceRoleKey) {
-    throw new ApiError(503, 'server_misconfigured', 'Missing SUPABASE URL or SERVICE ROLE key.');
+    throw new ApiError(
+      503,
+      'server_misconfigured',
+      'Missing SUPABASE_SERVICE_ROLE_KEY. Read-only listing can use au_users fallback, but admin write actions require service role.'
+    );
   }
   return createClient(supabaseUrl, serviceRoleKey, {
     auth: {
@@ -50,6 +66,39 @@ function createServiceRoleClient() {
       detectSessionInUrl: false,
     },
   });
+}
+
+function tryCreateServiceRoleClient(): ReturnType<typeof createServiceRoleClient> | null {
+  const supabaseUrl = getSupabaseUrl();
+  const serviceRoleKey = getSupabaseServiceRoleKey();
+  if (!supabaseUrl || !serviceRoleKey) return null;
+  return createClient(supabaseUrl, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
+function createScopedRlsClient(accessToken: string): ReturnType<typeof createServiceRoleClient> {
+  const supabaseUrl = getSupabaseUrl();
+  const anonKey = getSupabaseAnonKey();
+  if (!supabaseUrl || !anonKey) {
+    throw new ApiError(503, 'server_misconfigured', 'Missing SUPABASE URL or anon key.');
+  }
+  return createClient(supabaseUrl, anonKey, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  }) as ReturnType<typeof createServiceRoleClient>;
 }
 
 function jsonError(error: unknown) {
@@ -71,6 +120,7 @@ function jsonError(error: unknown) {
 type AuthorizedActor = {
   userId: string;
   email: string | null;
+  accessToken: string;
 };
 
 async function requireConexAdmin(req: NextRequest): Promise<AuthorizedActor> {
@@ -79,8 +129,8 @@ async function requireConexAdmin(req: NextRequest): Promise<AuthorizedActor> {
     throw new ApiError(401, 'unauthorized');
   }
 
-  const supabaseAdmin = createServiceRoleClient();
-  const { data: profile, error } = await supabaseAdmin
+  const profileClient = tryCreateServiceRoleClient() ?? createScopedRlsClient(auth.accessToken);
+  const { data: profile, error } = await profileClient
     .from('au_user_profiles')
     .select('tier')
     .eq('user_id', auth.userId)
@@ -100,7 +150,7 @@ async function requireConexAdmin(req: NextRequest): Promise<AuthorizedActor> {
     throw new ApiError(403, 'forbidden');
   }
 
-  return { userId: auth.userId, email: auth.email ?? null };
+  return { userId: auth.userId, email: auth.email ?? null, accessToken: auth.accessToken };
 }
 
 type AuthUserResult = {
@@ -130,6 +180,34 @@ async function listAllAuthUsers(supabaseAdmin: ReturnType<typeof createServiceRo
   }
 
   return { users, total: total || users.length };
+}
+
+type AuUsersRow = {
+  id: string;
+  email: string | null;
+  provider: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+};
+
+async function listAllAuUsers(
+  supabaseClient: ReturnType<typeof createServiceRoleClient>
+): Promise<{ rows: AuUsersRow[]; total: number }> {
+  const { data, error, count } = await supabaseClient
+    .from('au_users')
+    .select('id,email,provider,created_at,updated_at', { count: 'exact' })
+    .order('updated_at', { ascending: false })
+    .limit(5000);
+
+  if (error) {
+    throw new ApiError(500, 'au_users_list_failed', error.message);
+  }
+
+  const rows = ((data ?? []) as AuUsersRow[]).filter((row) => Boolean(row?.id));
+  return {
+    rows,
+    total: typeof count === 'number' ? count : rows.length,
+  };
 }
 
 async function fetchProfilesMap(
@@ -243,6 +321,37 @@ function mapAuthUserToManagedRecord(
   };
 }
 
+function mapAuUsersToManagedRecord(
+  user: AuUsersRow,
+  profile: { tier: string | null; full_name: string | null; avatar_url: string | null } | undefined,
+  activity: { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null } | undefined
+): ManagedUserRecord {
+  const role = normalizeUserRole(profile?.tier ?? 'user');
+  const tier = profile?.tier ?? roleToTier(role) ?? 'free';
+  const permissions = normalizePermissions((activity?.metadata as Record<string, unknown> | null)?.permissions);
+  const accountStatus = normalizeAccountStatus(
+    (activity?.metadata as Record<string, unknown> | null)?.account_status ?? 'active'
+  );
+  const isAuthorized = String(tier).toLowerCase() === 'admin';
+
+  return {
+    user_id: user.id,
+    email: user.email ?? null,
+    full_name: profile?.full_name ?? null,
+    avatar_url: profile?.avatar_url ?? null,
+    provider: user.provider ?? 'supabase',
+    created_at: user.created_at ?? null,
+    last_sign_in_at: null,
+    last_active_at: activity?.last_active_at ?? user.updated_at ?? user.created_at ?? null,
+    account_status: accountStatus,
+    role,
+    tier,
+    permissions,
+    is_suspended: accountStatus === 'suspended',
+    is_authorized: isAuthorized,
+  };
+}
+
 function temporaryPassword() {
   return `DcAu#${crypto.randomUUID().replace(/-/g, '').slice(0, 18)}`;
 }
@@ -318,9 +427,7 @@ const actionsSchema = z.discriminatedUnion('action', [
 ]);
 
 async function listManagedUsers(req: NextRequest) {
-  await requireConexAdmin(req);
-
-  const supabaseAdmin = createServiceRoleClient();
+  const actor = await requireConexAdmin(req);
   const queryInput = querySchema.parse({
     q: req.nextUrl.searchParams.get('q') ?? undefined,
     status: req.nextUrl.searchParams.get('status') ?? undefined,
@@ -331,16 +438,36 @@ async function listManagedUsers(req: NextRequest) {
     pageSize: req.nextUrl.searchParams.get('pageSize') ?? undefined,
   });
 
-  const { users: authUsers, total: totalUsers } = await listAllAuthUsers(supabaseAdmin);
-  const userIds = authUsers.map((user) => user.id);
-  const [profilesMap, activityMap] = await Promise.all([
-    fetchProfilesMap(supabaseAdmin, userIds),
-    fetchActivityMap(supabaseAdmin, userIds),
-  ]);
+  const serviceClient = tryCreateServiceRoleClient();
+  let merged: ManagedUserRecord[] = [];
+  let totalUsers = 0;
 
-  const merged = authUsers.map((user) =>
-    mapAuthUserToManagedRecord(user, profilesMap.get(user.id), activityMap.get(user.id))
-  );
+  if (serviceClient) {
+    const { users: authUsers, total } = await listAllAuthUsers(serviceClient);
+    const userIds = authUsers.map((user) => user.id);
+    const [profilesMap, activityMap] = await Promise.all([
+      fetchProfilesMap(serviceClient, userIds),
+      fetchActivityMap(serviceClient, userIds),
+    ]);
+
+    merged = authUsers.map((user) =>
+      mapAuthUserToManagedRecord(user, profilesMap.get(user.id), activityMap.get(user.id))
+    );
+    totalUsers = total;
+  } else {
+    const scopedClient = createScopedRlsClient(actor.accessToken);
+    const { rows, total } = await listAllAuUsers(scopedClient);
+    const userIds = rows.map((row) => row.id);
+    const [profilesMap, activityMap] = await Promise.all([
+      fetchProfilesMap(scopedClient, userIds),
+      fetchActivityMap(scopedClient, userIds),
+    ]);
+
+    merged = rows.map((row) =>
+      mapAuUsersToManagedRecord(row, profilesMap.get(row.id), activityMap.get(row.id))
+    );
+    totalUsers = total;
+  }
 
   const filtered = filterManagedUsers(merged, {
     q: queryInput.q ?? '',
@@ -361,6 +488,7 @@ async function listManagedUsers(req: NextRequest) {
     filteredTotal,
     page: queryInput.page,
     pageSize: queryInput.pageSize,
+    source: serviceClient ? 'auth_admin' : 'au_users_fallback',
   });
 }
 
@@ -457,6 +585,7 @@ async function handleCreateUser(payload: z.infer<typeof createUserSchema>, supab
       {
         id: userId,
         provider: 'supabase',
+        provider_uid: userId,
         email: payload.email,
       } as any,
       { onConflict: 'id' }
@@ -582,13 +711,18 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    await requireConexAdmin(req);
+    const actor = await requireConexAdmin(req);
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== 'object') {
       throw new ApiError(400, 'invalid_body', 'Expected JSON body.');
     }
 
     const payload = actionsSchema.parse(body);
+    if (payload.action === 'get_user_activity') {
+      const readClient = tryCreateServiceRoleClient() ?? createScopedRlsClient(actor.accessToken);
+      return await handleUserActivity(payload, readClient);
+    }
+
     const supabaseAdmin = createServiceRoleClient();
 
     if (payload.action === 'create_user') {
@@ -649,10 +783,6 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json({ ok: failures.length === 0, successCount, failures });
-    }
-
-    if (payload.action === 'get_user_activity') {
-      return await handleUserActivity(payload, supabaseAdmin);
     }
 
     throw new ApiError(400, 'unsupported_action');

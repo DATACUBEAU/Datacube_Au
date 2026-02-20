@@ -80,6 +80,8 @@ async function parseError(res: Response, fallback: string): Promise<Error> {
   const payload = await res.json().catch(() => null);
   const message =
     (payload && typeof payload === 'object' && (payload as any).details?.message) ||
+    (payload && typeof payload === 'object' && typeof (payload as any).details === 'string' && (payload as any).details) ||
+    (payload && typeof payload === 'object' && (payload as any).message) ||
     (payload && typeof payload === 'object' && (payload as any).error) ||
     fallback;
   return new Error(String(message));
@@ -91,6 +93,7 @@ export function ConexUserManagement() {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [totalUsers, setTotalUsers] = useState(0);
   const [filteredTotal, setFilteredTotal] = useState(0);
+  const [sourceMode, setSourceMode] = useState<'auth_admin' | 'au_users_fallback'>('auth_admin');
   const [page, setPage] = useState(1);
   const pageSize = 25;
   const [loadingUsers, setLoadingUsers] = useState(true);
@@ -155,6 +158,7 @@ export function ConexUserManagement() {
         setUsers(nextUsers);
         setTotalUsers(Number(payload.totalUsers || 0));
         setFilteredTotal(Number(payload.filteredTotal || 0));
+        setSourceMode(payload.source === 'au_users_fallback' ? 'au_users_fallback' : 'auth_admin');
 
         if (nextUsers.length === 0) {
           setSelectedUserId(null);
@@ -251,6 +255,7 @@ export function ConexUserManagement() {
 
   const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
   const selectedCount = selectedIds.size;
+  const isReadOnlyMode = sourceMode === 'au_users_fallback';
 
   const canRunBulk = selectedCount > 0 && !runningBulk;
   const hasBulkPatch = Boolean(bulkStatus || bulkRole || bulkPermissions.trim());
@@ -505,6 +510,18 @@ export function ConexUserManagement() {
 
   return (
     <div className="space-y-4">
+      {isReadOnlyMode && (
+        <Card className="border-yellow-500/40 bg-yellow-50/50 dark:bg-yellow-900/10">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Read-only Admin Mode</CardTitle>
+            <CardDescription>
+              User listing is loaded from <code>au_users</code> fallback because <code>SUPABASE_SERVICE_ROLE_KEY</code> is missing.
+              Create/update/delete/reset actions are disabled until server env is fixed.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
@@ -606,18 +623,24 @@ export function ConexUserManagement() {
                 value={bulkPermissions}
                 onChange={(event) => setBulkPermissions(event.target.value)}
               />
-              <div className="flex gap-2">
+              <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
                 <Button
                   type="button"
                   variant="outline"
                   className="w-full"
                   onClick={onRunBulkUpdate}
-                  disabled={!canRunBulk || !hasBulkPatch}
+                  disabled={!canRunBulk || !hasBulkPatch || isReadOnlyMode}
                 >
                   {runningBulk ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldPlus className="h-4 w-4 mr-2" />}
                   Apply
                 </Button>
-                <Button type="button" variant="destructive" className="w-full" onClick={onRunBulkDelete} disabled={!canRunBulk}>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="w-full"
+                  onClick={onRunBulkDelete}
+                  disabled={!canRunBulk || isReadOnlyMode}
+                >
                   <Trash2 className="h-4 w-4 mr-2" />
                   Delete
                 </Button>
@@ -626,8 +649,47 @@ export function ConexUserManagement() {
           </CardHeader>
 
           <CardContent className="space-y-3">
-            <div className="rounded-lg border overflow-auto max-h-[500px]">
-              <table className="w-full text-sm">
+            <div className="md:hidden space-y-2">
+              {users.length === 0 ? (
+                <div className="rounded-lg border p-4 text-center text-sm text-muted-foreground">
+                  No users found for current filters.
+                </div>
+              ) : (
+                users.map((user) => (
+                  <div
+                    key={user.user_id}
+                    className={`rounded-lg border p-3 ${selectedUserId === user.user_id ? 'border-primary/50 bg-primary/5' : ''}`}
+                    onClick={() => setSelectedUserId(user.user_id)}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{user.full_name || user.email || 'Unnamed User'}</div>
+                        <div className="truncate text-xs text-muted-foreground font-mono">{user.email || user.user_id}</div>
+                      </div>
+                      <div onClick={(event) => event.stopPropagation()}>
+                        <Checkbox
+                          checked={selectedIds.has(user.user_id)}
+                          onCheckedChange={(value) => toggleSelectUser(user.user_id, Boolean(value))}
+                          aria-label={`Select ${user.email || user.user_id}`}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Badge
+                        variant={user.account_status === 'active' ? 'default' : user.account_status === 'inactive' ? 'secondary' : 'destructive'}
+                      >
+                        {user.account_status}
+                      </Badge>
+                      <Badge variant="outline">{user.role}</Badge>
+                      <span className="text-[11px] text-muted-foreground">Last active: {formatDate(user.last_active_at)}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="hidden md:block rounded-lg border overflow-auto max-h-[500px]">
+              <table className="w-full min-w-[740px] text-sm">
                 <thead className="bg-muted sticky top-0">
                   <tr>
                     <th className="p-2 text-left w-10">
@@ -686,7 +748,7 @@ export function ConexUserManagement() {
               </table>
             </div>
 
-            <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
               <span>
                 Page {page} of {totalPages}
               </span>
@@ -779,15 +841,15 @@ export function ConexUserManagement() {
                     />
                   </div>
                   <div className="grid gap-2 sm:grid-cols-3">
-                    <Button onClick={onSaveUser} disabled={savingUser}>
+                    <Button onClick={onSaveUser} disabled={savingUser || isReadOnlyMode}>
                       {savingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                       Save
                     </Button>
-                    <Button variant="outline" onClick={onResetPassword} disabled={resettingPassword}>
+                    <Button variant="outline" onClick={onResetPassword} disabled={resettingPassword || isReadOnlyMode}>
                       {resettingPassword ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <KeyRound className="h-4 w-4 mr-2" />}
                       Reset Password
                     </Button>
-                    <Button variant="destructive" onClick={onDeleteUser} disabled={deletingUser}>
+                    <Button variant="destructive" onClick={onDeleteUser} disabled={deletingUser || isReadOnlyMode}>
                       {deletingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Trash2 className="h-4 w-4 mr-2" />}
                       Delete
                     </Button>
@@ -857,7 +919,7 @@ export function ConexUserManagement() {
                   className="min-h-[72px]"
                 />
               </div>
-              <Button onClick={onCreateUser} className="w-full" disabled={creatingUser}>
+              <Button onClick={onCreateUser} className="w-full" disabled={creatingUser || isReadOnlyMode}>
                 {creatingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserPlus className="h-4 w-4 mr-2" />}
                 Create User
               </Button>
