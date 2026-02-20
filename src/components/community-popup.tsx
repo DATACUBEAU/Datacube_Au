@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useCommunityPopup } from '@/hooks/use-community-popup';
+import { openCommunityLink, WHATSAPP_COMMUNITY_URL } from '@/lib/community';
 import {
   Dialog,
   DialogContent,
@@ -17,8 +17,7 @@ export function CommunityPopup() {
   const { isOpen, markAsSeen, markAsJoined } = useCommunityPopup();
 
   const handleJoin = () => {
-    // Open WhatsApp link
-    window.open('https://chat.whatsapp.com/D7GGljLQitlFHRoEbBQsYO', '_blank');
+    openCommunityLink();
     // Mark as joined
     markAsJoined();
   };
@@ -36,6 +35,14 @@ export function CommunityPopup() {
           <DialogDescription className="text-center pt-2">
             Join our WhatsApp community for updates, important info, and announcements directly from the team.
           </DialogDescription>
+          <a
+            href={WHATSAPP_COMMUNITY_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="mx-auto mt-2 block max-w-full truncate text-center text-xs font-medium text-primary underline-offset-4 hover:underline"
+          >
+            {WHATSAPP_COMMUNITY_URL}
+          </a>
         </DialogHeader>
         <DialogFooter className="flex-col sm:flex-row gap-2 pt-4">
           <Button onClick={handleJoin} className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white">

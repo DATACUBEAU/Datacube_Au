@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useCommunityPopup } from '@/hooks/use-community-popup';
+import { openCommunityLink, WHATSAPP_COMMUNITY_URL } from '@/lib/community';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { MessageCircle, CheckCircle2, ArrowRight } from 'lucide-react';
@@ -21,7 +22,7 @@ export default function MessagesPage() {
   const [showRejoinConfirm, setShowRejoinConfirm] = useState(false);
 
   const openWhatsApp = () => {
-    window.open('https://chat.whatsapp.com/D7GGljLQitlFHRoEbBQsYO', '_blank');
+    openCommunityLink();
     markAsJoined();
   };
 
@@ -63,6 +64,14 @@ export default function MessagesPage() {
                 <p className="text-sm text-muted-foreground leading-relaxed">
                   Join our WhatsApp community to receive instant notifications about system updates, maintenance alerts, and tips on how to get the most out of DataCube AU.
                 </p>
+                <a
+                  href={WHATSAPP_COMMUNITY_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex max-w-full truncate text-xs font-medium text-primary underline-offset-4 hover:underline"
+                >
+                  {WHATSAPP_COMMUNITY_URL}
+                </a>
                 {isJoined && (
                   <div className="flex items-center gap-2 text-sm font-medium text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-900/10 p-2 rounded-md w-fit">
                     <CheckCircle2 className="h-4 w-4" />

@@ -17,15 +17,34 @@ import { useToast } from "@/hooks/use-toast";
 
 interface GlobalHistoryPromptProps {
   userId: string;
+  scope?: 'global' | 'document';
   onClearComplete?: () => void;
+  onClear?: () => Promise<void>;
 }
 
-export function GlobalHistoryPrompt({ userId, onClearComplete }: GlobalHistoryPromptProps) {
+export function GlobalHistoryPrompt({ userId, scope = 'global', onClearComplete, onClear }: GlobalHistoryPromptProps) {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const { toast } = useToast();
 
   const handleClearAll = async () => {
     if (!userId) return;
+
+    if (onClear) {
+        await onClear();
+        toast({ title: "Reset Complete", description: "Chat history cleared." });
+        setIsDialogOpen(false);
+        onClearComplete?.();
+        return;
+    }
+
+    if (scope === 'document') {
+        // Fallback or error if no onClear provided for document scope
+        // Assuming we need onClear for document scope as it requires docId
+        console.warn("GlobalHistoryPrompt: Document scope requires onClear prop");
+        return;
+    }
+
+    // GLOBAL SCOPE DEFAULT LOGIC
     // 1. Clear device history
     const { removedCount, removedKeys } = LocalChatStorage.clearAllGlobalChats(userId);
     
@@ -54,13 +73,21 @@ export function GlobalHistoryPrompt({ userId, onClearComplete }: GlobalHistoryPr
     onClearComplete?.();
   };
 
+  const title = scope === 'global' ? 'Manage Global History' : 'Manage Chat History';
+  const description = scope === 'global' 
+    ? 'Choose how you want to handle your Global Chat history.' 
+    : 'Choose how you want to handle the chat history for this document.';
+  const bannerText = scope === 'global'
+    ? 'Global Chat history is stored on this device.'
+    : 'Chat history is synced with this document.';
+
   return (
     <>
       {/* 1. NON-BLOCKING BANNER (Always Visible) */}
       <div className="w-full bg-muted/30 border-b border-primary/10 px-4 py-2 flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <Info className="h-3.5 w-3.5 text-primary/70" />
-          <span>Global Chat history is stored on this device.</span>
+          <span>{bannerText}</span>
         </div>
         <Button 
           variant="ghost" 
@@ -78,10 +105,10 @@ export function GlobalHistoryPrompt({ userId, onClearComplete }: GlobalHistoryPr
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-muted-foreground" />
-              Manage Global History
+              {title}
             </DialogTitle>
             <DialogDescription>
-              Choose how you want to handle your Global Chat history.
+              {description}
             </DialogDescription>
           </DialogHeader>
           
@@ -91,10 +118,10 @@ export function GlobalHistoryPrompt({ userId, onClearComplete }: GlobalHistoryPr
               className="justify-start h-auto py-3 px-4 bg-destructive/10 text-destructive hover:bg-destructive/20 border-destructive/20 border w-full"
               onClick={handleClearAll}
             >
-              <Trash2 className="mr-3 h-5 w-5" />
-              <div className="flex flex-col items-start text-left">
-                <span className="font-semibold">Clear Chat History</span>
-                <span className="text-xs opacity-80">Permanently removes history from this device and the cloud.</span>
+              <Trash2 className="mr-3 h-5 w-5 flex-shrink-0" />
+              <div className="flex flex-col items-start text-left overflow-hidden w-full">
+                <span className="font-semibold truncate w-full">Clear Chat History</span>
+                <span className="text-xs opacity-80 whitespace-normal break-words w-full">Permanently removes history from this device and the cloud.</span>
               </div>
             </Button>
           </div>

@@ -408,6 +408,7 @@ export default function GlobalChatPage() {
       {user?.id && (
         <GlobalHistoryPrompt 
           userId={user.id} 
+          scope="global"
           onClearComplete={() => {
             setHistoryPersisted([]);
             toast({ title: "History Refreshed", description: "Chat interface cleared." });

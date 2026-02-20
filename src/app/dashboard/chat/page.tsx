@@ -181,7 +181,8 @@ export default function ChatPage() {
     stopGeneration,
     scanAndGreet,
     fetchPrompts,
-    isInitialized
+    isInitialized,
+    clearChat // Destructure clearChat here
   } = useAuChat(selectedDocId);
   const { connectionStatus } = useChatRuntime();
 
@@ -870,7 +871,7 @@ export default function ChatPage() {
 
   return (
     <main className="flex h-[calc(100dvh-3.5rem)] flex-col relative">
-      <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background px-4 py-3 md:h-14 md:flex-row md:items-center md:justify-end md:px-8 shrink-0">
+      <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background/80 backdrop-blur-md px-4 py-3 md:h-14 md:flex-row md:items-center md:justify-end md:px-8 shrink-0 z-10">
         <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
           <div className="flex items-center gap-2">
             <Select onValueChange={id => handleDocSelection(id)} value={selectedDocId || ''} disabled={docsLoading}>
@@ -952,7 +953,11 @@ export default function ChatPage() {
       </header>
 
       {user?.id && (
-        <GlobalHistoryPrompt userId={user.id} />
+        <GlobalHistoryPrompt 
+          userId={user.id} 
+          scope="document"
+          onClear={clearChat}
+        />
       )}
 
       <TooltipProvider>
