@@ -5,18 +5,33 @@ import { hasConexAccess } from '@/lib/conex-rbac';
 
 export const runtime = 'edge';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-// Use Service Role if available to manage admin logs, otherwise fallback (might fail if RLS is strict)
-const supabaseAdmin = createClient(
-  SUPABASE_URL,
-  SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
-);
+function firstEnv(...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value && value.trim().length > 0) return value;
+  }
+  return null;
+}
 
 export async function POST(req: NextRequest) {
   try {
+    const SUPABASE_URL = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
+    const SUPABASE_ANON_KEY = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+    const SUPABASE_SERVICE_ROLE_KEY = firstEnv('SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY');
+
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+      return NextResponse.json(
+        { error: 'server_misconfigured', message: 'Missing Supabase URL or anon key.' },
+        { status: 503 }
+      );
+    }
+
+    // Use Service Role if available to manage admin logs, otherwise fallback (may be RLS-restricted)
+    const supabaseAdmin = createClient(
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
+    );
+
     const auth = await requireUserFromRequest(req);
     if (!auth.ok) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

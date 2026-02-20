@@ -18,10 +18,12 @@ type AuthFailure = {
 
 export type RequestAuthResult = AuthSuccess | AuthFailure;
 
-function requiredEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) throw new Error(`Missing environment variable: ${key}`);
-  return value;
+function firstEnv(...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value && value.trim().length > 0) return value;
+  }
+  return null;
 }
 
 function safeJsonParse(value: string): any | null {
@@ -98,9 +100,13 @@ function extractAccessTokenFromCookies(req: NextRequest): string | null {
 }
 
 async function validateAccessToken(token: string): Promise<{ userId: string; email: string | null } | null> {
+  const supabaseUrl = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
+  const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+  if (!supabaseUrl || !anonKey) return null;
+
   const supabase = createClient(
-    requiredEnv('NEXT_PUBLIC_SUPABASE_URL'),
-    requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'),
+    supabaseUrl,
+    anonKey,
     {
       auth: {
         persistSession: false,

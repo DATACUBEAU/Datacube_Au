@@ -4,14 +4,20 @@ import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 
 export const runtime = 'edge';
 
-function requiredEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) throw new Error(`Missing environment variable: ${key}`);
-  return value;
+function firstEnv(...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value && value.trim().length > 0) return value;
+  }
+  return null;
 }
 
 function functionsBaseUrl(): string {
-  return `${requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '')}/functions/v1`;
+  const supabaseUrl = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
+  if (!supabaseUrl) {
+    throw new Error('server_misconfigured:missing_supabase_url');
+  }
+  return `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
 }
 
 function corsHeaders(): HeadersInit {
@@ -72,7 +78,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     if (apikey) {
       headers.set('apikey', apikey);
     } else {
-      headers.set('apikey', requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY'));
+      const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+      if (!anonKey) {
+        return NextResponse.json(
+          { error: 'server_misconfigured', message: 'Missing Supabase anon key.' },
+          { status: 503, headers: corsHeaders() }
+        );
+      }
+      headers.set('apikey', anonKey);
     }
 
     let body: BodyInit | null = null;
@@ -134,6 +147,13 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     });
   } catch (error: any) {
     console.error(`[Proxy] Error calling function ${functionName}:`, error);
+    const message = String(error?.message || '');
+    if (message.startsWith('server_misconfigured:')) {
+      return NextResponse.json(
+        { error: 'server_misconfigured', requestId },
+        { status: 503, headers: corsHeaders() }
+      );
+    }
     return NextResponse.json(
       { error: 'internal_server_error', requestId },
       { status: 500, headers: corsHeaders() }

@@ -180,7 +180,6 @@ export async function sendChatMessageStream(
   const endpoint = isGlobal ? 'global-chat' : 'au-chat';
 
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!anonKey) throw new Error('Missing SUPABASE anon key');
 
   let payload: any = {};
 
@@ -217,14 +216,16 @@ export async function sendChatMessageStream(
   if (!accessToken) throw { message: 'No active session', status: 401 };
 
   const doRequest = async (token: string) => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      Authorization: `Bearer ${token}`,
+    };
+    if (anonKey) headers.apikey = anonKey;
+
     return await safeFetch(`/api/proxy/${endpoint}`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-        apikey: anonKey,
-        Authorization: `Bearer ${token}`,
-      },
+      headers,
       body: JSON.stringify(payload),
       signal: opts?.signal,
       timeout: 120_000,

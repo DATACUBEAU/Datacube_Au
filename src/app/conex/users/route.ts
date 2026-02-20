@@ -13,14 +13,35 @@ import {
 
 export const runtime = 'nodejs';
 
-function requiredEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) throw new Error(`Missing environment variable: ${key}`);
-  return value;
+function firstEnv(...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = process.env[key];
+    if (value && value.trim().length > 0) return value;
+  }
+  return null;
 }
 
-function createServiceRoleClient() {
-  return createClient(requiredEnv('NEXT_PUBLIC_SUPABASE_URL'), requiredEnv('SUPABASE_SERVICE_ROLE_KEY'), {
+function createSupabaseServerClient(accessToken?: string) {
+  const url = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
+  const serviceRoleKey = firstEnv('SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY');
+  const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+  const key = serviceRoleKey ?? anonKey;
+
+  if (!url || !key) {
+    throw new ConexAccessError(
+      503,
+      'server_misconfigured',
+      'Missing Supabase environment variables. Configure SUPABASE URL and key in Vercel.'
+    );
+  }
+
+  const headers: Record<string, string> = {};
+  if (!serviceRoleKey && accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  return createClient(url, key, {
+    global: Object.keys(headers).length > 0 ? { headers } : undefined,
     auth: {
       persistSession: false,
       autoRefreshToken: false,
@@ -29,8 +50,8 @@ function createServiceRoleClient() {
   });
 }
 
-function createConexUsersRepo(): ConexUsersRepository {
-  const supabase = createServiceRoleClient();
+function createConexUsersRepo(accessToken?: string): ConexUsersRepository {
+  const supabase = createSupabaseServerClient(accessToken);
   const selectColumns = 'user_id,tier,full_name,avatar_url';
 
   return {
@@ -77,7 +98,7 @@ function toErrorResponse(error: unknown): NextResponse {
 }
 
 async function requireActor(req: NextRequest): Promise<
-  { ok: true; actor: { userId: string; email: string | null } } | { ok: false; response: NextResponse }
+  { ok: true; actor: { userId: string; email: string | null; accessToken: string } } | { ok: false; response: NextResponse }
 > {
   const auth = await requireUserFromRequest(req);
   if (!auth.ok) {
@@ -92,6 +113,7 @@ async function requireActor(req: NextRequest): Promise<
     actor: {
       userId: auth.userId,
       email: auth.email ?? null,
+      accessToken: auth.accessToken,
     },
   };
 }
@@ -110,7 +132,7 @@ export async function GET(req: NextRequest) {
 
       // Fallback: check tier from profile when service role is available.
       try {
-        const repo = createConexUsersRepo();
+        const repo = createConexUsersRepo(actorResult.actor.accessToken);
         const profile = await repo.getProfileByUserId(actorResult.actor.userId);
         const allowed = hasConexAccess({
           userId: actorResult.actor.userId,
@@ -124,7 +146,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'forbidden', access: false }, { status: 403 });
     }
 
-    const repo = createConexUsersRepo();
+    const repo = createConexUsersRepo(actorResult.actor.accessToken);
     const data = await listConexDashboardUsers(repo, actorResult.actor);
     return NextResponse.json(data);
   } catch (error) {
@@ -145,7 +167,7 @@ export async function POST(req: NextRequest) {
     const targetUserId = String((body as any).userId || '').trim();
     const tier = (body as any).tier;
 
-    const repo = createConexUsersRepo();
+    const repo = createConexUsersRepo(actorResult.actor.accessToken);
     const updated = await setConexTierForUser(repo, actorResult.actor, targetUserId, tier);
 
     // Return the refreshed dashboard payload so UI state stays consistent after toggles.
