@@ -1,0 +1,899 @@
+'use client';
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { KeyRound, Loader2, RefreshCw, Search, ShieldPlus, Trash2, UserPlus, Users } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
+import { useToast } from '@/hooks/use-toast';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
+
+type AccountStatus = 'active' | 'inactive' | 'suspended';
+type UserRole = 'admin' | 'free' | 'weekly' | 'monthly' | 'pro' | 'user';
+
+type ManagedUser = {
+  user_id: string;
+  email: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
+  provider: string | null;
+  created_at: string | null;
+  last_sign_in_at: string | null;
+  last_active_at: string | null;
+  account_status: AccountStatus;
+  role: UserRole;
+  tier: string | null;
+  permissions: string[];
+  is_suspended: boolean;
+  is_authorized: boolean;
+};
+
+type ActivityLog = {
+  id: string;
+  kind: string;
+  created_at: string;
+  details: unknown;
+};
+
+const STATUS_OPTIONS: Array<{ label: string; value: AccountStatus | 'all' }> = [
+  { label: 'All statuses', value: 'all' },
+  { label: 'Active', value: 'active' },
+  { label: 'Inactive', value: 'inactive' },
+  { label: 'Suspended', value: 'suspended' },
+];
+
+const ROLE_OPTIONS: Array<{ label: string; value: UserRole | 'all' }> = [
+  { label: 'All roles', value: 'all' },
+  { label: 'Admin', value: 'admin' },
+  { label: 'Free', value: 'free' },
+  { label: 'Weekly', value: 'weekly' },
+  { label: 'Monthly', value: 'monthly' },
+  { label: 'Pro', value: 'pro' },
+  { label: 'User', value: 'user' },
+];
+
+function formatDate(value: string | null): string {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString();
+}
+
+async function authedFetch(input: string, init?: RequestInit): Promise<Response> {
+  const token = await getSupabaseAccessToken();
+  if (!token) throw new Error('Session expired. Sign in again.');
+
+  const headers = new Headers(init?.headers ?? {});
+  headers.set('Authorization', `Bearer ${token}`);
+  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (!headers.has('Accept')) headers.set('Accept', 'application/json');
+
+  return fetch(input, { ...init, headers, cache: 'no-store' });
+}
+
+async function parseError(res: Response, fallback: string): Promise<Error> {
+  const payload = await res.json().catch(() => null);
+  const message =
+    (payload && typeof payload === 'object' && (payload as any).details?.message) ||
+    (payload && typeof payload === 'object' && (payload as any).error) ||
+    fallback;
+  return new Error(String(message));
+}
+
+export function ConexUserManagement() {
+  const { toast } = useToast();
+
+  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [filteredTotal, setFilteredTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const pageSize = 25;
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all');
+  const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all');
+
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const selectedUser = useMemo(() => users.find((u) => u.user_id === selectedUserId) ?? null, [users, selectedUserId]);
+
+  const [fullName, setFullName] = useState('');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [status, setStatus] = useState<AccountStatus>('active');
+  const [role, setRole] = useState<UserRole>('user');
+  const [permissionsText, setPermissionsText] = useState('');
+  const [savingUser, setSavingUser] = useState(false);
+  const [deletingUser, setDeletingUser] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
+
+  const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+  const [loadingActivity, setLoadingActivity] = useState(false);
+
+  const [bulkStatus, setBulkStatus] = useState<AccountStatus | ''>('');
+  const [bulkRole, setBulkRole] = useState<UserRole | ''>('');
+  const [bulkPermissions, setBulkPermissions] = useState('');
+  const [runningBulk, setRunningBulk] = useState(false);
+
+  const [creatingUser, setCreatingUser] = useState(false);
+  const [createEmail, setCreateEmail] = useState('');
+  const [createPassword, setCreatePassword] = useState('');
+  const [createFullName, setCreateFullName] = useState('');
+  const [createRole, setCreateRole] = useState<UserRole>('user');
+  const [createStatus, setCreateStatus] = useState<AccountStatus>('active');
+  const [createPermissions, setCreatePermissions] = useState('');
+
+  const fetchUsers = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = Boolean(opts?.silent);
+      if (!silent) setLoadingUsers(true);
+      if (silent) setRefreshing(true);
+
+      try {
+        const params = new URLSearchParams({
+          q: search,
+          status: statusFilter,
+          role: roleFilter,
+          page: String(page),
+          pageSize: String(pageSize),
+          sortBy: 'last_active_at',
+          sortDir: 'desc',
+        });
+
+        const res = await authedFetch(`/api/admin/users?${params.toString()}`);
+        if (!res.ok) throw await parseError(res, 'Failed to load users.');
+        const payload = await res.json();
+
+        const nextUsers = Array.isArray(payload.users) ? (payload.users as ManagedUser[]) : [];
+        setUsers(nextUsers);
+        setTotalUsers(Number(payload.totalUsers || 0));
+        setFilteredTotal(Number(payload.filteredTotal || 0));
+
+        if (nextUsers.length === 0) {
+          setSelectedUserId(null);
+          setSelectedIds(new Set());
+        } else if (!selectedUserId || !nextUsers.find((row) => row.user_id === selectedUserId)) {
+          setSelectedUserId(nextUsers[0].user_id);
+        }
+      } catch (error: any) {
+        toast({
+          title: 'User list failed',
+          description: error?.message || 'Unable to load users.',
+          variant: 'destructive',
+        });
+      } finally {
+        if (!silent) setLoadingUsers(false);
+        if (silent) setRefreshing(false);
+      }
+    },
+    [page, roleFilter, search, selectedUserId, statusFilter, toast]
+  );
+
+  const fetchActivity = useCallback(
+    async (userId: string) => {
+      setLoadingActivity(true);
+      try {
+        const res = await authedFetch('/api/admin/users', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'get_user_activity',
+            userId,
+            limit: 30,
+          }),
+        });
+        if (!res.ok) throw await parseError(res, 'Failed to load activity logs.');
+        const payload = await res.json();
+        setActivityLogs(Array.isArray(payload.logs) ? payload.logs : []);
+      } catch (error: any) {
+        setActivityLogs([]);
+        toast({
+          title: 'Activity log failed',
+          description: error?.message || 'Unable to fetch activity logs.',
+          variant: 'destructive',
+        });
+      } finally {
+        setLoadingActivity(false);
+      }
+    },
+    [toast]
+  );
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setSearch(searchInput.trim()), 250);
+    return () => clearTimeout(timeout);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter, roleFilter]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  useEffect(() => {
+    if (!selectedUser?.user_id) {
+      setActivityLogs([]);
+      setFullName('');
+      setAvatarUrl('');
+      setStatus('active');
+      setRole('user');
+      setPermissionsText('');
+      return;
+    }
+
+    setFullName(selectedUser.full_name || '');
+    setAvatarUrl(selectedUser.avatar_url || '');
+    setStatus(selectedUser.account_status);
+    setRole(selectedUser.role);
+    setPermissionsText((selectedUser.permissions || []).join(', '));
+    fetchActivity(selectedUser.user_id).catch(() => {});
+  }, [fetchActivity, selectedUser]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+      fetchUsers({ silent: true }).catch(() => {});
+      if (selectedUserId) {
+        fetchActivity(selectedUserId).catch(() => {});
+      }
+    }, 45_000);
+    return () => clearInterval(interval);
+  }, [fetchActivity, fetchUsers, selectedUserId]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
+  const selectedCount = selectedIds.size;
+
+  const canRunBulk = selectedCount > 0 && !runningBulk;
+  const hasBulkPatch = Boolean(bulkStatus || bulkRole || bulkPermissions.trim());
+
+  const toggleSelectUser = useCallback((userId: string, checked: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(userId);
+      else next.delete(userId);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAllOnPage = useCallback((checked: boolean) => {
+    if (checked) setSelectedIds(new Set(users.map((user) => user.user_id)));
+    else setSelectedIds(new Set());
+  }, [users]);
+
+  const onSaveUser = useCallback(async () => {
+    if (!selectedUser?.user_id) return;
+    setSavingUser(true);
+    try {
+      const permissions = permissionsText
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const res = await authedFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'update_user',
+          userId: selectedUser.user_id,
+          fullName,
+          avatarUrl,
+          status,
+          role,
+          permissions,
+        }),
+      });
+
+      if (!res.ok) throw await parseError(res, 'Failed to save user.');
+
+      toast({ title: 'Saved', description: 'User profile updated.' });
+      await fetchUsers({ silent: true });
+      await fetchActivity(selectedUser.user_id);
+    } catch (error: any) {
+      toast({
+        title: 'Update failed',
+        description: error?.message || 'Could not update user.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingUser(false);
+    }
+  }, [avatarUrl, fetchActivity, fetchUsers, fullName, permissionsText, role, selectedUser?.user_id, status, toast]);
+
+  const onDeleteUser = useCallback(async () => {
+    if (!selectedUser?.user_id) return;
+    const confirmed = window.confirm(`Delete user ${selectedUser.email || selectedUser.user_id}?`);
+    if (!confirmed) return;
+
+    setDeletingUser(true);
+    try {
+      const res = await authedFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'delete_user',
+          userId: selectedUser.user_id,
+        }),
+      });
+      if (!res.ok) throw await parseError(res, 'Failed to delete user.');
+
+      toast({ title: 'Deleted', description: 'User account removed.' });
+      setSelectedUserId(null);
+      setSelectedIds(new Set());
+      await fetchUsers({ silent: true });
+    } catch (error: any) {
+      toast({
+        title: 'Delete failed',
+        description: error?.message || 'Could not delete user.',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingUser(false);
+    }
+  }, [fetchUsers, selectedUser?.email, selectedUser?.user_id, toast]);
+
+  const onResetPassword = useCallback(async () => {
+    if (!selectedUser?.user_id) return;
+    setResettingPassword(true);
+    try {
+      const res = await authedFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'reset_password',
+          userId: selectedUser.user_id,
+        }),
+      });
+      if (!res.ok) throw await parseError(res, 'Failed to generate reset link.');
+      const payload = await res.json();
+      const actionLink = payload.actionLink ? `\n\nReset link:\n${payload.actionLink}` : '';
+      toast({
+        title: 'Password reset ready',
+        description: `Recovery link generated for ${payload.email || selectedUser.email || selectedUser.user_id}.${actionLink}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Reset failed',
+        description: error?.message || 'Could not create password reset link.',
+        variant: 'destructive',
+      });
+    } finally {
+      setResettingPassword(false);
+    }
+  }, [selectedUser?.email, selectedUser?.user_id, toast]);
+
+  const onRunBulkUpdate = useCallback(async () => {
+    if (!canRunBulk || !hasBulkPatch) return;
+
+    setRunningBulk(true);
+    try {
+      const permissions = bulkPermissions
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const res = await authedFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'bulk_update_users',
+          userIds: [...selectedIds],
+          status: bulkStatus || undefined,
+          role: bulkRole || undefined,
+          permissions: permissions.length > 0 ? permissions : undefined,
+        }),
+      });
+      if (!res.ok) throw await parseError(res, 'Bulk update failed.');
+      const payload = await res.json();
+
+      toast({
+        title: 'Bulk update completed',
+        description: `${payload.successCount || 0} users updated${payload.failures?.length ? `, ${payload.failures.length} failed.` : '.'}`,
+      });
+
+      await fetchUsers({ silent: true });
+      setSelectedIds(new Set());
+      setBulkStatus('');
+      setBulkRole('');
+      setBulkPermissions('');
+    } catch (error: any) {
+      toast({
+        title: 'Bulk update failed',
+        description: error?.message || 'Unable to update selected users.',
+        variant: 'destructive',
+      });
+    } finally {
+      setRunningBulk(false);
+    }
+  }, [bulkPermissions, bulkRole, bulkStatus, canRunBulk, fetchUsers, hasBulkPatch, selectedIds, toast]);
+
+  const onRunBulkDelete = useCallback(async () => {
+    if (!canRunBulk) return;
+    const confirmed = window.confirm(`Delete ${selectedIds.size} selected users?`);
+    if (!confirmed) return;
+
+    setRunningBulk(true);
+    try {
+      const res = await authedFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'bulk_delete_users',
+          userIds: [...selectedIds],
+        }),
+      });
+      if (!res.ok) throw await parseError(res, 'Bulk delete failed.');
+      const payload = await res.json();
+
+      toast({
+        title: 'Bulk delete completed',
+        description: `${payload.successCount || 0} users deleted${payload.failures?.length ? `, ${payload.failures.length} failed.` : '.'}`,
+      });
+
+      setSelectedUserId(null);
+      setSelectedIds(new Set());
+      await fetchUsers({ silent: true });
+    } catch (error: any) {
+      toast({
+        title: 'Bulk delete failed',
+        description: error?.message || 'Unable to delete selected users.',
+        variant: 'destructive',
+      });
+    } finally {
+      setRunningBulk(false);
+    }
+  }, [canRunBulk, fetchUsers, selectedIds, toast]);
+
+  const onCreateUser = useCallback(async () => {
+    const email = createEmail.trim().toLowerCase();
+    if (!email) {
+      toast({ title: 'Missing email', description: 'Email is required.', variant: 'destructive' });
+      return;
+    }
+
+    setCreatingUser(true);
+    try {
+      const permissions = createPermissions
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean);
+
+      const res = await authedFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'create_user',
+          email,
+          password: createPassword.trim() || undefined,
+          fullName: createFullName.trim() || undefined,
+          role: createRole,
+          status: createStatus,
+          permissions,
+        }),
+      });
+      if (!res.ok) throw await parseError(res, 'Failed to create user.');
+
+      toast({ title: 'User created', description: `${email} is ready.` });
+      setCreateEmail('');
+      setCreatePassword('');
+      setCreateFullName('');
+      setCreatePermissions('');
+      setCreateRole('user');
+      setCreateStatus('active');
+      await fetchUsers({ silent: true });
+    } catch (error: any) {
+      toast({
+        title: 'Create failed',
+        description: error?.message || 'Unable to create user.',
+        variant: 'destructive',
+      });
+    } finally {
+      setCreatingUser(false);
+    }
+  }, [createEmail, createFullName, createPassword, createPermissions, createRole, createStatus, fetchUsers, toast]);
+
+  if (loadingUsers && users.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-12 text-muted-foreground">
+        <Loader2 className="h-5 w-5 animate-spin mr-2" />
+        Loading user management data...
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Total users</CardDescription>
+            <CardTitle className="text-2xl">{totalUsers}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Filtered users</CardDescription>
+            <CardTitle className="text-2xl">{filteredTotal}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Selected users</CardDescription>
+            <CardTitle className="text-2xl">{selectedCount}</CardTitle>
+          </CardHeader>
+        </Card>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
+        <Card className="overflow-hidden">
+          <CardHeader className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-base">User Directory</CardTitle>
+                <CardDescription>Search, filter, and run bulk account actions.</CardDescription>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => fetchUsers({ silent: true })} disabled={refreshing}>
+                <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+                Refresh
+              </Button>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="relative sm:col-span-1">
+                <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  className="pl-9"
+                  placeholder="Search name/email/id"
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value as AccountStatus | 'all')}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATUS_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value as UserRole | 'all')}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Role" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="grid gap-2 sm:grid-cols-4">
+              <Select value={bulkStatus || 'none'} onValueChange={(value) => setBulkStatus(value === 'none' ? '' : (value as AccountStatus))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Bulk status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No status update</SelectItem>
+                  <SelectItem value="active">Set active</SelectItem>
+                  <SelectItem value="inactive">Set inactive</SelectItem>
+                  <SelectItem value="suspended">Set suspended</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={bulkRole || 'none'} onValueChange={(value) => setBulkRole(value === 'none' ? '' : (value as UserRole))}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Bulk role" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No role update</SelectItem>
+                  {ROLE_OPTIONS.filter((option) => option.value !== 'all').map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                placeholder="Bulk permissions (comma)"
+                value={bulkPermissions}
+                onChange={(event) => setBulkPermissions(event.target.value)}
+              />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={onRunBulkUpdate}
+                  disabled={!canRunBulk || !hasBulkPatch}
+                >
+                  {runningBulk ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ShieldPlus className="h-4 w-4 mr-2" />}
+                  Apply
+                </Button>
+                <Button type="button" variant="destructive" className="w-full" onClick={onRunBulkDelete} disabled={!canRunBulk}>
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+
+          <CardContent className="space-y-3">
+            <div className="rounded-lg border overflow-auto max-h-[500px]">
+              <table className="w-full text-sm">
+                <thead className="bg-muted sticky top-0">
+                  <tr>
+                    <th className="p-2 text-left w-10">
+                      <Checkbox
+                        checked={users.length > 0 && selectedIds.size === users.length}
+                        onCheckedChange={(value) => toggleSelectAllOnPage(Boolean(value))}
+                        aria-label="Select all users on page"
+                      />
+                    </th>
+                    <th className="p-2 text-left">User</th>
+                    <th className="p-2 text-left">Status</th>
+                    <th className="p-2 text-left">Role</th>
+                    <th className="p-2 text-left">Last Active</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                        No users found for current filters.
+                      </td>
+                    </tr>
+                  ) : (
+                    users.map((user) => (
+                      <tr
+                        key={user.user_id}
+                        className={`border-t cursor-pointer hover:bg-muted/30 ${selectedUserId === user.user_id ? 'bg-primary/5' : ''}`}
+                        onClick={() => setSelectedUserId(user.user_id)}
+                      >
+                        <td className="p-2" onClick={(event) => event.stopPropagation()}>
+                          <Checkbox
+                            checked={selectedIds.has(user.user_id)}
+                            onCheckedChange={(value) => toggleSelectUser(user.user_id, Boolean(value))}
+                            aria-label={`Select ${user.email || user.user_id}`}
+                          />
+                        </td>
+                        <td className="p-2">
+                          <div className="font-medium">{user.full_name || user.email || 'Unnamed User'}</div>
+                          <div className="text-xs text-muted-foreground font-mono">{user.email || user.user_id}</div>
+                        </td>
+                        <td className="p-2">
+                          <Badge
+                            variant={user.account_status === 'active' ? 'default' : user.account_status === 'inactive' ? 'secondary' : 'destructive'}
+                          >
+                            {user.account_status}
+                          </Badge>
+                        </td>
+                        <td className="p-2">
+                          <Badge variant="outline">{user.role}</Badge>
+                        </td>
+                        <td className="p-2 text-xs text-muted-foreground">{formatDate(user.last_active_at)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                Page {page} of {totalPages}
+              </span>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1}>
+                  Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                  disabled={page >= totalPages}
+                >
+                  Next
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <Users className="h-4 w-4" />
+                User Profile Management
+              </CardTitle>
+              <CardDescription>
+                View and edit account status, role, permissions, and profile fields.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {!selectedUser ? (
+                <div className="text-sm text-muted-foreground">Select a user to manage account settings.</div>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <Label>User ID</Label>
+                    <Input value={selectedUser.user_id} readOnly className="font-mono text-xs" />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Email</Label>
+                    <Input value={selectedUser.email || ''} readOnly />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Full Name</Label>
+                    <Input value={fullName} onChange={(event) => setFullName(event.target.value)} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Avatar URL</Label>
+                    <Input value={avatarUrl} onChange={(event) => setAvatarUrl(event.target.value)} placeholder="https://..." />
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label>Status</Label>
+                      <Select value={status} onValueChange={(value) => setStatus(value as AccountStatus)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="active">Active</SelectItem>
+                          <SelectItem value="inactive">Inactive</SelectItem>
+                          <SelectItem value="suspended">Suspended</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Role</Label>
+                      <Select value={role} onValueChange={(value) => setRole(value as UserRole)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ROLE_OPTIONS.filter((option) => option.value !== 'all').map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Permissions (comma separated)</Label>
+                    <Textarea
+                      value={permissionsText}
+                      onChange={(event) => setPermissionsText(event.target.value)}
+                      placeholder="documents:read, users:manage"
+                      className="min-h-[72px]"
+                    />
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-3">
+                    <Button onClick={onSaveUser} disabled={savingUser}>
+                      {savingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                      Save
+                    </Button>
+                    <Button variant="outline" onClick={onResetPassword} disabled={resettingPassword}>
+                      {resettingPassword ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <KeyRound className="h-4 w-4 mr-2" />}
+                      Reset Password
+                    </Button>
+                    <Button variant="destructive" onClick={onDeleteUser} disabled={deletingUser}>
+                      {deletingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Trash2 className="h-4 w-4 mr-2" />}
+                      Delete
+                    </Button>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base flex items-center gap-2">
+                <UserPlus className="h-4 w-4" />
+                Create User
+              </CardTitle>
+              <CardDescription>Create accounts with default role, status, and permissions.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1">
+                <Label>Email</Label>
+                <Input value={createEmail} onChange={(event) => setCreateEmail(event.target.value)} placeholder="name@example.com" />
+              </div>
+              <div className="space-y-1">
+                <Label>Password (optional)</Label>
+                <Input value={createPassword} onChange={(event) => setCreatePassword(event.target.value)} type="password" placeholder="Auto-generated if empty" />
+              </div>
+              <div className="space-y-1">
+                <Label>Full Name</Label>
+                <Input value={createFullName} onChange={(event) => setCreateFullName(event.target.value)} />
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label>Role</Label>
+                  <Select value={createRole} onValueChange={(value) => setCreateRole(value as UserRole)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {ROLE_OPTIONS.filter((option) => option.value !== 'all').map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Status</Label>
+                  <Select value={createStatus} onValueChange={(value) => setCreateStatus(value as AccountStatus)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="suspended">Suspended</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label>Permissions</Label>
+                <Textarea
+                  value={createPermissions}
+                  onChange={(event) => setCreatePermissions(event.target.value)}
+                  placeholder="documents:read, users:manage"
+                  className="min-h-[72px]"
+                />
+              </div>
+              <Button onClick={onCreateUser} className="w-full" disabled={creatingUser}>
+                {creatingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <UserPlus className="h-4 w-4 mr-2" />}
+                Create User
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">User Activity Logs</CardTitle>
+              <CardDescription>Recent activity for the selected user.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 max-h-[280px] overflow-auto">
+              {loadingActivity ? (
+                <div className="flex items-center text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Loading activity...
+                </div>
+              ) : activityLogs.length === 0 ? (
+                <div className="text-sm text-muted-foreground">No activity logs for this user.</div>
+              ) : (
+                activityLogs.map((log) => (
+                  <div key={log.id} className="rounded-md border p-2 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge variant="outline">{log.kind}</Badge>
+                      <span className="text-muted-foreground">{formatDate(log.created_at)}</span>
+                    </div>
+                    <pre className="mt-2 whitespace-pre-wrap break-all text-[10px] text-muted-foreground">
+                      {JSON.stringify(log.details, null, 2)}
+                    </pre>
+                  </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+}

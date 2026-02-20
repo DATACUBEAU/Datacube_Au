@@ -14,10 +14,11 @@ function run(name: string, fn: () => void) {
   }
 }
 
-run('isRootConexAdmin only allows exact bootstrap user id + email', () => {
+run('isRootConexAdmin allows bootstrap identity by known id or known email aliases', () => {
   assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, CONEX_ROOT_ADMIN_EMAIL), true);
-  assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, 'wrong@example.com'), false);
-  assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', CONEX_ROOT_ADMIN_EMAIL), false);
+  assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, 'wrong@example.com'), true);
+  assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', CONEX_ROOT_ADMIN_EMAIL), true);
+  assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', 'not-admin@example.com'), false);
 });
 
 run('hasConexAccess allows admin tier and denies free tier', () => {

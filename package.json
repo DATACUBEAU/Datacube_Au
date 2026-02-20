@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test:conex-rbac": "pnpm exec tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/conex-rbac.unit.test.ts tests/conex-users.integration.test.ts src/lib/conex-rbac.ts src/lib/server/conex-users-service.ts && node -e \"require('node:fs').writeFileSync('.tmp-tests/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node .tmp-tests/tests/conex-rbac.unit.test.js && node .tmp-tests/tests/conex-users.integration.test.js",
+    "test:admin-users": "pnpm exec tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/admin-user-management.unit.test.ts tests/admin-user-management.integration.test.ts src/lib/server/admin-user-management.ts src/lib/conex-rbac.ts && node -e \"require('node:fs').writeFileSync('.tmp-tests/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node .tmp-tests/tests/admin-user-management.unit.test.js && node .tmp-tests/tests/admin-user-management.integration.test.js",
     "supabase:db:push": "supabase --workdir backend db push",
     "supabase:functions:deploy": "supabase --workdir backend functions deploy"
   },
