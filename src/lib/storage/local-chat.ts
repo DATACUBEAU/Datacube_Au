@@ -65,35 +65,6 @@ export const LocalChatStorage = {
   },
 
   /**
-   * Auto-cleanup expired AU chats (older than 3 days)
-   * This relies on checking all keys in localStorage
-   */
-  cleanupExpiredAUChats: (userId: string) => {
-    if (typeof window === 'undefined') return;
-    const prefix = `${STORAGE_PREFIX}:au:${userId}:`;
-    const now = Date.now();
-    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
-
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && key.startsWith(prefix)) {
-        try {
-          const raw = localStorage.getItem(key);
-          if (raw) {
-            const data = JSON.parse(raw) as StoredChat;
-            if (now - data.updatedAt > THREE_DAYS_MS) {
-              localStorage.removeItem(key);
-              console.log('[LocalChatStorage] Removed expired AU chat:', key);
-            }
-          }
-        } catch {
-          // If parse fails, maybe just remove it?
-        }
-      }
-    }
-  },
-
-  /**
    * Clear ALL Global Chat history for a user
    * (Used by Global Chat Prompt)
    */

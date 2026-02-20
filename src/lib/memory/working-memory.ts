@@ -34,7 +34,6 @@ export type MemoryWriteResult = {
 
 const PREFIX = 'dcau';
 
-const DOC_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 const DOC_SOFT_LIMIT_BYTES = 8 * 1024 * 1024;
 const DOC_HARD_LIMIT_BYTES = 10 * 1024 * 1024;
 const DEFAULT_KEEP_TURNS = 40;
@@ -158,8 +157,11 @@ export async function saveWorkingMemory(
   next.lastUpdatedAt = now;
 
   if (scope === 'doc') {
-    const ttl = opts?.ttlMs ?? DOC_TTL_MS;
-    next.expiresAt = now + ttl;
+    if (typeof opts?.ttlMs === 'number' && opts.ttlMs > 0) {
+      next.expiresAt = now + opts.ttlMs;
+    } else {
+      delete next.expiresAt;
+    }
   }
 
   const softLimitBytes =
@@ -238,8 +240,7 @@ export async function sweepExpiredDocWorkingMemory(): Promise<{ removedKeys: str
   for (const key of docKeys) {
     const payload = await loadWorkingMemory(key);
     if (!payload) continue;
-    const expiresAt = typeof payload.expiresAt === 'number' ? payload.expiresAt : payload.lastUpdatedAt + DOC_TTL_MS;
-    if (expiresAt < now) {
+    if (typeof payload.expiresAt === 'number' && payload.expiresAt < now) {
       await store.removeItem(key);
       removedKeys.push(key);
     }

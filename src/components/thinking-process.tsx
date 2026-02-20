@@ -45,10 +45,10 @@ export function ThinkingProcess({ isThinking = false, thought }: ThinkingProcess
                     key={idx}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: idx * 0.1 }}
+                    transition={{ delay: idx * 0.05, duration: 0.14 }}
                     className={cn(
                         "flex items-center gap-3 text-xs transition-colors",
-                        step.status === 'active' ? "text-primary font-medium" : 
+                        step.status === 'active' ? "text-foreground font-medium" : 
                         step.status === 'completed' ? "text-muted-foreground/80" : "text-muted-foreground/40"
                     )}
                 >
@@ -61,9 +61,7 @@ export function ThinkingProcess({ isThinking = false, thought }: ThinkingProcess
                             <Circle className="h-3 w-3" />
                         )}
                     </div>
-                    <span className={cn(
-                        step.status === 'active' && "animate-pulse"
-                    )}>
+                    <span>
                         {step.label}
                     </span>
                 </motion.div>
@@ -83,7 +81,7 @@ export function ThinkingProcess({ isThinking = false, thought }: ThinkingProcess
         className="flex items-center gap-2 text-xs font-medium text-muted-foreground/70 hover:text-primary transition-colors mb-2 px-1 select-none"
       >
         <Sparkles className="h-3 w-3" />
-        <span className="uppercase tracking-wider text-[10px]">Thought Process</span>
+        <span className="uppercase tracking-wider text-[10px]">Reasoning Summary</span>
         {isExpanded ? (
           <ChevronUp className="h-3 w-3 opacity-50" />
         ) : (
@@ -102,7 +100,7 @@ export function ThinkingProcess({ isThinking = false, thought }: ThinkingProcess
           >
             <div className="pl-4 border-l-2 border-primary/20 py-2 ml-1.5 bg-muted/30 rounded-r-md">
                {/* Render the thought as a clean list if possible, otherwise text */}
-              <p className="text-sm text-muted-foreground/90 leading-relaxed whitespace-pre-wrap font-mono text-xs">
+              <p className="text-sm text-muted-foreground/90 leading-relaxed whitespace-pre-wrap text-xs">
                 {cleanThought(thought)}
               </p>
             </div>

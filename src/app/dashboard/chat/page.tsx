@@ -26,7 +26,6 @@ import {
   MessageSquare,
   HelpCircle,
   Plus,
-  History,
   Brain,
   Quote,
   Copy,
@@ -41,8 +40,7 @@ import {
   DropdownMenu, 
   DropdownMenuContent, 
   DropdownMenuItem, 
-  DropdownMenuTrigger,
-  DropdownMenuSeparator
+  DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { nanoid } from 'nanoid';
 import { Button } from '@/components/ui/button';
@@ -72,10 +70,10 @@ import { cn } from '@/lib/utils';
 import { TruncatedText } from '@/components/TruncatedText';
 import { ThinkingProcess } from '@/components/thinking-process';
 import { useStore } from '@/hooks/use-store';
-import { GlobalChatDevDialog } from '@/components/global-chat-dev-dialog';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
+import { GlobalHistoryPrompt } from '@/components/global-history-prompt';
 
 import { type ChatMessage } from '@/lib/api/chat';
 
@@ -251,7 +249,6 @@ export default function ChatPage() {
 
   const [summaryMode, setSummaryMode] = useState<'short' | 'mid' | 'detailed' | null>(null);
   const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; role: 'user' | 'assistant' } | null>(null);
-  const [showGlobalChatDevDialog, setShowGlobalChatDevDialog] = useState(false);
   const [showThrottlingDialog, setShowThrottlingDialog] = useState(false);
   const [showWhatsappDialog, setShowWhatsappDialog] = useState(false);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
@@ -279,26 +276,6 @@ export default function ChatPage() {
               handleDocSelection(null);
           }
       }
-  };
-  
-  // Clear Global History Action
-  const handleClearGlobalHistory = async () => {
-      if (!user) return;
-      // Clear LocalStorage
-      // We need to find all keys starting with `dcau:global:${user.id}`
-      // Since we don't have a direct method in LocalChatStorage exposed yet to clear all global,
-      // we can manually clear the current thread or implement a broader clear.
-      // For now, let's clear the current 'global' thread.
-      const { LocalChatStorage } = await import('@/lib/storage/local-chat');
-      LocalChatStorage.clearThread('global', user.id, 'global');
-      
-      const { clearWorkingMemory, globalMemoryKey } = await import('@/lib/memory/working-memory');
-      const { deleteMemorySummary } = await import('@/lib/api/memory-summaries');
-      await clearWorkingMemory(globalMemoryKey(user.id));
-      await deleteMemorySummary({ scope: 'global' });
-      
-      setCurrentChatHistory([]);
-      toast({ title: "History Cleared", description: "Global chat memory has been reset." });
   };
 
 
@@ -892,7 +869,7 @@ export default function ChatPage() {
   const isLoading = docsLoading || isResponding || isSwitchingDocs;
 
   return (
-    <main className="flex h-[calc(100dvh-3.5rem)] flex-col">
+    <main className="flex h-[calc(100dvh-3.5rem)] flex-col relative">
       <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background px-4 py-3 md:h-14 md:flex-row md:items-center md:justify-end md:px-8 shrink-0">
         <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
           <div className="flex items-center gap-2">
@@ -932,24 +909,12 @@ export default function ChatPage() {
 
             <Tooltip>
               <TooltipTrigger asChild>
-                <Badge variant="outline" className="hidden md:flex items-center gap-1 text-xs border-dashed text-muted-foreground cursor-default">
-                  <History className="h-3 w-3" />
-                  Auto-clear: 3 days
-                </Badge>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Chat history auto-clears after 3 days of inactivity.</p>
-              </TooltipContent>
-            </Tooltip>
-
-            <Tooltip>
-              <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-10 w-10 text-muted-foreground hover:text-primary transition-all duration-300"
-                  disabled={docsLoading || !selectedDocId || !isOnline}
-                  onClick={() => setShowGlobalChatDevDialog(true)}
+                  disabled={!session?.access_token || isLoadingAuth}
+                  onClick={() => router.push('/dashboard/global-chat')}
                 >
                   <Globe className="h-5 w-5" />
                 </Button>
@@ -980,16 +945,15 @@ export default function ChatPage() {
                   <FileTextIcon className="mr-2 h-4 w-4" />
                   Detailed Summary
                 </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={handleClearGlobalHistory} className="text-destructive focus:text-destructive">
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  Clear History & Memory
-                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
       </header>
+
+      {user?.id && (
+        <GlobalHistoryPrompt userId={user.id} />
+      )}
 
       <TooltipProvider>
         <div className="flex-1 overflow-hidden relative">
@@ -1488,12 +1452,6 @@ export default function ChatPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <GlobalChatDevDialog 
-        open={showGlobalChatDevDialog} 
-        onOpenChange={setShowGlobalChatDevDialog}
-        onContactSupport={handleWhatsAppRedirect}
-      />
 
       <AUThrottlingDialog 
         open={showThrottlingDialog}

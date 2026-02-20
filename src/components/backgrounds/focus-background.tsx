@@ -14,10 +14,10 @@ export function FocusBackground() {
       background: 'linear-gradient(135deg, rgba(var(--background), 1) 0%, rgba(var(--background), 1) 100%)',
     },
     thinking: {
-      background: 'linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, rgba(147, 51, 234, 0.05) 100%)',
+      background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.04) 0%, rgba(14, 165, 233, 0.03) 100%)',
     },
     responding: {
-      background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(59, 130, 246, 0.05) 100%)',
+      background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.04) 0%, rgba(56, 189, 248, 0.03) 100%)',
     },
     error: {
       background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(239, 68, 68, 0.02) 100%)',
@@ -33,6 +33,17 @@ export function FocusBackground() {
         variants={variants}
         transition={{ duration: 1.5, ease: "easeInOut" }}
       />
+
+      <motion.div
+        className="absolute -left-24 top-10 h-72 w-72 rounded-full bg-sky-300/10 blur-3xl"
+        animate={{ x: [0, 40, -10, 0], y: [0, -25, 15, 0], opacity: [0.18, 0.28, 0.2, 0.18] }}
+        transition={{ duration: 24, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute -right-16 bottom-0 h-80 w-80 rounded-full bg-emerald-300/10 blur-3xl"
+        animate={{ x: [0, -35, 15, 0], y: [0, 20, -20, 0], opacity: [0.14, 0.24, 0.16, 0.14] }}
+        transition={{ duration: 28, repeat: Infinity, ease: 'easeInOut' }}
+      />
       
       {/* Pulse Effect for Thinking */}
       <AnimatePresence>
@@ -41,7 +52,7 @@ export function FocusBackground() {
             key="thinking-pulse"
             className="absolute inset-0 bg-primary/5"
             initial={{ opacity: 0 }}
-            animate={{ opacity: [0.2, 0.5, 0.2] }}
+            animate={{ opacity: [0.12, 0.22, 0.12] }}
             exit={{ opacity: 0 }}
             transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
           />
@@ -55,7 +66,7 @@ export function FocusBackground() {
             key="responding-glow"
             className="absolute bottom-0 left-0 right-0 h-1/3 bg-gradient-to-t from-primary/10 to-transparent"
             initial={{ opacity: 0, y: 100 }}
-            animate={{ opacity: 1, y: 0 }}
+            animate={{ opacity: 0.8, y: 0 }}
             exit={{ opacity: 0, y: 100 }}
             transition={{ duration: 1 }}
           />

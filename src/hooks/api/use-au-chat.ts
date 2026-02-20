@@ -6,12 +6,10 @@ import { useToast } from '@/hooks/use-toast';
 import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
 import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summaries';
-import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, sweepExpiredDocWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
+import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
 import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { logOnce } from '@/lib/log/dedupe';
-
-const AUTO_CLEAR_MS = 3 * 24 * 60 * 60 * 1000;
 
 // Simple string hash for local cache keys
 const simpleHash = (str: string) => {
@@ -143,10 +141,6 @@ export function useAuChat(selectedDocId: string | null) {
 
     const key = selectedDocId === 'global' ? globalMemoryKey(user.id) : docMemoryKey(user.id, selectedDocId);
 
-    if (selectedDocId !== 'global') {
-      sweepExpiredDocWorkingMemory().catch(() => {});
-    }
-
     loadWorkingMemory(key)
       .then(payload => {
         const messages = payload?.turns?.map(t => ({ id: t.id, role: t.role, content: t.text } as ChatMessage)) ?? [];
@@ -266,13 +260,13 @@ export function useAuChat(selectedDocId: string | null) {
         } else {
           clearInterval(thinkingInterval);
         }
-      }, cachedResult ? 200 : 1200); // Speed up significantly if cached
+      }, cachedResult ? 140 : 650); // Fast and readable cadence
 
       let result;
 
       if (cachedResult) {
           // Simulate brief network delay for UX smoothness
-          await new Promise(resolve => setTimeout(resolve, 800));
+          await new Promise(resolve => setTimeout(resolve, 220));
           result = cachedResult;
           await appendTurn(
             memoryKey,
@@ -412,7 +406,7 @@ export function useAuChat(selectedDocId: string | null) {
       setTimeout(() => {
         setAuAnimationState('idle');
         setAuThinkingSteps([]); // Clear steps after done
-      }, 3000);
+      }, 1200);
     }
   }, [selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, toast]);
 
@@ -461,7 +455,7 @@ export function useAuChat(selectedDocId: string | null) {
             } else {
                 clearInterval(thinkingInterval);
             }
-        }, 1200);
+        }, 700);
 
         const result = await sendChatMessage({
             messages: [{ id: 'system-init', role: 'user', content: 'INIT_GREETING' }], // Dummy message
@@ -499,7 +493,7 @@ export function useAuChat(selectedDocId: string | null) {
         abortControllerRef.current = null;
         setTimeout(() => {
           setAuAnimationState('idle');
-        }, 3000);
+        }, 1200);
     }
   }, [selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline]);
 

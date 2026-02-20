@@ -415,9 +415,6 @@ export default function GlobalChatPage() {
         />
       )}
 
-      {/* Global background is usually handled by layout/theme, but we can reuse AdaptiveBackground with a 'global' type if we want */}
-      <div className="absolute inset-0 -z-10 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 dark:from-indigo-950/20 dark:to-purple-950/20" />
-      
       <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background/80 backdrop-blur-md px-4 py-3 md:h-14 md:flex-row md:items-center md:px-8 shrink-0 z-10">
         <div className="flex items-center gap-2">
            <Globe className="h-5 w-5 text-primary" />

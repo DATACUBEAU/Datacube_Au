@@ -31,7 +31,7 @@ export function BackgroundController() {
       setPageType('informational');
     } else if (pathname === '/login' || pathname === '/policy' || pathname === '/terms' || pathname.includes('/settings')) {
       setPageType('system');
-    } else if (pathname.includes('/dashboard/chat')) {
+    } else if (pathname.includes('/dashboard/chat') || pathname.includes('/dashboard/global-chat')) {
       setPageType('focus');
     } else if (pathname.startsWith('/dashboard')) {
       // Default dashboard pages (documents, knowledge, etc.)
