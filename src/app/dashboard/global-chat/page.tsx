@@ -12,7 +12,6 @@ import {
   Trash2,
   ChevronDown,
   Edit2,
-  MoreVertical,
   Scissors,
   FileText as FileTextIcon,
   AlignLeft,
@@ -27,12 +26,6 @@ import {
   MessageCircle
 } from 'lucide-react';
 import { FeedbackSection } from "@/components/au-feedback";
-import { 
-  DropdownMenu, 
-  DropdownMenuContent, 
-  DropdownMenuItem, 
-  DropdownMenuTrigger 
-} from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -155,8 +148,7 @@ export default function GlobalChatPage() {
     deleteMessagePersisted,
     isResponding,
     sendMessage,
-    stopGeneration,
-    clearChat: clearProviderChat
+    stopGeneration
   } = useAuChat(selectedDocId);
 
   const { documents } = useAuDocuments();
@@ -205,7 +197,6 @@ export default function GlobalChatPage() {
   const [summaryMode, setSummaryMode] = useState<'short' | 'mid' | 'detailed' | null>(null);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [isClearChatOpen, setIsClearChatOpen] = useState(false);
 
   const handleCopy = (messageId: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -230,14 +221,6 @@ export default function GlobalChatPage() {
     if (mode) setSummaryMode(mode);
 
     handleSendMessage({ preventDefault: () => {} } as React.FormEvent, userMessage.content, mode);
-  };
-
-  const clearChat = async () => {
-    await clearProviderChat();
-    toast({ title: "Hot Reload", description: "Reloading to clear all states..." });
-    setTimeout(() => {
-        window.location.reload();
-    }, 500);
   };
 
   const deleteMessage = (messageId: string) => {
@@ -441,29 +424,7 @@ export default function GlobalChatPage() {
            <h1 className="font-headline text-lg font-semibold md:text-xl">AU Global Assistant</h1>
         </div>
         
-        <div className="flex w-full flex-col gap-2 md:ml-auto md:w-auto md:flex-row md:items-center">
-          <div className="flex items-center gap-2">
-{/* Browsing Mode is Always Active for Global Assistant */}
-<DropdownMenu>
-  <DropdownMenuTrigger asChild>
-    <Button variant="ghost" size="icon" className="h-10 w-10">
-      <MoreVertical className="h-5 w-5" />
-    </Button>
-  </DropdownMenuTrigger>
-
-  <DropdownMenuContent align="end">
-    <DropdownMenuItem
-      className="text-destructive"
-      onClick={clearChat}
-    >
-      <Trash2 className="mr-2 h-4 w-4" />
-      Clear Chat History
-    </DropdownMenuItem>
-  </DropdownMenuContent>
-</DropdownMenu>
-
-          </div>
-        </div>
+        <div className="flex w-full flex-col gap-2 md:ml-auto md:w-auto md:flex-row md:items-center" />
       </header>
 
       <TooltipProvider>

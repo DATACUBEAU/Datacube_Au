@@ -74,7 +74,7 @@ export function GlobalHistoryPrompt({ userId, onClearComplete }: GlobalHistoryPr
 
       {/* 2. CONFIRMATION DIALOG (On Click Only) */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="w-[calc(100vw-1.5rem)] max-w-md p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Trash2 className="h-5 w-5 text-muted-foreground" />
@@ -99,11 +99,11 @@ export function GlobalHistoryPrompt({ userId, onClearComplete }: GlobalHistoryPr
             </Button>
           </div>
 
-          <DialogFooter className="sm:justify-between flex-row items-center gap-2">
-            <span className="text-[10px] text-muted-foreground hidden sm:inline-block">
+          <DialogFooter className="flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-[10px] text-muted-foreground">
               Actions are irreversible.
             </span>
-            <Button variant="ghost" onClick={() => setIsDialogOpen(false)}>
+            <Button variant="ghost" onClick={() => setIsDialogOpen(false)} className="w-full sm:w-auto">
               Cancel
             </Button>
           </DialogFooter>

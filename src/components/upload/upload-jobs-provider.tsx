@@ -397,18 +397,42 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         // 5. Upload File (PUT to Signed URL)
         console.log(`[upload-jobs] Uploading to Signed URL...`);
         updateJobLocal(job.id, { status: 'uploading', progress: 10 });
-        
-        const uploadRes = await fetch(initResult.uploadUrl, {
+
+        let uploaded = false;
+        const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
+
+        // Prefer Supabase signed-upload API when token/path are available.
+        if (initResult.token && initResult.path) {
+          const { error: signedUploadError } = await supabase.storage
+            .from(bucketName)
+            .uploadToSignedUrl(initResult.path, initResult.token, file, {
+              contentType: file.type || 'application/octet-stream',
+              upsert: true,
+            });
+
+          if (!signedUploadError) {
+            uploaded = true;
+          } else {
+            console.warn('[upload-jobs] uploadToSignedUrl failed, falling back to fetch PUT:', signedUploadError.message);
+          }
+        }
+
+        if (!uploaded) {
+          const uploadRes = await fetch(initResult.uploadUrl, {
             method: 'PUT',
             body: file,
             headers: {
-                'Content-Type': file.type || 'application/octet-stream',
+              'Content-Type': file.type || 'application/octet-stream',
+              'x-upsert': 'true',
             },
-            signal: controller.signal
-        });
+            signal: controller.signal,
+          });
 
-        if (!uploadRes.ok) {
-            throw new Error(`Upload failed: ${uploadRes.statusText}`);
+          if (!uploadRes.ok) {
+            const raw = await uploadRes.text().catch(() => '');
+            const details = raw || uploadRes.statusText || 'Bad Request';
+            throw new Error(`Upload failed (${uploadRes.status}): ${details}`);
+          }
         }
         
         updateJobLocal(job.id, { progress: 90 });
