@@ -3,30 +3,59 @@ import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { hasConexAccess } from '@/lib/conex-rbac';
 
+const CONEX_USERS_PATH_PREFIX = '/conex/users';
+const FRAME_ANCESTORS_POLICY = "frame-ancestors 'none'";
+
 function isConexUsersApi(pathname: string): boolean {
-  return pathname === '/conex/users';
+  return pathname === CONEX_USERS_PATH_PREFIX || pathname.startsWith(`${CONEX_USERS_PATH_PREFIX}/`);
+}
+
+function mergeFrameAncestorsDirective(cspHeader: string | null): string {
+  if (!cspHeader) return FRAME_ANCESTORS_POLICY;
+
+  const directives = cspHeader
+    .split(';')
+    .map((directive) => directive.trim())
+    .filter(Boolean);
+
+  let replaced = false;
+  const mergedDirectives = directives.map((directive) => {
+    if (!directive.toLowerCase().startsWith('frame-ancestors')) return directive;
+    replaced = true;
+    return FRAME_ANCESTORS_POLICY;
+  });
+
+  if (!replaced) mergedDirectives.push(FRAME_ANCESTORS_POLICY);
+  return mergedDirectives.join('; ');
+}
+
+function applyClickjackingHeaders(response: NextResponse): NextResponse {
+  const mergedCsp = mergeFrameAncestorsDirective(response.headers.get('Content-Security-Policy'));
+  response.headers.set('Content-Security-Policy', mergedCsp);
+  response.headers.set('X-Frame-Options', 'DENY');
+  return response;
 }
 
 function loginRedirect(req: NextRequest): NextResponse {
   const loginUrl = new URL('/login', req.url);
   loginUrl.searchParams.set('redirectTo', req.nextUrl.pathname);
-  return NextResponse.redirect(loginUrl);
+  return applyClickjackingHeaders(NextResponse.redirect(loginUrl));
 }
 
 function forbiddenRedirect(req: NextRequest): NextResponse {
-  return NextResponse.redirect(new URL('/403', req.url));
+  return applyClickjackingHeaders(NextResponse.redirect(new URL('/403', req.url)));
 }
 
 function unauthorizedResponse(req: NextRequest): NextResponse {
   if (isConexUsersApi(req.nextUrl.pathname)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    return applyClickjackingHeaders(NextResponse.json({ error: 'unauthorized' }, { status: 401 }));
   }
   return loginRedirect(req);
 }
 
 function forbiddenResponse(req: NextRequest): NextResponse {
   if (isConexUsersApi(req.nextUrl.pathname)) {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+    return applyClickjackingHeaders(NextResponse.json({ error: 'forbidden' }, { status: 403 }));
   }
   return forbiddenRedirect(req);
 }
@@ -46,14 +75,16 @@ function getServiceClient() {
 }
 
 export async function middleware(req: NextRequest) {
-  if (!req.nextUrl.pathname.startsWith('/conex')) return NextResponse.next();
+  if (!isConexUsersApi(req.nextUrl.pathname)) {
+    return applyClickjackingHeaders(NextResponse.next());
+  }
 
   const auth = await requireUserFromRequest(req);
   if (!auth.ok) return unauthorizedResponse(req);
 
   // Fast-path: known root admin identity can pass without DB lookup.
   if (hasConexAccess({ userId: auth.userId, email: auth.email, tier: null })) {
-    return NextResponse.next();
+    return applyClickjackingHeaders(NextResponse.next());
   }
 
   const supabase = getServiceClient();
@@ -77,9 +108,9 @@ export async function middleware(req: NextRequest) {
   });
 
   if (!allowed) return forbiddenResponse(req);
-  return NextResponse.next();
+  return applyClickjackingHeaders(NextResponse.next());
 }
 
 export const config = {
-  matcher: ['/conex/users', '/conex/users/:path*'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml).*)'],
 };
