@@ -73,18 +73,27 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener('abort', onAbort);
       
-      const isAbort = error.name === 'AbortError';
+      const isAbort = error?.name === 'AbortError';
+      const isUserAbort = isAbort && !!signal?.aborted;
+      const isTimeoutAbort = isAbort && !signal?.aborted;
       const isNetworkError = !isAbort; // Fetch only throws on network error (DNS, etc)
 
-      // If it's a network error or timeout, and we have retries left, retry
-      if ((isNetworkError || isAbort) && attempt < MAX_RETRIES) {
+      // User-requested abort should never retry.
+      if (isUserAbort) {
+        const abortError = new Error('Request aborted');
+        (abortError as any).name = 'AbortError';
+        throw abortError;
+      }
+
+      // If it's a network error or timeout, and we have retries left, retry.
+      if ((isNetworkError || isTimeoutAbort) && attempt < MAX_RETRIES) {
         attempt++;
         const delay = 1000 * attempt; // 1s, 2s
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
 
-      if (isAbort) {
+      if (isTimeoutAbort) {
         if (!options.silent) {
             toast({
                 variant: 'destructive',

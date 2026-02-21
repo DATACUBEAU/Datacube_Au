@@ -309,14 +309,18 @@ export default function GlobalChatPage() {
       return;
     }
 
+    const shouldClearComposer = messageContent === undefined;
+    if (shouldClearComposer) {
+      setInput('');
+    }
+
     // 2. Send Message via API
     try {
-      const res = await sendMessage(currentInput, {
+      await sendMessage(currentInput, {
         summaryMode: overrideMode || summaryMode,
         browsingMode,
         referenceDocId: referencedDocId
       });
-      if (res) setInput('');
     } catch (error: any) {
       console.error("[GlobalChatPage] Message error:", error);
       // Toast is handled by useAuChat mostly, but we can keep a fallback

@@ -75,6 +75,7 @@ import { GlobalChatDevDialog } from '@/components/global-chat-dev-dialog';
 import { useUnreadCount } from '@/hooks/use-unread-count';
 import { Badge } from '@/components/ui/badge';
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
+import { ToastAction } from '@/components/ui/toast';
 
 type NavItem = {
   href: string;
@@ -394,6 +395,33 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     window.addEventListener('au-upgrade-required', handler as any);
     return () => window.removeEventListener('au-upgrade-required', handler as any);
   }, [setUpgradeModalOpen]);
+
+  useEffect(() => {
+    const handleChatCompleted = (event: any) => {
+      const detail = event?.detail as {
+        route?: string;
+        preview?: string;
+      };
+      const targetRoute = detail?.route;
+      if (!targetRoute || pathname === targetRoute) return;
+
+      toast({
+        title: 'AU response is ready',
+        description: detail.preview
+          ? `${detail.preview}${detail.preview.length >= 200 ? '…' : ''}`
+          : 'Your background response has completed.',
+        action: (
+          <ToastAction altText="Open chat" onClick={() => router.push(targetRoute)}>
+            Open chat
+          </ToastAction>
+        ),
+        duration: 7000,
+      });
+    };
+
+    window.addEventListener('au-chat:completed', handleChatCompleted as EventListener);
+    return () => window.removeEventListener('au-chat:completed', handleChatCompleted as EventListener);
+  }, [pathname, router, toast]);
 
   useEffect(() => {
     if (!upgradeBlockedUntil) return;

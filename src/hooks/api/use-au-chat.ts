@@ -11,6 +11,25 @@ import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { logOnce } from '@/lib/log/dedupe';
 
+const CHAT_EVENT_STARTED = 'au-chat:started';
+const CHAT_EVENT_COMPLETED = 'au-chat:completed';
+const CHAT_EVENT_FAILED = 'au-chat:failed';
+const CHAT_EVENT_CANCELED = 'au-chat:canceled';
+
+type ChatLifecycleDetail = {
+  requestId: string;
+  route: '/dashboard/chat' | '/dashboard/global-chat';
+  selectedDocId: string | null;
+  prompt?: string;
+  preview?: string;
+  error?: string;
+};
+
+function emitChatLifecycleEvent(eventName: string, detail: ChatLifecycleDetail) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(eventName, { detail }));
+}
+
 // Simple string hash for local cache keys
 const simpleHash = (str: string) => {
   let hash = 0;
@@ -35,6 +54,11 @@ export function useAuChat(selectedDocId: string | null) {
   const [isResponding, setIsResponding] = useState(false);
   const [promptStarters, setPromptStarters] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const activeRequestRef = useRef<{
+    requestId: string;
+    route: '/dashboard/chat' | '/dashboard/global-chat';
+    selectedDocId: string | null;
+  } | null>(null);
 
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
@@ -164,6 +188,14 @@ export function useAuChat(selectedDocId: string | null) {
 
   const stopGeneration = useCallback(() => {
     if (abortControllerRef.current) {
+      const activeRequest = activeRequestRef.current;
+      if (activeRequest) {
+        emitChatLifecycleEvent(CHAT_EVENT_CANCELED, {
+          requestId: activeRequest.requestId,
+          route: activeRequest.route,
+          selectedDocId: activeRequest.selectedDocId,
+        });
+      }
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsResponding(false);
@@ -199,6 +231,16 @@ export function useAuChat(selectedDocId: string | null) {
 
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
+    const requestId = nanoid();
+    const route: '/dashboard/chat' | '/dashboard/global-chat' =
+      selectedDocId === 'global' ? '/dashboard/global-chat' : '/dashboard/chat';
+    activeRequestRef.current = { requestId, route, selectedDocId };
+    emitChatLifecycleEvent(CHAT_EVENT_STARTED, {
+      requestId,
+      route,
+      selectedDocId,
+      prompt: content.slice(0, 180),
+    });
 
     const userMessage: ChatMessage = { id: nanoid(), role: 'user', content };
     const loadingId = nanoid();
@@ -379,6 +421,12 @@ export function useAuChat(selectedDocId: string | null) {
         citations: result.citations,
         thought: result.thought
       } : m));
+      emitChatLifecycleEvent(CHAT_EVENT_COMPLETED, {
+        requestId,
+        route,
+        selectedDocId,
+        preview: String(result.answer || '').slice(0, 200),
+      });
       return result;
     } catch (err: any) {
       if (thinkingInterval) clearInterval(thinkingInterval);
@@ -388,6 +436,11 @@ export function useAuChat(selectedDocId: string | null) {
         console.log('[useAuChat] Message aborted');
         setHistory(prev => prev.filter(m => m.id !== loadingId));
         setAuAnimationState('idle');
+        emitChatLifecycleEvent(CHAT_EVENT_CANCELED, {
+          requestId,
+          route,
+          selectedDocId,
+        });
         return;
       }
       const msg = String(err?.message || '');
@@ -398,10 +451,17 @@ export function useAuChat(selectedDocId: string | null) {
       }
       setHistory(prev => prev.filter(m => m.id !== loadingId));
       setAuAnimationState('error');
+      emitChatLifecycleEvent(CHAT_EVENT_FAILED, {
+        requestId,
+        route,
+        selectedDocId,
+        error: msg.slice(0, 220),
+      });
       throw err;
     } finally {
       setIsResponding(false);
       abortControllerRef.current = null;
+      activeRequestRef.current = null;
       // Delay setting back to idle to allow animation to breathe
       setTimeout(() => {
         setAuAnimationState('idle');

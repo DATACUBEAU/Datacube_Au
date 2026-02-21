@@ -813,6 +813,11 @@ export default function ChatPage() {
       return;
     }
 
+    const shouldClearComposer = messageContent === undefined;
+    if (shouldClearComposer) {
+      setInput('');
+    }
+
     setPromptStarters([]);
     
     // Construct message with reply context if present
@@ -824,15 +829,12 @@ export default function ChatPage() {
     }
 
     try {
-      const res = await sendMessage(finalMessage, {
+      await sendMessage(finalMessage, {
         guide: guideText !== defaultGuideText ? guideText : undefined,
         summaryMode: overrideMode || summaryMode,
         browsingMode
       });
-      if (res) {
-        setInput('');
-        setGeneratedPrompts([]);
-      }
+      setGeneratedPrompts([]);
     } catch (error: any) {
       console.error("[ChatPage] Message error:", error);
       
