@@ -11,7 +11,7 @@ export function MarketingBackground() {
   const opacity = useTransform(scrollY, [0, 500], [0.8, 0.4]);
 
   return (
-    <div className="fixed inset-0 -z-50 overflow-hidden pointer-events-none">
+    <div className="fixed inset-0 z-0 overflow-hidden pointer-events-none" aria-hidden="true">
       {/* Base Gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-background via-background/90 to-background/80" />
       
@@ -24,7 +24,7 @@ export function MarketingBackground() {
           x: [0, 20, 0]
         }}
         transition={{ duration: 15, repeat: Infinity, ease: "easeInOut" }}
-        style={{ y: y1 }}
+        style={{ y: y1, opacity }}
       />
       
       <motion.div 
@@ -35,7 +35,7 @@ export function MarketingBackground() {
           x: [0, -30, 0]
         }}
         transition={{ duration: 20, repeat: Infinity, ease: "easeInOut", delay: 2 }}
-        style={{ y: y2 }}
+        style={{ y: y2, opacity }}
       />
       
       {/* Subtle Mesh Grid */}

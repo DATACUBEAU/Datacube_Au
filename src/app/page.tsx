@@ -23,7 +23,7 @@ export default function LandingPage() {
   ];
 
   return (
-    <div className="flex min-h-dvh w-full flex-col bg-background text-foreground">
+    <div className="flex min-h-dvh w-full flex-col bg-transparent text-foreground">
       <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur-sm">
         <div className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-4 sm:px-6 lg:px-8">
             <Link href="/" className="flex items-center space-x-2">

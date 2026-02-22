@@ -537,7 +537,7 @@ export default function SubscriptionPage() {
     // --- Main Render ---
 
   return (
-    <div className="min-h-screen bg-background pb-16 relative">
+    <div className="min-h-screen bg-transparent pb-16 relative">
         <div className="pointer-events-none absolute left-1/2 top-[-10rem] h-[24rem] w-[24rem] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
 
         <section className="relative border-b border-border bg-background px-4 py-12 text-center">
@@ -547,7 +547,7 @@ export default function SubscriptionPage() {
                 </Badge>
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight">Simple, Transparent Pricing</h1>
                 <p className="text-muted-foreground text-lg max-w-xl mx-auto leading-relaxed">
-                    Unlock the full power of AI with flexible plans. Cancel anytime, no hidden fees.
+                    Unlock the full power of AU with flexible plans. Cancel anytime, no hidden fees.
                 </p>
 
                 {/* Toggle Switch */}
@@ -724,7 +724,7 @@ export default function SubscriptionPage() {
                                 features={[
                                     'Max 4 documents',
                                     '14-day history retention',
-                                    'Standard AI models',
+                                    'Standard AU models',
                                     'Basic support'
                                 ]}
                                 onSelect={() => {}}
@@ -746,7 +746,7 @@ export default function SubscriptionPage() {
                                     features={[
                                         'Unlimited documents',
                                         '30-day history retention',
-                                        'Premium AI models (GPT-4)',
+                                        'Premium AU models',
                                         'Priority processing',
                                         'Advanced data analysis',
                                         'Priority support'

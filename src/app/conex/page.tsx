@@ -1800,7 +1800,7 @@ export default function ConexPage() {
 
   if (isUserLoading || isCheckingConexAccess) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+      <div className="min-h-screen flex items-center justify-center bg-transparent p-4">
         <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     );
@@ -1808,7 +1808,7 @@ export default function ConexPage() {
 
   if (step === 3 && adminToken) {
     return (
-      <div className="min-h-screen bg-background p-4 md:p-8">
+      <div className="min-h-screen bg-transparent p-4 md:p-8">
         <div className="mx-auto max-w-6xl space-y-8">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">

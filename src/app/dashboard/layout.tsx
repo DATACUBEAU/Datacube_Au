@@ -869,7 +869,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         onContactSupport={() => setShowWhatsappDialog(true)}
       />
 
-        <div className="flex min-h-dvh w-full bg-background">
+        <div className="flex min-h-dvh w-full bg-transparent">
           <Sidebar collapsible="icon" side="left" variant="sidebar" className="group-data-[variant=sidebar]:border-r">
             <SidebarHeader className="flex h-14 items-center gap-2 border-b p-2">
               <Link href="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">

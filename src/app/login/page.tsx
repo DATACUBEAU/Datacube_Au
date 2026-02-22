@@ -160,7 +160,7 @@ export default function LoginPage() {
   }
   
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-4">
+    <div className="flex min-h-dvh flex-col items-center justify-center bg-transparent px-4">
       <AnimatePresence>
         {showAuthPopup && (
           <Dialog open={showAuthPopup} onOpenChange={handleAuthCancelAttempt}>

@@ -56,10 +56,14 @@ export default function RootLayout({
           <NetworkStatusProvider>
             <SmartAuthProvider>
               <FeatureFlagProvider>
-                <BackgroundController />
-                <UploadJobsProvider>{children}</UploadJobsProvider>
-                <GlobalListeners />
-                <Toaster />
+                <div className="relative isolate">
+                  <BackgroundController />
+                  <div className="relative z-10">
+                    <UploadJobsProvider>{children}</UploadJobsProvider>
+                    <GlobalListeners />
+                    <Toaster />
+                  </div>
+                </div>
               </FeatureFlagProvider>
             </SmartAuthProvider>
           </NetworkStatusProvider>

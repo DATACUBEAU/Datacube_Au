@@ -48,7 +48,7 @@ export function BackgroundController() {
 
   // Global Reduced Motion Override
   if (shouldReduceMotion) {
-    return <SystemBackground />;
+    return <SystemBackground disableMotion />;
   }
 
   // Render appropriate background
