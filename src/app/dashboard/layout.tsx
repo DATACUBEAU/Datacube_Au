@@ -8,7 +8,8 @@ import {
   LayoutDashboard,
   MessageCircle,
   Settings,
-  User as UserIcon,
+  CreditCard,
+  BarChart3,
   LogOut,
   Loader2,
   SquarePen,
@@ -135,6 +136,9 @@ const SidebarFooterMenu = ({
   userInitial,
   userDisplayName,
   userEmail,
+  planStatusLabel,
+  planStatusMeta,
+  isPlanStatusLoading,
   onOpenGuide,
 }: {
   footerItems: Array<any>;
@@ -142,6 +146,9 @@ const SidebarFooterMenu = ({
   userInitial: string;
   userDisplayName: string;
   userEmail: string;
+  planStatusLabel: string;
+  planStatusMeta: string;
+  isPlanStatusLoading: boolean;
   onOpenGuide: () => void;
 }) => (
   <SidebarFooter className="p-2">
@@ -169,6 +176,25 @@ const SidebarFooterMenu = ({
           )}
         </SidebarMenuItem>
       ))}
+
+      <SidebarMenuItem>
+        <div className="rounded-md border border-sidebar-border bg-sidebar-accent/35 px-3 py-2">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-sidebar-foreground/60">
+            Plan Status
+          </div>
+          <div className="mt-1 flex items-center justify-between gap-2">
+            <span className="text-sm font-semibold text-sidebar-foreground">
+              {isPlanStatusLoading ? 'Updating...' : planStatusLabel}
+            </span>
+            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+              Active
+            </Badge>
+          </div>
+          <div className="mt-1 text-[10px] text-sidebar-foreground/65">
+            {planStatusMeta}
+          </div>
+        </div>
+      </SidebarMenuItem>
 
       <Separator className="my-2 bg-sidebar-border" />
 
@@ -235,8 +261,17 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const upgradeBlockedUntil = useStore((s) => s.upgradeBlockedUntil);
   const clearUpgradeBlock = useStore((s) => s.clearUpgradeBlock);
   const unreadCount = useUnreadCount();
+  const [planTier, setPlanTier] = useState<string>('free');
+  const [planExpiresAt, setPlanExpiresAt] = useState<string | null>(null);
+  const [isBillingDisabled, setIsBillingDisabled] = useState(false);
+  const [isPlanStatusLoading, setIsPlanStatusLoading] = useState(false);
 
   const isAuthenticated = !!user;
+  const hasAdminAccess = useMemo(() => {
+    const role = user?.app_metadata?.role ?? user?.user_metadata?.role;
+    if (role === 'admin' || role === 'service_role') return true;
+    return planTier === 'admin';
+  }, [planTier, user?.app_metadata?.role, user?.user_metadata?.role]);
 
   const handleGoogleSignIn = useCallback(async () => {
     setIsLoadingGoogle(true);
@@ -277,6 +312,67 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const userEmail = user?.email || '';
   const userInitial =
     userDisplayName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || 'G';
+
+  const refreshPlanStatus = useCallback(async () => {
+    if (!user?.id || !isOnline) return;
+
+    setIsPlanStatusLoading(true);
+    try {
+      const [profileResult, configResult] = await Promise.all([
+        supabase
+          .from('au_user_profiles')
+          .select('tier, tier_expires_at')
+          .eq('user_id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('au_config')
+          .select('billing_enabled')
+          .limit(1)
+          .maybeSingle(),
+      ]);
+
+      if (profileResult.data?.tier) {
+        setPlanTier(String(profileResult.data.tier));
+      } else {
+        setPlanTier('free');
+      }
+
+      setPlanExpiresAt(
+        typeof profileResult.data?.tier_expires_at === 'string'
+          ? profileResult.data.tier_expires_at
+          : null,
+      );
+
+      const billingEnabled = configResult.data?.billing_enabled;
+      setIsBillingDisabled(billingEnabled === false);
+    } catch {
+      setPlanTier('free');
+      setPlanExpiresAt(null);
+      setIsBillingDisabled(false);
+    } finally {
+      setIsPlanStatusLoading(false);
+    }
+  }, [isOnline, user?.id]);
+
+  const normalizedPlanTier = useMemo(() => {
+    if (isBillingDisabled) return 'premium';
+    return (planTier || 'free').toLowerCase();
+  }, [isBillingDisabled, planTier]);
+
+  const planStatusLabel = useMemo(() => {
+    if (isBillingDisabled) return 'Premium Free';
+    if (normalizedPlanTier === 'pro') return 'Pro';
+    if (normalizedPlanTier === 'admin') return 'Admin';
+    return 'Free';
+  }, [isBillingDisabled, normalizedPlanTier]);
+
+  const planStatusMeta = useMemo(() => {
+    if (isBillingDisabled) return 'Promo mode: premium unlocked for all users';
+    if (!planExpiresAt) return 'No expiry set';
+    const expires = new Date(planExpiresAt);
+    if (Number.isNaN(expires.getTime())) return 'No expiry set';
+    return `Renews/Expires: ${expires.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  }, [isBillingDisabled, planExpiresAt]);
 
   const handleWhatsAppRedirect = () => {
     const phoneNumber = '2349036553377';
@@ -328,20 +424,30 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const navItems = useMemo(() => [
-    { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { href: '/dashboard/documents', icon: FileTextIcon, label: 'Documents', tourId: 'upload-section' },
-    { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
-    { 
-      href: '/dashboard/global-chat', 
-      icon: Globe, 
-      label: 'Global Chat',
-    },
-    { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge },
-    { href: '/dashboard/messages', icon: Inbox, label: 'Messages', badge: unreadCount > 0 ? unreadCount : undefined },
-    { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section' },
-    { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section' },
-  ], [isGeneratingKnowledge, isGeneratingPredictions, unreadCount]);
+  const navItems = useMemo(() => {
+    const items: NavItem[] = [
+      { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+      { href: '/dashboard/documents', icon: FileTextIcon, label: 'Documents', tourId: 'upload-section' },
+      { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
+      {
+        href: '/dashboard/global-chat',
+        icon: Globe,
+        label: 'Global Chat',
+      },
+      { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge },
+      { href: '/dashboard/messages', icon: Inbox, label: 'Messages', badge: unreadCount > 0 ? unreadCount : undefined },
+      { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section' },
+      { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section' },
+      { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
+      { href: '/dashboard/settings/subscription', icon: CreditCard, label: 'Subscription' },
+    ];
+
+    if (hasAdminAccess) {
+      items.push({ href: '/dashboard/admin/analytics', icon: BarChart3, label: 'Admin Analytics' });
+    }
+
+    return items;
+  }, [hasAdminAccess, isGeneratingKnowledge, isGeneratingPredictions, unreadCount]);
 
   const prefetchRoutes = useMemo(
     () =>
@@ -397,6 +503,48 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       return () => clearInterval(activityInterval);
     }
   }, [user, isUserLoading, toast, isOnline]);
+
+  useEffect(() => {
+    if (!user?.id || !isOnline) return;
+
+    void refreshPlanStatus();
+
+    const profileChannel = supabase
+      .channel(`dashboard-plan-status:${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'au_user_profiles',
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => {
+          void refreshPlanStatus();
+        },
+      )
+      .subscribe();
+
+    const billingChannel = supabase
+      .channel('dashboard-billing-config')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'au_config',
+        },
+        () => {
+          void refreshPlanStatus();
+        },
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(profileChannel);
+      void supabase.removeChannel(billingChannel);
+    };
+  }, [isOnline, refreshPlanStatus, user?.id]);
 
   useEffect(() => {
     if (!isAuthenticated || !isOnline || hasWarmedRoutesRef.current) return;
@@ -749,6 +897,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               userInitial={userInitial}
               userDisplayName={userDisplayName}
               userEmail={userEmail}
+              planStatusLabel={planStatusLabel}
+              planStatusMeta={planStatusMeta}
+              isPlanStatusLoading={isPlanStatusLoading}
               onOpenGuide={() => setIsSiteGuideOpen(true)}
             />
           </Sidebar>
