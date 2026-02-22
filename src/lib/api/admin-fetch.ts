@@ -1,5 +1,5 @@
 import { safeFetch } from './safe-fetch';
-import { supabase } from '@/lib/supabase-client/client';
+import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 
 /**
  * Centralized utility for all admin-related API requests.
@@ -21,23 +21,73 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   const url = endpoint.startsWith('http') ? endpoint : `/api/proxy/${endpoint}`;
 
   const headers = new Headers(options.headers || {});
+  const hadExplicitAuthorization = headers.has('Authorization');
   
   // 1. Default API Key
   if (ANON_KEY) {
     if (!headers.has('apikey')) headers.set('apikey', ANON_KEY);
   }
 
-  // 2. Authorization: Require an authenticated Supabase user session
-  if (!headers.has('Authorization')) {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.access_token) {
-          headers.set('Authorization', `Bearer ${session.access_token}`);
-      } else {
-          return new Response(JSON.stringify({ error: 'unauthorized' }), {
-            status: 401,
-            headers: { 'Content-Type': 'application/json' },
-          });
+  const resolveAccessToken = async (forceRefresh = false): Promise<string | null> => {
+    let token = await getSupabaseAccessToken();
+    if (token) return token;
+
+    if (forceRefresh) {
+      try {
+        const { data, error } = await supabase.auth.refreshSession();
+        if (!error && data.session?.access_token) {
+          return data.session.access_token;
+        }
+      } catch {
       }
+    }
+
+    try {
+      const { data, error } = await supabase.auth.getUser();
+      if (!error && data.user) {
+        token = await getSupabaseAccessToken();
+        if (token) return token;
+      }
+    } catch {
+    }
+
+    return null;
+  };
+
+  const executeWithToken = async (token: string) => {
+    const requestHeaders = new Headers(headers);
+    requestHeaders.set('Authorization', `Bearer ${token}`);
+    return safeFetch(url, {
+      ...options,
+      headers: requestHeaders,
+    });
+  };
+
+  // 2. Authorization: Require an authenticated Supabase user session
+  let accessToken: string | null = null;
+  if (hadExplicitAuthorization) {
+    const auth = headers.get('Authorization');
+    if (typeof auth === 'string' && auth.trim().length > 0) {
+      accessToken = auth.toLowerCase().startsWith('bearer ')
+        ? auth.slice('bearer '.length).trim()
+        : auth.trim();
+    }
+  } else {
+    accessToken = await resolveAccessToken(false);
+    if (!accessToken) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    headers.set('Authorization', `Bearer ${accessToken}`);
+  }
+
+  if (!accessToken) {
+    return new Response(JSON.stringify({ error: 'unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
@@ -46,10 +96,16 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     headers.set('X-Admin-Token', adminToken);
   }
 
-  const res = await safeFetch(url, {
-    ...options,
-    headers,
-  });
+  let res = await executeWithToken(accessToken);
+
+  // Retry once with a refreshed token if server says unauthorized.
+  if (res.status === 401 && !hadExplicitAuthorization) {
+    const refreshedToken = await resolveAccessToken(true);
+    if (refreshedToken && refreshedToken !== accessToken) {
+      accessToken = refreshedToken;
+      res = await executeWithToken(accessToken);
+    }
+  }
 
   try {
     const ct = res.headers.get('content-type') || '';

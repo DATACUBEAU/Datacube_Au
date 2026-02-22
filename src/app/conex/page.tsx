@@ -425,15 +425,18 @@ const AdminUsage = ({ token }: { token: string }) => {
       // Fetch Usage using the centralized fetchAdmin utility
       const usageRes = await fetchAdmin('admin-handler', {
         method: 'POST',
+        headers: { 'X-Admin-Token': token },
         body: JSON.stringify({ action: 'get_usage' })
       });
-      if (usageRes.ok) {
-        setUsage((usageRes as any).usage || []);
-        if ((usageRes as any).stats) setStats((usageRes as any).stats);
+      if (!usageRes.ok) {
+        throw new Error((usageRes as any).error || 'Failed to load usage');
       }
+      setUsage((usageRes as any).usage || []);
+      if ((usageRes as any).stats) setStats((usageRes as any).stats);
 
       const usersRes = await fetchAdmin('admin-handler', {
         method: 'POST',
+        headers: { 'X-Admin-Token': token },
         body: JSON.stringify({ action: 'list_users', page: 1, pageSize: 1 })
       });
       if (usersRes.ok) {
@@ -444,11 +447,15 @@ const AdminUsage = ({ token }: { token: string }) => {
       }
     } catch (e) {
       console.error('[AdminUsage] fetch error:', e);
-      toast({ title: 'Error', description: 'Failed to load usage dashboard.', variant: 'destructive' });
+      const message =
+        e instanceof Error && e.message.toLowerCase().includes('unauthorized')
+          ? 'Session expired. Please sign in again, then re-open Conex.'
+          : 'Failed to load usage dashboard.';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, token]);
 
   useEffect(() => {
     fetchData();
@@ -1640,28 +1647,44 @@ export default function ConexPage() {
 
   // Handle persistence on refresh
   useEffect(() => {
-    const savedToken = localStorage.getItem('conex_admin_token');
-    const savedSession = localStorage.getItem('conex_session_id');
-    const savedStep = localStorage.getItem('conex_auth_step');
+    let mounted = true;
 
-    if (savedStep === '3') {
-      if (!savedToken || savedToken === 'undefined' || !uuidRegex.test(savedToken)) {
+    const restoreAdminState = async () => {
+      const accessToken = await getSupabaseAccessToken();
+      if (!mounted) return;
+      if (!accessToken) {
         resetConexAuth({ message: 'Session expired. Please log in again.' });
         return;
       }
-      setAdminToken(savedToken);
-      setStep(3);
-      return;
-    }
 
-    if (savedStep === '2') {
-      if (!savedSession || savedSession === 'undefined' || !uuidRegex.test(savedSession)) {
-        resetConexAuth({ message: 'Session expired. Please restart access.' });
+      const savedToken = localStorage.getItem('conex_admin_token');
+      const savedSession = localStorage.getItem('conex_session_id');
+      const savedStep = localStorage.getItem('conex_auth_step');
+
+      if (savedStep === '3') {
+        if (!savedToken || savedToken === 'undefined' || !uuidRegex.test(savedToken)) {
+          resetConexAuth({ message: 'Session expired. Please log in again.' });
+          return;
+        }
+        setAdminToken(savedToken);
+        setStep(3);
         return;
       }
-      setSessionId(savedSession);
-      setStep(2);
-    }
+
+      if (savedStep === '2') {
+        if (!savedSession || savedSession === 'undefined' || !uuidRegex.test(savedSession)) {
+          resetConexAuth({ message: 'Session expired. Please restart access.' });
+          return;
+        }
+        setSessionId(savedSession);
+        setStep(2);
+      }
+    };
+
+    restoreAdminState();
+    return () => {
+      mounted = false;
+    };
   }, []);
 
   const handlePuzzle = (e: React.FormEvent) => {
