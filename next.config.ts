@@ -6,6 +6,13 @@ const withPWA = withPWAInit({
   dest: 'public',
   disable: process.env.NODE_ENV === 'development',
   register: true,
+  cacheOnFrontEndNav: true,
+  aggressiveFrontEndNavCaching: true,
+  dynamicStartUrlRedirect: '/dashboard',
+  fallbacks: {
+    document: '/~offline',
+  },
+  extendDefaultRuntimeCaching: true,
   workboxOptions: {
     skipWaiting: true,
     clientsClaim: true,
@@ -16,38 +23,8 @@ const withPWA = withPWAInit({
         options: { cacheName: 'supabase-no-cache' },
       },
       {
-        urlPattern: /^https:\/\/.*\.googleapis\.com\/.*/i,
-        handler: 'NetworkOnly',
-        options: { cacheName: 'google-apis-no-cache' },
-      },
-      {
-        urlPattern: ({ url }: { url: URL }) => url.origin !== self.location.origin,
-        handler: 'NetworkOnly',
-        options: { cacheName: 'external-no-cache' },
-      },
-      {
         urlPattern: /\/api\/health$/i,
         handler: 'NetworkOnly',
-      },
-      {
-        urlPattern: ({ request }: { request: Request }) => request.mode === 'navigate',
-        handler: 'NetworkFirst',
-        options: {
-          cacheName: 'html-cache',
-          networkTimeoutSeconds: 3, // Reduced from 5s for faster fallback
-        },
-      },
-      {
-        urlPattern: /\?_rsc=/,
-        handler: 'NetworkFirst',
-        options: {
-          cacheName: 'next-rsc-cache',
-          networkTimeoutSeconds: 3, // Add timeout to avoid hanging on lie-fi
-          expiration: {
-            maxEntries: 100, // Increased from 50
-            maxAgeSeconds: 24 * 60 * 60,
-          },
-        },
       },
       {
         urlPattern: /manifest\.webmanifest$/i,
