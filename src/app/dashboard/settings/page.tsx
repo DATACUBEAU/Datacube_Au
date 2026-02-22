@@ -95,6 +95,7 @@ export default function SettingsPage() {
   const [latestInvoiceUrl, setLatestInvoiceUrl] = useState<string | null>(null);
   const [billingConfig, setBillingConfig] = useState<any>(null);
   const [usageStatus, setUsageStatus] = useState<any>(null);
+  const isBillingDisabled = !!billingConfig && !billingConfig.billing_enabled;
 
   useEffect(() => {
     if (user?.id && session?.access_token && isOnline) {
@@ -250,10 +251,23 @@ export default function SettingsPage() {
   };
 
   const openBankTransfer = () => {
+      if (isBillingDisabled) {
+          toast({
+              title: 'Free Premium Access is active',
+              description: 'Manual Bank Transfer is currently disabled while premium is unlocked for all users.',
+          });
+          return;
+      }
       setManualPaymentRef(generateReference());
       setManualPaymentStatus('idle');
       setShowBankTransfer(true);
   };
+
+  useEffect(() => {
+    if (!isBillingDisabled) return;
+    setShowBankTransfer(false);
+    setManualPaymentStatus('idle');
+  }, [isBillingDisabled]);
 
   useEffect(() => {
     if (user) {
@@ -538,7 +552,7 @@ export default function SettingsPage() {
                               </div>
                               
                               <div className="flex flex-col gap-3 pt-2">
-                                  <Button onClick={handlePortal} disabled={isLoadingBilling} className="w-full">
+                                  <Button onClick={handlePortal} disabled={isLoadingBilling || isBillingDisabled} className="w-full">
                                       <Settings className="mr-2 h-4 w-4" /> Manage Subscription
                                   </Button>
                                   {latestInvoiceUrl && (
@@ -553,7 +567,7 @@ export default function SettingsPage() {
               ) : (
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative">
                       {/* Overlay for Billing Disabled */}
-                      {billingConfig && !billingConfig.billing_enabled && (
+                      {isBillingDisabled && (
                           <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-xl">
                               <div className="bg-background border border-primary/20 p-6 rounded-lg shadow-2xl max-w-md text-center animate-in fade-in zoom-in duration-500">
                                   <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -603,7 +617,7 @@ export default function SettingsPage() {
                                   {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
                                   Pay with Card
                               </Button> */}
-                              <Button variant="default" onClick={() => handlePaystackCheckout('weekly')} disabled={isLoadingBilling} className="w-full">
+                              <Button variant="default" onClick={() => handlePaystackCheckout('weekly')} disabled={isLoadingBilling || isBillingDisabled} className="w-full">
                                   {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Banknote className="mr-2 h-4 w-4" />}
                                   Pay via Bank Transfer
                               </Button>
@@ -637,7 +651,7 @@ export default function SettingsPage() {
                                   {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
                                   Pay with Card
                               </Button> */}
-                              <Button variant="default" onClick={() => handlePaystackCheckout('monthly')} disabled={isLoadingBilling} className="w-full shadow-md shadow-primary/20">
+                              <Button variant="default" onClick={() => handlePaystackCheckout('monthly')} disabled={isLoadingBilling || isBillingDisabled} className="w-full shadow-md shadow-primary/20">
                                   {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Banknote className="mr-2 h-4 w-4" />}
                                   Pay via Bank Transfer
                               </Button>
@@ -647,7 +661,7 @@ export default function SettingsPage() {
               )}
               
               {/* Manual Fallback Link */}
-              {tier !== 'pro' && (
+              {tier !== 'pro' && !isBillingDisabled && (
                   <div className="text-center pt-4">
                       <button 
                           onClick={openBankTransfer}

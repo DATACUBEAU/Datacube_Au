@@ -17,6 +17,7 @@ const OFFLINE_WARMUP_ROUTES = [
   "/dashboard/practice",
   "/dashboard/settings",
   "/dashboard/settings/subscription",
+  "/dashboard/admin/analytics",
   "/offline",
   "/~offline",
   "/403",
@@ -26,34 +27,42 @@ const OFFLINE_WARMUP_ROUTES = [
 async function warmOfflinePages() {
   const cache = await caches.open(PAGE_CACHE_NAME);
 
-  await Promise.all(
-    OFFLINE_WARMUP_ROUTES.map(async (route) => {
-      try {
-        const requestUrl = new URL(route, self.location.origin).toString();
-        const request = new Request(requestUrl, {
-          method: "GET",
-          credentials: "same-origin",
-        });
+  // Keep warmup sequential to avoid saturating bandwidth and slowing active navigation.
+  for (const route of OFFLINE_WARMUP_ROUTES) {
+    try {
+      const requestUrl = new URL(route, self.location.origin).toString();
+      const request = new Request(requestUrl, {
+        method: "GET",
+        credentials: "same-origin",
+      });
 
-        const response = await fetch(request, { cache: "reload" });
-        if (!response || (!response.ok && response.type !== "opaqueredirect")) return;
+      const response = await fetch(request, { cache: "reload" });
+      if (!response || (!response.ok && response.type !== "opaqueredirect")) continue;
 
-        const cacheable =
-          response.type === "opaqueredirect"
-            ? new Response(response.body, {
-                status: 200,
-                statusText: "OK",
-                headers: response.headers,
-              })
-            : response.clone();
+      const cacheable =
+        response.type === "opaqueredirect"
+          ? new Response(response.body, {
+              status: 200,
+              statusText: "OK",
+              headers: response.headers,
+            })
+          : response.clone();
 
-        await cache.put(requestUrl, cacheable);
-      } catch {
-      }
-    }),
-  );
+      await cache.put(requestUrl, cacheable);
+    } catch {
+    }
+  }
 }
 
 self.addEventListener("install", (event) => {
+  event.waitUntil(warmOfflinePages());
+});
+
+self.addEventListener("activate", (event) => {
+  event.waitUntil(warmOfflinePages());
+});
+
+self.addEventListener("message", (event) => {
+  if (!event?.data || event.data.type !== "PWA_WARM_ROUTES") return;
   event.waitUntil(warmOfflinePages());
 });

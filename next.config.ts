@@ -25,6 +25,18 @@ const withPWA = withPWAInit({
       {
         urlPattern: /\/api\/health$/i,
         handler: 'NetworkOnly',
+        options: {
+          cacheName: 'health-no-cache',
+          plugins: [
+            {
+              handlerDidError: async () =>
+                new Response(JSON.stringify({ ok: false, offline: true, ts: Date.now() }), {
+                  status: 503,
+                  headers: { 'Content-Type': 'application/json' },
+                }),
+            },
+          ],
+        },
       },
       {
         urlPattern: /manifest\.webmanifest$/i,
@@ -46,6 +58,65 @@ const withPWA = withPWAInit({
         urlPattern: /^https:\/\/www\.googletagmanager\.com\/.*/i,
         handler: 'NetworkOnly',
         options: { cacheName: 'gtm-no-cache' },
+      },
+      {
+        // Keep Next.js data payloads around longer so already-visited pages reopen offline.
+        urlPattern: /\/_next\/data\/.+\/.+\.json$/i,
+        handler: 'StaleWhileRevalidate',
+        options: {
+          cacheName: 'next-data',
+          expiration: {
+            maxEntries: 256,
+            maxAgeSeconds: 7 * 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        // App Router prefetch payloads should fail over to cache quickly when offline.
+        urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
+          request.headers.get('RSC') === '1' &&
+          request.headers.get('Next-Router-Prefetch') === '1' &&
+          sameOrigin &&
+          !pathname.startsWith('/api/'),
+        handler: 'NetworkFirst',
+        options: {
+          cacheName: 'pages-rsc-prefetch',
+          networkTimeoutSeconds: 2,
+          expiration: {
+            maxEntries: 256,
+            maxAgeSeconds: 7 * 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        // Route payloads should not block UI for long on flaky networks.
+        urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
+          request.headers.get('RSC') === '1' &&
+          sameOrigin &&
+          !pathname.startsWith('/api/'),
+        handler: 'NetworkFirst',
+        options: {
+          cacheName: 'pages-rsc',
+          networkTimeoutSeconds: 2,
+          expiration: {
+            maxEntries: 256,
+            maxAgeSeconds: 7 * 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        // Main HTML navigation fallback for instant offline/poor-network transitions.
+        urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
+          request.mode === 'navigate' && sameOrigin && !pathname.startsWith('/api/'),
+        handler: 'NetworkFirst',
+        options: {
+          cacheName: 'pages',
+          networkTimeoutSeconds: 2,
+          expiration: {
+            maxEntries: 256,
+            maxAgeSeconds: 7 * 24 * 60 * 60,
+          },
+        },
       },
     ],
   },

@@ -9,7 +9,8 @@ import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summarie
 import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
 import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
-import { logOnce } from '@/lib/log/dedupe';
+import { logOnce, shouldDedupe } from '@/lib/log/dedupe';
+import { logEvent } from '@/lib/analytics';
 
 const CHAT_EVENT_STARTED = 'au-chat:started';
 const CHAT_EVENT_COMPLETED = 'au-chat:completed';
@@ -444,10 +445,19 @@ export function useAuChat(selectedDocId: string | null) {
         return;
       }
       const msg = String(err?.message || '');
+      const status = typeof err?.status === 'number' ? err.status : null;
       if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
         logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', err);
       } else {
         console.error('[useAuChat] Message error:', err);
+      }
+      if (!shouldDedupe(`event:chat:send:error:${status ?? 'unknown'}`)) {
+        logEvent('au_chat_error', {
+          status,
+          message: msg.slice(0, 400),
+          route: activeRequestRef.current?.route ?? null,
+          selectedDocId,
+        });
       }
       setHistory(prev => prev.filter(m => m.id !== loadingId));
       setAuAnimationState('error');

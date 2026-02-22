@@ -57,7 +57,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import PageLoader from '@/components/page-loader';
 import { useStore } from '@/hooks/use-store';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
@@ -111,7 +111,7 @@ const SidebarNavMenu = ({ navItems, pathname }: { navItems: NavItem[]; pathname:
                 ) : null}
               </button>
             ) : (
-              <Link href={item.href} className="flex items-center gap-2 w-full h-full">
+              <Link href={item.href} prefetch className="flex items-center gap-2 w-full h-full">
                 {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
                 <span className="flex-1">{item.label}</span>
                 {item.badge ? (
@@ -156,7 +156,7 @@ const SidebarFooterMenu = ({
         <SidebarMenuItem key={item.key}>
           {item.href ? (
             <SidebarMenuButton asChild>
-              <Link href={item.href}>
+              <Link href={item.href} prefetch>
                 <item.icon />
                 <span>{item.label}</span>
               </Link>
@@ -184,7 +184,7 @@ const SidebarFooterMenu = ({
       {/* User Avatar */}
       <SidebarMenuItem>
         <SidebarMenuButton asChild size="lg" className="h-auto py-2">
-          <Link href="/dashboard/settings">
+          <Link href="/dashboard/settings" prefetch>
             <Avatar className="size-8">
               <AvatarImage src={''} alt="User Avatar" />
               <AvatarFallback>{userInitial}</AvatarFallback>
@@ -215,6 +215,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const hasWarmedRoutesRef = useRef(false);
 
   const [user, , isUserLoading] = useSupabaseUser();
   const [showWhatsappDialog, setShowWhatsappDialog] = useState(false);
@@ -342,6 +343,19 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section' },
   ], [isGeneratingKnowledge, isGeneratingPredictions, unreadCount]);
 
+  const prefetchRoutes = useMemo(
+    () =>
+      Array.from(
+        new Set([
+          ...navItems.map((item) => item.href),
+          '/dashboard/settings',
+          '/dashboard/settings/subscription',
+          '/conex',
+        ]),
+      ),
+    [navItems],
+  );
+
   const footerItems = useMemo(() => {
     const items = [
       {
@@ -383,6 +397,53 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       return () => clearInterval(activityInterval);
     }
   }, [user, isUserLoading, toast, isOnline]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isOnline || hasWarmedRoutesRef.current) return;
+
+    const prefetchAll = () => {
+      for (const route of prefetchRoutes) {
+        if (route === pathname) continue;
+        router.prefetch(route);
+      }
+      hasWarmedRoutesRef.current = true;
+    };
+
+    const idleWindow = window as Window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+      cancelIdleCallback?: (handle: number) => void;
+    };
+
+    let timeoutId: number | null = null;
+    let idleId: number | null = null;
+
+    if (typeof idleWindow.requestIdleCallback === 'function') {
+      idleId = idleWindow.requestIdleCallback(() => {
+        prefetchAll();
+      }, { timeout: 1200 });
+    } else {
+      timeoutId = window.setTimeout(prefetchAll, 200);
+    }
+
+    return () => {
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+      if (idleId !== null && typeof idleWindow.cancelIdleCallback === 'function') {
+        idleWindow.cancelIdleCallback(idleId);
+      }
+    };
+  }, [isAuthenticated, isOnline, pathname, prefetchRoutes, router]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !isOnline || !('serviceWorker' in navigator)) return;
+
+    navigator.serviceWorker.ready
+      .then((registration) => {
+        registration.active?.postMessage({ type: 'PWA_WARM_ROUTES' });
+      })
+      .catch(() => {});
+  }, [isAuthenticated, isOnline]);
 
 
   useEffect(() => {
@@ -698,7 +759,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               <SidebarTrigger />
               <span className="font-semibold">{currentPageTitle}</span>
               <div className="flex items-center gap-1">
-                 <Link href="/dashboard/messages" className="p-2 relative">
+                 <Link href="/dashboard/messages" prefetch className="p-2 relative">
                     <Bell className="h-5 w-5" />
                     {unreadCount > 0 && (
                         <span className="absolute top-1 right-1 h-2 w-2 bg-destructive rounded-full" />
@@ -712,7 +773,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-2">
                 <HeaderPwaInstallButton />
                 <Button variant="ghost" size="icon" asChild className="relative">
-                  <Link href="/dashboard/messages">
+                  <Link href="/dashboard/messages" prefetch>
                     <Bell className="h-5 w-5" />
                     {unreadCount > 0 && (
                         <Badge variant="destructive" className="absolute -top-1 -right-1 h-4 w-4 p-0 flex items-center justify-center text-[10px] rounded-full">

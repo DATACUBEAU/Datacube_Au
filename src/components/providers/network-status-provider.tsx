@@ -3,6 +3,8 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { WifiOff } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { logEvent } from '@/lib/analytics';
+import { logOnce } from '@/lib/log/dedupe';
 
 interface NetworkStatusContextType {
   isOnline: boolean;
@@ -23,6 +25,7 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
   const failCount = useRef(0);
   const isChecking = useRef(false);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastErrorRef = useRef<string | null>(null);
 
   // Configuration
   const MAX_FAILURES = 2; // Flip to offline after 2 failures
@@ -54,14 +57,20 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
       if (res.ok) {
         // Success
         failCount.current = 0;
+        lastErrorRef.current = null;
+        if (!isOnline) {
+          logEvent('network_health_restored', { ts: Date.now() });
+        }
         if (!isOnline) setIsOnline(true);
       } else {
         // HTTP Error (500, etc) - treat as potential connectivity issue
         failCount.current++;
+        lastErrorRef.current = `status_${res.status}`;
       }
     } catch (error) {
       // Network Error (fetch failed)
       failCount.current++;
+      lastErrorRef.current = String((error as any)?.message || error);
     } finally {
       clearTimeout(timeoutId);
       isChecking.current = false;
@@ -69,6 +78,10 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
       
       // Decision Logic
       if (failCount.current >= MAX_FAILURES) {
+        if (isOnline) {
+          logOnce('warn', 'network:health:offline', '[network] Health check failed', lastErrorRef.current);
+          logEvent('network_health_offline', { error: lastErrorRef.current, failCount: failCount.current });
+        }
         if (isOnline) setIsOnline(false);
       }
     }
