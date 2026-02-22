@@ -9,7 +9,6 @@ import {
   MessageCircle,
   Settings,
   CreditCard,
-  BarChart3,
   LogOut,
   Loader2,
   SquarePen,
@@ -267,11 +266,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const [isPlanStatusLoading, setIsPlanStatusLoading] = useState(false);
 
   const isAuthenticated = !!user;
-  const hasAdminAccess = useMemo(() => {
-    const role = user?.app_metadata?.role ?? user?.user_metadata?.role;
-    if (role === 'admin' || role === 'service_role') return true;
-    return planTier === 'admin';
-  }, [planTier, user?.app_metadata?.role, user?.user_metadata?.role]);
 
   const handleGoogleSignIn = useCallback(async () => {
     setIsLoadingGoogle(true);
@@ -442,12 +436,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       { href: '/dashboard/settings/subscription', icon: CreditCard, label: 'Subscription' },
     ];
 
-    if (hasAdminAccess) {
-      items.push({ href: '/dashboard/admin/analytics', icon: BarChart3, label: 'Admin Analytics' });
-    }
-
     return items;
-  }, [hasAdminAccess, isGeneratingKnowledge, isGeneratingPredictions, unreadCount]);
+  }, [isGeneratingKnowledge, isGeneratingPredictions, unreadCount]);
 
   const prefetchRoutes = useMemo(
     () =>

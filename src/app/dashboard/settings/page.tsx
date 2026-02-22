@@ -21,13 +21,7 @@ import {
   Loader2, 
   AlertTriangle, 
   ShieldAlert, 
-  Trash2,
-  CreditCard,
-  Settings,
-  CheckCircle2,
-  Banknote,
-  Download,
-  Copy
+  Trash2
 } from 'lucide-react';
 import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
@@ -37,8 +31,6 @@ import PwaInstallButton from '@/components/pwa-install-button';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
-import { Badge } from '@/components/ui/badge';
-import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 import {
   Dialog,
@@ -62,10 +54,9 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function SettingsPage() {
-  const [user, session] = useSupabaseUser();
+  const [user] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
-  const { isOnline } = useNetworkStatus();
 
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
@@ -84,190 +75,6 @@ export default function SettingsPage() {
   const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
   const [signOutStep, setSignOutStep] = useState<'idle' | 'warning' | 'final' | 'processing'>('idle');
-
-  // Billing State
-  const [tier, setTier] = useState<string>('free');
-  const [tierExpiresAt, setTierExpiresAt] = useState<string | null>(null);
-  const [isLoadingBilling, setIsLoadingBilling] = useState(false);
-  const [showBankTransfer, setShowBankTransfer] = useState(false);
-  const [manualPaymentRef, setManualPaymentRef] = useState('');
-  const [manualPaymentStatus, setManualPaymentStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
-  const [latestInvoiceUrl, setLatestInvoiceUrl] = useState<string | null>(null);
-  const [billingConfig, setBillingConfig] = useState<any>(null);
-  const [usageStatus, setUsageStatus] = useState<any>(null);
-  const isBillingDisabled = !!billingConfig && !billingConfig.billing_enabled;
-
-  useEffect(() => {
-    if (user?.id && session?.access_token && isOnline) {
-      // Fetch Profile
-      supabase.from('au_user_profiles')
-        .select('tier, tier_expires_at, latest_invoice_url')
-        .eq('user_id', user.id)
-        .maybeSingle()
-        .then(({ data }) => {
-           if (data?.tier) setTier(data.tier);
-           if (data?.tier_expires_at) setTierExpiresAt(data.tier_expires_at);
-           if (data?.latest_invoice_url) setLatestInvoiceUrl(data.latest_invoice_url);
-        });
-      
-      // Fetch Config
-      supabase.from('au_config')
-        .select('*')
-        .limit(1)
-        .maybeSingle()
-        .then(({ data }) => {
-            if (data) setBillingConfig(data);
-        });
-
-      invokeEdgeFunction<any>('usage-status', { method: 'GET', requireAuth: true, silent: true })
-        .then(({ data }) => setUsageStatus(data))
-        .catch(() => setUsageStatus(null));
-    }
-  }, [isOnline, session?.access_token, user]);
-
-  const handleStripeCheckout = async (planType: 'weekly' | 'monthly') => {
-      if (!isOnline) {
-        toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
-        return;
-      }
-      if (!session?.access_token) {
-        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
-        return;
-      }
-      setIsLoadingBilling(true);
-      try {
-          const { data, error } = await invokeEdgeFunction('stripe-checkout', {
-              method: 'POST',
-              requireAuth: true,
-              body: { 
-                  email: user?.email,
-                  planType,
-                  redirectUrls: {
-                      success: window.location.href,
-                      cancel: window.location.href
-                  }
-              }
-          });
-          
-          if (error) throw new Error(error.message);
-          const { url, error: funcError } = data || {};
-          if (funcError) throw new Error(funcError);
-          if (url) window.location.href = url;
-      } catch (e: any) {
-          toast({ variant: 'destructive', title: 'Billing Error', description: e.message });
-      } finally {
-          setIsLoadingBilling(false);
-      }
-  };
-
-  const handlePaystackCheckout = async (planType: 'weekly' | 'monthly') => {
-      if (!isOnline) {
-        toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
-        return;
-      }
-      if (!session?.access_token) {
-        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
-        return;
-      }
-      setIsLoadingBilling(true);
-      try {
-          const origin = window.location.origin;
-          const { data, error: invokeError } = await invokeEdgeFunction<any>('paystack-initiate', {
-              method: 'POST',
-              requireAuth: true,
-              body: { 
-                  email: user?.email,
-                  planType,
-                  redirectUrls: {
-                      success: `${origin}/dashboard/settings/subscription?success=true`,
-                      cancel: `${origin}/dashboard/settings/subscription?cancelled=true`
-                  }
-              }
-          });
-          
-          if (invokeError) throw new Error(invokeError.message || "Request failed");
-          const { url } = data || {};
-          if (url) window.location.href = url;
-      } catch (e: any) {
-          toast({ variant: 'destructive', title: 'Payment Error', description: e.message });
-      } finally {
-          setIsLoadingBilling(false);
-      }
-  };
-
-  const handlePortal = async () => {
-      if (!isOnline) {
-        toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
-        return;
-      }
-      if (!session?.access_token) {
-        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
-        return;
-      }
-
-      setIsLoadingBilling(true);
-      try {
-          const { data, error } = await invokeEdgeFunction('stripe-portal', {
-              method: 'POST',
-              requireAuth: true
-          });
-          
-          if (error) throw new Error(error.message);
-          const { url, error: funcError } = data || {};
-          if (funcError) throw new Error(funcError);
-          if (url) window.location.href = url;
-      } catch (e: any) {
-          toast({ variant: 'destructive', title: 'Portal Error', description: e.message });
-      } finally {
-          setIsLoadingBilling(false);
-      }
-  };
-
-  const generateReference = () => {
-      return `PAY-${user?.id.slice(0, 4).toUpperCase()}-${Math.floor(Math.random() * 10000)}`;
-  };
-
-  const handleManualPaymentSubmit = async () => {
-      if (!user) return;
-      setManualPaymentStatus('submitting');
-      try {
-          const refCode = manualPaymentRef || generateReference();
-          
-          const { error } = await supabase.from('au_manual_payments').insert({
-              user_id: user.id,
-              amount: 4500, // Monthly default
-              reference_code: refCode,
-              status: 'pending'
-          });
-
-          if (error) throw error;
-
-          setManualPaymentStatus('success');
-          toast({ title: 'Payment Submitted', description: 'Your payment is pending confirmation.' });
-      } catch (e: any) {
-          toast({ variant: 'destructive', title: 'Submission Failed', description: e.message });
-          setManualPaymentStatus('idle');
-      }
-  };
-
-  const openBankTransfer = () => {
-      if (isBillingDisabled) {
-          toast({
-              title: 'Free Premium Access is active',
-              description: 'Manual Bank Transfer is currently disabled while premium is unlocked for all users.',
-          });
-          return;
-      }
-      setManualPaymentRef(generateReference());
-      setManualPaymentStatus('idle');
-      setShowBankTransfer(true);
-  };
-
-  useEffect(() => {
-    if (!isBillingDisabled) return;
-    setShowBankTransfer(false);
-    setManualPaymentStatus('idle');
-  }, [isBillingDisabled]);
 
   useEffect(() => {
     if (user) {
@@ -471,273 +278,33 @@ export default function SettingsPage() {
                 </Button>
                 </CardFooter>
             </Card>
-          
           <Card>
             <CardHeader>
               <CardTitle className="font-headline">Subscription</CardTitle>
               <CardDescription>
-                Manage your billing and plan details.
+                Billing and plan management are handled on the dedicated pricing page.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {usageStatus && usageStatus.billingEnabled && !usageStatus.isPro ? (
-                <div className="rounded-xl border bg-card p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="font-semibold">Daily Free Limits</div>
-                    <Badge variant="outline">Resets daily</Badge>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {[
-                      { label: 'Chat', used: usageStatus.usage?.chat ?? 0, limit: usageStatus.limits?.chat ?? 0 },
-                      { label: 'Exams', used: usageStatus.usage?.exam ?? 0, limit: usageStatus.limits?.exam ?? 0 },
-                      { label: 'Uploads', used: usageStatus.usage?.upload ?? 0, limit: usageStatus.limits?.upload ?? 0 },
-                    ].map((m) => (
-                      <div key={m.label}>
-                        <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                          <span>{m.label}</span>
-                          <span className="font-mono">{m.used} / {m.limit}</span>
-                        </div>
-                        <div className="h-2.5 bg-muted rounded-full overflow-hidden">
-                          <div
-                            className="h-full bg-primary"
-                            style={{ width: `${m.limit ? Math.min(100, (m.used / m.limit) * 100) : 0}%` }}
-                          />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="pt-3 text-xs text-muted-foreground">
-                    Hit the limit? AU will prompt you to upgrade.
-                  </div>
+            <CardContent className="space-y-4">
+              <div className="rounded-xl border bg-card p-5">
+                <p className="text-sm text-muted-foreground">
+                  Use the standalone Subscription page for payment methods, plan upgrades, and billing history.
+                </p>
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                  <Button asChild className="w-full sm:w-auto">
+                    <Link href="/dashboard/settings/subscription">
+                      Open Subscription Page
+                    </Link>
+                  </Button>
+                  <Button asChild variant="outline" className="w-full sm:w-auto">
+                    <Link href="/dashboard/settings/subscription">
+                      View Simple, Transparent Pricing
+                    </Link>
+                  </Button>
                 </div>
-              ) : null}
-              {tier === 'pro' ? (
-                  <div className="p-6 rounded-xl border-2 border-primary bg-primary/5">
-                      <div className="flex justify-between items-start mb-6">
-                          <div>
-                              <h3 className="text-2xl font-bold font-headline">Pro Plan Active</h3>
-                              <p className="text-muted-foreground mt-1">
-                                  You have full access to all premium features.
-                              </p>
-                          </div>
-                          <Badge className="bg-primary text-lg px-4 py-1">Current</Badge>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                          <div className="space-y-4">
-                              <div className="flex items-center gap-2">
-                                  <CheckCircle2 className="h-5 w-5 text-primary" />
-                                  <span className="font-medium">Unlimited Premium Models (GPT-4, Claude 3 Opus)</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                  <CheckCircle2 className="h-5 w-5 text-primary" />
-                                  <span className="font-medium">High-Priority Processing</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                  <CheckCircle2 className="h-5 w-5 text-primary" />
-                                  <span className="font-medium">Extended Context Window</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                  <CheckCircle2 className="h-5 w-5 text-primary" />
-                                  <span className="font-medium">Advanced Data Analysis Tools</span>
-                              </div>
-                          </div>
-
-                          <div className="space-y-4 border-l pl-6">
-                              <div>
-                                  <Label className="text-muted-foreground">Renewal Date</Label>
-                                  <p className="text-xl font-bold">
-                                      {tierExpiresAt ? new Date(tierExpiresAt).toLocaleDateString(undefined, { dateStyle: 'long' }) : 'Unknown'}
-                                  </p>
-                              </div>
-                              
-                              <div className="flex flex-col gap-3 pt-2">
-                                  <Button onClick={handlePortal} disabled={isLoadingBilling || isBillingDisabled} className="w-full">
-                                      <Settings className="mr-2 h-4 w-4" /> Manage Subscription
-                                  </Button>
-                                  {latestInvoiceUrl && (
-                                      <Button variant="outline" onClick={() => window.open(latestInvoiceUrl, '_blank')} className="w-full">
-                                          <Download className="mr-2 h-4 w-4" /> Download Latest Invoice
-                                      </Button>
-                                  )}
-                              </div>
-                          </div>
-                      </div>
-                  </div>
-              ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 relative">
-                      {/* Overlay for Billing Disabled */}
-                      {isBillingDisabled && (
-                          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-xl">
-                              <div className="bg-background border border-primary/20 p-6 rounded-lg shadow-2xl max-w-md text-center animate-in fade-in zoom-in duration-500">
-                                  <div className="h-12 w-12 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                                      <CheckCircle2 className="h-6 w-6 text-primary" />
-                                  </div>
-                                  <h3 className="text-xl font-bold font-headline mb-2">Free Premium Access</h3>
-                                  <p className="text-muted-foreground mb-4">
-                                      Enjoy the ultimate features while it lasts! We've unlocked Pro capabilities for everyone temporarily.
-                                  </p>
-                                  <Badge variant="outline" className="bg-primary/5 border-primary/20">Limited Time Offer</Badge>
-                              </div>
-                          </div>
-                      )}
-
-                      {/* Card 1: Free Plan */}
-                      <div className="p-6 rounded-xl border-2 border-muted bg-card flex flex-col">
-                          <div className="mb-4">
-                              <h3 className="text-xl font-bold font-headline">Free Plan</h3>
-                              <p className="text-sm text-muted-foreground mt-1">For personal exploration</p>
-                              {tier === 'free' && <Badge className="mt-2 bg-secondary text-secondary-foreground">Current</Badge>}
-                          </div>
-                          <div className="space-y-3 text-sm mb-6 flex-1">
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-500" /> <span>Small uploads</span></div>
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-500" /> <span>Limited documents</span></div>
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-green-500" /> <span>Basic AU models</span></div>
-                          </div>
-                          <Button variant="outline" className="w-full" disabled>Active</Button>
-                      </div>
-
-                      {/* Card 2: Pro Weekly */}
-                      <div className="p-6 rounded-xl border-2 border-primary/20 bg-card hover:border-primary/50 transition-all flex flex-col relative overflow-hidden">
-                          <div className="mb-4">
-                              <h3 className="text-xl font-bold font-headline">Pro Weekly</h3>
-                              <div className="flex items-baseline gap-1 mt-1">
-                                  <span className="text-2xl font-bold">₦1,900</span>
-                                  <span className="text-sm text-muted-foreground">/ 7 days</span>
-                              </div>
-                          </div>
-                          <div className="space-y-3 text-sm mb-6 flex-1">
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> <span>Short-term access</span></div>
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> <span>Full Pro features</span></div>
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> <span>Cancel anytime</span></div>
-                          </div>
-                          <div className="space-y-2">
-                              {/* Stripe Disabled/Hidden */}
-                              {/* <Button onClick={() => handleStripeCheckout('weekly')} disabled={isLoadingBilling} className="w-full">
-                                  {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
-                                  Pay with Card
-                              </Button> */}
-                              <Button variant="default" onClick={() => handlePaystackCheckout('weekly')} disabled={isLoadingBilling || isBillingDisabled} className="w-full">
-                                  {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Banknote className="mr-2 h-4 w-4" />}
-                                  Pay via Bank Transfer
-                              </Button>
-                          </div>
-                      </div>
-
-                      {/* Card 3: Pro Monthly */}
-                      <div className="p-6 rounded-xl border-2 border-primary bg-primary/5 shadow-lg flex flex-col relative">
-                          <div className="absolute top-0 right-0 bg-primary text-primary-foreground text-xs font-bold px-3 py-1 rounded-bl-lg">
-                              BEST VALUE
-                          </div>
-                          <div className="mb-4">
-                              <h3 className="text-xl font-bold font-headline">Pro Monthly</h3>
-                              <div className="flex items-baseline gap-1 mt-1">
-                                  <span className="text-2xl font-bold">₦4,500</span>
-                                  <span className="text-sm text-muted-foreground">/ month</span>
-                              </div>
-                              <p className="text-xs text-primary font-bold mt-1 bg-primary/10 inline-block px-2 py-0.5 rounded">
-                                  Try for 7 days – ₦1,900
-                              </p>
-                          </div>
-                          <div className="space-y-3 text-sm mb-6 flex-1">
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> <span>Higher upload limits</span></div>
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> <span>Priority processing</span></div>
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> <span>Premium models</span></div>
-                              <div className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-primary" /> <span>Advanced tools</span></div>
-                          </div>
-                          <div className="space-y-2">
-                              {/* Stripe Disabled/Hidden */}
-                              {/* <Button onClick={() => handleStripeCheckout('monthly')} disabled={isLoadingBilling} className="w-full shadow-md shadow-primary/20">
-                                  {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CreditCard className="mr-2 h-4 w-4" />}
-                                  Pay with Card
-                              </Button> */}
-                              <Button variant="default" onClick={() => handlePaystackCheckout('monthly')} disabled={isLoadingBilling || isBillingDisabled} className="w-full shadow-md shadow-primary/20">
-                                  {isLoadingBilling ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Banknote className="mr-2 h-4 w-4" />}
-                                  Pay via Bank Transfer
-                              </Button>
-                          </div>
-                      </div>
-                  </div>
-              )}
-              
-              {/* Manual Fallback Link */}
-              {tier !== 'pro' && !isBillingDisabled && (
-                  <div className="text-center pt-4">
-                      <button 
-                          onClick={openBankTransfer}
-                          className="text-xs text-muted-foreground hover:text-primary underline transition-colors"
-                      >
-                          Having trouble? Use Manual Bank Transfer
-                      </button>
-                  </div>
-              )}
+              </div>
             </CardContent>
           </Card>
-
-          {/* Bank Transfer Modal */}
-          <Dialog open={showBankTransfer} onOpenChange={setShowBankTransfer}>
-              <DialogContent className="sm:max-w-[425px]">
-                  <DialogHeader>
-                      <DialogTitle>Bank Transfer Payment</DialogTitle>
-                      <DialogDescription>Make a transfer to the account below and confirm.</DialogDescription>
-                  </DialogHeader>
-                  
-                  {manualPaymentStatus === 'success' ? (
-                      <div className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
-                          <div className="h-16 w-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
-                              <CheckCircle2 className="h-8 w-8" />
-                          </div>
-                          <div>
-                              <h3 className="font-bold text-lg">Payment Submitted</h3>
-                              <p className="text-sm text-muted-foreground mt-1">
-                                  We will activate your Pro plan as soon as we confirm the funds (usually within 2 hours).
-                              </p>
-                          </div>
-                          <Button onClick={() => setShowBankTransfer(false)} className="w-full">Close</Button>
-                      </div>
-                  ) : (
-                      <div className="space-y-6 py-2">
-                          <div className="p-4 bg-muted rounded-lg space-y-3">
-                              <div className="flex justify-between text-sm">
-                                  <span className="text-muted-foreground">Bank Name:</span>
-                                  <span className="font-bold">Moniepoint / OPay</span>
-                              </div>
-                              <div className="flex justify-between text-sm">
-                                  <span className="text-muted-foreground">Account Name:</span>
-                                  <span className="font-bold">Datacube AU Systems</span>
-                              </div>
-                              <div className="flex justify-between text-sm items-center">
-                                  <span className="text-muted-foreground">Account Number:</span>
-                                  <div className="flex items-center gap-2">
-                                      <span className="font-mono font-bold text-lg">8023456789</span>
-                                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { navigator.clipboard.writeText("8023456789"); toast({ title: "Copied" }); }}>
-                                          <Copy className="h-3 w-3" />
-                                      </Button>
-                                  </div>
-                              </div>
-                              <div className="flex justify-between text-sm pt-2 border-t border-dashed border-gray-300">
-                                  <span className="text-muted-foreground">Amount:</span>
-                                  <span className="font-bold text-primary">₦4,500</span>
-                              </div>
-                              <div className="flex justify-between text-sm items-center">
-                                  <span className="text-muted-foreground">Reference Code:</span>
-                                  <span className="font-mono font-bold bg-background px-2 py-1 rounded border select-all">{manualPaymentRef}</span>
-                              </div>
-                          </div>
-                          
-                          <div className="text-xs text-muted-foreground bg-yellow-50 text-yellow-800 p-3 rounded border border-yellow-200">
-                              <p className="font-bold flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Important</p>
-                              Please include the <strong>Reference Code</strong> in your transfer description/narration to ensure instant activation.
-                          </div>
-
-                          <Button onClick={handleManualPaymentSubmit} disabled={manualPaymentStatus === 'submitting'} className="w-full">
-                              {manualPaymentStatus === 'submitting' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                              I Have Made the Transfer
-                          </Button>
-                      </div>
-                  )}
-              </DialogContent>
-          </Dialog>
           
           <Card>
             <CardHeader>
@@ -979,3 +546,4 @@ export default function SettingsPage() {
     </main>
   );
 }
+

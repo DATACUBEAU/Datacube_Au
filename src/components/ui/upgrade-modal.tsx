@@ -18,11 +18,11 @@ export function UpgradeModal() {
 
   const handleUpgrade = () => {
     setOpen(false);
-    if (upgradeUrl) {
-      router.push(upgradeUrl);
-    } else {
-        router.push('/dashboard/settings/subscription');
-    }
+    const normalizedUpgradeUrl =
+      typeof upgradeUrl === 'string' && upgradeUrl.startsWith('/dashboard/settings/subscription')
+        ? upgradeUrl
+        : '/dashboard/settings/subscription';
+    router.push(normalizedUpgradeUrl);
   };
 
   return (

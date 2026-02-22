@@ -17,7 +17,6 @@ const OFFLINE_WARMUP_ROUTES = [
   "/dashboard/practice",
   "/dashboard/settings",
   "/dashboard/settings/subscription",
-  "/dashboard/admin/analytics",
   "/offline",
   "/~offline",
   "/403",

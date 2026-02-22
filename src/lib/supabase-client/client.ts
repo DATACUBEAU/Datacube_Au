@@ -232,7 +232,6 @@ export async function invokeEdgeFunction<T = any>(
     silent?: boolean;
   }
 ): Promise<{ data: T | null; error: any | null }> {
-  const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
   const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   const method = options?.method ?? 'POST';
   const timeoutMs = options?.timeoutMs ?? 10000;
@@ -288,7 +287,23 @@ export async function invokeEdgeFunction<T = any>(
   };
 
   const accessToken = await getSupabaseAccessToken();
-  return attemptOnce(accessToken);
+  const initial = await attemptOnce(accessToken);
+
+  // Retry once with a refreshed session when auth likely expired/stale.
+  if (!requireAuth) return initial;
+  if (!initial.error) return initial;
+  const status = Number((initial.error as any)?.status ?? 0);
+  const message = String((initial.error as any)?.message ?? '').toLowerCase();
+  const shouldRetryAuth = status === 401 || message.includes('no active session') || message.includes('unauthorized');
+  if (!shouldRetryAuth) return initial;
+
+  try {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error || !data.session?.access_token) return initial;
+    return attemptOnce(data.session.access_token);
+  } catch {
+    return initial;
+  }
 }
 
 /**

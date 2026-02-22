@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock, Copy, Banknote } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
@@ -42,6 +42,11 @@ export default function SubscriptionPage() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
+  const [billingEnabled, setBillingEnabled] = useState(true);
+  const [showBankTransfer, setShowBankTransfer] = useState(false);
+  const [manualPaymentRef, setManualPaymentRef] = useState('');
+  const [manualPlan, setManualPlan] = useState<'weekly' | 'monthly'>('monthly');
+  const [manualPaymentStatus, setManualPaymentStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
   
   const [paymentState, setPaymentState] = useState<'idle' | 'redirecting' | 'confirming' | 'success' | 'pending' | 'error'>('idle');
   const [pollCount, setPollCount] = useState(0);
@@ -51,6 +56,7 @@ export default function SubscriptionPage() {
     weekly: { amount: number; compare_at: number; label: string };
     monthly: { amount: number; compare_at: number; label: string };
   }>(PRICING);
+  const isPromoUnlocked = !billingEnabled;
 
   const fetchBillingStatus = useCallback(async () => {
       if (!isOnline) return null;
@@ -71,6 +77,9 @@ export default function SubscriptionPage() {
               if (data.pricing) {
                   setPricing(data.pricing);
               }
+              if (typeof data.billingEnabled === 'boolean') {
+                  setBillingEnabled(data.billingEnabled);
+              }
               
               // If user has active subscription, default to auto-renew view
               if (data.subscription?.status === 'active') {
@@ -83,6 +92,69 @@ export default function SubscriptionPage() {
       }
       return null;
   }, [isOnline, session?.access_token]);
+
+  const fetchBillingConfig = useCallback(async () => {
+      if (!isOnline) return;
+      try {
+          const { data } = await supabase
+              .from('au_config')
+              .select('billing_enabled')
+              .limit(1)
+              .maybeSingle();
+          if (typeof data?.billing_enabled === 'boolean') {
+              setBillingEnabled(data.billing_enabled);
+          }
+      } catch {
+      }
+  }, [isOnline]);
+
+  const generateReference = useCallback((planType: 'weekly' | 'monthly') => {
+      const suffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+      const userPrefix = (user?.id ?? 'anon').slice(0, 4).toUpperCase();
+      const planPrefix = planType === 'weekly' ? 'WK' : 'MO';
+      return `PAY-${planPrefix}-${userPrefix}-${suffix}`;
+  }, [user?.id]);
+
+  const openManualBankTransfer = useCallback((planType: 'weekly' | 'monthly') => {
+      if (isPromoUnlocked) {
+          toast({
+              title: 'Free Premium Access is active',
+              description: 'Payment options are disabled while premium is temporarily unlocked.',
+          });
+          return;
+      }
+      setManualPlan(planType);
+      setManualPaymentRef(generateReference(planType));
+      setManualPaymentStatus('idle');
+      setShowBankTransfer(true);
+  }, [generateReference, isPromoUnlocked, toast]);
+
+  const handleManualPaymentSubmit = useCallback(async () => {
+      if (!user) return;
+      setManualPaymentStatus('submitting');
+      try {
+          const { error } = await supabase.from('au_manual_payments').insert({
+              user_id: user.id,
+              amount: pricing[manualPlan].amount,
+              reference_code: manualPaymentRef,
+              status: 'pending',
+          });
+
+          if (error) throw error;
+          setManualPaymentStatus('success');
+          toast({
+              title: 'Payment Submitted',
+              description: 'Your transfer has been submitted for confirmation.',
+          });
+      } catch (error: any) {
+          setManualPaymentStatus('idle');
+          toast({
+              variant: 'destructive',
+              title: 'Submission Failed',
+              description: error?.message || 'Unable to submit transfer proof.',
+          });
+      }
+  }, [manualPaymentRef, manualPlan, pricing, toast, user]);
 
   const stopPolling = useCallback(() => {
       if (pollTimerRef.current) {
@@ -132,13 +204,14 @@ export default function SubscriptionPage() {
           console.error("Verification failed", e);
       }
       startPolling();
-  }, [fetchBillingStatus, startPolling]);
+  }, [fetchBillingStatus, isOnline, session?.access_token, startPolling]);
 
   // Initial Load & URL Check
   useEffect(() => {
     if (!user) return;
 
     fetchBillingStatus();
+    fetchBillingConfig();
 
     // Check for Paystack return
     const reference = searchParams.get('reference');
@@ -157,11 +230,21 @@ export default function SubscriptionPage() {
     }
 
     return () => stopPolling();
-  }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
+  }, [user, searchParams, fetchBillingConfig, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
+
+  useEffect(() => {
+      if (!isPromoUnlocked) return;
+      setShowBankTransfer(false);
+      setManualPaymentStatus('idle');
+  }, [isPromoUnlocked]);
 
   const handlePaystack = async (planType: 'weekly' | 'monthly') => {
       if (!isOnline) {
           toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+          return;
+      }
+      if (isPromoUnlocked) {
+          toast({ title: 'Free Premium Access is active', description: 'Payments are paused while premium is unlocked.' });
           return;
       }
       if (!session?.access_token) {
@@ -193,7 +276,7 @@ export default function SubscriptionPage() {
               }
           });
 
-          if (invokeError) throw new Error(invokeError.message || "Failed to initiate payment");
+          if (invokeError) throw new Error(invokeError.message || 'Failed to initiate payment');
           const { url, error } = data || {};
           if (error) throw new Error(error);
           
@@ -201,12 +284,12 @@ export default function SubscriptionPage() {
               setPaymentState('redirecting');
               window.location.href = url;
           } else {
-              throw new Error("No authorization URL returned");
+              throw new Error('No authorization URL returned');
           }
 
       } catch (e: any) {
           console.error(e);
-          toast({ variant: 'destructive', title: 'Payment Error', description: e.message || "Failed to initialize payment" });
+          toast({ variant: 'destructive', title: 'Payment Error', description: e?.message || 'Failed to initialize payment' });
           setLoadingPlan(null);
           setPaymentState('idle');
       }
@@ -259,14 +342,14 @@ export default function SubscriptionPage() {
     return (
         <div>
             <div className="flex justify-between text-sm mb-1.5">
-                <span className="font-medium text-gray-700">{label}</span>
-                <span className={cn("font-mono text-xs", isLimit ? "text-red-600 font-bold" : "text-gray-500")}>
+                <span className="font-medium text-foreground">{label}</span>
+                <span className={cn("font-mono text-xs", isLimit ? "text-destructive font-bold" : "text-muted-foreground")}>
                     {used} / {limit}
                 </span>
             </div>
-            <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-2.5 bg-muted rounded-full overflow-hidden">
                 <div 
-                    className={cn("h-full transition-all duration-500", isLimit ? "bg-red-500" : "bg-purple-600")} 
+                    className={cn("h-full transition-all duration-500", isLimit ? "bg-destructive" : "bg-primary")} 
                     style={{ width: `${percent}%` }} 
                 />
             </div>
@@ -289,10 +372,10 @@ export default function SubscriptionPage() {
     if (!usage || !usage.billingEnabled || usage.isPro) return null;
 
     return (
-        <div className="bg-white rounded-3xl shadow-xl p-6 border border-gray-100 mb-8 max-w-4xl mx-auto">
+        <div className="bg-card rounded-3xl shadow-sm p-6 border border-border mb-8 max-w-4xl mx-auto">
             <div className="flex items-center gap-2 mb-4">
-                <ShieldCheck className="h-5 w-5 text-purple-600" />
-                <h2 className="text-lg font-bold text-gray-900">Daily Free Limits</h2>
+                <ShieldCheck className="h-5 w-5 text-primary" />
+                <h2 className="text-lg font-bold text-foreground">Daily Free Limits</h2>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <LimitBar label="Chat Messages" used={usage.usage.chat} limit={usage.limits.chat} />
@@ -318,14 +401,14 @@ export default function SubscriptionPage() {
     disabled
   }: any) => (
     <div className={cn(
-        "relative flex flex-col bg-white rounded-3xl shadow-xl overflow-hidden transition-all duration-300",
-        highlighted ? "border-2 border-purple-500 z-10 scale-105 shadow-2xl" : "border border-gray-100 hover:scale-[1.02]",
+        "relative flex flex-col bg-card rounded-3xl shadow-sm overflow-hidden transition-all duration-300",
+        highlighted ? "border-2 border-primary z-10 scale-105 shadow-xl shadow-primary/10" : "border border-border hover:scale-[1.02]",
         disabled && "opacity-80"
     )}>
       {/* Header with Curve */}
       <div className={cn(
           "pt-10 pb-16 px-6 text-center relative",
-          highlighted ? "bg-purple-600 text-white" : "bg-gray-50 text-gray-900"
+          highlighted ? "bg-primary text-primary-foreground" : "bg-muted/40 text-foreground"
       )}>
          {/* Curve Overlay */}
          <div className={cn(
@@ -339,7 +422,7 @@ export default function SubscriptionPage() {
              {originalPrice && (
                  <div className={cn(
                      "text-sm font-medium line-through mb-1",
-                     highlighted ? "text-purple-200" : "text-gray-400"
+                     highlighted ? "text-primary-foreground/70" : "text-muted-foreground"
                  )}>
                      {originalPrice}
                  </div>
@@ -347,7 +430,7 @@ export default function SubscriptionPage() {
             <div className="flex items-baseline gap-1">
                 <span className="text-4xl font-extrabold">{price}</span>
             </div>
-            <span className={cn("text-xs font-medium uppercase mt-2", highlighted ? "text-purple-100" : "text-muted-foreground")}>
+            <span className={cn("text-xs font-medium uppercase mt-2", highlighted ? "text-primary-foreground/80" : "text-muted-foreground")}>
                 /{period}
             </span>
          </div>
@@ -355,7 +438,7 @@ export default function SubscriptionPage() {
          {savedLabel && (
              <span className={cn(
                  "absolute top-4 right-4 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm",
-                 highlighted ? "bg-white text-purple-700" : "bg-purple-100 text-purple-700"
+                 highlighted ? "bg-background text-primary" : "bg-primary/10 text-primary"
              )}>
                  {savedLabel}
              </span>
@@ -363,11 +446,11 @@ export default function SubscriptionPage() {
       </div>
 
       {/* Content */}
-      <div className="p-8 pt-6 flex-1 flex flex-col items-center z-10 bg-white">
-          <ul className="space-y-4 text-sm text-gray-600 mb-8 w-full">
+      <div className="p-8 pt-6 flex-1 flex flex-col items-center z-10 bg-card">
+          <ul className="space-y-4 text-sm text-muted-foreground mb-8 w-full">
               {features.map((f: string, i: number) => (
                   <li key={i} className="flex items-center gap-3 text-left">
-                      <Check className={cn("h-5 w-5 shrink-0", highlighted ? "text-purple-600" : "text-gray-400")} />
+                      <Check className={cn("h-5 w-5 shrink-0", highlighted ? "text-primary" : "text-muted-foreground")} />
                       <span className="leading-tight">{f}</span>
                   </li>
               ))}
@@ -380,8 +463,8 @@ export default function SubscriptionPage() {
                 className={cn(
                     "w-full rounded-full h-12 font-bold tracking-wide transition-all",
                     highlighted 
-                        ? "bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-200 hover:shadow-purple-300" 
-                        : "bg-white border-2 border-purple-100 hover:border-purple-600 hover:text-purple-600 text-gray-600",
+                        ? "bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg shadow-primary/20 hover:shadow-primary/30" 
+                        : "bg-background border-2 border-border hover:border-primary hover:text-primary text-foreground",
                     disabled && "cursor-not-allowed opacity-50"
                 )}
              >
@@ -397,7 +480,7 @@ export default function SubscriptionPage() {
   if (paymentState === 'redirecting') {
       return (
           <div className="container max-w-2xl py-20 text-center space-y-6">
-              <div className="flex justify-center"><Loader2 className="h-16 w-16 animate-spin text-purple-600" /></div>
+              <div className="flex justify-center"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>
               <h2 className="text-2xl font-bold">Redirecting to secure checkout...</h2>
               <p className="text-muted-foreground">Please wait while we connect you to Paystack.</p>
               <div className="flex justify-center gap-2 text-sm text-muted-foreground">
@@ -410,9 +493,9 @@ export default function SubscriptionPage() {
   if (paymentState === 'confirming') {
       return (
           <div className="container max-w-2xl py-20 text-center space-y-6">
-              <div className="flex justify-center"><Loader2 className="h-16 w-16 animate-spin text-purple-600" /></div>
+              <div className="flex justify-center"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>
               <h2 className="text-2xl font-bold">Confirming your payment...</h2>
-              <p className="text-muted-foreground">We’re verifying your payment. This usually takes a few seconds.</p>
+              <p className="text-muted-foreground">We are verifying your payment. This usually takes a few seconds.</p>
           </div>
       );
   }
@@ -425,9 +508,9 @@ export default function SubscriptionPage() {
                       <CheckCircle2 className="h-10 w-10" />
                   </div>
               </div>
-              <h2 className="text-3xl font-bold">You’re Pro 🎉</h2>
+              <h2 className="text-3xl font-bold">You are Pro</h2>
               <p className="text-lg text-muted-foreground">Your subscription is active. Enjoy higher limits, premium models, and advanced tools.</p>
-              <Button onClick={() => router.push('/dashboard')} size="lg" className="mt-4 bg-purple-600 hover:bg-purple-700 rounded-full px-8">
+              <Button onClick={() => router.push('/dashboard')} size="lg" className="mt-4 bg-primary hover:bg-primary/90 rounded-full px-8">
                   Go to Dashboard
               </Button>
           </div>
@@ -451,53 +534,53 @@ export default function SubscriptionPage() {
       );
   }
 
-  // --- Main Render ---
+    // --- Main Render ---
 
   return (
-    <div className="min-h-screen bg-gray-50/50 pb-20 relative">
-        {/* Top Hero Section */}
-        <div className="bg-purple-700 text-white pt-12 pb-32 px-4 text-center rounded-b-[2.5rem] relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-full opacity-10 bg-[url('/grid-pattern.svg')]"></div>
-            <div className="relative z-10 max-w-3xl mx-auto space-y-4">
-                <Badge className="bg-purple-500/30 text-purple-100 hover:bg-purple-500/40 border-0 mb-4 px-4 py-1.5 rounded-full backdrop-blur-sm">
-                    ✨ Upgrade your experience
+    <div className="min-h-screen bg-background pb-16 relative">
+        <div className="pointer-events-none absolute left-1/2 top-[-10rem] h-[24rem] w-[24rem] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
+
+        <section className="relative border-b border-border bg-background px-4 py-12 text-center">
+            <div className="mx-auto max-w-3xl space-y-4">
+                <Badge variant="outline" className="mb-2 rounded-full px-4 py-1.5">
+                    Upgrade your experience
                 </Badge>
                 <h1 className="text-4xl md:text-5xl font-bold tracking-tight">Simple, Transparent Pricing</h1>
-                <p className="text-purple-100 text-lg max-w-xl mx-auto leading-relaxed">
-                    Unlock the full power of AI with our flexible subscription plans. 
-                    Cancel anytime, no hidden fees.
+                <p className="text-muted-foreground text-lg max-w-xl mx-auto leading-relaxed">
+                    Unlock the full power of AI with flexible plans. Cancel anytime, no hidden fees.
                 </p>
 
                 {/* Toggle Switch */}
                 {tier !== 'pro' && (
-                    <div className="flex items-center justify-center gap-4 pt-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                        <span className={cn("text-sm font-medium transition-colors", !isAutoRenew ? "text-white" : "text-purple-200")}>
+                    <div className="flex flex-wrap items-center justify-center gap-4 pt-6">
+                        <span className={cn("text-sm font-medium transition-colors", !isAutoRenew ? "text-foreground" : "text-muted-foreground") }>
                             One-time Payment
                         </span>
-                        <Switch 
-                            checked={isAutoRenew} 
+                        <Switch
+                            checked={isAutoRenew}
                             onCheckedChange={setIsAutoRenew}
-                            className="data-[state=checked]:bg-white data-[state=unchecked]:bg-purple-900 border-2 border-transparent"
+                            disabled={isPromoUnlocked}
+                            className="data-[state=checked]:bg-primary"
                         />
-                        <span className={cn("text-sm font-medium transition-colors", isAutoRenew ? "text-white" : "text-purple-200")}>
+                        <span className={cn("text-sm font-medium transition-colors", isAutoRenew ? "text-foreground" : "text-muted-foreground") }>
                             Auto-renew Subscription
                         </span>
                     </div>
                 )}
             </div>
-        </div>
+        </section>
 
         {/* Pricing Cards Grid */}
-        <div className="container max-w-6xl mx-auto px-4 -mt-20 relative z-20">
+        <div className="container max-w-6xl mx-auto px-4 pt-10 relative z-20">
             <UsageMeter />
             {tier === 'pro' ? (
                 // Active Pro View
                 <div className="max-w-4xl mx-auto space-y-8">
                     {/* Subscription Status */}
-                    <div className="bg-white rounded-3xl shadow-xl p-8 border border-purple-100">
+                    <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
                         <div className="flex items-center justify-between mb-8">
                             <div>
-                                <h2 className="text-2xl font-bold text-gray-900">Pro Plan Active</h2>
+                                <h2 className="text-2xl font-bold text-foreground">Pro Plan Active</h2>
                                 <p className="text-muted-foreground mt-1">You have full access to all premium features.</p>
                             </div>
                             <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
@@ -508,23 +591,23 @@ export default function SubscriptionPage() {
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3">
-                                    <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                                    <CheckCircle2 className="h-5 w-5 text-primary" />
                                     <span className="font-medium">Unlimited Premium Models</span>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                    <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                                    <CheckCircle2 className="h-5 w-5 text-primary" />
                                     <span className="font-medium">High-Priority Processing</span>
                                 </div>
                                 <div className="flex items-center gap-3">
-                                    <CheckCircle2 className="h-5 w-5 text-purple-600" />
+                                    <CheckCircle2 className="h-5 w-5 text-primary" />
                                     <span className="font-medium">Extended Context Window</span>
                                 </div>
                             </div>
-                            <div className="bg-gray-50 rounded-2xl p-6">
+                            <div className="bg-muted/40 rounded-2xl p-6">
                                 <div className="text-sm text-muted-foreground mb-1">
                                     {subscription?.status === 'active' ? 'Renews on' : 'Expires on'}
                                 </div>
-                                <div className="text-2xl font-bold text-gray-900 mb-4">
+                                <div className="text-2xl font-bold text-foreground mb-4">
                                     {formatDate(expiry || '')}
                                 </div>
                                 {subscription?.status === 'active' ? (
@@ -544,9 +627,9 @@ export default function SubscriptionPage() {
                                                 </DialogHeader>
                                                 <div className="space-y-4 py-4">
                                                     <Label>Reason for cancellation (required)</Label>
-                                                    <Textarea 
-                                                        placeholder="Please tell us why you are leaving..." 
-                                                        value={cancelReason} 
+                                                    <Textarea
+                                                        placeholder="Please tell us why you are leaving..."
+                                                        value={cancelReason}
                                                         onChange={(e) => setCancelReason(e.target.value)}
                                                     />
                                                 </div>
@@ -561,7 +644,7 @@ export default function SubscriptionPage() {
                                     </OfflineGuard>
                                 ) : (
                                     <OfflineGuard>
-                                        <Button className="w-full bg-purple-600 hover:bg-purple-700" onClick={() => setTier('free')}>
+                                        <Button className="w-full bg-primary hover:bg-primary/90" onClick={() => setTier('free')}>
                                             Re-subscribe
                                         </Button>
                                     </OfflineGuard>
@@ -571,12 +654,12 @@ export default function SubscriptionPage() {
                     </div>
 
                     {/* Payment History Table */}
-                    <div className="bg-white rounded-3xl shadow-xl p-8 border border-gray-100">
+                    <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
                         <div className="flex items-center gap-2 mb-6">
-                            <Clock className="h-5 w-5 text-gray-500" />
-                            <h2 className="text-xl font-bold text-gray-900">Payment History</h2>
+                            <Clock className="h-5 w-5 text-muted-foreground" />
+                            <h2 className="text-xl font-bold text-foreground">Payment History</h2>
                         </div>
-                        
+
                         {payments.length > 0 ? (
                             <div className="overflow-x-auto">
                                 <Table>
@@ -594,7 +677,7 @@ export default function SubscriptionPage() {
                                             <TableRow key={p.reference}>
                                                 <TableCell className="font-medium">{formatDate(p.created_at)}</TableCell>
                                                 <TableCell className="capitalize">{p.plan} Plan</TableCell>
-                                                <TableCell>₦{p.amount_ngn.toLocaleString()}</TableCell>
+                                                <TableCell>NGN {p.amount_ngn.toLocaleString()}</TableCell>
                                                 <TableCell>
                                                     <Badge variant={p.status === 'success' ? 'default' : 'secondary'} className={p.status === 'success' ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
                                                         {p.status}
@@ -607,7 +690,7 @@ export default function SubscriptionPage() {
                                 </Table>
                             </div>
                         ) : (
-                            <div className="text-center py-8 text-muted-foreground bg-gray-50 rounded-xl">
+                            <div className="text-center py-8 text-muted-foreground bg-muted/30 rounded-xl">
                                 No payment history found.
                             </div>
                         )}
@@ -615,72 +698,184 @@ export default function SubscriptionPage() {
                 </div>
             ) : (
                 // Pricing Options
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-                    {/* Free Plan */}
-                    <PricingCard 
-                        title="Basic"
-                        price="₦0"
-                        period="forever"
-                        features={[
-                            "Max 4 documents",
-                            "14-day history retention",
-                            "Standard AI models",
-                            "Basic support"
-                        ]}
-                        onSelect={() => {}}
-                        disabled={true}
-                    />
+                <div className="space-y-8">
+                    <div className="relative">
+                        {isPromoUnlocked && (
+                            <div className="absolute inset-0 z-20 flex items-center justify-center rounded-3xl bg-background/70 backdrop-blur-sm">
+                                <div className="max-w-md rounded-2xl border border-primary/20 bg-card p-6 text-center shadow-xl">
+                                    <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                                        <CheckCircle2 className="h-6 w-6 text-primary" />
+                                    </div>
+                                    <h3 className="text-xl font-bold font-headline mb-2">Free Premium Access</h3>
+                                    <p className="text-muted-foreground mb-4">
+                                        Enjoy the ultimate features while it lasts! We&apos;ve unlocked Pro capabilities for everyone temporarily.
+                                    </p>
+                                    <Badge variant="outline" className="bg-primary/5 border-primary/20">Limited Time Offer</Badge>
+                                </div>
+                            </div>
+                        )}
 
-                    {/* Monthly (Highlighted) */}
-                    <OfflineGuard asChild>
-                        <PricingCard 
-                            title="Pro Monthly"
-                            price={`₦${pricing.monthly.amount.toLocaleString()}`}
-                            originalPrice={`₦${pricing.monthly.compare_at.toLocaleString()}`}
-                            period="month"
-                            highlighted={true}
-                            savedLabel={pricing.monthly.label}
-                            loading={loadingPlan === 'monthly'}
-                            onSelect={() => handlePaystack('monthly')}
-                            features={[
-                                "Unlimited documents",
-                                "30-day history retention",
-                                "Premium AI models (GPT-4)",
-                                "Priority processing",
-                                "Advanced data analysis",
-                                "Priority support"
-                            ]}
-                        />
-                    </OfflineGuard>
+                        <div className={cn('grid grid-cols-1 md:grid-cols-3 gap-8 items-start', isPromoUnlocked && 'pointer-events-none opacity-60')}>
+                            {/* Free Plan */}
+                            <PricingCard
+                                title="Basic"
+                                price="NGN 0"
+                                period="forever"
+                                features={[
+                                    'Max 4 documents',
+                                    '14-day history retention',
+                                    'Standard AI models',
+                                    'Basic support'
+                                ]}
+                                onSelect={() => {}}
+                                disabled={true}
+                            />
 
-                    {/* Weekly */}
-                    <OfflineGuard asChild>
-                        <PricingCard 
-                            title="Pro Weekly"
-                            price={`₦${pricing.weekly.amount.toLocaleString()}`}
-                            originalPrice={`₦${pricing.weekly.compare_at.toLocaleString()}`}
-                            period="week"
-                            savedLabel={pricing.weekly.label}
-                            loading={loadingPlan === 'weekly'}
-                            onSelect={() => handlePaystack('weekly')}
-                            features={[
-                                "All Pro features",
-                                "7-day access",
-                                "Cancel anytime",
-                                "Standard support"
-                            ]}
-                        />
-                    </OfflineGuard>
+                            {/* Monthly (Highlighted) */}
+                            <OfflineGuard asChild>
+                                <PricingCard
+                                    title="Pro Monthly"
+                                    price={`NGN ${pricing.monthly.amount.toLocaleString()}`}
+                                    originalPrice={`NGN ${pricing.monthly.compare_at.toLocaleString()}`}
+                                    period="month"
+                                    highlighted={true}
+                                    savedLabel={pricing.monthly.label}
+                                    loading={loadingPlan === 'monthly'}
+                                    onSelect={() => handlePaystack('monthly')}
+                                    disabled={isPromoUnlocked}
+                                    features={[
+                                        'Unlimited documents',
+                                        '30-day history retention',
+                                        'Premium AI models (GPT-4)',
+                                        'Priority processing',
+                                        'Advanced data analysis',
+                                        'Priority support'
+                                    ]}
+                                />
+                            </OfflineGuard>
+
+                            {/* Weekly */}
+                            <OfflineGuard asChild>
+                                <PricingCard
+                                    title="Pro Weekly"
+                                    price={`NGN ${pricing.weekly.amount.toLocaleString()}`}
+                                    originalPrice={`NGN ${pricing.weekly.compare_at.toLocaleString()}`}
+                                    period="week"
+                                    savedLabel={pricing.weekly.label}
+                                    loading={loadingPlan === 'weekly'}
+                                    onSelect={() => handlePaystack('weekly')}
+                                    disabled={isPromoUnlocked}
+                                    features={[
+                                        'All Pro features',
+                                        '7-day access',
+                                        'Cancel anytime',
+                                        'Standard support'
+                                    ]}
+                                />
+                            </OfflineGuard>
+                        </div>
+                    </div>
+
+                    {!isPromoUnlocked && (
+                        <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+                            <OfflineGuard asChild>
+                                <Button variant="outline" onClick={() => openManualBankTransfer('monthly')}>
+                                    <Banknote className="mr-2 h-4 w-4" />
+                                    Pay via Bank Transfer (Monthly)
+                                </Button>
+                            </OfflineGuard>
+                            <OfflineGuard asChild>
+                                <Button variant="outline" onClick={() => openManualBankTransfer('weekly')}>
+                                    <Banknote className="mr-2 h-4 w-4" />
+                                    Pay via Bank Transfer (Weekly)
+                                </Button>
+                            </OfflineGuard>
+                        </div>
+                    )}
                 </div>
             )}
-            
-            <div className="mt-16 text-center">
-                 <div className="inline-flex items-center gap-2 text-xs text-gray-400 bg-white/50 px-4 py-2 rounded-full border border-gray-100 shadow-sm">
+
+            <div className="mt-12 text-center">
+                 <div className="inline-flex items-center gap-2 text-xs text-muted-foreground bg-card/50 px-4 py-2 rounded-full border border-border shadow-sm">
                     <Lock className="h-3 w-3" />
-                    <span>Secure payment processing by Paystack. Encrypted & Safe.</span>
+                    <span>Secure payment processing by Paystack. Encrypted and safe.</span>
                  </div>
             </div>
         </div>
+
+        <Dialog open={showBankTransfer} onOpenChange={setShowBankTransfer}>
+            <DialogContent className="sm:max-w-[430px]">
+                <DialogHeader>
+                    <DialogTitle>Bank Transfer Payment</DialogTitle>
+                    <DialogDescription>
+                        Transfer the exact amount below and submit for verification.
+                    </DialogDescription>
+                </DialogHeader>
+
+                {manualPaymentStatus === 'success' ? (
+                    <div className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
+                        <div className="h-16 w-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
+                            <CheckCircle2 className="h-8 w-8" />
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-lg">Payment Submitted</h3>
+                            <p className="text-sm text-muted-foreground mt-1">
+                                We will activate your Pro access once the transfer is confirmed.
+                            </p>
+                        </div>
+                        <Button onClick={() => setShowBankTransfer(false)} className="w-full">Close</Button>
+                    </div>
+                ) : (
+                    <div className="space-y-6 py-1">
+                        <div className="p-4 bg-muted rounded-lg space-y-3">
+                            <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Bank Name:</span>
+                                <span className="font-bold">Moniepoint / OPay</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Account Name:</span>
+                                <span className="font-bold">Datacube AU Systems</span>
+                            </div>
+                            <div className="flex justify-between text-sm items-center">
+                                <span className="text-muted-foreground">Account Number:</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="font-mono font-bold text-lg">8023456789</span>
+                                    <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6"
+                                        onClick={() => {
+                                            navigator.clipboard.writeText('8023456789');
+                                            toast({ title: 'Copied' });
+                                        }}
+                                    >
+                                        <Copy className="h-3 w-3" />
+                                    </Button>
+                                </div>
+                            </div>
+                            <div className="flex justify-between text-sm pt-2 border-t border-dashed border-border">
+                                <span className="text-muted-foreground">Amount:</span>
+                                <span className="font-bold text-primary">NGN {pricing[manualPlan].amount.toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-sm items-center">
+                                <span className="text-muted-foreground">Reference Code:</span>
+                                <span className="font-mono font-bold bg-background px-2 py-1 rounded border select-all">{manualPaymentRef}</span>
+                            </div>
+                        </div>
+
+                        <div className="text-xs text-amber-800 bg-amber-50 p-3 rounded border border-amber-200">
+                            <p className="font-bold flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Important</p>
+                            Include the reference code in your transfer narration for faster confirmation.
+                        </div>
+
+                        <Button onClick={handleManualPaymentSubmit} disabled={manualPaymentStatus === 'submitting'} className="w-full">
+                            {manualPaymentStatus === 'submitting' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
+                            I Have Made the Transfer
+                        </Button>
+                    </div>
+                )}
+            </DialogContent>
+        </Dialog>
     </div>
   );
 }
