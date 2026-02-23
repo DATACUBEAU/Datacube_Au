@@ -1,3 +1,5 @@
+import { resolveUploadMimeType } from './file-types';
+
 type TusCreateArgs = {
   supabaseUrl: string;
   anonKey: string;
@@ -33,10 +35,11 @@ export async function createTusUpload({
   upsert = false,
 }: TusCreateArgs): Promise<string> {
   const endpoint = `${supabaseUrl.replace(/\/$/, '')}/storage/v1/upload/resumable`;
+  const mimeType = resolveUploadMimeType(file);
   const metadata = [
     `bucketName ${b64(bucket)}`,
     `objectName ${b64(objectName)}`,
-    `contentType ${b64(file.type || 'application/octet-stream')}`,
+    `contentType ${b64(mimeType)}`,
     `cacheControl ${b64('3600')}`,
     `filename ${b64(file.name)}`,
   ].join(',');

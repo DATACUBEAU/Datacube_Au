@@ -11,16 +11,16 @@ export function FocusBackground() {
   // Variants for different states
   const variants = {
     idle: {
-      background: 'linear-gradient(135deg, rgba(var(--background), 1) 0%, rgba(var(--background), 1) 100%)',
+      background: 'radial-gradient(circle at 20% 20%, rgba(59, 130, 246, 0.18), transparent 40%), radial-gradient(circle at 80% 80%, rgba(16, 185, 129, 0.14), transparent 42%), linear-gradient(135deg, rgba(15, 23, 42, 0.88), rgba(17, 24, 39, 0.9))',
     },
     thinking: {
-      background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.04) 0%, rgba(14, 165, 233, 0.03) 100%)',
+      background: 'radial-gradient(circle at 18% 26%, rgba(56, 189, 248, 0.26), transparent 38%), radial-gradient(circle at 76% 72%, rgba(59, 130, 246, 0.18), transparent 40%), linear-gradient(135deg, rgba(15, 23, 42, 0.86), rgba(17, 24, 39, 0.9))',
     },
     responding: {
-      background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.04) 0%, rgba(56, 189, 248, 0.03) 100%)',
+      background: 'radial-gradient(circle at 24% 24%, rgba(16, 185, 129, 0.24), transparent 40%), radial-gradient(circle at 74% 76%, rgba(56, 189, 248, 0.2), transparent 42%), linear-gradient(135deg, rgba(15, 23, 42, 0.84), rgba(17, 24, 39, 0.9))',
     },
     error: {
-      background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.05) 0%, rgba(239, 68, 68, 0.02) 100%)',
+      background: 'radial-gradient(circle at 22% 28%, rgba(239, 68, 68, 0.24), transparent 40%), radial-gradient(circle at 78% 70%, rgba(248, 113, 113, 0.18), transparent 42%), linear-gradient(135deg, rgba(20, 10, 12, 0.88), rgba(28, 15, 16, 0.9))',
     }
   };
 
@@ -35,14 +35,19 @@ export function FocusBackground() {
       />
 
       <motion.div
-        className="absolute -left-24 top-10 h-72 w-72 rounded-full bg-sky-300/10 blur-3xl"
-        animate={{ x: [0, 40, -10, 0], y: [0, -25, 15, 0], opacity: [0.18, 0.28, 0.2, 0.18] }}
+        className="absolute -left-24 top-10 h-72 w-72 rounded-full bg-sky-300/30 blur-3xl mix-blend-screen"
+        animate={{ x: [0, 40, -10, 0], y: [0, -25, 15, 0], opacity: [0.2, 0.34, 0.24, 0.2] }}
         transition={{ duration: 24, repeat: Infinity, ease: 'easeInOut' }}
       />
       <motion.div
-        className="absolute -right-16 bottom-0 h-80 w-80 rounded-full bg-emerald-300/10 blur-3xl"
-        animate={{ x: [0, -35, 15, 0], y: [0, 20, -20, 0], opacity: [0.14, 0.24, 0.16, 0.14] }}
+        className="absolute -right-16 bottom-0 h-80 w-80 rounded-full bg-emerald-300/28 blur-3xl mix-blend-screen"
+        animate={{ x: [0, -35, 15, 0], y: [0, 20, -20, 0], opacity: [0.16, 0.3, 0.2, 0.16] }}
         transition={{ duration: 28, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute left-1/3 top-1/3 h-64 w-64 rounded-full bg-primary/20 blur-3xl mix-blend-screen"
+        animate={{ x: [0, 20, -12, 0], y: [0, -16, 12, 0], opacity: [0.08, 0.18, 0.08] }}
+        transition={{ duration: 18, repeat: Infinity, ease: 'easeInOut', delay: 1 }}
       />
       
       {/* Pulse Effect for Thinking */}

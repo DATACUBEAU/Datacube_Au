@@ -4,7 +4,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { 
   validateFile, 
-  normalizeFileName 
+  normalizeFileName,
+  resolveUploadMimeType,
 } from '@/lib/upload/file-types';
 import { 
   supabase, 
@@ -344,6 +345,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
         const file = await getJobFile(job.id);
         if (!file) throw new Error('Missing file data. Retry upload.');
+        const resolvedMimeType = resolveUploadMimeType(file);
 
         const { data: { session: currentSession } } = await supabase.auth.getSession();
         let accessToken = currentSession?.access_token;
@@ -393,20 +395,21 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (!initResult.ok || !initResult.uploadUrl) {
             throw new Error((initResult as any).error || "Upload initiation failed");
         }
+        const uploadMimeType = initResult.contentType || resolvedMimeType;
 
         // 5. Upload File (PUT to Signed URL)
         console.log(`[upload-jobs] Uploading to Signed URL...`);
         updateJobLocal(job.id, { status: 'uploading', progress: 10 });
 
         let uploaded = false;
-        const bucketName = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
+        const bucketName = initResult.bucket || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
 
         // Prefer Supabase signed-upload API when token/path are available.
         if (initResult.token && initResult.path) {
           const { error: signedUploadError } = await supabase.storage
             .from(bucketName)
             .uploadToSignedUrl(initResult.path, initResult.token, file, {
-              contentType: file.type || 'application/octet-stream',
+              contentType: uploadMimeType,
               upsert: true,
             });
 
@@ -422,7 +425,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
             method: 'PUT',
             body: file,
             headers: {
-              'Content-Type': file.type || 'application/octet-stream',
+              'Content-Type': uploadMimeType,
               'x-upsert': 'true',
             },
             signal: controller.signal,
@@ -446,7 +449,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
                 jobId: job.id,
                 fileName: job.file_name,
                 fileSize: file.size,
-                mimeType: file.type || undefined
+                mimeType: uploadMimeType
             },
             accessToken || undefined
         );
@@ -557,7 +560,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           user_id: effectiveUserId,
           label: input.label ?? null,
           file_name: safeFileName,
-          mime_type: file.type || null,
+          mime_type: resolveUploadMimeType(file),
           file_size_bytes: file.size,
           bucket: process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents',
           object_path: '',
@@ -704,7 +707,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         progress: 0,
         error: null,
         tus_url: null,
-        mime_type: file.type || null,
+        mime_type: resolveUploadMimeType(file),
         file_size_bytes: file.size,
       });
 
@@ -715,7 +718,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           progress: 0,
           error: null,
           tus_url: null,
-          mime_type: file.type || null,
+          mime_type: resolveUploadMimeType(file),
           file_size_bytes: file.size,
           updated_at: new Date().toISOString(),
         } as any

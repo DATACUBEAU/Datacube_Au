@@ -57,6 +57,11 @@ export default function SubscriptionPage() {
     monthly: { amount: number; compare_at: number; label: string };
   }>(PRICING);
   const isPromoUnlocked = !billingEnabled;
+  const hasPaidProAccess = billingEnabled && tier === 'pro';
+  const freeRetentionLabel = '14-day history retention';
+  const proRetentionLabel = isPromoUnlocked
+    ? '14-day history retention (promo mode)'
+    : '30-day history retention';
 
   const fetchBillingStatus = useCallback(async () => {
       if (!isOnline) return null;
@@ -82,7 +87,7 @@ export default function SubscriptionPage() {
               }
               
               // If user has active subscription, default to auto-renew view
-              if (data.subscription?.status === 'active') {
+              if ((data.billingEnabled ?? true) && data.subscription?.status === 'active') {
                   setIsAutoRenew(true);
               }
               return data;
@@ -96,13 +101,24 @@ export default function SubscriptionPage() {
   const fetchBillingConfig = useCallback(async () => {
       if (!isOnline) return;
       try {
-          const { data } = await supabase
+          const { data: conexConfig } = await supabase
+              .from('au_conex_config')
+              .select('billing_enabled')
+              .eq('id', 1)
+              .maybeSingle();
+
+          if (typeof conexConfig?.billing_enabled === 'boolean') {
+              setBillingEnabled(conexConfig.billing_enabled);
+              return;
+          }
+
+          const { data: legacyConfig } = await supabase
               .from('au_config')
               .select('billing_enabled')
               .limit(1)
               .maybeSingle();
-          if (typeof data?.billing_enabled === 'boolean') {
-              setBillingEnabled(data.billing_enabled);
+          if (typeof legacyConfig?.billing_enabled === 'boolean') {
+              setBillingEnabled(legacyConfig.billing_enabled);
           }
       } catch {
       }
@@ -178,7 +194,7 @@ export default function SubscriptionPage() {
           });
 
           const data = await fetchBillingStatus();
-          if (data && data.tier === 'pro') {
+          if (data && (data.billingEnabled ?? true) && data.tier === 'pro') {
               setPaymentState('success');
               stopPolling();
           }
@@ -573,7 +589,7 @@ export default function SubscriptionPage() {
         {/* Pricing Cards Grid */}
         <div className="container max-w-6xl mx-auto px-4 pt-10 relative z-20">
             <UsageMeter />
-            {tier === 'pro' ? (
+            {hasPaidProAccess ? (
                 // Active Pro View
                 <div className="max-w-4xl mx-auto space-y-8">
                     {/* Subscription Status */}
@@ -600,7 +616,7 @@ export default function SubscriptionPage() {
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <CheckCircle2 className="h-5 w-5 text-primary" />
-                                    <span className="font-medium">Extended Context Window</span>
+                                    <span className="font-medium">30-day history retention</span>
                                 </div>
                             </div>
                             <div className="bg-muted/40 rounded-2xl p-6">
@@ -710,6 +726,9 @@ export default function SubscriptionPage() {
                                     <p className="text-muted-foreground mb-4">
                                         Enjoy the ultimate features while it lasts! We&apos;ve unlocked Pro capabilities for everyone temporarily.
                                     </p>
+                                    <p className="text-xs text-muted-foreground mb-4">
+                                        Note: Document history retention remains 14 days in promo mode.
+                                    </p>
                                     <Badge variant="outline" className="bg-primary/5 border-primary/20">Limited Time Offer</Badge>
                                 </div>
                             </div>
@@ -723,7 +742,7 @@ export default function SubscriptionPage() {
                                 period="forever"
                                 features={[
                                     'Max 4 documents',
-                                    '14-day history retention',
+                                    freeRetentionLabel,
                                     'Standard AU models',
                                     'Basic support'
                                 ]}
@@ -745,7 +764,7 @@ export default function SubscriptionPage() {
                                     disabled={isPromoUnlocked}
                                     features={[
                                         'Unlimited documents',
-                                        '30-day history retention',
+                                        proRetentionLabel,
                                         'Premium AU models',
                                         'Priority processing',
                                         'Advanced data analysis',

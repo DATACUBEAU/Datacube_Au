@@ -312,11 +312,16 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
     setIsPlanStatusLoading(true);
     try {
-      const [profileResult, configResult] = await Promise.all([
+      const [profileResult, conexConfigResult, legacyConfigResult] = await Promise.all([
         supabase
           .from('au_user_profiles')
           .select('tier, tier_expires_at')
           .eq('user_id', user.id)
+          .maybeSingle(),
+        supabase
+          .from('au_conex_config')
+          .select('billing_enabled')
+          .eq('id', 1)
           .maybeSingle(),
         supabase
           .from('au_config')
@@ -337,7 +342,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           : null,
       );
 
-      const billingEnabled = configResult.data?.billing_enabled;
+      const billingEnabled =
+        conexConfigResult.data?.billing_enabled ?? legacyConfigResult.data?.billing_enabled;
       setIsBillingDisabled(billingEnabled === false);
     } catch {
       setPlanTier('free');
@@ -523,6 +529,17 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           event: '*',
           schema: 'public',
           table: 'au_config',
+        },
+        () => {
+          void refreshPlanStatus();
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'au_conex_config',
         },
         () => {
           void refreshPlanStatus();

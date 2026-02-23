@@ -34,7 +34,7 @@ export async function initiateUpload(
     metadata?: any;
   },
   accessToken?: string
-): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string; token?: string; bucket?: string }> {
+): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string; token?: string; bucket?: string; contentType?: string }> {
   const { data, error } = await invokeEdgeFunction('document-upload', {
     method: 'POST',
     requireAuth: true,

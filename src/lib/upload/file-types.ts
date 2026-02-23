@@ -74,3 +74,27 @@ export function detectUploadKind(file: File): SupportedUploadKind | null {
       return null;
   }
 }
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/plain',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.csv': 'text/csv',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+export function resolveUploadMimeType(file: File): string {
+  const ext = getFileExtensionLower(file.name);
+  if (ext && MIME_BY_EXTENSION[ext]) {
+    return MIME_BY_EXTENSION[ext];
+  }
+
+  const browserType = (file.type || '').trim();
+  if (browserType.length > 0) {
+    return browserType;
+  }
+
+  return 'application/octet-stream';
+}
