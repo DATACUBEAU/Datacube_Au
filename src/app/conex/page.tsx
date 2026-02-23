@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Lock, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, Send, UserMinus, Search, Menu, FolderTree, Crown } from 'lucide-react';
@@ -18,7 +18,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useToast } from '@/hooks/use-toast';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
-import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
+import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
 import { ConexAccessControl } from '@/components/admin/conex-access-control';
@@ -32,21 +32,65 @@ const AdminBilling = ({ token }: { token: string }) => {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
+  const isFetchingRef = useRef(false);
 
-  const fetchConfig = useCallback(async () => {
-    setLoading(true);
+  const normalizeConexConfig = useCallback((raw: any) => ({
+    ...raw,
+    global_chat_enabled: raw?.global_chat_enabled !== false,
+    premium_models_enabled: raw?.premium_models_enabled !== false,
+    premium_models_paid_only: raw?.premium_models_paid_only !== false,
+    paid_mode_enabled: raw?.paid_mode_enabled === true,
+    free_pressure_mode_enabled: raw?.free_pressure_mode_enabled === true,
+    stripe_live_mode: raw?.stripe_live_mode === true,
+    stripe_price_weekly:
+      typeof raw?.stripe_price_weekly === 'string'
+        ? raw.stripe_price_weekly
+        : (typeof raw?.stripe_price_weekly_id === 'string' ? raw.stripe_price_weekly_id : ''),
+    stripe_price_monthly:
+      typeof raw?.stripe_price_monthly === 'string'
+        ? raw.stripe_price_monthly
+        : (typeof raw?.stripe_price_monthly_id === 'string' ? raw.stripe_price_monthly_id : ''),
+  }), []);
+
+  const normalizeAuConfig = useCallback((raw: any) => ({
+    ...raw,
+    billing_enabled: raw?.billing_enabled === true,
+    free_chat_daily_limit: Number(raw?.free_chat_daily_limit ?? 10),
+    free_exam_daily_limit: Number(raw?.free_exam_daily_limit ?? 2),
+    free_upload_daily_limit: Number(raw?.free_upload_daily_limit ?? 3),
+    free_max_upload_mb: Number(raw?.free_max_upload_mb ?? 10),
+  }), []);
+
+  const fetchConfig = useCallback(async (opts?: { silent?: boolean }) => {
+    if (isFetchingRef.current) {
+      return;
+    }
+    isFetchingRef.current = true;
+    if (!opts?.silent) {
+      setLoading(true);
+    }
+
     try {
+      await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'ensure_feature_flags' }),
+      });
+
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_conex_config' })
       });
-      if (res.ok) setConfig((res as any).config || {});
+      if (res.ok) {
+        setConfig(normalizeConexConfig((res as any).config || {}));
+      }
 
       const auRes = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_au_config' })
       });
-      if (auRes.ok) setAuConfig((auRes as any).config || {});
+      if (auRes.ok) {
+        setAuConfig(normalizeAuConfig((auRes as any).config || {}));
+      }
 
       const flagsRes = await fetchAdmin('admin-handler', {
         method: 'POST',
@@ -58,10 +102,56 @@ const AdminBilling = ({ token }: { token: string }) => {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
-  }, [toast]);
+  }, [normalizeAuConfig, normalizeConexConfig, toast]);
 
-  useEffect(() => { fetchConfig(); }, [fetchConfig]);
+  useEffect(() => { void fetchConfig(); }, [fetchConfig]);
+
+  useEffect(() => {
+    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleRefresh = () => {
+      if (refreshTimeout !== null) {
+        return;
+      }
+      refreshTimeout = setTimeout(() => {
+        refreshTimeout = null;
+        void fetchConfig({ silent: true });
+      }, 150);
+    };
+
+    const channel = supabase
+      .channel('conex-billing-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_conex_config' },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_feature_flags' },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_config' },
+        scheduleRefresh,
+      )
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[AdminBilling] realtime sync degraded; fallback refresh will continue.');
+          scheduleRefresh();
+        }
+      });
+
+    return () => {
+      if (refreshTimeout !== null) {
+        clearTimeout(refreshTimeout);
+      }
+      void supabase.removeChannel(channel);
+    };
+  }, [fetchConfig]);
 
   const toggleFlag = async (key: string, current: boolean) => {
     try {
@@ -93,8 +183,8 @@ const AdminBilling = ({ token }: { token: string }) => {
       });
       if (res.ok) {
           toast({ title: 'Saved', description: 'Billing configuration updated.' });
-          setConfig(newConfig);
-          fetchConfig();
+          setConfig(normalizeConexConfig(newConfig));
+          void fetchConfig({ silent: true });
       }
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
@@ -102,6 +192,16 @@ const AdminBilling = ({ token }: { token: string }) => {
         setSaving(false);
     }
   };
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      void fetchConfig({ silent: true });
+    }, 45000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [fetchConfig]);
 
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
