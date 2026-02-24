@@ -1,5 +1,6 @@
 import { safeFetch } from './safe-fetch';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
+import { guardRequest } from './request-guard';
 
 /**
  * Centralized utility for all admin-related API requests.
@@ -11,7 +12,16 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   // Retrieve the admin token from secure storage (using localStorage for persistence across refreshes)
   const adminToken = typeof window !== 'undefined' ? localStorage.getItem('conex_admin_token') : null;
 
-  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+  const online = typeof window === 'undefined' ? true : window.navigator.onLine;
+  const gate = guardRequest({
+    isOnline: online,
+    requireAuth: false,
+    allowOfflineRead: false,
+    warnKey: 'admin:fetch',
+    context: endpoint,
+  });
+
+  if (!gate.ok && gate.reason === 'offline') {
     return new Response(JSON.stringify({ error: 'offline' }), {
       status: 503,
       headers: { 'Content-Type': 'application/json' },
@@ -28,19 +38,9 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     if (!headers.has('apikey')) headers.set('apikey', ANON_KEY);
   }
 
-  const resolveAccessToken = async (forceRefresh = false): Promise<string | null> => {
+  const resolveAccessToken = async (): Promise<string | null> => {
     let token = await getSupabaseAccessToken();
     if (token) return token;
-
-    if (forceRefresh) {
-      try {
-        const { data, error } = await supabase.auth.refreshSession();
-        if (!error && data.session?.access_token) {
-          return data.session.access_token;
-        }
-      } catch {
-      }
-    }
 
     try {
       const { data, error } = await supabase.auth.getUser();
@@ -73,7 +73,7 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
         : auth.trim();
     }
   } else {
-    accessToken = await resolveAccessToken(false);
+    accessToken = await resolveAccessToken();
     if (!accessToken) {
       return new Response(JSON.stringify({ error: 'unauthorized' }), {
         status: 401,
@@ -96,16 +96,7 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     headers.set('X-Admin-Token', adminToken);
   }
 
-  let res = await executeWithToken(accessToken);
-
-  // Retry once with a refreshed token if server says unauthorized.
-  if (res.status === 401 && !hadExplicitAuthorization) {
-    const refreshedToken = await resolveAccessToken(true);
-    if (refreshedToken && refreshedToken !== accessToken) {
-      accessToken = refreshedToken;
-      res = await executeWithToken(accessToken);
-    }
-  }
+  const res = await executeWithToken(accessToken);
 
   try {
     const ct = res.headers.get('content-type') || '';

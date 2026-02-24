@@ -11,6 +11,7 @@ import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { logOnce, shouldDedupe } from '@/lib/log/dedupe';
 import { logEvent } from '@/lib/analytics';
+import { guardRequest } from '@/lib/api/request-guard';
 
 const CHAT_EVENT_STARTED = 'au-chat:started';
 const CHAT_EVENT_COMPLETED = 'au-chat:completed';
@@ -213,8 +214,17 @@ export function useAuChat(selectedDocId: string | null) {
     }
   ) => {
     if (!selectedDocId || !user) return;
-    if (!isOnline) {
-      logOnce('warn', 'chat:send:offline', '[chat] Send blocked (offline)');
+    const gate = guardRequest({
+      isOnline,
+      requireAuth: true,
+      accessToken: session?.access_token ?? null,
+      warnKey: 'chat:send',
+      context: 'chat send',
+    });
+    if (!gate.ok) {
+      if (gate.reason === 'offline') {
+        logOnce('warn', 'chat:send:offline', '[chat] Send blocked (offline)');
+      }
       return;
     }
 
@@ -482,8 +492,17 @@ export function useAuChat(selectedDocId: string | null) {
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
-    if (!isOnline) {
-      logOnce('warn', 'chat:greet:offline', '[chat] scanAndGreet blocked (offline)');
+    const gate = guardRequest({
+      isOnline,
+      requireAuth: true,
+      accessToken: session?.access_token ?? null,
+      warnKey: 'chat:greet',
+      context: 'chat greet',
+    });
+    if (!gate.ok) {
+      if (gate.reason === 'offline') {
+        logOnce('warn', 'chat:greet:offline', '[chat] scanAndGreet blocked (offline)');
+      }
       return;
     }
 
@@ -582,14 +601,20 @@ export function useAuChat(selectedDocId: string | null) {
 
   const fetchPrompts = useCallback(async (title: string, content: string, idea?: string) => {
     try {
-      if (!isOnline) {
-        logOnce('warn', 'chat:prompts:offline', '[chat] Prompt generation blocked (offline)');
+      const gate = guardRequest({
+        isOnline,
+        requireAuth: true,
+        accessToken: session?.access_token ?? null,
+        warnKey: 'chat:prompts',
+        context: 'prompt generation',
+      });
+      if (!gate.ok) {
+        if (gate.reason === 'offline') {
+          logOnce('warn', 'chat:prompts:offline', '[chat] Prompt generation blocked (offline)');
+        }
         return [];
       }
-      if (!session?.access_token) {
-        logOnce('warn', 'chat:prompts:no_token', '[chat] Prompt generation blocked (no access token)');
-        return [];
-      }
+
       if (idea) {
         return await generatePromptStarters(title, content, idea);
       }

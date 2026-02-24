@@ -8,6 +8,7 @@ import { logOnce } from '@/lib/log/dedupe';
 
 interface NetworkStatusContextType {
   isOnline: boolean;
+  networkState: 'online' | 'degraded' | 'offline';
   lastCheckedAt: number | null;
   checkNow: () => Promise<void>;
 }
@@ -16,30 +17,81 @@ const NetworkStatusContext = createContext<NetworkStatusContextType | undefined>
 
 export function NetworkStatusProvider({ children }: { children: React.ReactNode }) {
   // Optimistic initial state based on navigator
-  const [isOnline, setIsOnline] = useState(() => 
+  const [isOnline, setIsOnline] = useState(() =>
     typeof window !== 'undefined' ? window.navigator.onLine : true
   );
+  const [networkState, setNetworkState] = useState<'online' | 'degraded' | 'offline'>(() =>
+    typeof window !== 'undefined' && window.navigator.onLine === false ? 'offline' : 'online',
+  );
   const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
-  
+
   // Refs for tracking state without triggering re-renders in loops
   const failCount = useRef(0);
   const isChecking = useRef(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<number | null>(null);
   const lastErrorRef = useRef<string | null>(null);
+  const stateRef = useRef<'online' | 'degraded' | 'offline'>('online');
+  const onlineRef = useRef(true);
+  const hiddenRef = useRef(false);
 
   // Configuration
-  const MAX_FAILURES = 2; // Flip to offline after 2 failures
-  const POLL_INTERVAL = 15000; // 15s normal polling
-  const RETRY_DELAY = 2000; // 2s retry when failing
+  const MAX_FAILURES = 2;
+  const POLL_INTERVAL = 15000;
+  const DEGRADED_INTERVAL = 6000;
+  const RETRY_DELAY = 2500;
+  const HIDDEN_INTERVAL = 45000;
+
+  const publishWindowState = useCallback((state: 'online' | 'degraded' | 'offline', online: boolean) => {
+    if (typeof window === 'undefined') return;
+    (window as any).__DCAU_NETWORK_STATE = {
+      isOnline: online,
+      state,
+      lastCheckedAt: Date.now(),
+    };
+  }, []);
+
+  const commitState = useCallback(
+    (nextState: 'online' | 'degraded' | 'offline') => {
+      const nextOnline = nextState !== 'offline';
+
+      stateRef.current = nextState;
+      onlineRef.current = nextOnline;
+
+      setNetworkState((prev) => (prev === nextState ? prev : nextState));
+      setIsOnline((prev) => (prev === nextOnline ? prev : nextOnline));
+      publishWindowState(nextState, nextOnline);
+    },
+    [publishWindowState],
+  );
+
+  const scheduleNextCheck = useCallback((checkHealth: () => Promise<void>) => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    const delay = hiddenRef.current
+      ? HIDDEN_INTERVAL
+      : stateRef.current === 'offline'
+        ? RETRY_DELAY
+        : stateRef.current === 'degraded'
+          ? DEGRADED_INTERVAL
+          : POLL_INTERVAL;
+
+    timerRef.current = window.setTimeout(() => {
+      void checkHealth();
+    }, delay);
+  }, []);
 
   const checkHealth = useCallback(async () => {
     if (isChecking.current) return;
-    
+
     // If navigator says offline, we are offline. No need to ping.
     if (!window.navigator.onLine) {
-      if (isOnline) setIsOnline(false);
-      failCount.current = MAX_FAILURES; // Force fail state
+      failCount.current = MAX_FAILURES;
+      commitState('offline');
       setLastCheckedAt(Date.now());
+      scheduleNextCheck(checkHealth);
       return;
     }
 
@@ -48,86 +100,96 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5s timeout
 
     try {
-      const res = await fetch('/api/health', { 
-        method: 'GET', 
-        cache: 'no-store', 
-        signal: controller.signal 
+      const res = await fetch('/api/health', {
+        method: 'GET',
+        cache: 'no-store',
+        signal: controller.signal,
       });
 
       if (res.ok) {
         // Success
         failCount.current = 0;
         lastErrorRef.current = null;
-        if (!isOnline) {
+        if (stateRef.current !== 'online') {
           logEvent('network_health_restored', { ts: Date.now() });
         }
-        if (!isOnline) setIsOnline(true);
+        commitState('online');
       } else {
-        // HTTP Error (500, etc) - treat as potential connectivity issue
         failCount.current++;
         lastErrorRef.current = `status_${res.status}`;
+        if (failCount.current >= MAX_FAILURES) {
+          commitState('offline');
+        } else {
+          commitState('degraded');
+        }
       }
     } catch (error) {
-      // Network Error (fetch failed)
       failCount.current++;
       lastErrorRef.current = String((error as any)?.message || error);
+      if (failCount.current >= MAX_FAILURES) {
+        commitState('offline');
+      } else {
+        commitState('degraded');
+      }
     } finally {
       clearTimeout(timeoutId);
       isChecking.current = false;
       setLastCheckedAt(Date.now());
-      
-      // Decision Logic
-      if (failCount.current >= MAX_FAILURES) {
-        if (isOnline) {
+
+      if (stateRef.current === 'offline') {
+        if (onlineRef.current === false) {
           logOnce('warn', 'network:health:offline', '[network] Health check failed', lastErrorRef.current);
           logEvent('network_health_offline', { error: lastErrorRef.current, failCount: failCount.current });
         }
-        if (isOnline) setIsOnline(false);
       }
+      scheduleNextCheck(checkHealth);
     }
-  }, [isOnline]);
+  }, [MAX_FAILURES, commitState, scheduleNextCheck]);
 
-  // Polling Logic with Backoff
   useEffect(() => {
-    const scheduleNext = () => {
-      const delay = failCount.current > 0 && failCount.current < MAX_FAILURES 
-        ? RETRY_DELAY 
-        : POLL_INTERVAL;
-      
-      timerRef.current = setTimeout(async () => {
-        await checkHealth();
-        scheduleNext();
-      }, delay);
-    };
+    publishWindowState(networkState, isOnline);
+  }, [isOnline, networkState, publishWindowState]);
 
-    // Initial check
-    checkHealth();
-    scheduleNext();
+  useEffect(() => {
+    void checkHealth();
 
     const handleOnline = () => {
-        failCount.current = 0;
-        checkHealth();
+      failCount.current = 0;
+      void checkHealth();
     };
-    
+
     const handleOffline = () => {
-        setIsOnline(false);
-        failCount.current = MAX_FAILURES;
+      failCount.current = MAX_FAILURES;
+      commitState('offline');
+      setLastCheckedAt(Date.now());
+      scheduleNextCheck(checkHealth);
+    };
+
+    const handleVisibility = () => {
+      hiddenRef.current = document.visibilityState === 'hidden';
+      if (!hiddenRef.current) {
+        void checkHealth();
+      } else {
+        scheduleNextCheck(checkHealth);
+      }
     };
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
+      if (timerRef.current) window.clearTimeout(timerRef.current);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, [checkHealth]);
+  }, [checkHealth, commitState, scheduleNextCheck]);
 
   return (
-    <NetworkStatusContext.Provider value={{ isOnline, lastCheckedAt, checkNow: checkHealth }}>
+    <NetworkStatusContext.Provider value={{ isOnline, networkState, lastCheckedAt, checkNow: checkHealth }}>
       {children}
-      
+
       {/* Global Offline Floating Indicator */}
       <AnimatePresence>
         {!isOnline && (

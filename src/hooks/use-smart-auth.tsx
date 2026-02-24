@@ -1,8 +1,10 @@
 'use client';
 
-import { useEffect, useState, createContext, useContext, useMemo, useCallback } from 'react';
+import { useEffect, useState, createContext, useContext, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
+import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
+import { explicitSignOut } from '@/lib/auth/explicit-signout';
 
 interface SmartUser {
   id: string;
@@ -15,6 +17,8 @@ interface SmartUser {
 interface SmartAuthContextType {
   user: SmartUser | null;
   session: Session | null;
+  authState: 'loading' | 'authenticated' | 'unauthenticated';
+  isOfflineSession: boolean;
   isAuthed: boolean;
   isLoadingAuth: boolean;
   isLoading: boolean;
@@ -28,73 +32,153 @@ const SmartAuthContext = createContext<SmartAuthContextType | undefined>(undefin
 export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<SmartUser | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const [isOfflineSession, setIsOfflineSession] = useState(false);
+  const sessionSignatureRef = useRef<string | null>(null);
+  const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+
+  const sessionToUser = useCallback((nextSession: Session | null): SmartUser | null => {
+    if (!nextSession?.user) return null;
+    return {
+      id: nextSession.user.id,
+      email: nextSession.user.email,
+      full_name: nextSession.user.user_metadata?.full_name || nextSession.user.user_metadata?.name,
+      avatar_url: nextSession.user.user_metadata?.avatar_url,
+      provider: 'supabase',
+    };
+  }, []);
+
+  const signatureFromSession = useCallback((nextSession: Session | null) => {
+    if (!nextSession?.user?.id || !nextSession?.access_token) return null;
+    const tokenTail = nextSession.access_token.slice(-12);
+    const expires = typeof nextSession.expires_at === 'number' ? nextSession.expires_at : 0;
+    return `${nextSession.user.id}:${tokenTail}:${expires}`;
+  }, []);
+
+  const applySessionState = useCallback(
+    (nextSession: Session | null, options?: { offlineBootstrap?: boolean; force?: boolean }) => {
+      const signature = signatureFromSession(nextSession);
+      if (!options?.force && signature && signature === sessionSignatureRef.current) {
+        return;
+      }
+
+      sessionSignatureRef.current = signature;
+      setSession(nextSession);
+      setUser(sessionToUser(nextSession));
+      const nextAuthState = nextSession?.user ? 'authenticated' : 'unauthenticated';
+      authStateRef.current = nextAuthState;
+      setAuthState(nextAuthState);
+      setIsOfflineSession(Boolean(options?.offlineBootstrap && nextSession?.user));
+    },
+    [sessionToUser, signatureFromSession],
+  );
 
   useEffect(() => {
     let mounted = true;
 
-    const syncFromSession = async () => {
+    const syncInitialSession = async () => {
+      const offlineAtBoot =
+        typeof window !== 'undefined' &&
+        (window.navigator.onLine === false ||
+          (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean' &&
+            (window as any).__DCAU_NETWORK_STATE.isOnline === false));
+
+      if (offlineAtBoot) {
+        const persisted = readPersistedSupabaseSession();
+        if (!mounted) return;
+        applySessionState(persisted, { offlineBootstrap: true, force: true });
+        return;
+      }
+
       try {
         const { data } = await supabase.auth.getSession();
         if (!mounted) return;
-        
-        setSession(data.session);
-
-        if (data.session?.user) {
-          setUser({
-            id: data.session.user.id,
-            email: data.session.user.email,
-            full_name: data.session.user.user_metadata?.full_name || data.session.user.user_metadata?.name,
-            avatar_url: data.session.user.user_metadata?.avatar_url,
-            provider: 'supabase',
-          });
-        } else {
-          setUser(null);
-        }
-      } finally {
-        if (mounted) setIsLoading(false);
+        const fallbackSession = readPersistedSupabaseSession();
+        const nextSession = data.session ?? fallbackSession;
+        applySessionState(nextSession, {
+          force: true,
+          offlineBootstrap: Boolean(!data.session && nextSession?.user),
+        });
+      } catch {
+        if (!mounted) return;
+        const persisted = readPersistedSupabaseSession();
+        applySessionState(persisted, {
+          force: true,
+          offlineBootstrap: Boolean(persisted?.user),
+        });
       }
     };
 
-    syncFromSession().catch(() => {
-      if (mounted) setIsLoading(false);
-    });
+    void syncInitialSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (mounted) {
-        setSession(session);
-        if (session?.user) {
-           setUser({
-            id: session.user.id,
-            email: session.user.email,
-            full_name: session.user.user_metadata?.full_name || session.user.user_metadata?.name,
-            avatar_url: session.user.user_metadata?.avatar_url,
-            provider: 'supabase',
-          });
-        } else {
-          setUser(null);
-        }
-        setIsLoading(false);
+      if (!mounted) return;
+      applySessionState(session);
+      if (event !== 'SIGNED_OUT') {
+        setIsOfflineSession(false);
       }
-      
+
       // Ensure user consistency on sign-in
       if (event === 'SIGNED_IN' && session?.user) {
-        supabase.rpc('ensure_user_consistency').then(({ error }) => {
-            if (error) {
-              console.error('Consistency check failed:', error);
-            }
+        void supabase.rpc('ensure_user_consistency').then(({ error }) => {
+          if (error) {
+            console.error('Consistency check failed:', error);
+          }
         });
       }
     });
 
+    const handleOnline = () => {
+      if (!mounted) return;
+      if (authStateRef.current === 'authenticated') {
+        void supabase.auth.getSession().then(({ data }) => {
+          if (!mounted) return;
+          const persisted = readPersistedSupabaseSession();
+          const nextSession = data.session ?? persisted;
+          if (!nextSession) {
+            applySessionState(null);
+            setIsOfflineSession(false);
+            return;
+          }
+          applySessionState(nextSession, {
+            force: !data.session,
+            offlineBootstrap: Boolean(!data.session && nextSession.user),
+          });
+          setIsOfflineSession(!data.session);
+        }).catch(() => {
+          if (!mounted) return;
+          const persisted = readPersistedSupabaseSession();
+          if (persisted?.user) {
+            applySessionState(persisted, { force: true, offlineBootstrap: true });
+            setIsOfflineSession(true);
+            return;
+          }
+          setIsOfflineSession(true);
+        });
+      }
+    };
+
+    const handleOffline = () => {
+      if (!mounted) return;
+      if (sessionSignatureRef.current) {
+        setIsOfflineSession(true);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
     return () => {
       mounted = false;
       subscription.unsubscribe();
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
-  }, []);
+  }, [applySessionState]);
 
   const signInWithGoogle = useCallback(async (redirectPath?: string) => {
-    setIsLoading(true);
+    authStateRef.current = 'loading';
+    setAuthState('loading');
     const safePath =
       typeof redirectPath === 'string' &&
       redirectPath.startsWith('/') &&
@@ -110,18 +194,19 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     if (error) {
-      setIsLoading(false);
+      const nextState = session ? 'authenticated' : 'unauthenticated';
+      authStateRef.current = nextState;
+      setAuthState(nextState);
       throw error;
     }
-  }, []);
+  }, [session]);
 
   const signOut = useCallback(async () => {
-    setIsLoading(true);
-    await supabase.auth.signOut();
-    setUser(null);
-    setSession(null);
-    setIsLoading(false);
-  }, []);
+    authStateRef.current = 'loading';
+    setAuthState('loading');
+    await explicitSignOut(session?.user?.id ?? null);
+    applySessionState(null, { force: true });
+  }, [applySessionState, session?.user?.id]);
 
   const getToken = useCallback(async () => {
     // If we have a session in state, use it (it's kept up to date by the listener)
@@ -133,12 +218,15 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     return null;
   }, [session]);
 
-  const isAuthed = !!session?.access_token && !!session?.user;
+  const isAuthed = authState === 'authenticated';
+  const isLoading = authState === 'loading';
 
   const value = useMemo(
     () => ({
       user,
       session,
+      authState,
+      isOfflineSession,
       isAuthed,
       isLoadingAuth: isLoading,
       isLoading,
@@ -146,7 +234,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       signOut,
       getToken,
     }),
-    [user, session, isAuthed, isLoading, signInWithGoogle, signOut, getToken]
+    [user, session, authState, isOfflineSession, isAuthed, isLoading, signInWithGoogle, signOut, getToken]
   );
 
   return (

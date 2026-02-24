@@ -23,6 +23,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
 import { ConexAccessControl } from '@/components/admin/conex-access-control';
 import { ConexUserManagement } from '@/components/admin/conex-user-management';
+import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
+import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
+import { AdminPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -607,11 +611,67 @@ const AdminUsage = ({ token }: { token: string }) => {
   const [stats, setStats] = useState({ totalCalls: 0, failedCalls: 0, successfulCalls: 0 });
   const [loading, setLoading] = useState(true);
   const [totalUsers, setTotalUsers] = useState(0);
+  const [isUsingCachedData, setIsUsingCachedData] = useState(false);
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
   const { toast } = useToast();
+  const { isOnline } = useNetworkStatus();
+  const [user] = useSupabaseUser();
+
+  const readUsageCache = useCallback(async () => {
+    if (!user?.id) return { data: null as any, cachedAt: null as number | null };
+    return readUserCache<any>({
+      userId: user.id,
+      route: '/conex',
+      source: 'admin-usage',
+      endpoint: 'get_usage',
+      schemaVersion: 1,
+      maxAgeMs: 1000 * 60 * 10,
+    });
+  }, [user?.id]);
+
+  const writeUsageCache = useCallback(async (payload: any) => {
+    if (!user?.id) return;
+    await writeUserCache({
+      userId: user.id,
+      route: '/conex',
+      source: 'admin-usage',
+      endpoint: 'get_usage',
+      schemaVersion: 1,
+      ttlMs: 1000 * 60 * 10,
+      data: payload,
+    });
+  }, [user?.id]);
+
+  const applyPayload = useCallback((payload: any, options?: { fromCache?: boolean; cachedAt?: number | null }) => {
+    setUsage(Array.isArray(payload?.usage) ? payload.usage : []);
+    setStats(
+      payload?.stats || {
+        totalCalls: 0,
+        failedCalls: 0,
+        successfulCalls: 0,
+      },
+    );
+    setTotalUsers(Number(payload?.totalUsers || 0));
+    if (options?.fromCache) {
+      setIsUsingCachedData(true);
+      setCachedAt(options.cachedAt ?? null);
+    } else {
+      setIsUsingCachedData(false);
+      setCachedAt(Date.now());
+    }
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
+      if (!isOnline) {
+        const cached = await readUsageCache();
+        if (cached.data) {
+          applyPayload(cached.data, { fromCache: true, cachedAt: cached.cachedAt });
+        }
+        return;
+      }
+
       // Fetch Usage using the centralized fetchAdmin utility
       const usageRes = await fetchAdmin('admin-handler', {
         method: 'POST',
@@ -621,8 +681,6 @@ const AdminUsage = ({ token }: { token: string }) => {
       if (!usageRes.ok) {
         throw new Error((usageRes as any).error || 'Failed to load usage');
       }
-      setUsage((usageRes as any).usage || []);
-      if ((usageRes as any).stats) setStats((usageRes as any).stats);
 
       const usersRes = await fetchAdmin('admin-handler', {
         method: 'POST',
@@ -631,30 +689,53 @@ const AdminUsage = ({ token }: { token: string }) => {
       });
       if (usersRes.ok) {
         const data = (usersRes as any).data || usersRes;
-        setTotalUsers(Number(data.total || 0));
+        const payload = {
+          usage: (usageRes as any).usage || [],
+          stats: (usageRes as any).stats || {
+            totalCalls: 0,
+            failedCalls: 0,
+            successfulCalls: 0,
+          },
+          totalUsers: Number(data.total || 0),
+        };
+        applyPayload(payload);
+        void writeUsageCache(payload);
       } else {
         throw new Error((usersRes as any).error || 'Failed to load users');
       }
     } catch (e) {
-      console.error('[AdminUsage] fetch error:', e);
-      const message =
-        e instanceof Error && e.message.toLowerCase().includes('unauthorized')
-          ? 'Session expired. Please sign in again, then re-open Conex.'
-          : 'Failed to load usage dashboard.';
-      toast({ title: 'Error', description: message, variant: 'destructive' });
+      const cached = await readUsageCache();
+      if (cached.data) {
+        applyPayload(cached.data, { fromCache: true, cachedAt: cached.cachedAt });
+      } else {
+        console.error('[AdminUsage] fetch error:', e);
+        const message =
+          e instanceof Error && e.message.toLowerCase().includes('unauthorized')
+            ? 'Session expired. Please sign in again, then re-open Conex.'
+            : 'Failed to load usage dashboard.';
+        toast({ title: 'Error', description: message, variant: 'destructive' });
+      }
     } finally {
       setLoading(false);
     }
-  }, [toast, token]);
+  }, [applyPayload, isOnline, readUsageCache, toast, token, writeUsageCache]);
 
   useEffect(() => {
-    fetchData();
+    void fetchData();
   }, [fetchData]);
 
-  if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
+  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(loading);
+  if (loading && showSkeleton && usage.length === 0) return <AdminPageSkeleton />;
 
   return (
     <div className="space-y-6">
+      {showSlowNotice && loading ? <SlowNetworkNotice onRetry={() => void fetchData()} /> : null}
+      {isUsingCachedData && !isOnline ? (
+        <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
+          Offline • showing cached admin usage data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="p-4 flex items-center gap-4">

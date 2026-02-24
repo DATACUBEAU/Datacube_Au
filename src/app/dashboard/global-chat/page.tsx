@@ -63,6 +63,8 @@ import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
 import { OfflineGuard } from '@/components/offline-guard';
+import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
+import { GlobalChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 
 // Typing Animation Component
 const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, shouldAnimate?: boolean }) => {
@@ -151,7 +153,12 @@ export default function GlobalChatPage() {
     stopGeneration
   } = useAuChat(selectedDocId);
 
-  const { documents } = useAuDocuments();
+  const {
+    documents,
+    refresh: refreshDocuments,
+    isUsingCachedData,
+    cachedAt,
+  } = useAuDocuments();
   const [referencedDocId, setReferencedDocId] = useState<string | undefined>(undefined);
 
   // Sync AU State with Global Background Animation
@@ -327,8 +334,11 @@ export default function GlobalChatPage() {
     }
   };
 
-  if (isFlagLoading) {
-    return <div className="flex items-center justify-center h-full"><Loader2 className="h-8 w-8 animate-spin text-primary" /></div>;
+  const isBootLoading = isFlagLoading || isLoadingAuth;
+  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isBootLoading);
+
+  if (isBootLoading && showSkeleton) {
+    return <GlobalChatPageSkeleton />;
   }
 
   if (!isGlobalChatEnabled) {
@@ -408,6 +418,13 @@ export default function GlobalChatPage() {
 
   return (
     <main className="flex h-[calc(100dvh-3.5rem)] flex-col relative">
+      {showSlowNotice && isBootLoading ? <SlowNetworkNotice onRetry={() => void refreshDocuments()} /> : null}
+      {isUsingCachedData && !isOnline ? (
+        <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100 md:mx-8">
+          Offline • showing cached context data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+        </div>
+      ) : null}
+
       {/* STRICT: Always show history prompt on load */}
       {user?.id && (
         <GlobalHistoryPrompt 

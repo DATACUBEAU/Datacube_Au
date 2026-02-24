@@ -118,7 +118,17 @@ export class IngestionService {
 
         // 3. Generate Embeddings locally
         const model = await this.getModel();
-        const embeddings = await model.embed(newChunks.map(c => c.text));
+        const embeddingResult: any = model.embed(newChunks.map((c) => c.text));
+        const embeddings: number[][] = [];
+
+        if (embeddingResult && typeof embeddingResult[Symbol.asyncIterator] === 'function') {
+          for await (const batch of embeddingResult) {
+            embeddings.push(...(batch as number[][]));
+          }
+        } else {
+          const resolved = await embeddingResult;
+          embeddings.push(...(resolved as number[][]));
+        }
 
         // 4. Upsert to Qdrant
         const points = newChunks.map((chunk, i) => ({
@@ -149,7 +159,7 @@ export class IngestionService {
     await this.supabase
       .from('au_documents')
       .update({ 
-          status: 'indexed',
+          status: 'completed',
           expires_at: new Date(expiresAt * 1000).toISOString()
       })
       .eq('id', documentId);

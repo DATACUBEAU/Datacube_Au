@@ -10,6 +10,7 @@ export class OfflineError extends Error {
 interface SafeFetchOptions extends RequestInit {
   timeout?: number;
   silent?: boolean; // If true, suppresses global toast on offline/error
+  allowOffline?: boolean; // If true, caller handles offline fallback manually
 }
 
 /**
@@ -19,8 +20,16 @@ interface SafeFetchOptions extends RequestInit {
  * 3. Consistent error formatting
  */
 export async function safeFetch(url: string, options: SafeFetchOptions = {}): Promise<Response> {
+  const isOfflineNow = () =>
+    typeof window !== 'undefined' &&
+    (window.navigator.onLine === false ||
+      (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean' &&
+        (window as any).__DCAU_NETWORK_STATE.isOnline === false));
+
   // 1. Offline Check
-  if (typeof window !== 'undefined' && !window.navigator.onLine) {
+  const { timeout = 10000, signal, allowOffline = false, ...fetchOptions } = options;
+
+  if (!allowOffline && isOfflineNow()) {
     if (!options.silent) {
         toast({
             variant: 'destructive',
@@ -32,7 +41,6 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     throw new OfflineError();
   }
 
-  const { timeout = 10000, signal, ...fetchOptions } = options;
   const MAX_RETRIES = 2; // Retry twice on network errors
   let attempt = 0;
 
@@ -51,7 +59,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         ...fetchOptions,
         signal: controller.signal,
       });
-      
+
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener('abort', onAbort);
 
@@ -83,6 +91,10 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         const abortError = new Error('Request aborted');
         (abortError as any).name = 'AbortError';
         throw abortError;
+      }
+
+      if (isOfflineNow()) {
+        throw new OfflineError();
       }
 
       // If it's a network error or timeout, and we have retries left, retry.

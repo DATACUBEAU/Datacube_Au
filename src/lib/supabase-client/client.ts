@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
+import { guardRequest } from '@/lib/api/request-guard';
 
 const publicEnv = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -89,45 +90,25 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
   // Use the original Request object if available to preserve body and other settings
   const fetchInput = input;
 
-  // Retry logic with exponential backoff for 429 errors
-  const MAX_RETRIES = 3;
+  // Retry logic for network failures only.
+  const MAX_RETRIES = 2;
   let attempt = 0;
 
   while (attempt <= MAX_RETRIES) {
     try {
-      const response = await fetch(fetchInput, newInit);
-      
-      // If success or not a 429, return immediately
-      if (response.status !== 429) {
-        return response;
-      }
-
-      // If 429, check if we have retries left
-      if (attempt >= MAX_RETRIES) {
-        console.warn(`[customFetch] Rate limit exceeded for ${url} after ${MAX_RETRIES} retries.`);
-        return response;
-      }
-
-      // Calculate backoff with jitter
-      // Base: 1s, 2s, 4s... + random jitter (0-500ms)
-      const baseDelay = 1000 * Math.pow(2, attempt);
-      const jitter = Math.floor(Math.random() * 500);
-      const delay = baseDelay + jitter;
-      
-      console.log(`[customFetch] 429 received. Retrying in ${delay}ms (Attempt ${attempt + 1}/${MAX_RETRIES})`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      
-      attempt++;
+      return await fetch(fetchInput, newInit);
     } catch (err: any) {
-      // If network error, check if we have retries left
-      const isNetworkError = err.name !== 'AbortError'; // Fetch throws TypeError on network failure
-      
-      if (isNetworkError && attempt < MAX_RETRIES) {
-         const delay = 1000 * Math.pow(2, attempt);
-         console.warn(`[customFetch] Network error fetching ${url}. Retrying in ${delay}ms...`);
-         await new Promise(resolve => setTimeout(resolve, delay));
-         attempt++;
-         continue;
+      const isAbort = err?.name === 'AbortError';
+      if (isAbort) {
+        throw err;
+      }
+
+      if (attempt < MAX_RETRIES) {
+        const delay = 500 * Math.pow(2, attempt);
+        console.warn(`[customFetch] Network error fetching ${url}. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        attempt += 1;
+        continue;
       }
 
       console.error(`[customFetch] Network error fetching ${url}:`, {
@@ -230,6 +211,7 @@ export async function invokeEdgeFunction<T = any>(
     timeoutMs?: number;
     method?: 'POST' | 'GET';
     silent?: boolean;
+    allowOffline?: boolean;
   }
 ): Promise<{ data: T | null; error: any | null }> {
   const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
@@ -237,8 +219,34 @@ export async function invokeEdgeFunction<T = any>(
   const timeoutMs = options?.timeoutMs ?? 10000;
   const silent = options?.silent ?? true;
   const requireAuth = options?.requireAuth ?? true;
+  const allowOffline = options?.allowOffline === true;
 
   const attemptOnce = async (accessToken: string | null) => {
+    const isOnline =
+      typeof window === 'undefined'
+        ? true
+        : (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean'
+            ? (window as any).__DCAU_NETWORK_STATE.isOnline
+            : window.navigator.onLine);
+    const gate = guardRequest({
+      isOnline,
+      requireAuth,
+      accessToken,
+      allowOfflineRead: allowOffline,
+      warnKey: `invoke-edge:${functionName}`,
+      context: functionName,
+    });
+
+    if (!gate.ok) {
+      return {
+        data: null as T | null,
+        error: {
+          message: gate.message,
+          status: gate.reason === 'offline' ? 0 : 401,
+        },
+      };
+    }
+
     if (requireAuth && !accessToken) {
       return { data: null as T | null, error: { message: 'No active session', status: 401 } };
     }
@@ -287,23 +295,7 @@ export async function invokeEdgeFunction<T = any>(
   };
 
   const accessToken = await getSupabaseAccessToken();
-  const initial = await attemptOnce(accessToken);
-
-  // Retry once with a refreshed session when auth likely expired/stale.
-  if (!requireAuth) return initial;
-  if (!initial.error) return initial;
-  const status = Number((initial.error as any)?.status ?? 0);
-  const message = String((initial.error as any)?.message ?? '').toLowerCase();
-  const shouldRetryAuth = status === 401 || message.includes('no active session') || message.includes('unauthorized');
-  if (!shouldRetryAuth) return initial;
-
-  try {
-    const { data, error } = await supabase.auth.refreshSession();
-    if (error || !data.session?.access_token) return initial;
-    return attemptOnce(data.session.access_token);
-  } catch {
-    return initial;
-  }
+  return attemptOnce(accessToken);
 }
 
 /**

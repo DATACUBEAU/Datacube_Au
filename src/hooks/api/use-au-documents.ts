@@ -4,9 +4,15 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 
 let hasWarnedDocumentsRealtime = false;
 let hasWarnedDocumentsFetch = false;
+const DOCS_CACHE_ROUTE = '/dashboard/documents';
+const DOCS_CACHE_SOURCE = 'au_documents';
+const DOCS_CACHE_ENDPOINT = 'list';
+const DOCS_CACHE_SCHEMA = 1;
+const DOCS_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 
 export function useAuDocuments(pollInterval = 0) {
   const [user] = useSupabaseUser();
@@ -14,17 +20,58 @@ export function useAuDocuments(pollInterval = 0) {
   const { isOnline } = useNetworkStatus();
   const [documents, setDocuments] = useState<AuDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isUsingCachedData, setIsUsingCachedData] = useState(false);
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();
+
+  const readCachedDocuments = useCallback(async () => {
+    if (!user?.id) return { data: null as AuDocumentRow[] | null, cachedAt: null as number | null };
+    return readUserCache<AuDocumentRow[]>({
+      userId: user.id,
+      route: DOCS_CACHE_ROUTE,
+      source: DOCS_CACHE_SOURCE,
+      endpoint: DOCS_CACHE_ENDPOINT,
+      query: { pollInterval },
+      schemaVersion: DOCS_CACHE_SCHEMA,
+      maxAgeMs: DOCS_CACHE_MAX_AGE_MS,
+    });
+  }, [pollInterval, user?.id]);
+
+  const writeCachedDocuments = useCallback(
+    async (rows: AuDocumentRow[]) => {
+      if (!user?.id) return;
+      await writeUserCache({
+        userId: user.id,
+        route: DOCS_CACHE_ROUTE,
+        source: DOCS_CACHE_SOURCE,
+        endpoint: DOCS_CACHE_ENDPOINT,
+        query: { pollInterval },
+        schemaVersion: DOCS_CACHE_SCHEMA,
+        data: rows,
+        ttlMs: DOCS_CACHE_MAX_AGE_MS,
+      });
+    },
+    [pollInterval, user?.id],
+  );
 
   const fetchDocs = useCallback(async () => {
     if (!user || !session?.access_token) {
       setLoading(false);
       setDocuments([]);
+      setIsUsingCachedData(false);
+      setCachedAt(null);
       return;
     }
     if (!isOnline) {
+      const cached = await readCachedDocuments();
+      if (cached.data) {
+        setDocuments(cached.data);
+        setIsUsingCachedData(true);
+        setCachedAt(cached.cachedAt);
+        setError(null);
+      }
       setLoading(false);
       return;
     }
@@ -32,18 +79,58 @@ export function useAuDocuments(pollInterval = 0) {
     try {
       const data = await listDocuments(user);
       setDocuments(data);
+      setIsUsingCachedData(false);
+      setCachedAt(Date.now());
       setError(null);
+      void writeCachedDocuments(data);
     } catch (err: any) {
       if (err.name === 'AbortError') return;
-      setError(err);
-      if (!hasWarnedDocumentsFetch) {
-        console.warn('[useAuDocuments] Failed to fetch documents.', err);
-        hasWarnedDocumentsFetch = true;
+
+      const cached = await readCachedDocuments();
+      if (cached.data) {
+        setDocuments(cached.data);
+        setIsUsingCachedData(true);
+        setCachedAt(cached.cachedAt);
+        setError(null);
+      } else {
+        setError(err);
+        if (!hasWarnedDocumentsFetch) {
+          console.warn('[useAuDocuments] Failed to fetch documents.', err);
+          hasWarnedDocumentsFetch = true;
+        }
       }
     } finally {
       setLoading(false);
     }
-  }, [isOnline, session?.access_token, user]);
+  }, [isOnline, readCachedDocuments, session?.access_token, user, writeCachedDocuments]);
+
+  useEffect(() => {
+    if (isLoadingAuth) return;
+    if (!user?.id) {
+      setDocuments([]);
+      setLoading(false);
+      setIsUsingCachedData(false);
+      setCachedAt(null);
+      return;
+    }
+
+    let canceled = false;
+    void readCachedDocuments().then((cached) => {
+      if (canceled) return;
+      if (cached.data) {
+        setDocuments(cached.data);
+        setIsUsingCachedData(true);
+        setCachedAt(cached.cachedAt);
+        setLoading(false);
+      } else if (!isOnline) {
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      canceled = true;
+    };
+  }, [isLoadingAuth, isOnline, readCachedDocuments, user?.id]);
 
   // Real-time subscription
   useEffect(() => {
@@ -52,6 +139,8 @@ export function useAuDocuments(pollInterval = 0) {
     if (!user || !session?.access_token) {
       setLoading(false);
       setDocuments([]);
+      setIsUsingCachedData(false);
+      setCachedAt(null);
       return;
     }
     if (!isOnline) {
@@ -139,5 +228,14 @@ export function useAuDocuments(pollInterval = 0) {
     return () => clearInterval(interval);
   }, [fetchDocs, isOnline, pollInterval, session?.access_token, user]);
 
-  return { documents, loading, error, refresh: fetchDocs, remove, deletingIds };
+  return {
+    documents,
+    loading,
+    error,
+    refresh: fetchDocs,
+    remove,
+    deletingIds,
+    isUsingCachedData,
+    cachedAt,
+  };
 }

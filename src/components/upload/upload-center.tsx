@@ -36,7 +36,7 @@ function statusLabel(status: string) {
     case 'uploaded':
       return { text: 'Enqueued', variant: 'secondary' as const };
     case 'processing':
-      return { text: 'Analyzing…', variant: 'secondary' as const };
+      return { text: 'Analyzing...', variant: 'secondary' as const };
     case 'completed':
       return { text: 'Done', variant: 'default' as const };
     case 'done':

@@ -16,14 +16,23 @@ import { cn } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
+import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
+import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 
 const PRICING = {
   weekly: { amount: 1900, compare_at: 2500, label: 'Save 24%' },
   monthly: { amount: 4500, compare_at: 6000, label: 'Save 25%' },
 } as const;
 
+const BILLING_ROUTE = '/dashboard/settings/subscription';
+const BILLING_STATUS_SOURCE = 'billing-status';
+const BILLING_CONFIG_SOURCE = 'billing-config';
+const BILLING_CACHE_SCHEMA = 1;
+const BILLING_CACHE_TTL_MS = 1000 * 60 * 30;
+
 export default function SubscriptionPage() {
-  const [user, session] = useSupabaseUser();
+  const [user, session, isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -51,21 +60,98 @@ export default function SubscriptionPage() {
   const [paymentState, setPaymentState] = useState<'idle' | 'redirecting' | 'confirming' | 'success' | 'pending' | 'error'>('idle');
   const [pollCount, setPollCount] = useState(0);
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(true);
+  const [isUsingCachedData, setIsUsingCachedData] = useState(false);
+  const [cachedAt, setCachedAt] = useState<number | null>(null);
 
   const [pricing, setPricing] = useState<{
     weekly: { amount: number; compare_at: number; label: string };
     monthly: { amount: number; compare_at: number; label: string };
   }>(PRICING);
-  const isPromoUnlocked = !billingEnabled;
+  const isPromoUnlocked = billingEnabled === false;
   const hasPaidProAccess = billingEnabled && tier === 'pro';
   const freeRetentionLabel = '14-day history retention';
   const proRetentionLabel = isPromoUnlocked
     ? '14-day history retention (promo mode)'
     : '30-day history retention';
 
+  const applyBillingStatus = useCallback((data: any, options?: { fromCache?: boolean }) => {
+      if (!data) return;
+      setTier(data.tier || 'free');
+      setExpiry(data.tier_expires_at ?? null);
+      setSubscription(data.subscription ?? null);
+      setPayments(Array.isArray(data.payments) ? data.payments : []);
+      if (data.pricing) {
+          setPricing(data.pricing);
+      }
+      if ((data.billingEnabled ?? true) && data.subscription?.status === 'active') {
+          setIsAutoRenew(true);
+      }
+      if (options?.fromCache) {
+          setIsUsingCachedData(true);
+      }
+  }, []);
+
+  const readCachedBillingStatus = useCallback(async () => {
+      if (!user?.id) return { data: null as any, cachedAt: null as number | null };
+      return readUserCache<any>({
+          userId: user.id,
+          route: BILLING_ROUTE,
+          source: BILLING_STATUS_SOURCE,
+          endpoint: 'get',
+          schemaVersion: BILLING_CACHE_SCHEMA,
+          maxAgeMs: BILLING_CACHE_TTL_MS,
+      });
+  }, [user?.id]);
+
+  const writeCachedBillingStatus = useCallback(async (data: any) => {
+      if (!user?.id) return;
+      await writeUserCache({
+          userId: user.id,
+          route: BILLING_ROUTE,
+          source: BILLING_STATUS_SOURCE,
+          endpoint: 'get',
+          schemaVersion: BILLING_CACHE_SCHEMA,
+          ttlMs: BILLING_CACHE_TTL_MS,
+          data,
+      });
+  }, [user?.id]);
+
+  const readCachedBillingConfig = useCallback(async () => {
+      if (!user?.id) return { data: null as any, cachedAt: null as number | null };
+      return readUserCache<any>({
+          userId: user.id,
+          route: BILLING_ROUTE,
+          source: BILLING_CONFIG_SOURCE,
+          endpoint: 'get',
+          schemaVersion: BILLING_CACHE_SCHEMA,
+          maxAgeMs: BILLING_CACHE_TTL_MS,
+      });
+  }, [user?.id]);
+
+  const writeCachedBillingConfig = useCallback(async (data: any) => {
+      if (!user?.id) return;
+      await writeUserCache({
+          userId: user.id,
+          route: BILLING_ROUTE,
+          source: BILLING_CONFIG_SOURCE,
+          endpoint: 'get',
+          schemaVersion: BILLING_CACHE_SCHEMA,
+          ttlMs: BILLING_CACHE_TTL_MS,
+          data,
+      });
+  }, [user?.id]);
+
   const fetchBillingStatus = useCallback(async () => {
-      if (!isOnline) return null;
-      if (!session?.access_token) return null;
+      if (!user?.id) return null;
+      if (!isOnline || !session?.access_token) {
+          const cached = await readCachedBillingStatus();
+          if (cached.data) {
+              applyBillingStatus(cached.data, { fromCache: true });
+              setCachedAt(cached.cachedAt);
+          }
+          return cached.data;
+      }
       try {
           const { data, error } = await invokeEdgeFunction<any>('billing-status', {
               method: 'GET',
@@ -74,32 +160,35 @@ export default function SubscriptionPage() {
               silent: true,
           });
           if (!error && data) {
-              setTier(data.tier || 'free');
-              setExpiry(data.tier_expires_at);
-              setSubscription(data.subscription);
-              setPayments(data.payments || []);
-              
-              if (data.pricing) {
-                  setPricing(data.pricing);
-              }
-              if (typeof data.billingEnabled === 'boolean') {
-                  setBillingEnabled(data.billingEnabled);
-              }
-              
-              // If user has active subscription, default to auto-renew view
-              if ((data.billingEnabled ?? true) && data.subscription?.status === 'active') {
-                  setIsAutoRenew(true);
-              }
+              applyBillingStatus(data);
+              setIsUsingCachedData(false);
+              setCachedAt(Date.now());
+              void writeCachedBillingStatus(data);
               return data;
           }
       } catch (e) {
           console.error("Failed to fetch billing status", e);
+          const cached = await readCachedBillingStatus();
+          if (cached.data) {
+              applyBillingStatus(cached.data, { fromCache: true });
+              setCachedAt(cached.cachedAt);
+              return cached.data;
+          }
       }
       return null;
-  }, [isOnline, session?.access_token]);
+  }, [applyBillingStatus, isOnline, readCachedBillingStatus, session?.access_token, user?.id, writeCachedBillingStatus]);
 
   const fetchBillingConfig = useCallback(async () => {
-      if (!isOnline) return;
+      if (!user?.id) return;
+      if (!isOnline) {
+          const cached = await readCachedBillingConfig();
+          if (cached.data && typeof cached.data.billing_enabled === 'boolean') {
+              setBillingEnabled(cached.data.billing_enabled);
+              setIsUsingCachedData(true);
+              setCachedAt(cached.cachedAt);
+          }
+          return;
+      }
       try {
           const { data: conexConfig } = await supabase
               .from('au_conex_config')
@@ -109,6 +198,8 @@ export default function SubscriptionPage() {
 
           if (typeof conexConfig?.billing_enabled === 'boolean') {
               setBillingEnabled(conexConfig.billing_enabled);
+              setIsUsingCachedData(false);
+              void writeCachedBillingConfig({ billing_enabled: conexConfig.billing_enabled });
               return;
           }
 
@@ -119,10 +210,18 @@ export default function SubscriptionPage() {
               .maybeSingle();
           if (typeof legacyConfig?.billing_enabled === 'boolean') {
               setBillingEnabled(legacyConfig.billing_enabled);
+              setIsUsingCachedData(false);
+              void writeCachedBillingConfig({ billing_enabled: legacyConfig.billing_enabled });
           }
       } catch {
+          const cached = await readCachedBillingConfig();
+          if (cached.data && typeof cached.data.billing_enabled === 'boolean') {
+              setBillingEnabled(cached.data.billing_enabled);
+              setIsUsingCachedData(true);
+              setCachedAt(cached.cachedAt);
+          }
       }
-  }, [isOnline]);
+  }, [isOnline, readCachedBillingConfig, user?.id, writeCachedBillingConfig]);
 
   const generateReference = useCallback((planType: 'weekly' | 'monthly') => {
       const suffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
@@ -228,29 +327,77 @@ export default function SubscriptionPage() {
 
   // Initial Load & URL Check
   useEffect(() => {
-    if (!user) return;
-
-    fetchBillingStatus();
-    fetchBillingConfig();
-
-    // Check for Paystack return
-    const reference = searchParams.get('reference');
-    const success = searchParams.get('success');
-    
-    if (reference) {
-        setPaymentState('confirming');
-        verifyPayment(reference);
-    } else if (success === 'true') {
-        setPaymentState('confirming');
-        startPolling();
-    }
-    
-    if (searchParams.get('cancelled') === 'true') {
-        setPaymentState('error');
+    if (!user) {
+        setIsInitialLoading(false);
+        return;
     }
 
-    return () => stopPolling();
+    let canceled = false;
+    setIsInitialLoading(true);
+
+    const bootstrap = async () => {
+        await Promise.all([fetchBillingStatus(), fetchBillingConfig()]);
+        if (canceled) return;
+        setIsInitialLoading(false);
+
+        // Check for Paystack return
+        const reference = searchParams.get('reference');
+        const success = searchParams.get('success');
+        
+        if (reference) {
+            setPaymentState('confirming');
+            void verifyPayment(reference);
+        } else if (success === 'true') {
+            setPaymentState('confirming');
+            startPolling();
+        }
+        
+        if (searchParams.get('cancelled') === 'true') {
+            setPaymentState('error');
+        }
+    };
+
+    void bootstrap();
+
+    return () => {
+        canceled = true;
+        stopPolling();
+    };
   }, [user, searchParams, fetchBillingConfig, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
+
+  useEffect(() => {
+      if (!user) return;
+
+      const channel = supabase
+          .channel(`subscription-billing-config-${user.id}`)
+          .on(
+              'postgres_changes',
+              { event: '*', schema: 'public', table: 'au_conex_config', filter: 'id=eq.1' },
+              (payload: any) => {
+                  const nextBillingEnabled = payload?.new?.billing_enabled;
+                  if (typeof nextBillingEnabled === 'boolean') {
+                      setBillingEnabled(nextBillingEnabled);
+                  }
+              },
+          )
+          .subscribe();
+
+      return () => {
+          void supabase.removeChannel(channel);
+      };
+  }, [user]);
+
+  useEffect(() => {
+      const onVisibility = () => {
+          if (document.visibilityState !== 'visible') return;
+          void fetchBillingConfig();
+      };
+
+      document.addEventListener('visibilitychange', onVisibility);
+      return () => {
+          document.removeEventListener('visibilitychange', onVisibility);
+      };
+  }, [fetchBillingConfig]);
 
   useEffect(() => {
       if (!isPromoUnlocked) return;
@@ -382,11 +529,15 @@ export default function SubscriptionPage() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
+        if (!isOnline || !session?.access_token) {
+            setLoading(false);
+            return;
+        }
         invokeEdgeFunction<any>('usage-status', { method: 'GET', silent: true })
             .then(({ data }) => setUsage(data))
-            .catch((e) => console.error(e))
+            .catch(() => {})
             .finally(() => setLoading(false));
-    }, []);
+    }, [isOnline, session?.access_token]);
 
     if (loading) return null;
     if (!usage || !usage.billingEnabled || usage.isPro) return null;
@@ -496,6 +647,12 @@ export default function SubscriptionPage() {
   );
 
   // --- Payment States ---
+  const isBootLoading = isUserLoading || isInitialLoading;
+  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isBootLoading);
+
+  if (isBootLoading && showSkeleton && paymentState === 'idle') {
+      return <BillingPageSkeleton />;
+  }
 
   if (paymentState === 'redirecting') {
       return (
@@ -558,6 +715,13 @@ export default function SubscriptionPage() {
 
   return (
     <div className="min-h-screen bg-transparent pb-16 relative">
+        {showSlowNotice && isBootLoading ? <SlowNetworkNotice onRetry={() => void fetchBillingStatus()} /> : null}
+        {isUsingCachedData && !isOnline ? (
+            <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100 md:mx-8">
+                Offline • showing cached subscription data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+            </div>
+        ) : null}
+
         <div className="pointer-events-none absolute left-1/2 top-[-10rem] h-[24rem] w-[24rem] -translate-x-1/2 rounded-full bg-primary/10 blur-3xl" />
 
         <section className="relative border-b border-border bg-background px-4 py-12 text-center">
@@ -719,102 +883,111 @@ export default function SubscriptionPage() {
             ) : (
                 // Pricing Options
                 <div className="space-y-8">
-                    <div className="relative">
-                        {isPromoUnlocked && (
-                            <div className="absolute inset-0 z-20 flex items-center justify-center rounded-3xl bg-background/70 backdrop-blur-sm">
-                                <div className="max-w-md rounded-2xl border border-primary/20 bg-card p-6 text-center shadow-xl">
-                                    <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                                        <CheckCircle2 className="h-6 w-6 text-primary" />
-                                    </div>
-                                    <h3 className="text-xl font-bold font-headline mb-2">Free Premium Access</h3>
-                                    <p className="text-muted-foreground mb-4">
-                                        Enjoy the ultimate features while it lasts! We&apos;ve unlocked Pro capabilities for everyone temporarily.
-                                    </p>
-                                    <p className="text-xs text-muted-foreground mb-4">
-                                        Note: Document history retention remains 14 days in promo mode.
-                                    </p>
-                                    <Badge variant="outline" className="bg-primary/5 border-primary/20">Limited Time Offer</Badge>
+                    {isPromoUnlocked ? (
+                        <div className="relative min-h-[440px] overflow-hidden rounded-3xl border border-primary/20 bg-card">
+                            <div className="absolute inset-0 z-0 p-6">
+                                <div className="grid h-full grid-cols-1 gap-6 md:grid-cols-3">
+                                    <div className="rounded-3xl border border-border/60 bg-muted/30" />
+                                    <div className="rounded-3xl border border-border/60 bg-muted/30" />
+                                    <div className="rounded-3xl border border-border/60 bg-muted/30" />
                                 </div>
                             </div>
-                        )}
-
-                        <div className={cn('grid grid-cols-1 md:grid-cols-3 gap-8 items-start', isPromoUnlocked && 'pointer-events-none opacity-60')}>
-                            {/* Free Plan */}
-                            <PricingCard
-                                title="Basic"
-                                price="NGN 0"
-                                period="forever"
-                                features={[
-                                    'Max 4 documents',
-                                    freeRetentionLabel,
-                                    'Standard AU models',
-                                    'Basic support'
-                                ]}
-                                onSelect={() => {}}
-                                disabled={true}
-                            />
-
-                            {/* Monthly (Highlighted) */}
-                            <OfflineGuard asChild>
-                                <PricingCard
-                                    title="Pro Monthly"
-                                    price={`NGN ${pricing.monthly.amount.toLocaleString()}`}
-                                    originalPrice={`NGN ${pricing.monthly.compare_at.toLocaleString()}`}
-                                    period="month"
-                                    highlighted={true}
-                                    savedLabel={pricing.monthly.label}
-                                    loading={loadingPlan === 'monthly'}
-                                    onSelect={() => handlePaystack('monthly')}
-                                    disabled={isPromoUnlocked}
-                                    features={[
-                                        'Unlimited documents',
-                                        proRetentionLabel,
-                                        'Premium AU models',
-                                        'Priority processing',
-                                        'Advanced data analysis',
-                                        'Priority support'
-                                    ]}
-                                />
-                            </OfflineGuard>
-
-                            {/* Weekly */}
-                            <OfflineGuard asChild>
-                                <PricingCard
-                                    title="Pro Weekly"
-                                    price={`NGN ${pricing.weekly.amount.toLocaleString()}`}
-                                    originalPrice={`NGN ${pricing.weekly.compare_at.toLocaleString()}`}
-                                    period="week"
-                                    savedLabel={pricing.weekly.label}
-                                    loading={loadingPlan === 'weekly'}
-                                    onSelect={() => handlePaystack('weekly')}
-                                    disabled={isPromoUnlocked}
-                                    features={[
-                                        'All Pro features',
-                                        '7-day access',
-                                        'Cancel anytime',
-                                        'Standard support'
-                                    ]}
-                                />
-                            </OfflineGuard>
+                            <div className="absolute inset-0 z-10 bg-background/85 backdrop-blur-sm" />
+                            <div className="absolute inset-0 z-20 flex items-center justify-center p-6">
+                                <div className="max-w-lg rounded-2xl border border-primary/20 bg-card p-8 text-center shadow-xl">
+                                    <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                                        <CheckCircle2 className="h-6 w-6 text-primary" />
+                                    </div>
+                                    <h3 className="mb-2 text-xl font-bold font-headline">Free Premium Access</h3>
+                                    <p className="mb-4 text-muted-foreground">
+                                        Enjoy the ultimate features while it lasts! We&apos;ve unlocked Pro capabilities for everyone temporarily.
+                                    </p>
+                                    <p className="mb-4 text-xs text-muted-foreground">
+                                        Note: Document history retention remains 14 days in promo mode.
+                                    </p>
+                                    <Badge variant="outline" className="border-primary/20 bg-primary/5">Limited Time Offer</Badge>
+                                </div>
+                            </div>
                         </div>
-                    </div>
+                    ) : (
+                        <>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+                                {/* Free Plan */}
+                                <PricingCard
+                                    title="Basic"
+                                    price="NGN 0"
+                                    period="forever"
+                                    features={[
+                                        'Max 4 documents',
+                                        freeRetentionLabel,
+                                        'Standard AU models',
+                                        'Basic support'
+                                    ]}
+                                    onSelect={() => {}}
+                                    disabled={true}
+                                />
 
-                    {!isPromoUnlocked && (
-                        <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
-                            <OfflineGuard asChild>
-                                <Button variant="outline" onClick={() => openManualBankTransfer('monthly')}>
-                                    <Banknote className="mr-2 h-4 w-4" />
-                                    Pay via Bank Transfer (Monthly)
-                                </Button>
-                            </OfflineGuard>
-                            <OfflineGuard asChild>
-                                <Button variant="outline" onClick={() => openManualBankTransfer('weekly')}>
-                                    <Banknote className="mr-2 h-4 w-4" />
-                                    Pay via Bank Transfer (Weekly)
-                                </Button>
-                            </OfflineGuard>
-                        </div>
+                                {/* Monthly (Highlighted) */}
+                                <OfflineGuard asChild>
+                                    <PricingCard
+                                        title="Pro Monthly"
+                                        price={`NGN ${pricing.monthly.amount.toLocaleString()}`}
+                                        originalPrice={`NGN ${pricing.monthly.compare_at.toLocaleString()}`}
+                                        period="month"
+                                        highlighted={true}
+                                        savedLabel={pricing.monthly.label}
+                                        loading={loadingPlan === 'monthly'}
+                                        onSelect={() => handlePaystack('monthly')}
+                                        disabled={isPromoUnlocked}
+                                        features={[
+                                            'Unlimited documents',
+                                            proRetentionLabel,
+                                            'Premium AU models',
+                                            'Priority processing',
+                                            'Advanced data analysis',
+                                            'Priority support'
+                                        ]}
+                                    />
+                                </OfflineGuard>
+
+                                {/* Weekly */}
+                                <OfflineGuard asChild>
+                                    <PricingCard
+                                        title="Pro Weekly"
+                                        price={`NGN ${pricing.weekly.amount.toLocaleString()}`}
+                                        originalPrice={`NGN ${pricing.weekly.compare_at.toLocaleString()}`}
+                                        period="week"
+                                        savedLabel={pricing.weekly.label}
+                                        loading={loadingPlan === 'weekly'}
+                                        onSelect={() => handlePaystack('weekly')}
+                                        disabled={isPromoUnlocked}
+                                        features={[
+                                            'All Pro features',
+                                            '7-day access',
+                                            'Cancel anytime',
+                                            'Standard support'
+                                        ]}
+                                    />
+                                </OfflineGuard>
+                            </div>
+
+                            <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+                                <OfflineGuard asChild>
+                                    <Button variant="outline" onClick={() => openManualBankTransfer('monthly')}>
+                                        <Banknote className="mr-2 h-4 w-4" />
+                                        Pay via Bank Transfer (Monthly)
+                                    </Button>
+                                </OfflineGuard>
+                                <OfflineGuard asChild>
+                                    <Button variant="outline" onClick={() => openManualBankTransfer('weekly')}>
+                                        <Banknote className="mr-2 h-4 w-4" />
+                                        Pay via Bank Transfer (Weekly)
+                                    </Button>
+                                </OfflineGuard>
+                            </div>
+                        </>
                     )}
+
                 </div>
             )}
 

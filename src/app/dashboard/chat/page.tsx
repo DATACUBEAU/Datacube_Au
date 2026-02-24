@@ -74,6 +74,8 @@ import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
 import { GlobalHistoryPrompt } from '@/components/global-history-prompt';
+import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
+import { ChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 
 import { type ChatMessage } from '@/lib/api/chat';
 
@@ -170,7 +172,13 @@ export default function ChatPage() {
   }, []);
 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
-  const { documents: apiDocuments, loading: docsLoading } = useAuDocuments();
+  const {
+    documents: apiDocuments,
+    loading: docsLoading,
+    refresh: refreshDocuments,
+    isUsingCachedData,
+    cachedAt,
+  } = useAuDocuments();
   const { 
     history: currentChatHistory, 
     setHistory: setCurrentChatHistory,
@@ -870,9 +878,22 @@ export default function ChatPage() {
   };
 
   const isLoading = docsLoading || isResponding || isSwitchingDocs;
+  const isBootLoading = isLoadingAuth || (docsLoading && currentChatHistory.length === 0 && !isInitialized);
+  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isBootLoading);
+
+  if (isBootLoading && showSkeleton && currentChatHistory.length === 0) {
+    return <ChatPageSkeleton />;
+  }
 
   return (
     <main className="flex h-[calc(100dvh-3.5rem)] flex-col relative">
+      {showSlowNotice && isBootLoading ? <SlowNetworkNotice onRetry={() => void refreshDocuments()} /> : null}
+      {isUsingCachedData && !isOnline ? (
+        <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100 md:mx-8">
+          Offline • showing cached chat documents{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+        </div>
+      ) : null}
+
       <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background/80 backdrop-blur-md px-4 py-3 md:h-14 md:flex-row md:items-center md:justify-end md:px-8 shrink-0 z-10">
         <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
           <div className="flex items-center gap-2">

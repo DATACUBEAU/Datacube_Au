@@ -31,6 +31,7 @@ import PwaInstallButton from '@/components/pwa-install-button';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
+import { explicitSignOut } from '@/lib/auth/explicit-signout';
 
 import {
   Dialog,
@@ -52,11 +53,18 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
+import { SettingsPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 
 export default function SettingsPage() {
-  const [user] = useSupabaseUser();
+  const [user, , isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
+  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isUserLoading);
+
+  if (isUserLoading && showSkeleton) {
+    return <SettingsPageSkeleton />;
+  }
 
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
@@ -174,12 +182,12 @@ export default function SettingsPage() {
       }
 
       // 3. Final sign out
-      await supabase.auth.signOut();
+      await explicitSignOut(user?.id ?? null);
       router.push('/');
     } catch (error) {
       console.error("[signOut] Error wiping data:", error);
       // Even if wipe fails, we should sign out for safety
-      await supabase.auth.signOut();
+      await explicitSignOut(user?.id ?? null);
       router.push('/');
     }
   };
@@ -215,6 +223,7 @@ export default function SettingsPage() {
   
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
+      {showSlowNotice && isUserLoading ? <SlowNetworkNotice /> : null}
 
       <div className="mx-auto grid w-full max-w-4xl gap-2">
         <h1 className="font-headline text-3xl font-semibold">Settings</h1>

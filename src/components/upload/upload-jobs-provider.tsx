@@ -19,6 +19,7 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from '@/hooks/use-toast';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { guardRequest } from '@/lib/api/request-guard';
 
 type UploadJobsContextValue = {
   jobs: UploadJobRow[];
@@ -204,6 +205,104 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     });
   }, []);
 
+  const normalizeJobRows = useCallback((rows: any[], includeError: boolean): UploadJobRow[] => {
+    return rows.map((j: any) => ({
+      ...j,
+      owner_id: j.owner_id ?? j.user_id ?? null,
+      user_id: j.user_id ?? j.owner_id ?? null,
+      error: includeError ? (j.error || null) : null,
+    })) as UploadJobRow[];
+  }, []);
+
+  const reconcileJobsWithDocuments = useCallback(
+    async (rows: UploadJobRow[]): Promise<UploadJobRow[]> => {
+      if (!user?.id || rows.length === 0) return rows;
+
+      const targetDocumentIds = Array.from(
+        new Set(
+          rows
+            .filter((job) => job.status === 'queued' || job.status === 'uploaded' || job.status === 'processing')
+            .map((job) => job.document_id)
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+
+      if (targetDocumentIds.length === 0) return rows;
+
+      const documentOwnershipConditions = [
+        `owner_id.eq.${user.id},user_id.eq.${user.id}`,
+        `user_id.eq.${user.id}`,
+      ];
+
+      let documentRows: any[] | null = null;
+      for (const conditions of documentOwnershipConditions) {
+        const query = supabase
+          .from('au_documents')
+          .select('id,status,error,updated_at')
+          .in('id', targetDocumentIds)
+          .limit(targetDocumentIds.length);
+
+        applyOwnershipFilter(query, conditions);
+        const { data, error } = await query;
+        if (error) {
+          if (isMissingOwnerIdColumnError(error) && conditions.includes('owner_id')) {
+            continue;
+          }
+          break;
+        }
+        documentRows = data || [];
+        break;
+      }
+
+      if (!documentRows) return rows;
+
+      const docMap = new Map<string, any>();
+      for (const row of documentRows) {
+        if (!row?.id) continue;
+        docMap.set(String(row.id), row);
+      }
+
+      return rows.map((job) => {
+        const doc = docMap.get(job.document_id);
+        if (!doc) return job;
+
+        const docStatus = String(doc.status || '').toLowerCase();
+        const docUpdatedAt = typeof doc.updated_at === 'string' ? doc.updated_at : job.updated_at;
+
+        if (docStatus === 'failed') {
+          return {
+            ...job,
+            status: 'failed',
+            error: (typeof doc.error === 'string' && doc.error) || job.error || 'Document processing failed.',
+            updated_at: docUpdatedAt,
+          };
+        }
+
+        if (docStatus === 'completed' || docStatus === 'done' || docStatus === 'indexed') {
+          return {
+            ...job,
+            status: 'done',
+            progress: 100,
+            error: null,
+            updated_at: docUpdatedAt,
+          };
+        }
+
+        if (docStatus === 'processing' || docStatus === 'uploaded') {
+          return {
+            ...job,
+            status: 'processing',
+            progress: Math.max(job.progress || 0, 92),
+            updated_at: docUpdatedAt,
+          };
+        }
+
+        return job;
+      });
+    },
+    [user?.id],
+  );
+
   const refreshJobs = useCallback(async () => {
     if (isLoadingAuth) {
       return;
@@ -248,12 +347,9 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
 
         if (safeData) {
-          mergeJobs(safeData.map((j: any) => ({
-            ...j,
-            owner_id: j.owner_id ?? j.user_id ?? null,
-            user_id: j.user_id ?? j.owner_id ?? null,
-            error: j.error || null,
-          })) as UploadJobRow[]);
+          const normalizedRows = normalizeJobRows(safeData, true);
+          const reconciledRows = await reconcileJobsWithDocuments(normalizedRows);
+          mergeJobs(reconciledRows);
         }
         return;
       }
@@ -302,27 +398,32 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
             }
 
             if (data2) {
-              mergeJobs(data2.map((j: any) => ({
-                ...j,
-                owner_id: j.owner_id ?? j.user_id ?? null,
-                user_id: j.user_id ?? j.owner_id ?? null,
-                error: null,
-              })) as UploadJobRow[]);
+              const normalizedRows = normalizeJobRows(data2, false);
+              const reconciledRows = await reconcileJobsWithDocuments(normalizedRows);
+              mergeJobs(reconciledRows);
               return;
             }
           }
         }
       } else if (data) {
-        mergeJobs((data as any[]).map((j) => ({
-          ...j,
-          owner_id: j.owner_id ?? j.user_id ?? null,
-          user_id: j.user_id ?? j.owner_id ?? null,
-        })) as UploadJobRow[]);
+        const normalizedRows = normalizeJobRows(data as any[], true);
+        const reconciledRows = await reconcileJobsWithDocuments(normalizedRows);
+        mergeJobs(reconciledRows);
       }
     } catch (err) {
       console.error('[upload-jobs] Unexpected error in refreshJobs:', err);
     }
-  }, [getWorkerOwnershipConditions, isLoadingAuth, isOnline, session?.access_token, useSafeSelection, mergeJobs, user]);
+  }, [
+    getWorkerOwnershipConditions,
+    isLoadingAuth,
+    isOnline,
+    mergeJobs,
+    normalizeJobRows,
+    reconcileJobsWithDocuments,
+    session?.access_token,
+    useSafeSelection,
+    user,
+  ]);
 
   useEffect(() => {
     if (isLoadingAuth) return;
@@ -349,23 +450,32 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     const PROCESSING_STUCK_MS = 10 * 60 * 1000;
     const UPLOADING_STUCK_MS = 5 * 60 * 1000;
+    const QUEUED_STUCK_MS = 3 * 60 * 1000;
     const interval = setInterval(() => {
       const now = Date.now();
       jobs.forEach((j) => {
         const updatedAt = Date.parse(j.updated_at);
         if (Number.isNaN(updatedAt)) return;
+
         if (j.status === 'processing' && now - updatedAt > PROCESSING_STUCK_MS && !stuckNotifiedRef.current.has(j.id)) {
           stuckNotifiedRef.current.add(j.id);
           toast({
             title: 'Processing taking longer than expected',
-            description: `“${j.file_name}” may be stuck. You can retry from Uploads.`,
+            description: `"${j.file_name}" may be stuck. You can retry from Uploads.`,
             variant: 'destructive',
           });
         } else if (j.status === 'uploading' && now - updatedAt > UPLOADING_STUCK_MS && !stuckNotifiedRef.current.has(j.id)) {
           stuckNotifiedRef.current.add(j.id);
           toast({
             title: 'Upload taking longer than expected',
-            description: `“${j.file_name}” may be stuck. Check your network and retry.`,
+            description: `"${j.file_name}" may be stuck. Check your network and retry.`,
+            variant: 'destructive',
+          });
+        } else if ((j.status === 'queued' || j.status === 'uploaded') && now - updatedAt > QUEUED_STUCK_MS && !stuckNotifiedRef.current.has(j.id)) {
+          stuckNotifiedRef.current.add(j.id);
+          toast({
+            title: 'Upload is queued for too long',
+            description: `"${j.file_name}" is waiting for backend processing. Check VPS worker/queue health.`,
             variant: 'destructive',
           });
         }
@@ -434,8 +544,21 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       controllersRef.current.set(job.id, controller);
 
       try {
-        if (!isOnline) throw new Error('Offline. Connect to the internet to upload.');
-        if (!session?.access_token) throw new Error('Sign in required to upload.');
+        const gate = guardRequest({
+          isOnline,
+          requireAuth: true,
+          accessToken: session?.access_token ?? null,
+          allowOfflineRead: false,
+          warnKey: 'upload:run',
+          context: 'upload job',
+        });
+        if (!gate.ok) {
+          throw new Error(
+            gate.reason === 'offline'
+              ? 'Offline. Connect to the internet to upload.'
+              : 'Sign in required to upload.',
+          );
+        }
 
         const file = await getJobFile(job.id);
         if (!file) throw new Error('Missing file data. Retry upload.');
@@ -622,7 +745,22 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
   const enqueueUploads = useCallback(
     async (inputs: CreateUploadJobInput[]) => {
-      if (!isOnline) throw new Error('Offline. Connect to the internet to upload.');
+      const gate = guardRequest({
+        isOnline,
+        requireAuth: true,
+        accessToken: session?.access_token ?? null,
+        allowOfflineRead: false,
+        warnKey: 'upload:enqueue',
+        context: 'upload enqueue',
+      });
+      if (!gate.ok) {
+        throw new Error(
+          gate.reason === 'offline'
+            ? 'Offline. Connect to the internet to upload.'
+            : 'Authentication required to upload.',
+        );
+      }
+
       if (isLoadingAuth) throw new Error('Authentication is still loading. Please try again.');
       if (!session?.access_token) throw new Error('Authentication required to upload.');
 

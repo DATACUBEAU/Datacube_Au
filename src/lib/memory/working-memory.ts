@@ -213,6 +213,15 @@ export async function clearDocWorkingMemory(userId: string, docId: string): Prom
   await store.removeItem(docMetaKey(userId, docId));
 }
 
+export async function clearUserLocalWorkingMemory(userId: string): Promise<{ removed: number }> {
+  const store = getWorkingMemoryStore();
+  const keys = await store.keys();
+  const userPrefixes = [`${PREFIX}:mem:global:${userId}`, `${PREFIX}:mem:doc:${userId}:`, `${PREFIX}:meta:doc:${userId}:`];
+  const toRemove = keys.filter((k) => userPrefixes.some((prefix) => k.startsWith(prefix)));
+  await Promise.all(toRemove.map((k) => store.removeItem(k)));
+  return { removed: toRemove.length };
+}
+
 export async function clearAllLocalWorkingMemory(): Promise<{ removed: number }> {
   const store = getWorkingMemoryStore();
   const keys = await store.keys();

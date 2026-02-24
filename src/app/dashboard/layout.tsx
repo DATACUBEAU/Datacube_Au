@@ -76,6 +76,7 @@ import { useUnreadCount } from '@/hooks/use-unread-count';
 import { Badge } from '@/components/ui/badge';
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import { ToastAction } from '@/components/ui/toast';
+import { explicitSignOut } from '@/lib/auth/explicit-signout';
 
 type NavItem = {
   href: string;
@@ -414,12 +415,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       }
 
       // 3. Final sign out
-      await supabase.auth.signOut();
+      await explicitSignOut(user?.id ?? null);
       router.push('/');
     } catch (error) {
       console.error("[signOut] Error wiping data:", error);
       // Even if wipe fails, we should sign out for safety
-      await supabase.auth.signOut();
+      await explicitSignOut(user?.id ?? null);
       router.push('/');
     }
   };

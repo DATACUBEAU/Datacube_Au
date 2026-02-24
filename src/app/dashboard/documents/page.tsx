@@ -41,6 +41,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
+import { DocumentsPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 type DocumentType = "main_textbook" | "past_questions";
 type DocumentStatus = "uploading" | "processing" | "completed" | "failed";
@@ -62,11 +65,15 @@ const AUTH_DOCUMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export default function DocumentsPage() {
   const [user] = useSupabaseUser();
   const [isAdmin] = useIsAdmin();
+  const { isOnline } = useNetworkStatus();
   const { 
     documents: apiDocuments, 
     loading: apiLoading, 
     remove: apiRemove,
-    deletingIds 
+    deletingIds,
+    refresh,
+    isUsingCachedData,
+    cachedAt,
   } = useAuDocuments(5000);
   const { jobs, removeJob } = useUploadJobs();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
@@ -82,18 +89,27 @@ export default function DocumentsPage() {
   };
 
   // Map API documents to local format
-  const documents = useMemo(() => apiDocuments.map(row => ({
-    id: row.id,
-    fileName: row.file_name,
-    documentType: row.document_type as DocumentType,
-    status: row.status as DocumentStatus,
-    createdAt: row.created_at,
-    expiresAt: row.expires_at ?? undefined,
-    parentId: row.parent_id ?? undefined,
-    filePath: row.file_path,
-  })), [apiDocuments]);
+  const documents = useMemo(() => apiDocuments.map(row => {
+    // Accept legacy/status drift values from worker pipelines.
+    const rowStatus = String(row.status || '').toLowerCase();
+    const normalizedStatus = (rowStatus === 'indexed' || rowStatus === 'done')
+      ? 'completed'
+      : row.status;
+
+    return {
+      id: row.id,
+      fileName: row.file_name,
+      documentType: row.document_type as DocumentType,
+      status: normalizedStatus as DocumentStatus,
+      createdAt: row.created_at,
+      expiresAt: row.expires_at ?? undefined,
+      parentId: row.parent_id ?? undefined,
+      filePath: row.file_path,
+    };
+  }), [apiDocuments]);
 
   const loading = apiLoading;
+  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(loading);
   const cleanupInProgress = useMemo(() => new Set<string>(), []);
 
   const getComputedExpiresAt = (doc: DocumentData) => {
@@ -182,6 +198,10 @@ export default function DocumentsPage() {
     // Show all documents that are either in the DB or currently being uploaded
     return Array.from(map.values());
   }, [documents, jobs]);
+
+  if (loading && showSkeleton && mergedDocuments.length === 0) {
+    return <DocumentsPageSkeleton />;
+  }
 
   // ---- TREE BUILD ----
   const tree = useMemo(() => {
@@ -445,6 +465,13 @@ export default function DocumentsPage() {
   // ---- RENDER ----
   return (
     <main className="p-4 md:p-8 space-y-6">
+      {showSlowNotice && loading ? <SlowNetworkNotice onRetry={() => void refresh()} /> : null}
+      {isUsingCachedData && !isOnline ? (
+        <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
+          Offline • showing cached data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-1">
         <h1 className="text-2xl font-headline font-semibold">Document Manager</h1>
         <p className="text-sm text-muted-foreground">Manage and organize your study materials.</p>
@@ -454,7 +481,7 @@ export default function DocumentsPage() {
         <UploadCenter />
       </div>
 
-      {loading && (
+      {loading && !showSkeleton && (
         <div className="flex items-center justify-center p-12">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>

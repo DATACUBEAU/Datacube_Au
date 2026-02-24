@@ -34,6 +34,9 @@ import type { AuDocumentRow } from '@/lib/au/types';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useUploadJobs } from '@/components/upload/upload-jobs-provider';
 import type { UploadJobStatus } from '@/lib/upload/types';
+import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
+import { DashboardPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
 const quickAccessItems = [
   {
@@ -69,8 +72,20 @@ const quickAccessItems = [
 
 export default function DashboardPage() {
   const [user] = useSupabaseUser();
-  const { documents, loading: documentsLoading } = useAuDocuments();
+  const { isOnline } = useNetworkStatus();
+  const {
+    documents,
+    loading: documentsLoading,
+    refresh,
+    isUsingCachedData,
+    cachedAt,
+  } = useAuDocuments();
   const { jobs } = useUploadJobs();
+  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(documentsLoading);
+
+  if (documentsLoading && showSkeleton && documents.length === 0) {
+    return <DashboardPageSkeleton />;
+  }
 
   const recentDocuments = useMemo(() => {
     if (!user) return [];
@@ -141,6 +156,13 @@ export default function DashboardPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
+      {showSlowNotice && documentsLoading ? <SlowNetworkNotice onRetry={() => void refresh()} /> : null}
+      {isUsingCachedData && !isOnline ? (
+        <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
+          Offline • showing cached dashboard data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+        </div>
+      ) : null}
+
       <div className="flex items-center">
         <h1 className="font-headline text-2xl font-semibold">
           Welcome, {(user?.user_metadata?.full_name as string | undefined) || (user?.user_metadata?.name as string | undefined) || 'User'}!

@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '@shared/schemas';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { logOnce } from '@/lib/log/dedupe';
+import { guardRequest } from '@/lib/api/request-guard';
 
 export function useAuExams(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
@@ -19,13 +20,20 @@ export function useAuExams(selectedDocId: string | null) {
 
   const startExamGeneration = useCallback(async (pastQuestionIds: string[] = []) => {
     if (!selectedDocId || !user) return;
-    if (!isOnline) {
-      logOnce('warn', 'exams:practice:offline', '[exams] Practice exam blocked (offline)');
-      return;
-    }
-    if (!session?.access_token) {
-      logOnce('warn', 'exams:practice:no_token', '[exams] Practice exam blocked (no access token)');
-      toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate a practice exam.' });
+    const gate = guardRequest({
+      isOnline,
+      requireAuth: true,
+      accessToken: session?.access_token ?? null,
+      warnKey: 'exams:practice',
+      context: 'practice exam',
+    });
+    if (!gate.ok) {
+      if (gate.reason === 'offline') {
+        logOnce('warn', 'exams:practice:offline', '[exams] Practice exam blocked (offline)');
+      } else {
+        logOnce('warn', 'exams:practice:no_token', '[exams] Practice exam blocked (no access token)');
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate a practice exam.' });
+      }
       return;
     }
     
@@ -63,13 +71,20 @@ export function useAuExams(selectedDocId: string | null) {
 
   const startPredictionGeneration = useCallback(async (pastQuestionIds: string[]) => {
     if (!selectedDocId || !user || pastQuestionIds.length === 0) return;
-    if (!isOnline) {
-      logOnce('warn', 'exams:predictions:offline', '[exams] Predictions blocked (offline)');
-      return;
-    }
-    if (!session?.access_token) {
-      logOnce('warn', 'exams:predictions:no_token', '[exams] Predictions blocked (no access token)');
-      toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate predictions.' });
+    const gate = guardRequest({
+      isOnline,
+      requireAuth: true,
+      accessToken: session?.access_token ?? null,
+      warnKey: 'exams:predictions',
+      context: 'predictions',
+    });
+    if (!gate.ok) {
+      if (gate.reason === 'offline') {
+        logOnce('warn', 'exams:predictions:offline', '[exams] Predictions blocked (offline)');
+      } else {
+        logOnce('warn', 'exams:predictions:no_token', '[exams] Predictions blocked (no access token)');
+        toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate predictions.' });
+      }
       return;
     }
     

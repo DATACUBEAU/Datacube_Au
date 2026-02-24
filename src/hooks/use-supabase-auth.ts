@@ -9,8 +9,13 @@ export function useSupabaseUser() {
 }
 
 export function useSupabaseSession() {
-  const { session, isLoading } = useSmartAuth();
-  return { session, loading: isLoading };
+  const { session, isLoading, authState, isOfflineSession } = useSmartAuth();
+  return { session, loading: isLoading, authState, isOfflineSession };
+}
+
+export function useAuthState() {
+  const { authState, isOfflineSession, isAuthed, isLoading } = useSmartAuth();
+  return { authState, isOfflineSession, isAuthed, isLoading };
 }
 
 export function useIsAdmin(): readonly [boolean, boolean] {

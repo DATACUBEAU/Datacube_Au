@@ -13,8 +13,6 @@
     "functions",
     "./supabase",
     "tests",
-    "firebase-worker",
     "rag-worker"
   ]
 }
-

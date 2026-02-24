@@ -1,10 +1,14 @@
 export interface UploadJob {
   id: string;
   document_id: string;
-  owner_id: string;
+  owner_id?: string | null;
+  user_id?: string | null;
   bucket: string;
   object_path: string;
   metadata?: any;
+  status?: string;
+  progress?: number;
+  updated_at?: string;
 }
 
 export interface Chunk {
