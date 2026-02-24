@@ -78,7 +78,7 @@ export function detectUploadKind(file: File): SupportedUploadKind | null {
 const MIME_BY_EXTENSION: Record<string, string> = {
   '.pdf': 'application/pdf',
   '.txt': 'text/plain',
-  '.md': 'text/plain',
+  '.md': 'text/markdown',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   '.csv': 'text/csv',

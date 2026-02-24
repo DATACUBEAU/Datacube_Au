@@ -149,19 +149,23 @@ export default function SubscriptionPage() {
       if (!user) return;
       setManualPaymentStatus('submitting');
       try {
-          const { error } = await supabase.from('au_manual_payments').insert({
-              user_id: user.id,
-              amount: pricing[manualPlan].amount,
-              reference_code: manualPaymentRef,
-              status: 'pending',
+          const { error } = await invokeEdgeFunction<any>('submit-manual-payment', {
+              method: 'POST',
+              requireAuth: true,
+              body: {
+                  plan: manualPlan,
+                  amount: pricing[manualPlan].amount,
+                  reference: manualPaymentRef,
+              },
           });
-
           if (error) throw error;
+
           setManualPaymentStatus('success');
           toast({
               title: 'Payment Submitted',
               description: 'Your transfer has been submitted for confirmation.',
           });
+          void fetchBillingStatus();
       } catch (error: any) {
           setManualPaymentStatus('idle');
           toast({
@@ -170,7 +174,7 @@ export default function SubscriptionPage() {
               description: error?.message || 'Unable to submit transfer proof.',
           });
       }
-  }, [manualPaymentRef, manualPlan, pricing, toast, user]);
+  }, [fetchBillingStatus, manualPaymentRef, manualPlan, pricing, toast, user]);
 
   const stopPolling = useCallback(() => {
       if (pollTimerRef.current) {

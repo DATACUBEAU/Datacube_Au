@@ -14,6 +14,7 @@ export type UploadJobStatus =
 export type UploadJobRow = {
   id: string;
   user_id: string | null;
+  owner_id?: string | null;
   document_id: string;
   document_type?: AuDocumentType | null;
   parent_id?: string | null;

@@ -3,11 +3,7 @@
 import { usePathname } from 'next/navigation';
 import { useReducedMotion } from 'framer-motion';
 import { useEffect, useState } from 'react';
-import { MarketingBackground } from './backgrounds/marketing-background';
-import { InformationalBackground } from './backgrounds/informational-background';
-import { SystemBackground } from './backgrounds/system-background';
-import { ProductivityBackground } from './backgrounds/productivity-background';
-import { FocusBackground } from './backgrounds/focus-background';
+import { Adaptive3DBackground } from './backgrounds/adaptive-3d-background';
 
 type PageType = 'marketing' | 'informational' | 'system' | 'productivity' | 'focus';
 
@@ -46,24 +42,5 @@ export function BackgroundController() {
   // though for backgrounds it's usually fine, let's be safe.
   if (!mounted) return null;
 
-  // Global Reduced Motion Override
-  if (shouldReduceMotion) {
-    return <SystemBackground />;
-  }
-
-  // Render appropriate background
-  switch (pageType) {
-    case 'marketing':
-      return <MarketingBackground />;
-    case 'informational':
-      return <InformationalBackground />;
-    case 'system':
-      return <SystemBackground />;
-    case 'productivity':
-      return <ProductivityBackground />;
-    case 'focus':
-      return <FocusBackground />;
-    default:
-      return <SystemBackground />;
-  }
+  return <Adaptive3DBackground scene={pageType} disableMotion={Boolean(shouldReduceMotion)} />;
 }

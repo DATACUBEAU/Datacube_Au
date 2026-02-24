@@ -61,6 +61,42 @@ function createId() {
   return typeof randomUUID === 'function' ? randomUUID.call(globalThis.crypto) : uuidv4();
 }
 
+const UPLOAD_MIME_BY_EXTENSION: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.csv': 'text/csv',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+
+function getExtension(fileName: string): string {
+  const index = fileName.lastIndexOf('.');
+  if (index === -1) return '';
+  return fileName.slice(index).toLowerCase();
+}
+
+function ensureUploadMimeType(fileName: string, mimeType: string): string {
+  const normalizedMime = String(mimeType || '').trim().toLowerCase();
+  const ext = getExtension(fileName);
+  const extMime = UPLOAD_MIME_BY_EXTENSION[ext];
+  if (extMime) return extMime;
+  if (normalizedMime && normalizedMime !== 'application/octet-stream') return normalizedMime;
+  return 'text/plain';
+}
+
+function isMissingOwnerIdColumnError(error: any): boolean {
+  if (!error) return false;
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  return (
+    message.includes('owner_id') && message.includes('does not exist')
+  ) || (
+    details.includes('owner_id') && details.includes('does not exist')
+  );
+}
+
 export function UploadJobsProvider({ children }: { children: React.ReactNode }) {
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
@@ -79,6 +115,19 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? '';
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? '';
+
+  const getWorkerOwnershipConditions = useCallback(async (): Promise<string[]> => {
+    const effective = await getEffectiveOwnershipConditions(user);
+    if (!user?.id) {
+      return effective ? [effective] : [];
+    }
+
+    const combined = `owner_id.eq.${user.id},user_id.eq.${user.id}`;
+    if (!effective || effective === combined) {
+      return [combined];
+    }
+    return [combined, effective];
+  }, [user]);
 
   // Fetch Limit on Load
   useEffect(() => {
@@ -107,7 +156,12 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
   const mergeJobs = useCallback((remoteJobs: UploadJobRow[]) => {
     setJobs(currentJobs => {
-      const remoteMap = new Map(remoteJobs.map(j => [j.id, j]));
+      const normalizedRemoteJobs = remoteJobs.map((job) => ({
+        ...job,
+        owner_id: job.owner_id ?? job.user_id ?? null,
+        user_id: job.user_id ?? job.owner_id ?? null,
+      }));
+      const remoteMap = new Map(normalizedRemoteJobs.map(j => [j.id, j]));
       const merged: UploadJobRow[] = [];
       const processedIds = new Set<string>();
 
@@ -139,7 +193,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
       });
 
-      remoteJobs.forEach(remoteJob => {
+      normalizedRemoteJobs.forEach(remoteJob => {
         if (!processedIds.has(remoteJob.id)) {
           merged.push(remoteJob);
           processedIds.add(remoteJob.id);
@@ -163,77 +217,112 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     }
 
     try {
-      const fullConditions = await getEffectiveOwnershipConditions(user);
+      const ownershipConditions = await getWorkerOwnershipConditions();
+      if (ownershipConditions.length === 0) return;
       
       const safeColumns = [
-        'id', 'user_id', 'document_id', 'label', 'file_name', 'mime_type', 
+        'id', 'owner_id', 'user_id', 'document_id', 'label', 'file_name', 'mime_type', 
         'file_size_bytes', 'bucket', 'object_path', 'status', 'progress', 
         'tus_url', 'created_at', 'updated_at'
       ];
 
       if (useSafeSelection) {
-        const safeConditions = fullConditions;
+        let safeData: any[] | null = null;
+        for (const safeConditions of ownershipConditions) {
+          const query = supabase
+            .from('au_worker_jobs')
+            .select(safeColumns.join(', '))
+            .order('created_at', { ascending: false })
+            .limit(50);
 
-        const query = supabase
-          .from('au_worker_jobs')
-          .select(safeColumns.join(', '))
-          .order('created_at', { ascending: false })
-          .limit(50);
+          applyOwnershipFilter(query, safeConditions);
+          const { data, error } = await query;
+          if (error) {
+            if (isMissingOwnerIdColumnError(error) && safeConditions.includes('owner_id')) {
+              continue;
+            }
+            break;
+          }
+          safeData = data || [];
+          break;
+        }
 
-        applyOwnershipFilter(query, safeConditions);
-        const { data, error } = await query;
-
-        if (!error && data) {
-          mergeJobs(data.map((j: any) => ({ 
-            ...j, 
+        if (safeData) {
+          mergeJobs(safeData.map((j: any) => ({
+            ...j,
+            owner_id: j.owner_id ?? j.user_id ?? null,
+            user_id: j.user_id ?? j.owner_id ?? null,
             error: j.error || null,
           })) as UploadJobRow[]);
         }
         return;
       }
 
-      const query = supabase
-        .from('au_worker_jobs')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
+      let data: any[] | null = null;
+      let error: any = null;
+      for (const conditions of ownershipConditions) {
+        const query = supabase
+          .from('au_worker_jobs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(50);
 
-      applyOwnershipFilter(query, fullConditions);
-      const { data, error } = await query;
+        applyOwnershipFilter(query, conditions);
+        const result = await query;
+        data = result.data || null;
+        error = result.error || null;
+
+        if (!error) break;
+        if (isMissingOwnerIdColumnError(error) && conditions.includes('owner_id')) {
+          continue;
+        }
+        break;
+      }
 
       if (error) {
-        const errorMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
         const isMissingErrorCol = isMissingUploadJobsErrorColumn(error);
 
         if (isMissingErrorCol) {
           setUseSafeSelection(true);
           
-          const safeConditions = fullConditions;
-          
-          const query2 = supabase
-            .from('au_worker_jobs')
-            .select(safeColumns.join(', '))
-            .order('created_at', { ascending: false })
-            .limit(50);
-          
-          applyOwnershipFilter(query2, safeConditions);
-          const { data: data2, error: error2 } = await query2;
-          
-          if (!error2 && data2) {
-            mergeJobs(data2.map((j: any) => ({ 
-              ...j, 
-              error: null,
-            })) as UploadJobRow[]);
-            return;
+          for (const safeConditions of ownershipConditions) {
+            const query2 = supabase
+              .from('au_worker_jobs')
+              .select(safeColumns.join(', '))
+              .order('created_at', { ascending: false })
+              .limit(50);
+
+            applyOwnershipFilter(query2, safeConditions);
+            const { data: data2, error: error2 } = await query2;
+            if (error2) {
+              if (isMissingOwnerIdColumnError(error2) && safeConditions.includes('owner_id')) {
+                continue;
+              }
+              break;
+            }
+
+            if (data2) {
+              mergeJobs(data2.map((j: any) => ({
+                ...j,
+                owner_id: j.owner_id ?? j.user_id ?? null,
+                user_id: j.user_id ?? j.owner_id ?? null,
+                error: null,
+              })) as UploadJobRow[]);
+              return;
+            }
           }
         }
       } else if (data) {
-        mergeJobs(data as UploadJobRow[]);
+        mergeJobs((data as any[]).map((j) => ({
+          ...j,
+          owner_id: j.owner_id ?? j.user_id ?? null,
+          user_id: j.user_id ?? j.owner_id ?? null,
+        })) as UploadJobRow[]);
       }
     } catch (err) {
       console.error('[upload-jobs] Unexpected error in refreshJobs:', err);
     }
-  }, [isLoadingAuth, isOnline, session?.access_token, user, useSafeSelection, mergeJobs]);
+  }, [getWorkerOwnershipConditions, isLoadingAuth, isOnline, session?.access_token, useSafeSelection, mergeJobs, user]);
 
   useEffect(() => {
     if (isLoadingAuth) return;
@@ -287,25 +376,37 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
   const updateJobRow = useCallback(
     async (jobId: string, patch: Partial<UploadJobRow>) => {
-      const fullConditions = await getEffectiveOwnershipConditions(user);
+      const ownershipConditions = await getWorkerOwnershipConditions();
+      if (ownershipConditions.length === 0) return;
       const safePatch = { ...patch };
-      let conditions = fullConditions;
       if (useSafeSelection) {
         delete (safePatch as any).error;
-        conditions = fullConditions;
       }
 
-      const query = supabase
-        .from('au_worker_jobs')
-        .update(safePatch)
-        .eq('id', jobId);
-      
-      applyOwnershipFilter(query, conditions);
-      const { error } = await query;
-      
+      const runUpdate = async (payload: Partial<UploadJobRow>) => {
+        let latestError: any = null;
+        for (const conditions of ownershipConditions) {
+          const query = supabase
+            .from('au_worker_jobs')
+            .update(payload)
+            .eq('id', jobId);
+
+          applyOwnershipFilter(query, conditions);
+          const { error } = await query;
+          if (!error) return null;
+
+          latestError = error;
+          if (isMissingOwnerIdColumnError(error) && conditions.includes('owner_id')) {
+            continue;
+          }
+          return error;
+        }
+        return latestError;
+      };
+
+      const error = await runUpdate(safePatch);
       if (!error) return;
 
-      const errorMsg = error.message || '';
       const isMissingErrorCol = isMissingUploadJobsErrorColumn(error);
 
       if (Object.prototype.hasOwnProperty.call(safePatch, 'error') && isMissingErrorCol) {
@@ -314,17 +415,10 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (isMissingErrorCol) {
           delete nextPatch.error;
         }
-
-        const retryQuery = supabase
-          .from('au_worker_jobs')
-          .update(nextPatch)
-          .eq('id', jobId);
-        
-        applyOwnershipFilter(retryQuery, conditions);
-        await retryQuery;
+        await runUpdate(nextPatch);
       }
     },
-    [user, useSafeSelection]
+    [getWorkerOwnershipConditions, useSafeSelection]
   );
 
   const updateJobLocal = useCallback((jobId: string, patch: Partial<UploadJobRow>) => {
@@ -345,7 +439,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
         const file = await getJobFile(job.id);
         if (!file) throw new Error('Missing file data. Retry upload.');
-        const resolvedMimeType = resolveUploadMimeType(file);
+        const resolvedMimeType = ensureUploadMimeType(file.name, resolveUploadMimeType(file));
 
         const { data: { session: currentSession } } = await supabase.auth.getSession();
         let accessToken = currentSession?.access_token;
@@ -395,7 +489,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (!initResult.ok || !initResult.uploadUrl) {
             throw new Error((initResult as any).error || "Upload initiation failed");
         }
-        const uploadMimeType = initResult.contentType || resolvedMimeType;
+        const uploadMimeType = ensureUploadMimeType(
+          job.file_name,
+          (initResult.contentType || resolvedMimeType) as string,
+        );
+        const uploadFile = file.type === uploadMimeType
+          ? file
+          : new File([file], file.name, { type: uploadMimeType, lastModified: file.lastModified });
 
         // 5. Upload File (PUT to Signed URL)
         console.log(`[upload-jobs] Uploading to Signed URL...`);
@@ -408,7 +508,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (initResult.token && initResult.path) {
           const { error: signedUploadError } = await supabase.storage
             .from(bucketName)
-            .uploadToSignedUrl(initResult.path, initResult.token, file, {
+            .uploadToSignedUrl(initResult.path, initResult.token, uploadFile, {
               contentType: uploadMimeType,
               upsert: true,
             });
@@ -423,7 +523,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (!uploaded) {
           const uploadRes = await fetch(initResult.uploadUrl, {
             method: 'PUT',
-            body: file,
+            body: uploadFile,
             headers: {
               'Content-Type': uploadMimeType,
               'x-upsert': 'true',
@@ -558,6 +658,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           document_type: input.documentType,
           parent_id: input.parentId ?? null,
           user_id: effectiveUserId,
+          owner_id: effectiveUserId,
           label: input.label ?? null,
           file_name: safeFileName,
           mime_type: resolveUploadMimeType(file),

@@ -24,6 +24,8 @@ import { AdminAnalytics } from '@/components/admin/admin-analytics';
 import { ConexAccessControl } from '@/components/admin/conex-access-control';
 import { ConexUserManagement } from '@/components/admin/conex-user-management';
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
@@ -407,26 +409,36 @@ const AdminBilling = ({ token }: { token: string }) => {
 };
 
 const AdminManualPayments = ({ token }: { token: string }) => {
-    const [payments, setPayments] = useState<any[]>([]);
+    const [manualPayments, setManualPayments] = useState<any[]>([]);
+    const [cardPayments, setCardPayments] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const { toast } = useToast();
 
     const fetchPayments = useCallback(async () => {
         setLoading(true);
         try {
-            const res = await fetchAdmin('admin-handler', {
-                method: 'POST',
-                body: JSON.stringify({ action: 'get_manual_payments' })
-            });
-            if (res.ok) setPayments((res as any).payments || []);
+            const [manualRes, cardRes] = await Promise.all([
+                fetchAdmin('admin-handler', {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'get_manual_payments' })
+                }),
+                fetchAdmin('admin-handler', {
+                    method: 'POST',
+                    body: JSON.stringify({ action: 'get_card_payments' })
+                })
+            ]);
+
+            if (manualRes.ok) setManualPayments((manualRes as any).payments || []);
+            if (cardRes.ok) setCardPayments((cardRes as any).payments || []);
         } catch (e) {
             console.error(e);
+            toast({ title: 'Error', description: 'Failed to load payment queues.', variant: 'destructive' });
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [toast]);
 
-    useEffect(() => { fetchPayments(); }, [fetchPayments]);
+    useEffect(() => { void fetchPayments(); }, [fetchPayments]);
 
     const handleProcess = async (id: string, status: 'confirmed' | 'rejected') => {
         if (!confirm(`Are you sure you want to ${status} this payment?`)) return;
@@ -437,78 +449,156 @@ const AdminManualPayments = ({ token }: { token: string }) => {
             });
             if (res.ok) {
                 toast({ title: 'Success', description: `Payment ${status}.` });
-                fetchPayments();
-                
-                // If confirmed, trigger invoice generation (Client-side trigger for now to keep it simple or handled in edge function)
-                // For this implementation, we rely on the edge function to update the user tier. 
-                // Invoice generation will be added as a separate step or automatic.
+                void fetchPayments();
             }
         } catch (e: any) {
             toast({ title: 'Error', description: e.message, variant: 'destructive' });
         }
     };
 
+    const getUserName = (payment: any) => payment?.au_user_profiles?.full_name || payment?.au_user_profiles?.[0]?.full_name || 'User';
+    const getUserEmail = (payment: any) => payment?.au_users?.email || 'N/A';
+    const getReference = (payment: any) => payment?.reference_code || payment?.reference || payment?.provider_ref || '-';
+    const getAmount = (payment: any) => Number(payment?.amount ?? payment?.amount_ngn ?? 0);
+    const getStatus = (payment: any) => String(payment?.status || payment?.status_label || payment?.status_normalized || 'pending').toLowerCase();
+
+    const renderStatus = (status: string) => {
+        if (status === 'confirmed' || status === 'success' || status === 'succeeded') {
+            return <Badge className="bg-green-600 hover:bg-green-600">confirmed</Badge>;
+        }
+        if (status === 'rejected' || status === 'failed') {
+            return <Badge variant="destructive">rejected</Badge>;
+        }
+        return <Badge variant="secondary">pending</Badge>;
+    };
+
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>Pending Bank Transfers</CardTitle>
-                <CardDescription>Review and approve manual payments.</CardDescription>
-            </CardHeader>
-            <CardContent>
-                <div className="rounded-md border overflow-x-auto">
-                    <table className="w-full text-sm">
-                        <thead className="bg-muted">
-                            <tr>
-                                <th className="p-3 text-left">Date</th>
-                                <th className="p-3 text-left">User</th>
-                                <th className="p-3 text-left">Ref Code</th>
-                                <th className="p-3 text-left">Amount</th>
-                                <th className="p-3 text-left">Status</th>
-                                <th className="p-3 text-right">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {payments.length === 0 ? (
-                                <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No payments found.</td></tr>
-                            ) : (
-                                payments.map((p) => (
-                                    <tr key={p.id} className="border-t hover:bg-muted/30">
-                                        <td className="p-3 whitespace-nowrap">{new Date(p.created_at).toLocaleDateString()}</td>
-                                        <td className="p-3">
-                                            <div className="flex flex-col">
-                                                <span className="font-medium">{p.au_user_profiles?.[0]?.full_name || 'User'}</span>
-                                                <span className="text-xs text-muted-foreground">{p.au_users?.email}</span>
-                                            </div>
-                                        </td>
-                                        <td className="p-3 font-mono">{p.reference_code}</td>
-                                        <td className="p-3 font-bold">₦{p.amount}</td>
-                                        <td className="p-3">
-                                            <Badge variant={p.status === 'confirmed' ? 'default' : p.status === 'rejected' ? 'destructive' : 'secondary'}>
-                                                {p.status}
-                                            </Badge>
-                                        </td>
-                                        <td className="p-3 text-right space-x-2">
-                                            {p.status === 'pending' && (
-                                                <>
-                                                    <Button size="sm" variant="outline" className="text-green-600 hover:text-green-700 hover:bg-green-50" onClick={() => handleProcess(p.id, 'confirmed')}>
-                                                        <CheckCircle2 className="h-4 w-4" />
-                                                    </Button>
-                                                    <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => handleProcess(p.id, 'rejected')}>
-                                                        <Trash2 className="h-4 w-4" />
-                                                    </Button>
-                                                </>
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </CardContent>
-        </Card>
+        <div className="space-y-4">
+            <div className="flex justify-end">
+                <Button variant="outline" size="sm" onClick={() => void fetchPayments()}>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    Refresh
+                </Button>
+            </div>
+
+            <Tabs defaultValue="manual">
+                <TabsList>
+                    <TabsTrigger value="manual">Pending Bank Transfers</TabsTrigger>
+                    <TabsTrigger value="card">Card Payments</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="manual">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Pending Bank Transfers</CardTitle>
+                            <CardDescription>Review and approve manual payments.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="rounded-md border overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-muted">
+                                        <tr>
+                                            <th className="p-3 text-left">Date</th>
+                                            <th className="p-3 text-left">User</th>
+                                            <th className="p-3 text-left">Ref Code</th>
+                                            <th className="p-3 text-left">Amount</th>
+                                            <th className="p-3 text-left">Status</th>
+                                            <th className="p-3 text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {manualPayments.length === 0 ? (
+                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No manual payments found.</td></tr>
+                                        ) : (
+                                            manualPayments.map((payment) => {
+                                                const status = getStatus(payment);
+                                                return (
+                                                    <tr key={payment.id} className="border-t hover:bg-muted/30">
+                                                        <td className="p-3 whitespace-nowrap">{new Date(payment.created_at).toLocaleDateString()}</td>
+                                                        <td className="p-3">
+                                                            <div className="flex flex-col">
+                                                                <span className="font-medium">{getUserName(payment)}</span>
+                                                                <span className="text-xs text-muted-foreground">{getUserEmail(payment)}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3 font-mono">{getReference(payment)}</td>
+                                                        <td className="p-3 font-bold">N{getAmount(payment).toLocaleString()}</td>
+                                                        <td className="p-3">{renderStatus(status)}</td>
+                                                        <td className="p-3 text-right space-x-2">
+                                                            {status === 'pending' && (
+                                                                <>
+                                                                    <Button size="sm" variant="outline" className="text-green-600 hover:text-green-700 hover:bg-green-50" onClick={() => handleProcess(payment.id, 'confirmed')}>
+                                                                        <CheckCircle2 className="h-4 w-4" />
+                                                                    </Button>
+                                                                    <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => handleProcess(payment.id, 'rejected')}>
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    </Button>
+                                                                </>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                <TabsContent value="card">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Card Payments</CardTitle>
+                            <CardDescription>Recent Stripe/Paystack card transactions.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="rounded-md border overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-muted">
+                                        <tr>
+                                            <th className="p-3 text-left">Date</th>
+                                            <th className="p-3 text-left">User</th>
+                                            <th className="p-3 text-left">Provider</th>
+                                            <th className="p-3 text-left">Reference</th>
+                                            <th className="p-3 text-left">Amount</th>
+                                            <th className="p-3 text-left">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {cardPayments.length === 0 ? (
+                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No card payments found.</td></tr>
+                                        ) : (
+                                            cardPayments.map((payment) => {
+                                                const status = getStatus(payment);
+                                                return (
+                                                    <tr key={payment.id} className="border-t hover:bg-muted/30">
+                                                        <td className="p-3 whitespace-nowrap">{new Date(payment.created_at).toLocaleDateString()}</td>
+                                                        <td className="p-3">
+                                                            <div className="flex flex-col">
+                                                                <span className="font-medium">{getUserName(payment)}</span>
+                                                                <span className="text-xs text-muted-foreground">{getUserEmail(payment)}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3 capitalize">{String(payment.provider || 'unknown')}</td>
+                                                        <td className="p-3 font-mono">{getReference(payment)}</td>
+                                                        <td className="p-3 font-bold">N{getAmount(payment).toLocaleString()}</td>
+                                                        <td className="p-3">{renderStatus(status)}</td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+            </Tabs>
+        </div>
     );
 };
 
@@ -1731,8 +1821,6 @@ export default function ConexPage() {
     };
   }, [isUserLoading, user, router]);
 
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
   const resetConexAuth = (opts?: { message?: string }) => {
     localStorage.removeItem('conex_admin_token');
     localStorage.removeItem('conex_session_id');
@@ -1762,7 +1850,7 @@ export default function ConexPage() {
       const savedStep = localStorage.getItem('conex_auth_step');
 
       if (savedStep === '3') {
-        if (!savedToken || savedToken === 'undefined' || !uuidRegex.test(savedToken)) {
+        if (!savedToken || savedToken === 'undefined' || !UUID_REGEX.test(savedToken)) {
           resetConexAuth({ message: 'Session expired. Please log in again.' });
           return;
         }
@@ -1772,7 +1860,7 @@ export default function ConexPage() {
       }
 
       if (savedStep === '2') {
-        if (!savedSession || savedSession === 'undefined' || !uuidRegex.test(savedSession)) {
+        if (!savedSession || savedSession === 'undefined' || !UUID_REGEX.test(savedSession)) {
           resetConexAuth({ message: 'Session expired. Please restart access.' });
           return;
         }
@@ -1819,7 +1907,7 @@ export default function ConexPage() {
       const data = await res.json();
       if (res.ok) {
         const nextSessionId = String(data.sessionId || '');
-        if (!uuidRegex.test(nextSessionId)) {
+        if (!UUID_REGEX.test(nextSessionId)) {
           throw new Error('Auth session could not be created. Please try again.');
         }
         setSessionId(nextSessionId);
@@ -1838,7 +1926,7 @@ export default function ConexPage() {
 
   const handleStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionId || sessionId === 'undefined' || !uuidRegex.test(sessionId)) {
+    if (!sessionId || sessionId === 'undefined' || !UUID_REGEX.test(sessionId)) {
       resetConexAuth({ message: 'Invalid session. Please restart access.' });
       return;
     }
@@ -1861,7 +1949,7 @@ export default function ConexPage() {
       const data = await res.json();
       if (res.ok) {
         const nextAdminToken = String(data.adminToken || '');
-        if (!uuidRegex.test(nextAdminToken)) {
+        if (!UUID_REGEX.test(nextAdminToken)) {
           throw new Error('Admin token missing. Please try again.');
         }
         setAdminToken(nextAdminToken);
@@ -2243,5 +2331,3 @@ export default function ConexPage() {
     </div>
   );
 }
-
-
