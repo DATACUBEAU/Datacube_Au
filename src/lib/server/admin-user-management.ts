@@ -25,6 +25,7 @@ export type ManagedUserFilter = {
   q?: string;
   status?: 'all' | AccountStatus;
   role?: 'all' | UserRole;
+  presence?: 'all' | 'online' | 'offline';
   sortBy?: 'created_at' | 'last_active_at' | 'email' | 'full_name';
   sortDir?: 'asc' | 'desc';
 };
@@ -101,8 +102,10 @@ export function filterManagedUsers(rows: ManagedUserRecord[], filters: ManagedUs
   const normalizedQ = String(filters.q ?? '').trim().toLowerCase();
   const status = filters.status ?? 'all';
   const role = filters.role ?? 'all';
+  const presence = filters.presence ?? 'all';
   const sortBy = filters.sortBy ?? 'last_active_at';
   const sortDir = filters.sortDir === 'asc' ? 'asc' : 'desc';
+  const onlineWindowMs = 5 * 60 * 1000;
 
   let filtered = rows.slice();
 
@@ -112,6 +115,14 @@ export function filterManagedUsers(rows: ManagedUserRecord[], filters: ManagedUs
 
   if (role !== 'all') {
     filtered = filtered.filter((row) => row.role === role);
+  }
+
+  if (presence !== 'all') {
+    filtered = filtered.filter((row) => {
+      const timestamp = row.last_active_at ? new Date(String(row.last_active_at)).getTime() : 0;
+      const online = timestamp > 0 && Date.now() - timestamp <= onlineWindowMs;
+      return presence === 'online' ? online : !online;
+    });
   }
 
   if (normalizedQ) {
@@ -164,4 +175,3 @@ export function validateBulkUserIds(value: unknown, max = 200): string[] {
 
   return unique;
 }
-

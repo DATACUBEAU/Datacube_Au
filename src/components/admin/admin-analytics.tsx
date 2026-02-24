@@ -54,6 +54,7 @@ export const AdminAnalytics = ({ token }: { token: string }) => {
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
   if (error) return <div className="p-6 text-sm text-destructive">{error}</div>;
   if (!data) return <div className="p-6 text-sm text-muted-foreground">No analytics available.</div>;
+  const dbStatsWarning = data?.diagnostics?.dbStatsWarning ? String(data.diagnostics.dbStatsWarning) : null;
 
   return (
     <div className="space-y-6">
@@ -63,6 +64,12 @@ export const AdminAnalytics = ({ token }: { token: string }) => {
           <RefreshCw className="h-4 w-4 mr-2" /> Refresh
         </Button>
       </div>
+
+      {dbStatsWarning ? (
+        <div className="rounded-md border border-yellow-500/40 bg-yellow-50 px-3 py-2 text-xs text-yellow-900 dark:bg-yellow-900/20 dark:text-yellow-100">
+          DB stats fallback active: {dbStatsWarning}
+        </div>
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>

@@ -83,10 +83,6 @@ export default function DashboardPage() {
   const { jobs } = useUploadJobs();
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(documentsLoading);
 
-  if (documentsLoading && showSkeleton && documents.length === 0) {
-    return <DashboardPageSkeleton />;
-  }
-
   const recentDocuments = useMemo(() => {
     if (!user) return [];
 
@@ -136,6 +132,10 @@ export default function DashboardPage() {
       .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
       .slice(0, 5);
   }, [documents, jobs, user]);
+
+  if (documentsLoading && showSkeleton && documents.length === 0) {
+    return <DashboardPageSkeleton />;
+  }
 
   function statusToBadge(status: string) {
     switch (status) {

@@ -609,6 +609,7 @@ const AdminManualPayments = ({ token }: { token: string }) => {
 const AdminUsage = ({ token }: { token: string }) => {
   const [usage, setUsage] = useState<any[]>([]);
   const [stats, setStats] = useState({ totalCalls: 0, failedCalls: 0, successfulCalls: 0 });
+  const [usageSource, setUsageSource] = useState<'au_model_usage' | 'au_events_fallback' | 'au_messages_fallback'>('au_model_usage');
   const [loading, setLoading] = useState(true);
   const [totalUsers, setTotalUsers] = useState(0);
   const [isUsingCachedData, setIsUsingCachedData] = useState(false);
@@ -651,6 +652,11 @@ const AdminUsage = ({ token }: { token: string }) => {
         successfulCalls: 0,
       },
     );
+    setUsageSource(
+      (payload?.usageSource === 'au_events_fallback' || payload?.usageSource === 'au_messages_fallback'
+        ? payload.usageSource
+        : 'au_model_usage') as any
+    );
     setTotalUsers(Number(payload?.totalUsers || 0));
     if (options?.fromCache) {
       setIsUsingCachedData(true);
@@ -682,27 +688,17 @@ const AdminUsage = ({ token }: { token: string }) => {
         throw new Error((usageRes as any).error || 'Failed to load usage');
       }
 
-      const usersRes = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        headers: { 'X-Admin-Token': token },
-        body: JSON.stringify({ action: 'list_users', page: 1, pageSize: 1 })
-      });
-      if (usersRes.ok) {
-        const data = (usersRes as any).data || usersRes;
-        const payload = {
-          usage: (usageRes as any).usage || [],
-          stats: (usageRes as any).stats || {
-            totalCalls: 0,
-            failedCalls: 0,
-            successfulCalls: 0,
-          },
-          totalUsers: Number(data.total || 0),
-        };
-        applyPayload(payload);
-        void writeUsageCache(payload);
-      } else {
-        throw new Error((usersRes as any).error || 'Failed to load users');
-      }
+      const payload = {
+        usage: (usageRes as any).usage || [],
+        stats: (usageRes as any).stats || {
+          totalCalls: 0,
+          failedCalls: 0,
+          successfulCalls: 0,
+        },
+        totalUsers: Number((usageRes as any).totalUsers || 0),
+      };
+      applyPayload(payload);
+      void writeUsageCache(payload);
     } catch (e) {
       const cached = await readUsageCache();
       if (cached.data) {
@@ -732,7 +728,12 @@ const AdminUsage = ({ token }: { token: string }) => {
       {showSlowNotice && loading ? <SlowNetworkNotice onRetry={() => void fetchData()} /> : null}
       {isUsingCachedData && !isOnline ? (
         <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
-          Offline • showing cached admin usage data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+          Offline - showing cached admin usage data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+        </div>
+      ) : null}
+      {usageSource !== 'au_model_usage' ? (
+        <div className="rounded-lg border border-yellow-500/40 bg-yellow-50 px-4 py-2 text-xs text-yellow-900 dark:bg-yellow-900/20 dark:text-yellow-100">
+          Usage fallback active: {usageSource === 'au_events_fallback' ? 'event stream' : 'message history'}.
         </div>
       ) : null}
 
@@ -835,6 +836,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
   const [models, setModels] = useState<any[]>([]);
   const [selectedKey, setSelectedKey] = useState<any>(null);
   const [registrySource, setRegistrySource] = useState<'free' | 'pro'>('free');
+  const [diagnostics, setDiagnostics] = useState<any>({});
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
@@ -848,9 +850,11 @@ const AdminRegistry = ({ token }: { token: string }) => {
         })
       });
       if (res.ok) {
-        setKeys((res as any).keys || []);
-        setModels((res as any).models || []);
-        setRegistrySource(((res as any).registrySource === 'pro' ? 'pro' : 'free') as any);
+        const payload = (res as any).data || res;
+        setKeys((payload as any).keys || []);
+        setModels((payload as any).models || []);
+        setRegistrySource(((payload as any).registrySource === 'pro' ? 'pro' : 'free') as any);
+        setDiagnostics((payload as any).diagnostics || {});
       }
     } catch (e) {
       console.error('[AdminRegistry] fetch error:', e);
@@ -971,7 +975,30 @@ const AdminRegistry = ({ token }: { token: string }) => {
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6 lg:h-[600px] h-auto">
+    <div className="space-y-4">
+      {(diagnostics?.keysTableMissing || diagnostics?.modelsTableMissing) ? (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Registry Fallback Active</AlertTitle>
+          <AlertDescription>
+            {diagnostics?.keysTableMissing ? 'API keys table is missing. ' : ''}
+            {diagnostics?.modelsTableMissing ? 'Model registry table is missing. ' : ''}
+            Run Conex admin migrations in Supabase to make updates persistent.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {Number(diagnostics?.seededModels || 0) > 0 || Number(diagnostics?.seededKeys || 0) > 0 ? (
+        <Alert>
+          <CheckCircle2 className="h-4 w-4" />
+          <AlertTitle>Registry Auto-Healed</AlertTitle>
+          <AlertDescription>
+            Seeded {Number(diagnostics?.seededKeys || 0)} key entries and {Number(diagnostics?.seededModels || 0)} model entries.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <div className="flex flex-col lg:flex-row gap-6 lg:h-[600px] h-auto">
       {/* Sidebar: Keys List */}
       <div className="w-full lg:w-1/3 flex flex-col gap-4 lg:border-r lg:pr-4 border-b pb-4 lg:border-b-0 lg:pb-0 h-[400px] lg:h-auto">
         <div className="flex items-center justify-between">
@@ -992,6 +1019,11 @@ const AdminRegistry = ({ token }: { token: string }) => {
         </div>
         
         <div className="space-y-2 overflow-y-auto flex-1 pr-2">
+            {keys.length === 0 ? (
+                <div className="rounded-lg border p-3 text-xs text-muted-foreground">
+                    No API keys found.
+                </div>
+            ) : null}
             {keys.map(k => (
                 <div 
                     key={k.service}
@@ -1122,6 +1154,13 @@ const AdminRegistry = ({ token }: { token: string }) => {
                                  </tr>
                              </thead>
                              <tbody className="divide-y">
+                                 {models.length === 0 ? (
+                                    <tr>
+                                      <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                                        No models found for this registry.
+                                      </td>
+                                    </tr>
+                                 ) : null}
                                  {models.map(m => {
                                      const isAllowed = selectedKey.allowed_models === null 
                                          ? m.is_free // In Auto mode, only free models are "allowed" implicitly (or we can show all free as checked)
@@ -1180,6 +1219,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
              </div>
          )}
       </div>
+    </div>
     </div>
   );
 };
@@ -1320,6 +1360,10 @@ const AdminUsers = () => <ConexUserManagement />;
 const AdminActivity = ({ token }: { token: string }) => {
   const [isLive, setIsLive] = useState(true);
   const [events, setEvents] = useState<any[]>([]);
+  const [activeUsers, setActiveUsers] = useState(0);
+  const [windowMinutes, setWindowMinutes] = useState(15);
+  const [activitySource, setActivitySource] = useState<'au_events' | 'au_user_activity'>('au_events');
+  const [eventsTableMissing, setEventsTableMissing] = useState(false);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
@@ -1330,7 +1374,20 @@ const AdminActivity = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_active_users' }),
       });
-      if (res.ok) setEvents((res as any).events || []);
+      if (res.ok) {
+        const payload = (res as any).data || res;
+        const nextEvents = Array.isArray((payload as any).events) ? (payload as any).events : [];
+        setEvents(nextEvents);
+        setWindowMinutes(Number((payload as any).windowMinutes || 15));
+        setActivitySource(((payload as any).source === 'au_user_activity' ? 'au_user_activity' : 'au_events') as any);
+        setEventsTableMissing(Boolean((payload as any)?.diagnostics?.eventsTableMissing));
+        const countedActiveUsers = Number((payload as any).activeUsers || 0);
+        if (countedActiveUsers > 0) {
+          setActiveUsers(countedActiveUsers);
+        } else {
+          setActiveUsers(new Set(nextEvents.map((entry: any) => entry?.user_id).filter(Boolean)).size);
+        }
+      }
     } catch (e: any) {
       console.error('[AdminActivity] fetch error:', e);
       toast({ title: 'Error', description: 'Failed to load activity feed.', variant: 'destructive' });
@@ -1351,8 +1408,6 @@ const AdminActivity = ({ token }: { token: string }) => {
     return () => clearInterval(interval);
   }, [isLive, fetchEvents]);
 
-  const activeUsers = React.useMemo(() => new Set((events || []).map((e) => e.user_id)).size, [events]);
-
   if (loading && !events.length) {
     return (
       <div className="flex flex-col items-center justify-center p-8 gap-4">
@@ -1370,7 +1425,11 @@ const AdminActivity = ({ token }: { token: string }) => {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <div className={`h-2 w-2 rounded-full ${isLive ? 'bg-green-500 animate-pulse' : 'bg-muted'}`} />
-          <span className="text-sm font-medium">{isLive ? 'Live Monitoring (Supabase)' : 'Monitoring Paused'}</span>
+          <span className="text-sm font-medium">
+            {isLive
+              ? `Live Monitoring (${activitySource === 'au_user_activity' ? 'Activity Heartbeats' : 'Supabase Events'})`
+              : 'Monitoring Paused'}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => fetchEvents()} disabled={loading}>
@@ -1406,11 +1465,21 @@ const AdminActivity = ({ token }: { token: string }) => {
             <div className="p-2 bg-purple-100 rounded-lg text-purple-600"><Clock className="h-5 w-5" /></div>
             <div>
               <p className="text-xs text-muted-foreground">Window</p>
-              <p className="text-xl font-bold">15m</p>
+              <p className="text-xl font-bold">{windowMinutes}m</p>
             </div>
           </CardContent>
         </Card>
       </div>
+
+      {eventsTableMissing ? (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Events Table Fallback Active</AlertTitle>
+          <AlertDescription>
+            Live activity is currently sourced from user heartbeats because `au_events` is unavailable.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="rounded-md border overflow-x-auto">
         <table className="w-full text-sm min-w-[700px]">
@@ -1428,7 +1497,7 @@ const AdminActivity = ({ token }: { token: string }) => {
             ) : (
               events.slice(0, 50).map((e, idx) => (
                 <tr key={idx} className="border-t hover:bg-muted/30 transition-colors">
-                  <td className="p-2 text-xs font-medium">{new Date(e.timestamp).toLocaleTimeString()}</td>
+                  <td className="p-2 text-xs font-medium">{new Date(e.timestamp || e.created_at).toLocaleTimeString()}</td>
                   <td className="p-2">
                     <div className="flex flex-col">
                       <span className="text-xs font-mono text-muted-foreground">{String(e.user_id || '').slice(0, 8)}...</span>
@@ -1565,6 +1634,7 @@ const AdminFeedback = ({ token }: { token: string }) => {
 
 const AdminAlerts = ({ token }: { token: string }) => {
   const [configs, setConfigs] = useState<any[]>([]);
+  const [tableMissing, setTableMissing] = useState(false);
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
@@ -1574,7 +1644,11 @@ const AdminAlerts = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'get_alert_config' })
       });
-      if (res.ok) setConfigs((res as any).configs || []);
+      if (res.ok) {
+        const payload = (res as any).data || res;
+        setConfigs(Array.isArray((payload as any).configs) ? (payload as any).configs : []);
+        setTableMissing(Boolean((payload as any)?.diagnostics?.tableMissing));
+      }
     } catch (e) {
       console.error('[AdminAlerts] fetch error:', e);
     } finally {
@@ -1605,7 +1679,24 @@ const AdminAlerts = ({ token }: { token: string }) => {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
+      {tableMissing ? (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Email Alert Storage Not Ready</AlertTitle>
+          <AlertDescription>
+            Showing in-memory fallback alerts. Run the Conex admin SQL migration to persist changes.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <div className="grid gap-4">
+        {configs.length === 0 ? (
+          <Card>
+            <CardContent className="p-6 text-sm text-muted-foreground">
+              No alert rules found.
+            </CardContent>
+          </Card>
+        ) : null}
         {configs.map((c) => (
           <Card key={c.id}>
             <CardHeader className="pb-3">
@@ -1614,6 +1705,7 @@ const AdminAlerts = ({ token }: { token: string }) => {
                 <Switch 
                   checked={c.is_enabled} 
                   onCheckedChange={(val) => handleUpdate({ ...c, is_enabled: val })}
+                  disabled={Boolean(c._readonly_fallback)}
                 />
               </div>
               <CardDescription>Automatic email alerts for this system event.</CardDescription>
@@ -1623,7 +1715,7 @@ const AdminAlerts = ({ token }: { token: string }) => {
                 <Label>Recipients (Comma Separated)</Label>
                 <div className="flex gap-2">
                   <Input 
-                    value={c.recipients.join(', ')} 
+                    value={Array.isArray(c.recipients) ? c.recipients.join(', ') : ''} 
                     onChange={(e) => {
                       const next = [...configs];
                       const idx = next.findIndex(item => item.id === c.id);
@@ -1631,8 +1723,9 @@ const AdminAlerts = ({ token }: { token: string }) => {
                       setConfigs(next);
                     }}
                     placeholder="admin@datacube.au, dev@datacube.au"
+                    disabled={Boolean(c._readonly_fallback)}
                   />
-                  <Button size="sm" onClick={() => handleUpdate(c)}>
+                  <Button size="sm" onClick={() => handleUpdate(c)} disabled={Boolean(c._readonly_fallback)}>
                     <Save className="h-4 w-4" />
                   </Button>
                 </div>
@@ -1752,6 +1845,8 @@ const AdminLogs = ({ token }: { token: string }) => {
 
 const AdminHealth = ({ token }: { token: string }) => {
   const [results, setResults] = useState<Record<string, boolean>>({});
+  const [details, setDetails] = useState<Record<string, string | null>>({});
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [reloading, setReloading] = useState(false);
   const { toast } = useToast();
@@ -1763,7 +1858,12 @@ const AdminHealth = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'verify_system' })
       });
-      if (res.ok) setResults((res as any).results || {});
+      if (res.ok) {
+        const payload = (res as any).data || res;
+        setResults((payload as any).results || {});
+        setDetails((payload as any).details || {});
+        setCounts((payload as any).counts || {});
+      }
     } catch (e) {
       console.error('[AdminHealth] verify error:', e);
     } finally {
@@ -1779,7 +1879,16 @@ const AdminHealth = ({ token }: { token: string }) => {
         body: JSON.stringify({ action: 'reload_schema' })
       });
       if (res.ok) {
-        toast({ title: 'Success', description: 'Schema reload signal sent. Tables should appear shortly.' });
+        const payload = (res as any).data || res;
+        if ((payload as any).warning) {
+          toast({
+            title: 'Reload Warning',
+            description: String((payload as any).warning),
+            variant: 'destructive',
+          });
+        } else {
+          toast({ title: 'Success', description: 'Schema reload signal sent. Tables should appear shortly.' });
+        }
       }
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
@@ -1807,12 +1916,22 @@ const AdminHealth = ({ token }: { token: string }) => {
       <div className="grid gap-3">
         {Object.entries(results).map(([table, exists]) => (
           <div key={table} className="flex items-center justify-between p-3 rounded-lg border bg-muted/20">
-            <span className="font-mono text-sm">{table}</span>
-            {exists ? (
-              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 gap-1"><CheckCircle2 className="h-3 w-3" /> Ready</Badge>
-            ) : (
-              <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" /> Not Found (404)</Badge>
-            )}
+            <div className="flex flex-col gap-1">
+              <span className="font-mono text-sm">{table}</span>
+              {typeof counts[table] === 'number' ? (
+                <span className="text-xs text-muted-foreground">rows: {counts[table]}</span>
+              ) : null}
+              {details[table] ? (
+                <span className="text-xs text-yellow-600 dark:text-yellow-300">{details[table]}</span>
+              ) : null}
+            </div>
+            <div>
+              {exists ? (
+                <Badge className="bg-green-100 text-green-700 hover:bg-green-100 gap-1"><CheckCircle2 className="h-3 w-3" /> Ready</Badge>
+              ) : (
+                <Badge variant="destructive" className="gap-1"><AlertCircle className="h-3 w-3" /> Not Found (404)</Badge>
+              )}
+            </div>
           </div>
         ))}
       </div>

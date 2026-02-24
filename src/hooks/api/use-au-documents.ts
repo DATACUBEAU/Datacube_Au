@@ -14,6 +14,17 @@ const DOCS_CACHE_ENDPOINT = 'list';
 const DOCS_CACHE_SCHEMA = 1;
 const DOCS_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 
+function isAbortLikeError(error: unknown): boolean {
+  const name = String((error as any)?.name || '');
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (
+    name === 'AbortError' ||
+    message.includes('aborterror') ||
+    message.includes('signal is aborted') ||
+    message.includes('aborted without reason')
+  );
+}
+
 export function useAuDocuments(pollInterval = 0) {
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
@@ -84,7 +95,7 @@ export function useAuDocuments(pollInterval = 0) {
       setError(null);
       void writeCachedDocuments(data);
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
+      if (isAbortLikeError(err)) return;
 
       const cached = await readCachedDocuments();
       if (cached.data) {

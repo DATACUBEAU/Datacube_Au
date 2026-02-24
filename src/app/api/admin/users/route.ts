@@ -360,6 +360,7 @@ const querySchema = z.object({
   q: z.string().optional(),
   status: z.enum(['all', ...ACCOUNT_STATUSES]).optional().default('all'),
   role: z.enum(['all', ...USER_ROLES]).optional().default('all'),
+  presence: z.enum(['all', 'online', 'offline']).optional().default('all'),
   sortBy: z.enum(['created_at', 'last_active_at', 'email', 'full_name']).optional().default('last_active_at'),
   sortDir: z.enum(['asc', 'desc']).optional().default('desc'),
   page: z.coerce.number().int().min(1).optional().default(1),
@@ -432,6 +433,7 @@ async function listManagedUsers(req: NextRequest) {
     q: req.nextUrl.searchParams.get('q') ?? undefined,
     status: req.nextUrl.searchParams.get('status') ?? undefined,
     role: req.nextUrl.searchParams.get('role') ?? undefined,
+    presence: req.nextUrl.searchParams.get('presence') ?? undefined,
     sortBy: req.nextUrl.searchParams.get('sortBy') ?? undefined,
     sortDir: req.nextUrl.searchParams.get('sortDir') ?? undefined,
     page: req.nextUrl.searchParams.get('page') ?? undefined,
@@ -473,6 +475,7 @@ async function listManagedUsers(req: NextRequest) {
     q: queryInput.q ?? '',
     status: queryInput.status,
     role: queryInput.role,
+    presence: queryInput.presence,
     sortBy: queryInput.sortBy,
     sortDir: queryInput.sortDir,
   });

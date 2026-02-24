@@ -199,11 +199,6 @@ export default function DocumentsPage() {
     return Array.from(map.values());
   }, [documents, jobs]);
 
-  if (loading && showSkeleton && mergedDocuments.length === 0) {
-    return <DocumentsPageSkeleton />;
-  }
-
-  // ---- TREE BUILD ----
   const tree = useMemo(() => {
     const map = new Map<string, any>();
     const roots: any[] = [];
@@ -214,7 +209,6 @@ export default function DocumentsPage() {
       if (d.parentId && map.has(d.parentId)) {
         map.get(d.parentId).children.push(node);
       } else {
-        // If parent is missing or it has no parent, it's a root
         roots.push(node);
       }
     });
@@ -222,6 +216,11 @@ export default function DocumentsPage() {
     return roots;
   }, [mergedDocuments]);
 
+  if (loading && showSkeleton && mergedDocuments.length === 0) {
+    return <DocumentsPageSkeleton />;
+  }
+
+  // ---- TREE BUILD ----
   // ---- HELPERS ----
   const handleDeleteConfirm = async () => {
     if (!confirmDeleteId) return;

@@ -19,6 +19,17 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   }
 }
 
+function isAbortLikeError(error: unknown): boolean {
+  const name = String((error as any)?.name || '');
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (
+    name === 'AbortError' ||
+    message.includes('aborterror') ||
+    message.includes('signal is aborted') ||
+    message.includes('aborted without reason')
+  );
+}
+
 /**
  * Initiates an upload: Validates limits and gets a Signed URL.
  */
@@ -113,7 +124,9 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
   const { data, error } = await query.order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[API] Error listing documents:', error);
+    if (!isAbortLikeError(error)) {
+      console.error('[API] Error listing documents:', error);
+    }
     throw error;
   }
   return data || [];

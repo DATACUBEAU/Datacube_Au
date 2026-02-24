@@ -54,6 +54,62 @@ async function cleanup() {
         }
     }
   }
+
+  const { data: pendingCleanup, error: pendingCleanupError } = await supabase
+    .from('au_documents')
+    .select('id,file_path,storage_deleted_at,cleanup_attempts')
+    .eq('cleanup_pending', true)
+    .eq('status', 'completed')
+    .is('storage_deleted_at', null)
+    .limit(50);
+
+  if (pendingCleanupError) {
+    logger.error('Failed to fetch cleanup_pending documents', pendingCleanupError);
+  } else if (pendingCleanup && pendingCleanup.length > 0) {
+    for (const doc of pendingCleanup) {
+      if (!doc.file_path) continue;
+      const attempts = Number(doc.cleanup_attempts || 0) + 1;
+      try {
+        const { error: delError } = await supabase.storage
+          .from('documents')
+          .remove([doc.file_path]);
+
+        if (delError) {
+          await supabase
+            .from('au_documents')
+            .update({
+              cleanup_pending: true,
+              cleanup_attempts: attempts,
+              cleanup_last_error: delError.message || String(delError),
+              cleanup_last_attempt_at: new Date().toISOString(),
+            })
+            .eq('id', doc.id);
+          continue;
+        }
+
+        await supabase
+          .from('au_documents')
+          .update({
+            storage_deleted_at: new Date().toISOString(),
+            cleanup_pending: false,
+            cleanup_attempts: attempts,
+            cleanup_last_error: null,
+            cleanup_last_attempt_at: new Date().toISOString(),
+          })
+          .eq('id', doc.id);
+      } catch (e: any) {
+        await supabase
+          .from('au_documents')
+          .update({
+            cleanup_pending: true,
+            cleanup_attempts: attempts,
+            cleanup_last_error: e?.message || String(e),
+            cleanup_last_attempt_at: new Date().toISOString(),
+          })
+          .eq('id', doc.id);
+      }
+    }
+  }
   
   // 2. Stale Pending Uploads
   const { data: staleDocs, error: staleError } = await supabase

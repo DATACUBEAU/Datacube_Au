@@ -8,8 +8,33 @@ let flushInterval: NodeJS.Timeout | null = null;
 const PROCESS_INTERVAL_MS = 2000;
 const BATCH_SIZE = 5; // Process up to 5 events per flush (sequentially or parallel)
 
+function isAbortLikeError(error: unknown): boolean {
+  const name = String((error as any)?.name || '');
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (
+    name === 'AbortError' ||
+    message.includes('aborterror') ||
+    message.includes('signal is aborted') ||
+    message.includes('aborted without reason')
+  );
+}
+
+function stopFlushIntervalIfIdle() {
+  if (LOG_QUEUE.length === 0 && flushInterval) {
+    clearInterval(flushInterval);
+    flushInterval = null;
+  }
+}
+
 const processQueue = async () => {
-  if (isFlushing || LOG_QUEUE.length === 0) return;
+  if (isFlushing) return;
+  if (LOG_QUEUE.length === 0) {
+    stopFlushIntervalIfIdle();
+    return;
+  }
+  if (typeof window !== 'undefined' && window.navigator.onLine === false) {
+    return;
+  }
   isFlushing = true;
 
   try {
@@ -45,13 +70,18 @@ const processQueue = async () => {
         });
       } catch (e) {
         // Silent fail for individual logs
-        console.warn('[Analytics] Log failed', e);
+        if (!isAbortLikeError(e)) {
+          console.warn('[Analytics] Log failed', e);
+        }
       }
     }
   } catch (e) {
-    console.error('[Analytics] Flush error', e);
+    if (!isAbortLikeError(e)) {
+      console.error('[Analytics] Flush error', e);
+    }
   } finally {
     isFlushing = false;
+    stopFlushIntervalIfIdle();
     // If more items, trigger another flush soon
     if (LOG_QUEUE.length > 0) {
       setTimeout(processQueue, 1000);
@@ -74,4 +104,3 @@ export const logEvent = async (name: string, params: Record<string, any> = {}, t
     processQueue(); 
   }
 };
-

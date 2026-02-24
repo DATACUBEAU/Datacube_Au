@@ -80,7 +80,9 @@ import { ChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page
 import { type ChatMessage } from '@/lib/api/chat';
 
 // Add TypingAnimation component
-const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, shouldAnimate?: boolean }) => {
+type TypingAnimationProps = { content: string; shouldAnimate?: boolean };
+
+function TypingAnimation({ content, shouldAnimate = true }: TypingAnimationProps) {
   const [displayedContent, setDisplayedContent] = useState(shouldAnimate ? '' : content);
   const [isTyping, setIsTyping] = useState(shouldAnimate);
 
@@ -111,7 +113,7 @@ const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, s
       )}
     </div>
   );
-};
+}
 
 interface StoredChatHistory {
   timestamp: number;

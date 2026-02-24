@@ -5,10 +5,12 @@ import { logger, computeHash } from './utils';
 import { FlagEmbedding, EmbeddingModel } from 'fastembed';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 
 export class IngestionService {
   private embeddingModel?: FlagEmbedding;
   private qdrant: QdrantClient;
+  private pipelineId: string;
 
   constructor(
     private supabase: SupabaseClient,
@@ -19,6 +21,7 @@ export class IngestionService {
       url: qdrantUrl,
       apiKey: qdrantApiKey,
     });
+    this.pipelineId = process.env.WORKER_ID || process.env.PIPELINE_ID || 'vps-worker';
   }
 
   private async getModel() {
@@ -74,95 +77,126 @@ export class IngestionService {
       });
     }
 
-    // 2. Calculate Hashes & Deduplication
     const chunkData = chunks.map((text, index) => ({
+      id: this.stablePointId(ownerId, documentId, index),
       text,
       hash: computeHash(text),
-      index
+      index,
     }));
 
-    const hashes = chunkData.map(c => c.hash);
-    
-    // Check for existing hashes to avoid re-embedding/storing
-    // We scroll for any points with these hashes for this user
-    const existingHashes = new Set<string>();
-    
-    // Batch check (simplified: if list is huge, might need pagination, but for docs < 100 pages it's fine)
+    const createdAt = Math.floor(Date.now() / 1000);
+
+    await this.supabase
+      .from('au_document_chunks')
+      .delete()
+      .eq('document_id', documentId)
+      .eq('owner_id', ownerId);
+
+    const chunkRows = chunkData.map((c) => ({
+      id: c.id,
+      document_id: documentId,
+      owner_id: ownerId,
+      user_id: ownerId,
+      chunk_index: c.index,
+      text: c.text,
+    }));
+
+    const chunkInsert = await this.supabase
+      .from('au_document_chunks')
+      .insert(chunkRows);
+
+    if (chunkInsert.error) {
+      throw chunkInsert.error;
+    }
+
     try {
-       const searchResult = await this.qdrant.scroll(collectionName, {
-         filter: {
-           must: [
-             { key: 'owner_id', match: { value: ownerId } },
-             { key: 'text_hash', match: { any: hashes } }
-           ]
-         },
-         with_payload: true,
-         limit: hashes.length
-       });
-       
-       searchResult.points.forEach(point => {
-         if (point.payload && typeof point.payload.text_hash === 'string') {
-           existingHashes.add(point.payload.text_hash);
-         }
-       });
+      await this.qdrant.delete(collectionName, {
+        filter: {
+          must: [
+            { key: 'document_id', match: { value: documentId } },
+            { key: 'user_id', match: { value: ownerId } },
+          ],
+        },
+      });
     } catch (err) {
-      logger.warn('Failed to check for duplicates, proceeding with full ingestion', err);
+      logger.warn('Qdrant delete preflight failed, continuing with upsert', err);
     }
 
-    const newChunks = chunkData.filter(c => !existingHashes.has(c.hash));
-    
-    if (newChunks.length === 0) {
-       logger.info('All chunks already exist. Skipping ingestion.');
+    const model = await this.getModel();
+    const embeddingResult: any = model.embed(chunkData.map((c) => c.text));
+    const embeddings: number[][] = [];
+
+    if (embeddingResult && typeof embeddingResult[Symbol.asyncIterator] === 'function') {
+      for await (const batch of embeddingResult) {
+        embeddings.push(...(batch as number[][]));
+      }
     } else {
-        logger.info(`Ingesting ${newChunks.length} new chunks (skipped ${chunkData.length - newChunks.length} duplicates)`);
-
-        // 3. Generate Embeddings locally
-        const model = await this.getModel();
-        const embeddingResult: any = model.embed(newChunks.map((c) => c.text));
-        const embeddings: number[][] = [];
-
-        if (embeddingResult && typeof embeddingResult[Symbol.asyncIterator] === 'function') {
-          for await (const batch of embeddingResult) {
-            embeddings.push(...(batch as number[][]));
-          }
-        } else {
-          const resolved = await embeddingResult;
-          embeddings.push(...(resolved as number[][]));
-        }
-
-        // 4. Upsert to Qdrant
-        const points = newChunks.map((chunk, i) => ({
-          id: randomUUID(),
-          vector: Array.from(embeddings[i]),
-          payload: {
-            document_id: documentId,
-            text: chunk.text, // Text is already chunked to ~1000 chars in utils.ts
-            owner_id: ownerId,
-            text_hash: chunk.hash,
-            created_at: Math.floor(Date.now() / 1000),
-            expires_at: expiresAt,
-            metadata: {
-              source: 'vps-worker',
-              processed_at: new Date().toISOString()
-            }
-          },
-        }));
-
-        await this.qdrant.upsert(collectionName, {
-          wait: true,
-          points,
-        });
+      const resolved = await embeddingResult;
+      embeddings.push(...(resolved as number[][]));
     }
 
-    // 5. Update Supabase with success
-    // We also update expires_at in DB to match
+    if (embeddings.length !== chunkData.length) {
+      throw new Error(`Embedding count mismatch: expected ${chunkData.length}, got ${embeddings.length}`);
+    }
+
+    const points = chunkData.map((chunk, i) => ({
+      id: chunk.id,
+      vector: Array.from(embeddings[i]),
+      payload: {
+        chunk_id: chunk.id,
+        document_id: documentId,
+        user_id: ownerId,
+        owner_id: ownerId,
+        chunk_index: chunk.index,
+        text: chunk.text,
+        text_hash: chunk.hash,
+        created_at: createdAt,
+        expires_at: expiresAt,
+        metadata: {
+          pipeline: this.pipelineId,
+          processed_at: new Date().toISOString(),
+        },
+      },
+    }));
+
+    await this.qdrant.upsert(collectionName, { wait: true, points });
+
+    try {
+      const countRes = await this.qdrant.count(collectionName, {
+        filter: {
+          must: [
+            { key: 'document_id', match: { value: documentId } },
+            { key: 'user_id', match: { value: ownerId } },
+          ],
+        },
+        exact: true,
+      } as any);
+
+      const storedCount = Number((countRes as any)?.count ?? 0);
+      if (!Number.isFinite(storedCount) || storedCount < chunkData.length) {
+        throw new Error(`Qdrant stored count mismatch: expected >=${chunkData.length}, got ${storedCount}`);
+      }
+    } catch (err: any) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Qdrant verification failed: ${message}`);
+    }
+
     await this.supabase
       .from('au_documents')
-      .update({ 
-          status: 'completed',
-          expires_at: new Date(expiresAt * 1000).toISOString()
+      .update({
+        status: 'completed',
+        expires_at: new Date(expiresAt * 1000).toISOString(),
       })
       .eq('id', documentId);
+  }
+
+  private stablePointId(ownerId: string, documentId: string, chunkIndex: number): string {
+    const input = `${ownerId}:${documentId}:${chunkIndex}`;
+    const hex = createHash('sha256').update(input).digest('hex').slice(0, 32);
+    const b = hex.split('');
+    b[12] = '4';
+    b[16] = ['8', '9', 'a', 'b'][parseInt(b[16], 16) % 4];
+    return `${b.slice(0, 8).join('')}-${b.slice(8, 12).join('')}-${b.slice(12, 16).join('')}-${b.slice(16, 20).join('')}-${b.slice(20, 32).join('')}`;
   }
 
   /**

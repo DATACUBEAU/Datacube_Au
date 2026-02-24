@@ -62,10 +62,6 @@ export default function SettingsPage() {
   const router = useRouter();
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isUserLoading);
 
-  if (isUserLoading && showSkeleton) {
-    return <SettingsPageSkeleton />;
-  }
-
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
     return (
@@ -220,6 +216,10 @@ export default function SettingsPage() {
       setIsSaving(false);
     }
   };
+
+  if (isUserLoading && showSkeleton) {
+    return <SettingsPageSkeleton />;
+  }
   
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">

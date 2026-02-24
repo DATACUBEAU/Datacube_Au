@@ -15,6 +15,7 @@ import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 
 type AccountStatus = 'active' | 'inactive' | 'suspended';
 type UserRole = 'admin' | 'free' | 'weekly' | 'monthly' | 'pro' | 'user';
+type PresenceFilter = 'all' | 'online' | 'offline';
 
 type ManagedUser = {
   user_id: string;
@@ -57,11 +58,40 @@ const ROLE_OPTIONS: Array<{ label: string; value: UserRole | 'all' }> = [
   { label: 'User', value: 'user' },
 ];
 
+const PRESENCE_OPTIONS: Array<{ label: string; value: PresenceFilter }> = [
+  { label: 'All presence', value: 'all' },
+  { label: 'Online now', value: 'online' },
+  { label: 'Offline', value: 'offline' },
+];
+
+const ONLINE_WINDOW_MS = 5 * 60 * 1000;
+
 function formatDate(value: string | null): string {
   if (!value) return '-';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
   return date.toLocaleString();
+}
+
+function isOnlineNow(value: string | null): boolean {
+  if (!value) return false;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return false;
+  return Date.now() - date.getTime() <= ONLINE_WINDOW_MS;
+}
+
+function formatLastSeen(value: string | null): string {
+  if (!value) return 'Never';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Unknown';
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 60_000) return 'Just now';
+  const diffMinutes = Math.floor(diffMs / 60_000);
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
 }
 
 async function authedFetch(input: string, init?: RequestInit): Promise<Response> {
@@ -103,6 +133,7 @@ export function ConexUserManagement() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all');
   const [roleFilter, setRoleFilter] = useState<UserRole | 'all'>('all');
+  const [presenceFilter, setPresenceFilter] = useState<PresenceFilter>('all');
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
@@ -144,6 +175,7 @@ export function ConexUserManagement() {
           q: search,
           status: statusFilter,
           role: roleFilter,
+          presence: presenceFilter,
           page: String(page),
           pageSize: String(pageSize),
           sortBy: 'last_active_at',
@@ -177,7 +209,7 @@ export function ConexUserManagement() {
         if (silent) setRefreshing(false);
       }
     },
-    [page, roleFilter, search, selectedUserId, statusFilter, toast]
+    [page, presenceFilter, roleFilter, search, selectedUserId, statusFilter, toast]
   );
 
   const fetchActivity = useCallback(
@@ -216,7 +248,7 @@ export function ConexUserManagement() {
 
   useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, roleFilter]);
+  }, [search, statusFilter, roleFilter, presenceFilter]);
 
   useEffect(() => {
     fetchUsers();
@@ -256,6 +288,11 @@ export function ConexUserManagement() {
   const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
   const selectedCount = selectedIds.size;
   const isReadOnlyMode = sourceMode === 'au_users_fallback';
+  const onlineNowCount = useMemo(
+    () => users.filter((user) => isOnlineNow(user.last_active_at)).length,
+    [users]
+  );
+  const offlineCount = Math.max(0, users.length - onlineNowCount);
 
   const canRunBulk = selectedCount > 0 && !runningBulk;
   const hasBulkPatch = Boolean(bulkStatus || bulkRole || bulkPermissions.trim());
@@ -522,7 +559,7 @@ export function ConexUserManagement() {
         </Card>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-5">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Total users</CardDescription>
@@ -541,6 +578,18 @@ export function ConexUserManagement() {
             <CardTitle className="text-2xl">{selectedCount}</CardTitle>
           </CardHeader>
         </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Online now</CardDescription>
+            <CardTitle className="text-2xl text-green-600">{onlineNowCount}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Offline</CardDescription>
+            <CardTitle className="text-2xl text-muted-foreground">{offlineCount}</CardTitle>
+          </CardHeader>
+        </Card>
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
@@ -557,7 +606,7 @@ export function ConexUserManagement() {
               </Button>
             </div>
 
-            <div className="grid gap-2 sm:grid-cols-3">
+            <div className="grid gap-2 sm:grid-cols-4">
               <div className="relative sm:col-span-1">
                 <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -585,6 +634,18 @@ export function ConexUserManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   {ROLE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={presenceFilter} onValueChange={(value) => setPresenceFilter(value as PresenceFilter)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Presence" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PRESENCE_OPTIONS.map((option) => (
                     <SelectItem key={option.value} value={option.value}>
                       {option.label}
                     </SelectItem>
@@ -676,12 +737,20 @@ export function ConexUserManagement() {
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
                       <Badge
+                        variant={isOnlineNow(user.last_active_at) ? 'default' : 'secondary'}
+                        className={isOnlineNow(user.last_active_at) ? 'bg-green-600 hover:bg-green-600' : ''}
+                      >
+                        {isOnlineNow(user.last_active_at) ? 'online' : 'offline'}
+                      </Badge>
+                      <Badge
                         variant={user.account_status === 'active' ? 'default' : user.account_status === 'inactive' ? 'secondary' : 'destructive'}
                       >
                         {user.account_status}
                       </Badge>
                       <Badge variant="outline">{user.role}</Badge>
-                      <span className="text-[11px] text-muted-foreground">Last active: {formatDate(user.last_active_at)}</span>
+                      <span className="text-[11px] text-muted-foreground">
+                        Last seen: {formatLastSeen(user.last_active_at)} ({formatDate(user.last_active_at)})
+                      </span>
                     </div>
                   </div>
                 ))
@@ -700,15 +769,16 @@ export function ConexUserManagement() {
                       />
                     </th>
                     <th className="p-2 text-left">User</th>
+                    <th className="p-2 text-left">Presence</th>
                     <th className="p-2 text-left">Status</th>
                     <th className="p-2 text-left">Role</th>
-                    <th className="p-2 text-left">Last Active</th>
+                    <th className="p-2 text-left">Last Seen</th>
                   </tr>
                 </thead>
                 <tbody>
                   {users.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                      <td colSpan={6} className="p-6 text-center text-muted-foreground">
                         No users found for current filters.
                       </td>
                     </tr>
@@ -732,6 +802,14 @@ export function ConexUserManagement() {
                         </td>
                         <td className="p-2">
                           <Badge
+                            variant={isOnlineNow(user.last_active_at) ? 'default' : 'secondary'}
+                            className={isOnlineNow(user.last_active_at) ? 'bg-green-600 hover:bg-green-600' : ''}
+                          >
+                            {isOnlineNow(user.last_active_at) ? 'online' : 'offline'}
+                          </Badge>
+                        </td>
+                        <td className="p-2">
+                          <Badge
                             variant={user.account_status === 'active' ? 'default' : user.account_status === 'inactive' ? 'secondary' : 'destructive'}
                           >
                             {user.account_status}
@@ -740,7 +818,12 @@ export function ConexUserManagement() {
                         <td className="p-2">
                           <Badge variant="outline">{user.role}</Badge>
                         </td>
-                        <td className="p-2 text-xs text-muted-foreground">{formatDate(user.last_active_at)}</td>
+                        <td className="p-2 text-xs text-muted-foreground">
+                          <div className="flex flex-col">
+                            <span>{formatLastSeen(user.last_active_at)}</span>
+                            <span>{formatDate(user.last_active_at)}</span>
+                          </div>
+                        </td>
                       </tr>
                     ))
                   )}

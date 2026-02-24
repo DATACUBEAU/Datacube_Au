@@ -259,6 +259,16 @@ export class RAGWorker {
       });
 
       try {
+        await this.supabase
+          .from('au_documents')
+          .update({
+            cleanup_pending: true,
+            cleanup_attempts: 0,
+            cleanup_last_error: null,
+            cleanup_last_attempt_at: new Date().toISOString(),
+          })
+          .eq('id', currentJob.document_id);
+
         logger.info('Deleting file from Supabase Storage', { bucket: currentJob.bucket, path: currentJob.object_path });
         const { error: deleteError } = await this.supabase.storage
           .from(currentJob.bucket)
@@ -266,15 +276,39 @@ export class RAGWorker {
 
         if (deleteError) {
           logger.error('Failed to delete file from storage', deleteError);
+          await this.supabase
+            .from('au_documents')
+            .update({
+              cleanup_pending: true,
+              cleanup_attempts: 1,
+              cleanup_last_error: deleteError.message || String(deleteError),
+              cleanup_last_attempt_at: new Date().toISOString(),
+            })
+            .eq('id', currentJob.document_id);
         } else {
           logger.info('File deleted successfully');
           await this.supabase
             .from('au_documents')
-            .update({ storage_deleted_at: new Date().toISOString() })
+            .update({
+              storage_deleted_at: new Date().toISOString(),
+              cleanup_pending: false,
+              cleanup_last_error: null,
+              cleanup_last_attempt_at: new Date().toISOString(),
+            })
             .eq('id', currentJob.document_id);
         }
       } catch (delErr) {
         logger.error('Failed to delete file (exception)', delErr);
+        const msg = delErr instanceof Error ? delErr.message : String(delErr);
+        await this.supabase
+          .from('au_documents')
+          .update({
+            cleanup_pending: true,
+            cleanup_attempts: 1,
+            cleanup_last_error: msg,
+            cleanup_last_attempt_at: new Date().toISOString(),
+          })
+          .eq('id', currentJob.document_id);
       }
     } catch (processErr) {
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
