@@ -10,6 +10,7 @@
     "dev": "ts-node src/index.ts",
     "cleanup": "ts-node src/cleanup.ts",
     "cleanup:prod": "node dist/cleanup.js",
+    "audit:pipeline": "node audit-pipeline.js",
     "test": "jest"
   },
   "dependencies": {

@@ -1,0 +1,13 @@
+[Unit]
+Description=Datacube AU RAG Worker Cleanup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=datacube
+WorkingDirectory=/opt/datacube-au/rag-worker
+EnvironmentFile=/etc/datacube-au/rag-worker.env
+ExecStart=/usr/bin/node dist/cleanup.js
+TimeoutStartSec=300
+

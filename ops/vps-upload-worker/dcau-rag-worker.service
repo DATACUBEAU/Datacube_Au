@@ -1,0 +1,18 @@
+[Unit]
+Description=Datacube AU RAG Upload Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=datacube
+WorkingDirectory=/opt/datacube-au/rag-worker
+EnvironmentFile=/etc/datacube-au/rag-worker.env
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=2
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
+

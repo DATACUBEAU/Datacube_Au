@@ -1,0 +1,10 @@
+[Unit]
+Description=Datacube AU RAG Worker Cleanup Timer
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

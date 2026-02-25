@@ -15,6 +15,6 @@ describe('RAG Utilities', () => {
     const hash1 = computeHash(text);
     const hash2 = computeHash(text);
     expect(hash1).toBe(hash2);
-    expect(hash1).toBe('9f688536109318a4783f9872580c8502');
+    expect(hash1).toBe('932db5929ec1be06760a36716c09efe44fe812dd727a654d4f0f7f540f40210e');
   });
 });
