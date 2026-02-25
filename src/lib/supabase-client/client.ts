@@ -305,7 +305,7 @@ export async function invokeEdgeFunction<T = any>(
 export async function getEffectiveOwnershipConditions(user: User | null): Promise<string> {
   // Prioritize authenticated user ID. 
   if (user?.id) {
-    return `user_id.eq.${user.id}`;
+    return `owner_id.eq.${user.id},user_id.eq.${user.id}`;
   }
 
   // Fallback if no user is present

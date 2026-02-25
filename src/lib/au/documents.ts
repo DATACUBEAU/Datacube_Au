@@ -1,50 +1,57 @@
 import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
 import type { AuDocumentChunkRow, AuDocumentRow } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
+import {
+  normalizeAuDocumentRow,
+  normalizeAuDocumentType,
+  resolveDocumentRetentionDays,
+} from '@/lib/au/document-normalization';
 
-const SAFE_DOC_COLUMNS = 'id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, error';
+const SAFE_DOC_COLUMNS = 'id, owner_id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, error';
+
+function isMissingColumnError(error: unknown, column: string): boolean {
+  const message = String((error as any)?.message || '').toLowerCase();
+  const details = String((error as any)?.details || '').toLowerCase();
+  const lowered = column.toLowerCase();
+  return (
+    (message.includes(lowered) && message.includes('does not exist')) ||
+    (details.includes(lowered) && details.includes('does not exist'))
+  );
+}
+
+async function getOwnershipConditionCandidates(user: User | null): Promise<string[]> {
+  const fallback = await getEffectiveOwnershipConditions(user);
+  if (!user?.id) return [fallback];
+
+  const conditions = [
+    `owner_id.eq.${user.id},user_id.eq.${user.id}`,
+    `owner_id.eq.${user.id}`,
+    `user_id.eq.${user.id}`,
+    fallback,
+  ];
+  return Array.from(new Set(conditions.filter(Boolean)));
+}
 
 export async function listAuDocumentsForUser(user: User | null) {
-  const conditions = await getEffectiveOwnershipConditions(user);
-  
-  const query = supabase
-    .from('au_documents')
-    .select(SAFE_DOC_COLUMNS);
-    
-  applyOwnershipFilter(query, conditions);
+  const ownershipConditions = await getOwnershipConditionCandidates(user);
+  const retentionDays = await resolveDocumentRetentionDays(user?.id ?? null);
 
-  let { data, error } = await query.order('created_at', { ascending: false });
+  for (const conditions of ownershipConditions) {
+    const query = supabase
+      .from('au_documents')
+      .select(SAFE_DOC_COLUMNS);
 
-  if (error) {
-    const errorMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
-    const errorCode = error.code || 'unknown';
-    
-    // Log detailed error for debugging
-    console.error('[documents] Error listing documents:', {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
-      fullError: error
-    });
+    applyOwnershipFilter(query, conditions);
+    const { data, error } = await query.order('created_at', { ascending: false });
 
-    if (errorCode === '42703') {
-      const retryQuery = supabase
-        .from('au_documents')
-        .select(SAFE_DOC_COLUMNS)
-        .order('created_at', { ascending: false });
-      
-      applyOwnershipFilter(retryQuery, conditions);
-      const { data: retryData, error: retryError } = await retryQuery;
-      
-      if (!retryError) {
-        data = retryData;
-        error = null;
-      }
+    if (!error) {
+      return (data ?? []).map((row) => normalizeAuDocumentRow(row, retentionDays, user?.id ?? null));
     }
-  }
 
-  if (error) {
+    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
+      continue;
+    }
+
     console.error('[documents] Error listing documents (final):', {
       message: error.message,
       code: error.code,
@@ -54,94 +61,66 @@ export async function listAuDocumentsForUser(user: User | null) {
     });
     throw error;
   }
-  
-  return (data ?? []) as unknown as AuDocumentRow[];
+
+  return [];
 }
 
 export async function listCompletedAuDocumentsForUser(user: User | null, documentType?: AuDocumentRow['document_type']) {
-  const conditions = await getEffectiveOwnershipConditions(user);
-  
-  const buildQuery = (conds: string, columns = SAFE_DOC_COLUMNS) => {
-    const q = supabase
+  const ownershipConditions = await getOwnershipConditionCandidates(user);
+  const normalizedType = documentType ? normalizeAuDocumentType(documentType) : null;
+  const retentionDays = await resolveDocumentRetentionDays(user?.id ?? null);
+
+  for (const conditions of ownershipConditions) {
+    const query = supabase
       .from('au_documents')
-      .select(columns);
-    
-    applyOwnershipFilter(q, conds);
-    
-    const finalQ = q
+      .select(SAFE_DOC_COLUMNS)
       .eq('status', 'completed')
       .order('created_at', { ascending: false });
 
-    if (documentType) return finalQ.eq('document_type', documentType);
-    return finalQ;
-  };
-
-  let { data, error } = await buildQuery(conditions);
-  
-  if (error) {
-    const errorMsg = error.message || (typeof error === 'object' ? JSON.stringify(error) : String(error));
-    const errorCode = error.code || 'unknown';
-    
-    console.error('[documents] Error listing completed documents:', {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
-      fullError: error
-    });
-
-    if (errorCode === '42703') {
-      const { data: retryData, error: retryError } = await buildQuery(conditions);
-      if (!retryError) {
-        data = retryData;
-        error = null;
-      }
+    if (normalizedType) {
+      query.eq('document_type', normalizedType);
     }
-  }
 
-  if (error) {
+    applyOwnershipFilter(query, conditions);
+    const { data, error } = await query;
+
+    if (!error) {
+      return (data ?? []).map((row) => normalizeAuDocumentRow(row, retentionDays, user?.id ?? null));
+    }
+
+    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
+      continue;
+    }
+
     console.error('[documents] Error listing completed documents:', error);
     throw error;
   }
-  
-  return (data ?? []) as unknown as AuDocumentRow[];
+
+  return [];
 }
 
 export async function getAuDocumentChunksText(user: User | null, documentId: string): Promise<string> {
-  const conditions = await getEffectiveOwnershipConditions(user);
-  
-  const query = supabase
-    .from('au_document_chunks')
-    .select('text, chunk_index')
-    .eq('document_id', documentId)
-    .order('chunk_index', { ascending: true });
+  const ownershipConditions = await getOwnershipConditionCandidates(user);
 
-  applyOwnershipFilter(query, conditions);
-  let { data, error } = await query;
+  for (const conditions of ownershipConditions) {
+    const query = supabase
+      .from('au_document_chunks')
+      .select('text, chunk_index')
+      .eq('document_id', documentId)
+      .order('chunk_index', { ascending: true });
 
-  if (error) {
-    const errorCode = error.code || 'unknown';
+    applyOwnershipFilter(query, conditions);
+    const { data, error } = await query;
 
-    if (errorCode === '42703') {
-      const retryQuery = supabase
-        .from('au_document_chunks')
-        .select('text, chunk_index')
-        .eq('document_id', documentId)
-        .order('chunk_index', { ascending: true });
-
-      applyOwnershipFilter(retryQuery, conditions);
-      const { data: retryData, error: retryError } = await retryQuery;
-      
-      if (!retryError) {
-        data = retryData;
-        error = null;
-      } else {
-        console.error('[documents] Retry failed:', retryError.message);
-      }
+    if (!error) {
+      const rows = (data ?? []) as Pick<AuDocumentChunkRow, 'text' | 'chunk_index'>[];
+      return rows.map(r => r.text).join('\n\n');
     }
-  }
 
-  if (error) {
+    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
+      continue;
+    }
+
     console.error('[documents] Error getting document chunks:', {
       message: error.message,
       code: error.code,
@@ -151,41 +130,34 @@ export async function getAuDocumentChunksText(user: User | null, documentId: str
     });
     throw error;
   }
-  
-  const rows = (data ?? []) as Pick<AuDocumentChunkRow, 'text' | 'chunk_index'>[];
-  return rows.map(r => r.text).join('\n\n');
+
+  return '';
 }
 
 export async function countPastQuestionsForParent(user: User | null, parentId: string): Promise<number> {
-  const conditions = await getEffectiveOwnershipConditions(user);
-  
-  const buildCountQuery = (conds: string) => {
-    const q = supabase
+  const ownershipConditions = await getOwnershipConditionCandidates(user);
+
+  for (const conditions of ownershipConditions) {
+    const query = supabase
       .from('au_documents')
       .select('id', { count: 'exact', head: true })
       .eq('parent_id', parentId)
       .eq('document_type', 'past_questions');
-    
-    applyOwnershipFilter(q, conds);
-    return q;
-  };
 
-  let { count, error } = await buildCountQuery(conditions);
+    applyOwnershipFilter(query, conditions);
+    const { count, error } = await query;
 
-  if (error) {
-    if (error.code === '42703') {
-      const { count: retryCount, error: retryError } = await buildCountQuery(conditions);
-      if (!retryError) {
-        count = retryCount;
-        error = null;
-      }
+    if (!error) {
+      return count ?? 0;
     }
+
+    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
+      continue;
+    }
+
+    console.error('[documents] Error counting past questions:', error);
+    break;
   }
 
-  if (error) {
-    console.error('[documents] Error counting past questions:', error);
-    return 0;
-  }
-  
-  return count ?? 0;
+  return 0;
 }

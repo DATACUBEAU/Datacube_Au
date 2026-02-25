@@ -1,18 +1,29 @@
 export type AuDocumentType = 'main_textbook' | 'past_questions' | 'exam_questions';
 
-export type AuDocumentStatus = 'uploading' | 'processing' | 'completed' | 'failed';
+export type AuDocumentStatus =
+  | 'pending_upload'
+  | 'queued'
+  | 'uploading'
+  | 'uploaded'
+  | 'processing'
+  | 'completed'
+  | 'done'
+  | 'indexed'
+  | 'failed';
 
 export type AuDocumentRow = {
   id: string;
-  user_id: string;
-  document_type: AuDocumentType;
+  user_id: string | null;
+  owner_id?: string | null;
+  document_type: AuDocumentType | string;
   file_name: string;
   file_path: string;
-  status: AuDocumentStatus;
+  status: AuDocumentStatus | string;
   parent_id: string | null;
   created_at: string;
   expires_at: string | null;
   error: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 export type AuDocumentChunkRow = {

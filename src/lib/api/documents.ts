@@ -1,10 +1,10 @@
 
 import { supabase, invokeEdgeFunction, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
-import { safeFetch } from './safe-fetch';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
 import { clearDocWorkingMemory } from '@/lib/memory/working-memory';
 import { deleteMemorySummary } from '@/lib/api/memory-summaries';
+import { normalizeAuDocumentRow, resolveDocumentRetentionDays } from '@/lib/au/document-normalization';
 
 export type { AuDocumentRow, AuDocumentType };
 
@@ -28,6 +28,30 @@ function isAbortLikeError(error: unknown): boolean {
     message.includes('signal is aborted') ||
     message.includes('aborted without reason')
   );
+}
+
+function isMissingColumnError(error: unknown, column: string): boolean {
+  const message = String((error as any)?.message || '').toLowerCase();
+  const details = String((error as any)?.details || '').toLowerCase();
+  const lowered = column.toLowerCase();
+  return (
+    (message.includes(lowered) && message.includes('does not exist')) ||
+    (details.includes(lowered) && details.includes('does not exist'))
+  );
+}
+
+async function getOwnershipConditionCandidates(user: User | null): Promise<string[]> {
+  const fallback = await getEffectiveOwnershipConditions(user);
+  if (!user?.id) return [fallback];
+
+  const conditions = [
+    `owner_id.eq.${user.id},user_id.eq.${user.id}`,
+    `owner_id.eq.${user.id}`,
+    `user_id.eq.${user.id}`,
+    fallback,
+  ];
+
+  return Array.from(new Set(conditions.filter(Boolean)));
 }
 
 /**
@@ -113,23 +137,34 @@ export async function uploadDocument(
  * Mirrors RLS: USING (auth.uid() = user_id)
  */
 export async function listDocuments(user: User | null): Promise<AuDocumentRow[]> {
-  const conditions = await getEffectiveOwnershipConditions(user);
+  const ownershipConditions = await getOwnershipConditionCandidates(user);
+  const retentionDays = await resolveDocumentRetentionDays(user?.id ?? null);
 
-  const query = supabase
-    .from('au_documents')
-    .select('*');
-  
-  applyOwnershipFilter(query, conditions);
-  
-  const { data, error } = await query.order('created_at', { ascending: false });
+  for (const conditions of ownershipConditions) {
+    const query = supabase
+      .from('au_documents')
+      .select('*');
 
-  if (error) {
+    applyOwnershipFilter(query, conditions);
+    const { data, error } = await query.order('created_at', { ascending: false });
+
+    if (!error) {
+      const rows = (data || []).map((row) => normalizeAuDocumentRow(row, retentionDays, user?.id ?? null));
+      return rows;
+    }
+
+    if (isAbortLikeError(error)) throw error;
+
+    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
+      continue;
+    }
     if (!isAbortLikeError(error)) {
       console.error('[API] Error listing documents:', error);
     }
     throw error;
   }
-  return data || [];
+
+  return [];
 }
 
 /**
@@ -174,21 +209,28 @@ function applyOwnershipFilters(query: any, conditions: string) {
  * Fetches all text chunks for a document and joins them.
  */
 export async function getDocumentText(user: User | null, documentId: string): Promise<string> {
-  const conditions = await getEffectiveOwnershipConditions(user);
+  const ownershipConditions = await getOwnershipConditionCandidates(user);
 
-  const query = supabase
-    .from('au_document_chunks')
-    .select('text')
-    .eq('document_id', documentId);
+  for (const conditions of ownershipConditions) {
+    const query = supabase
+      .from('au_document_chunks')
+      .select('text')
+      .eq('document_id', documentId);
 
-  applyOwnershipFilter(query, conditions);
+    applyOwnershipFilter(query, conditions);
+    const { data, error } = await query.order('chunk_index', { ascending: true });
 
-  const { data, error } = await query.order('chunk_index', { ascending: true });
+    if (!error) {
+      return (data || []).map(chunk => chunk.text).join('\n\n');
+    }
 
-  if (error) {
+    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
+      continue;
+    }
+
     console.error('[API] Error fetching document text:', error);
     throw error;
   }
 
-  return (data || []).map(chunk => chunk.text).join('\n\n');
+  return '';
 }

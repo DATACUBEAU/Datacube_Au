@@ -2,7 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { IngestionService } from './ingestion';
 import { logger, deterministicChunking } from './utils';
 import { UploadJob } from './types';
-import pdf from 'pdf-parse';
+import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
 
 export class RAGWorker {
@@ -132,6 +132,29 @@ export class RAGWorker {
       .from('au_documents')
       .update(payload)
       .eq('id', documentId);
+  }
+
+  private async extractPdfText(buffer: Buffer): Promise<string> {
+    const legacyDefault = (pdfParseModule as any)?.default;
+    if (typeof legacyDefault === 'function') {
+      const parsed = await legacyDefault(buffer);
+      return typeof parsed?.text === 'string' ? parsed.text : '';
+    }
+
+    const PDFParseCtor = (pdfParseModule as any)?.PDFParse;
+    if (typeof PDFParseCtor === 'function') {
+      const parser = new PDFParseCtor({ data: new Uint8Array(buffer) });
+      try {
+        const parsed = await parser.getText();
+        return typeof parsed?.text === 'string' ? parsed.text : '';
+      } finally {
+        if (typeof parser.destroy === 'function') {
+          await parser.destroy();
+        }
+      }
+    }
+
+    throw new Error('Unsupported pdf-parse module export');
   }
 
   async start() {
@@ -507,8 +530,7 @@ export class RAGWorker {
     const extension = job.object_path.split('.').pop()?.toLowerCase();
 
     if (extension === 'pdf') {
-      const pdfData = await (pdf as any)(buffer);
-      text = pdfData.text;
+      text = await this.extractPdfText(buffer);
     } else if (extension === 'docx') {
       const result = await mammoth.extractRawText({ buffer });
       text = result.value;

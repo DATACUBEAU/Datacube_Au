@@ -44,6 +44,7 @@ import {
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { DocumentsPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { FREE_RETENTION_DAYS, resolveDocumentRetentionDays } from '@/lib/au/document-normalization';
 
 type DocumentType = "main_textbook" | "past_questions";
 type DocumentStatus = "uploading" | "processing" | "completed" | "failed";
@@ -60,7 +61,6 @@ interface DocumentData {
 }
 
 const FAILED_AUTO_DELETE_MS = 60 * 60 * 1000; // 1 hour
-const AUTH_DOCUMENT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export default function DocumentsPage() {
   const [user] = useSupabaseUser();
@@ -78,6 +78,18 @@ export default function DocumentsPage() {
   const { jobs, removeJob } = useUploadJobs();
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [retentionDays, setRetentionDays] = useState<number>(FREE_RETENTION_DAYS);
+
+  useEffect(() => {
+    let active = true;
+    void resolveDocumentRetentionDays(user?.id ?? null).then((days) => {
+      if (!active) return;
+      setRetentionDays(days);
+    });
+    return () => {
+      active = false;
+    };
+  }, [user?.id]);
 
   const toggleFolder = (id: string) => {
     setExpandedFolders(prev => {
@@ -113,7 +125,7 @@ export default function DocumentsPage() {
   const cleanupInProgress = useMemo(() => new Set<string>(), []);
 
   const getComputedExpiresAt = (doc: DocumentData) => {
-    return new Date(new Date(doc.createdAt).getTime() + AUTH_DOCUMENT_TTL_MS).toISOString();
+    return new Date(new Date(doc.createdAt).getTime() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
   };
 
   useEffect(() => {

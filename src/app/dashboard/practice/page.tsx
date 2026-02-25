@@ -69,6 +69,47 @@ export default function PracticePage() {
     [allDocuments]
   );
 
+  const getDocumentExpiryMs = useCallback((docId: string): number | null => {
+    const doc = allDocuments.find((item) => item.id === docId);
+    if (!doc?.expires_at) return null;
+    const expiryMs = new Date(doc.expires_at).getTime();
+    return Number.isFinite(expiryMs) ? expiryMs : null;
+  }, [allDocuments]);
+
+  const restoreCachedExam = useCallback((docId: string): boolean => {
+    if (!user || !isOnline) return false;
+    const cacheKey = getCacheKey(user.id, docId);
+    const storedJSON = localStorage.getItem(cacheKey);
+    if (!storedJSON) return false;
+
+    try {
+      const stored: StoredExamHistory = JSON.parse(storedJSON);
+      const expiryMs = getDocumentExpiryMs(docId);
+      const nowMs = Date.now();
+
+      if (expiryMs && nowMs >= expiryMs) {
+        localStorage.removeItem(cacheKey);
+        return false;
+      }
+
+      const hasValidTimestamp = typeof stored.timestamp === 'number' && Number.isFinite(stored.timestamp);
+      const stillValid = hasValidTimestamp && (!expiryMs || stored.timestamp <= expiryMs);
+      if (!stillValid) {
+        localStorage.removeItem(cacheKey);
+        return false;
+      }
+
+      const cachedQuestions = stored.data.questions.map(q => ({ ...q, answerState: 'unanswered' as AnswerState }));
+      setQuestions(cachedQuestions);
+      toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
+      return true;
+    } catch (e) {
+      console.error("Failed to parse exam history from localStorage", e);
+      localStorage.removeItem(cacheKey);
+      return false;
+    }
+  }, [getDocumentExpiryMs, isOnline, toast, user]);
+
   const [questions, setQuestions] = useState<QuestionState[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [examFinished, setExamFinished] = useState(false);
@@ -98,28 +139,8 @@ export default function PracticePage() {
     setExamFinished(false);
     setScore(0);
 
-    if (user && isOnline) {
-      const cacheKey = getCacheKey(user.id, docId);
-      const storedJSON = localStorage.getItem(cacheKey);
-      if (storedJSON) {
-        try {
-          const stored: StoredExamHistory = JSON.parse(storedJSON);
-          const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-
-          if (stored.timestamp > threeDaysAgo) {
-            const cachedQuestions = stored.data.questions.map(q => ({ ...q, answerState: 'unanswered' as AnswerState }));
-            setQuestions(cachedQuestions);
-            toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
-          } else {
-            localStorage.removeItem(cacheKey); // Stale data
-          }
-        } catch (e) {
-          console.error("Failed to parse exam history from localStorage", e);
-          localStorage.removeItem(cacheKey);
-        }
-      }
-    }
-  }, [user, toast, isOnline]);
+    restoreCachedExam(docId);
+  }, [restoreCachedExam]);
   
   useEffect(() => {
     if (docsLoading || !documents.length) return;
@@ -148,20 +169,11 @@ export default function PracticePage() {
     }
     
     if (!forceNew) {
-        const cacheKey = getCacheKey(user.id, selectedDocId);
-        const storedJSON = localStorage.getItem(cacheKey);
-        if (storedJSON) {
-            const stored: StoredExamHistory = JSON.parse(storedJSON);
-            const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-            if (stored.timestamp > threeDaysAgo) {
-                const cachedQuestions = stored.data.questions.map(q => ({ ...q, answerState: 'unanswered' as AnswerState }));
-                setQuestions(cachedQuestions);
-                toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
-                setExamFinished(false);
-                setCurrentQuestionIndex(0);
-                setScore(0);
-                return;
-            }
+        if (restoreCachedExam(selectedDocId)) {
+            setExamFinished(false);
+            setCurrentQuestionIndex(0);
+            setScore(0);
+            return;
         }
     }
     
@@ -423,7 +435,7 @@ export default function PracticePage() {
       <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
         <Info className="h-3 w-3" />
         <span>
-          Generated exams are cached for 3 days to save you time.
+          Generated exams are cached until the source document expires.
         </span>
       </div>
     </main>

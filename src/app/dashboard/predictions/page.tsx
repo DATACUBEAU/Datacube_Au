@@ -125,6 +125,13 @@ export default function PredictionsPage() {
 
   const mainTextbookIds = useMemo(() => textbookDocs.map((doc) => doc.id), [textbookDocs]);
 
+  const getDocumentExpiryMs = useCallback((docId: string): number | null => {
+    const doc = allDocuments.find((item) => item.id === docId);
+    if (!doc?.expires_at) return null;
+    const expiryMs = new Date(doc.expires_at).getTime();
+    return Number.isFinite(expiryMs) ? expiryMs : null;
+  }, [allDocuments]);
+
   const parseTopicWeights = useCallback((weights: any) => {
     if (!weights) {
       setFormattedTopicWeights([]);
@@ -173,6 +180,39 @@ export default function PredictionsPage() {
     }
   }, [predictionData, parseTopicWeights]);
 
+  const restoreCachedPredictions = useCallback((docId: string, expirySourceDocId?: string | null): boolean => {
+    if (!user || !isOnline) return false;
+    const cacheKey = getCacheKey(user.id, docId);
+    const storedJSON = localStorage.getItem(cacheKey);
+    if (!storedJSON) return false;
+
+    try {
+      const stored: StoredPredictionHistory = JSON.parse(storedJSON);
+      const expiryMs = getDocumentExpiryMs(expirySourceDocId || docId);
+      const nowMs = Date.now();
+
+      if (expiryMs && nowMs >= expiryMs) {
+        localStorage.removeItem(cacheKey);
+        return false;
+      }
+
+      const hasValidTimestamp = typeof stored.timestamp === 'number' && Number.isFinite(stored.timestamp);
+      const stillValid = hasValidTimestamp && (!expiryMs || stored.timestamp <= expiryMs);
+      if (!stillValid) {
+        localStorage.removeItem(cacheKey);
+        return false;
+      }
+
+      setPredictionData(stored.data);
+      toast({ title: 'Loaded from history', description: 'Restored your exam briefing from the last session.' });
+      return true;
+    } catch (e) {
+      console.error("Failed to parse prediction history", e);
+      localStorage.removeItem(cacheKey);
+      return false;
+    }
+  }, [getDocumentExpiryMs, isOnline, setPredictionData, toast, user]);
+
 
   const handlePastQuestionsChange = (docId: string) => {
     setSelectedPastQuestionsId(docId);
@@ -180,27 +220,7 @@ export default function PredictionsPage() {
     setSelectedTextbookId(pqDoc?.parent_id || null);
     clearKnowledgeAndPredictions(); // Clear global store data
 
-    // Try to load from cache
-    if (user && isOnline) {
-      const cacheKey = getCacheKey(user.id, docId);
-      const storedJSON = localStorage.getItem(cacheKey);
-      if (storedJSON) {
-        try {
-          const stored: StoredPredictionHistory = JSON.parse(storedJSON);
-          const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
-
-          if (stored.timestamp > threeDaysAgo) {
-            setPredictionData(stored.data);
-            toast({ title: 'Loaded from history', description: 'Restored your exam briefing from the last session.' });
-          } else {
-            localStorage.removeItem(cacheKey);
-          }
-        } catch (e) {
-          console.error("Failed to parse prediction history", e);
-          localStorage.removeItem(cacheKey);
-        }
-      }
-    }
+    restoreCachedPredictions(docId, pqDoc?.parent_id || docId);
   };
 
   const getDocContent = async (docId: string) => {

@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Card,
@@ -79,13 +79,17 @@ export default function KnowledgePage() {
     return apiDocuments.filter(d => d.parent_id === selectedDocId).length;
   }, [apiDocuments, selectedDocId]);
 
-  const ttlMs = 7 * 24 * 60 * 60 * 1000;
+  const getDocumentExpiryMs = useCallback((docId: string): number | null => {
+    const doc = apiDocuments.find((item) => item.id === docId);
+    if (!doc?.expires_at) return null;
+    const expiryMs = new Date(doc.expires_at).getTime();
+    return Number.isFinite(expiryMs) ? expiryMs : null;
+  }, [apiDocuments]);
+
   const selectedDocExpiresAt = useMemo(() => {
     if (!selectedDoc) return null;
-    const exp = selectedDoc.expires_at;
-    if (exp) return exp;
-    return new Date(new Date(selectedDoc.created_at).getTime() + ttlMs).toISOString();
-  }, [selectedDoc, ttlMs]);
+    return selectedDoc.expires_at;
+  }, [selectedDoc]);
   
   // Filter documents for Knowledge Hub (Textbooks only)
   const documents = useMemo(() => apiDocuments.filter(d => 
@@ -112,9 +116,17 @@ export default function KnowledgePage() {
       if (storedJSON) {
         try {
           const stored: StoredKnowledgeHistory = JSON.parse(storedJSON);
-          const threeDaysAgo = Date.now() - 3 * 24 * 60 * 60 * 1000;
+          const expiryMs = getDocumentExpiryMs(docId);
+          const nowMs = Date.now();
+          if (expiryMs && nowMs >= expiryMs) {
+            localStorage.removeItem(cacheKey);
+            return;
+          }
 
-          if (stored.timestamp > threeDaysAgo) {
+          const hasValidTimestamp = typeof stored.timestamp === 'number' && Number.isFinite(stored.timestamp);
+          const stillValid = hasValidTimestamp && (!expiryMs || stored.timestamp <= expiryMs);
+
+          if (stillValid) {
             setKnowledgeData(stored.data); // Directly set the data in the store
             toast({ title: 'Loaded from history', description: 'Showing cached knowledge materials.' });
           } else {
@@ -462,7 +474,11 @@ export default function KnowledgePage() {
                   <span>•</span>
                   <span>{attachedFileCount} {attachedFileCount === 1 ? 'file' : 'files'}</span>
                   <span>•</span>
-                  <span>{formatDistanceToNowStrict(new Date(selectedDocExpiresAt))} left</span>
+                  <span>
+                    {new Date(selectedDocExpiresAt).getTime() <= Date.now()
+                      ? 'Expired'
+                      : `${formatDistanceToNowStrict(new Date(selectedDocExpiresAt))} left`}
+                  </span>
                 </div>
               )}
             </div>
@@ -488,7 +504,7 @@ export default function KnowledgePage() {
         <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
           <Info className="h-3 w-3" />
           <span>
-            Documents auto-delete after 7 days. Generated materials are cached for 3 days.
+            Documents retain for 14 days (30 days for paid Pro). Generated materials expire with the source document.
           </span>
         </div>
       </main>

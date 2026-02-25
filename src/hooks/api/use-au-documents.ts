@@ -11,7 +11,7 @@ let hasWarnedDocumentsFetch = false;
 const DOCS_CACHE_ROUTE = '/dashboard/documents';
 const DOCS_CACHE_SOURCE = 'au_documents';
 const DOCS_CACHE_ENDPOINT = 'list';
-const DOCS_CACHE_SCHEMA = 1;
+const DOCS_CACHE_SCHEMA = 2;
 const DOCS_CACHE_MAX_AGE_MS = 1000 * 60 * 60 * 24;
 
 function isAbortLikeError(error: unknown): boolean {
@@ -170,18 +170,12 @@ export function useAuDocuments(pollInterval = 0) {
           event: '*',
           schema: 'public',
           table: 'au_documents',
-          // Filter by user_id if possible, but RLS might handle it on the server.
-          // For client-side filter, we can check payload.new.user_id === user.id
-          filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setDocuments(prev => [payload.new as AuDocumentRow, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            setDocuments(prev => prev.map(d => d.id === payload.new.id ? { ...d, ...payload.new } : d));
-          } else if (payload.eventType === 'DELETE') {
-            setDocuments(prev => prev.filter(d => d.id !== payload.old.id));
-          }
+          const row = (payload as any).new || (payload as any).old || null;
+          const ownerId = row?.owner_id || row?.user_id || null;
+          if (ownerId !== user.id) return;
+          void fetchDocs();
         }
       )
       .subscribe((status) => {
