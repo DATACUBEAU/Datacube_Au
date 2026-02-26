@@ -160,6 +160,7 @@ export class RAGWorker {
   async start() {
     this.isRunning = true;
     logger.info('Worker started', { pipelineId: this.pipelineId, workerId: this.workerInstanceId });
+    await this.ingestion.ensureStartupIndexes();
 
     while (this.isRunning) {
       try {

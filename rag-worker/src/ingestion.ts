@@ -69,12 +69,15 @@ export class IngestionService {
   private chunkInsertBatchSize: number;
   private embedBatchSize: number;
   private qdrantRetryCount: number;
+  private startupMigrationRetryCount: number;
   private modelCacheDir: string;
   private modelLockTimeoutMs: number;
   private modelLockStaleMs: number;
   private transformersFallbackEnabled: boolean;
   private transformersModelId: string;
   private hfCacheDir: string;
+  private preparedCollections: Set<string>;
+  private startupIndexesEnsured = false;
 
   constructor(
     private supabase: SupabaseClient,
@@ -90,6 +93,7 @@ export class IngestionService {
     this.chunkInsertBatchSize = this.parsePositiveInt(process.env.CHUNK_INSERT_BATCH_SIZE, 250);
     this.embedBatchSize = this.parsePositiveInt(process.env.EMBED_BATCH_SIZE, 96);
     this.qdrantRetryCount = this.parsePositiveInt(process.env.QDRANT_RETRY_COUNT, 3);
+    this.startupMigrationRetryCount = this.parsePositiveInt(process.env.QDRANT_STARTUP_MIGRATION_RETRIES, 5);
     const configuredCacheDir = (process.env.FASTEMBED_CACHE_DIR || '/root/rag-worker/local_cache').trim();
     this.modelCacheDir = path.resolve(configuredCacheDir);
     this.modelLockTimeoutMs = this.parsePositiveInt(process.env.FASTEMBED_MODEL_LOCK_TIMEOUT_MS, 120000);
@@ -98,6 +102,7 @@ export class IngestionService {
     this.transformersFallbackEnabled = !(fallbackRaw === 'false' || fallbackRaw === '0' || fallbackRaw === 'no');
     this.transformersModelId = (process.env.TRANSFORMERS_EMBEDDING_MODEL || 'Xenova/all-MiniLM-L6-v2').trim();
     this.hfCacheDir = path.resolve((process.env.HF_CACHE_DIR || path.join(this.modelCacheDir, 'hf-cache')).trim());
+    this.preparedCollections = new Set<string>();
   }
 
   private parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -703,42 +708,148 @@ export class IngestionService {
     } as any;
   }
 
+  private payloadIndexSpecs() {
+    return [
+      { field_name: 'text_hash', field_schemas: ['keyword'] as const },
+      { field_name: 'created_at', field_schemas: ['integer'] as const },
+      { field_name: 'expires_at', field_schemas: ['integer'] as const },
+      { field_name: 'expiresAt', field_schemas: ['integer'] as const },
+      { field_name: 'owner_id', field_schemas: ['uuid', 'keyword'] as const },
+      { field_name: 'user_id', field_schemas: ['uuid', 'keyword'] as const },
+      { field_name: 'document_id', field_schemas: ['uuid', 'keyword'] as const },
+    ];
+  }
+
+  private isIndexAlreadyExistsError(error: any): boolean {
+    const message = String(error?.message || '').toLowerCase();
+    return (
+      message.includes('already exists') ||
+      message.includes('already indexed') ||
+      message.includes('index exists') ||
+      message.includes('duplicate')
+    );
+  }
+
+  private isUnsupportedSchemaError(error: any): boolean {
+    const status = Number(error?.status || error?.statusCode || 0);
+    if (status !== 400) return false;
+    const message = String(error?.message || '').toLowerCase();
+    return (
+      message.includes('invalid') ||
+      message.includes('unknown') ||
+      message.includes('wrong input') ||
+      message.includes('field_schema')
+    );
+  }
+
+  private async ensurePayloadIndex(
+    collectionName: string,
+    fieldName: string,
+    candidateSchemas: readonly string[],
+  ): Promise<void> {
+    let lastError: unknown = null;
+    for (const fieldSchema of candidateSchemas) {
+      try {
+        await this.withQdrantRetry(`Qdrant createPayloadIndex:${fieldName}:${fieldSchema}`, () =>
+          this.qdrant.createPayloadIndex(collectionName, {
+            field_name: fieldName,
+            field_schema: fieldSchema as any,
+          } as any)
+        );
+
+        logger.info('Qdrant payload index ensured', {
+          collectionName,
+          fieldName,
+          fieldSchema,
+        });
+        return;
+      } catch (error: any) {
+        if (this.isIndexAlreadyExistsError(error)) {
+          logger.info('Qdrant payload index already exists', {
+            collectionName,
+            fieldName,
+            requestedSchema: fieldSchema,
+          });
+          return;
+        }
+
+        if (this.isUnsupportedSchemaError(error)) {
+          lastError = error;
+          continue;
+        }
+
+        throw error;
+      }
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+  }
+
+  private async ensureCollectionIndexes(collectionName: string): Promise<void> {
+    const specs = this.payloadIndexSpecs();
+    for (const spec of specs) {
+      await this.ensurePayloadIndex(collectionName, spec.field_name, spec.field_schemas);
+    }
+  }
+
   private async ensureCollection(collectionName: string): Promise<void> {
+    let exists = false;
     try {
       await this.withQdrantRetry('Qdrant getCollection', () => this.qdrant.getCollection(collectionName));
-      return;
+      exists = true;
     } catch (error: any) {
       if (Number(error?.status) !== 404 && !String(error?.message || '').toLowerCase().includes('not found')) {
         throw error;
       }
     }
 
-    logger.info('Creating Qdrant collection', { collectionName });
-    await this.withQdrantRetry('Qdrant createCollection', () => this.qdrant.createCollection(collectionName, {
-      vectors: {
-        size: 384,
-        distance: 'Cosine',
-      },
-    }));
+    if (!exists) {
+      logger.info('Creating Qdrant collection', { collectionName });
+      await this.withQdrantRetry('Qdrant createCollection', () => this.qdrant.createCollection(collectionName, {
+        vectors: {
+          size: 384,
+          distance: 'Cosine',
+        },
+      }));
+    }
 
-    const indexSpecs = [
-      { field_name: 'text_hash', field_schema: 'keyword' as const },
-      { field_name: 'created_at', field_schema: 'integer' as const },
-      { field_name: 'expires_at', field_schema: 'integer' as const },
-      { field_name: 'owner_id', field_schema: 'keyword' as const },
-      { field_name: 'user_id', field_schema: 'keyword' as const },
-      { field_name: 'document_id', field_schema: 'keyword' as const },
-    ];
+    if (this.preparedCollections.has(collectionName)) {
+      return;
+    }
 
-    for (const spec of indexSpecs) {
+    await this.ensureCollectionIndexes(collectionName);
+    this.preparedCollections.add(collectionName);
+  }
+
+  async ensureStartupIndexes(): Promise<void> {
+    if (this.startupIndexesEnsured) return;
+
+    const collectionName = 'au_chunks';
+    for (let attempt = 1; attempt <= this.startupMigrationRetryCount; attempt += 1) {
       try {
-        await this.withQdrantRetry(`Qdrant createPayloadIndex:${spec.field_name}`, () =>
-          this.qdrant.createPayloadIndex(collectionName, spec as any)
-        );
-      } catch (error: any) {
-        const message = String(error?.message || '').toLowerCase();
-        if (message.includes('already exists')) continue;
-        throw error;
+        await this.ensureCollection(collectionName);
+        this.startupIndexesEnsured = true;
+        logger.info('Qdrant startup migration complete', {
+          collectionName,
+          attempts: attempt,
+          ensuredIndexes: this.payloadIndexSpecs().map((spec) => spec.field_name),
+        });
+        return;
+      } catch (error) {
+        if (attempt >= this.startupMigrationRetryCount) {
+          throw error;
+        }
+
+        const backoffMs = Math.min(1000 * (2 ** (attempt - 1)), 10000);
+        logger.warn('Qdrant startup migration failed, retrying', {
+          collectionName,
+          attempt,
+          backoffMs,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        await this.wait(backoffMs);
       }
     }
   }
