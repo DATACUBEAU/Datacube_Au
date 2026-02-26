@@ -68,6 +68,11 @@ export default function PracticePage() {
     allDocuments.filter(d => d.document_type === 'main_textbook'),
     [allDocuments]
   );
+  const selectedDoc = useMemo(() => {
+    if (!selectedDocId) return null;
+    return documents.find((doc) => doc.id === selectedDocId) || null;
+  }, [documents, selectedDocId]);
+  const selectedDocReady = selectedDoc?.status === 'completed';
 
   const getDocumentExpiryMs = useCallback((docId: string): number | null => {
     const doc = allDocuments.find((item) => item.id === docId);
@@ -144,7 +149,8 @@ export default function PracticePage() {
   
   useEffect(() => {
     if (docsLoading || !documents.length) return;
-    const docIds = documents.map(doc => doc.id);
+    const completedDocIds = documents.filter((doc) => doc.status === 'completed').map((doc) => doc.id);
+    const docIds = completedDocIds.length > 0 ? completedDocIds : documents.map((doc) => doc.id);
     if (!selectedDocId || !docIds.includes(selectedDocId)) {
       const newSelectedId = docIds[0] || null;
       if (newSelectedId) {
@@ -156,6 +162,14 @@ export default function PracticePage() {
   const triggerGeneration = async (forceNew = false) => {
     if (!selectedDocId || !user) {
         toast({ variant: 'destructive', title: 'Error', description: 'Please select a document first.' });
+        return;
+    }
+    if (!selectedDocReady) {
+        toast({
+          variant: 'destructive',
+          title: 'Document not ready',
+          description: `The selected document is ${selectedDoc?.status || 'not ready'}. Please wait for completion.`,
+        });
         return;
     }
 
@@ -400,7 +414,7 @@ export default function PracticePage() {
               )}
             </SelectContent>
           </Select>
-          <Button onClick={() => triggerGeneration()} disabled={isGenerating || !selectedDocId || !isOnline || upgradeBlocked}>
+          <Button onClick={() => triggerGeneration()} disabled={isGenerating || !selectedDocId || !isOnline || upgradeBlocked || !selectedDocReady}>
             {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <SquarePen className="mr-2 h-4 w-4" />}
             <span>{questions.length > 0 && !isGenerating ? 'Restart Exam' : 'Generate Exam'}</span>
           </Button>

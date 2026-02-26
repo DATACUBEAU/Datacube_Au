@@ -122,6 +122,14 @@ export default function PredictionsPage() {
 
   const textbookDocs = useMemo(() => allDocuments.filter(d => d.document_type === 'main_textbook'), [allDocuments]);
   const pastQuestionsDocs = useMemo(() => allDocuments.filter(d => d.document_type === 'past_questions' || d.document_type === 'exam_questions'), [allDocuments]);
+  const selectedPastQuestionDoc = useMemo(
+    () => pastQuestionsDocs.find((d) => d.id === selectedPastQuestionsId) || null,
+    [pastQuestionsDocs, selectedPastQuestionsId]
+  );
+  const selectedTextbookDoc = useMemo(
+    () => textbookDocs.find((d) => d.id === selectedTextbookId) || null,
+    [textbookDocs, selectedTextbookId]
+  );
 
   const mainTextbookIds = useMemo(() => textbookDocs.map((doc) => doc.id), [textbookDocs]);
 
@@ -241,6 +249,15 @@ export default function PredictionsPage() {
       });
       return;
     }
+    const tbDoc = selectedTextbookId ? textbookDocs.find((d) => d.id === selectedTextbookId) : null;
+    if (tbDoc && tbDoc.status !== 'completed') {
+      toast({
+        variant: 'destructive',
+        title: 'Textbook not ready',
+        description: `The linked textbook is still ${tbDoc.status}. Please wait for it to complete.`,
+      });
+      return;
+    }
 
     if (!isOnline) {
       toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to generate predictions.' });
@@ -291,7 +308,7 @@ export default function PredictionsPage() {
                   <SelectTrigger id="past-questions" aria-label="Select past questions"><SelectValue placeholder={docsLoading ? 'Loading...' : 'Select questions...'} /></SelectTrigger>
                   <SelectContent>
                     {pastQuestionsDocs.map((doc) => (
-                      <SelectItem key={doc.id} value={doc.id}>
+                      <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
                         <div className="flex items-center gap-2">
                           <TruncatedText
                             text={doc.file_name}
@@ -335,7 +352,18 @@ export default function PredictionsPage() {
             </div>
 
             <div className="flex items-end">
-              <Button onClick={triggerGetPredictions} disabled={!selectedPastQuestionsId || isGeneratingPredictions || !isOnline || upgradeBlocked} className="w-full lg:w-auto">
+              <Button
+                onClick={triggerGetPredictions}
+                disabled={
+                  !selectedPastQuestionsId ||
+                  isGeneratingPredictions ||
+                  !isOnline ||
+                  upgradeBlocked ||
+                  selectedPastQuestionDoc?.status !== 'completed' ||
+                  (selectedTextbookId ? selectedTextbookDoc?.status !== 'completed' : false)
+                }
+                className="w-full lg:w-auto"
+              >
                 {isGeneratingPredictions ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <BrainCircuit className="mr-2 h-4 w-4" aria-hidden="true" />}
                 Generate Briefing
               </Button>

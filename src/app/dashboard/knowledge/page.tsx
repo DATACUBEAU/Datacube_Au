@@ -73,6 +73,7 @@ export default function KnowledgePage() {
     if (!selectedDocId) return null;
     return apiDocuments.find(d => d.id === selectedDocId) || null;
   }, [apiDocuments, selectedDocId]);
+  const selectedDocReady = selectedDoc?.status === 'completed';
 
   const attachedFileCount = useMemo(() => {
     if (!selectedDocId) return 0;
@@ -142,7 +143,8 @@ export default function KnowledgePage() {
 
   useEffect(() => {
     if (docsLoading || !documents.length) return;
-    const docIds = documents.map((doc) => doc.id);
+    const completedDocIds = documents.filter((doc) => doc.status === 'completed').map((doc) => doc.id);
+    const docIds = completedDocIds.length > 0 ? completedDocIds : documents.map((doc) => doc.id);
     if (!selectedDocId || !docIds.includes(selectedDocId)) {
       const newSelectedId = docIds[0] ? docIds[0] : null;
       if (newSelectedId) {
@@ -154,6 +156,14 @@ export default function KnowledgePage() {
 
   const triggerGeneration = async () => {
     if (!selectedDocId || !user || isGeneratingKnowledge) {
+      return;
+    }
+    if (!selectedDocReady) {
+      toast({
+        variant: 'destructive',
+        title: 'Document not ready',
+        description: `The selected document is ${selectedDoc?.status || 'not ready'}. Please wait for completion.`,
+      });
       return;
     }
     
@@ -486,7 +496,7 @@ export default function KnowledgePage() {
 
           <Button 
             onClick={triggerGeneration} 
-            disabled={!selectedDocId || isGeneratingKnowledge || !isOnline}
+            disabled={!selectedDocId || isGeneratingKnowledge || !isOnline || !selectedDocReady}
             className="shrink-0 gap-2 shadow-md hover:shadow-lg transition-all"
           >
             {isGeneratingKnowledge ? (

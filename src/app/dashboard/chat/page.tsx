@@ -228,17 +228,17 @@ export default function ChatPage() {
       return () => setAuAnimationState('idle');
   }, [setAuAnimationState]);
 
-  const documentList = useMemo(() => apiDocuments
-    .filter(d => d.document_type === 'main_textbook' || d.document_type === 'exam_questions') // Keep exams visible if desired, or strict 'main_textbook'
-    .filter(d => d.status === 'completed' || d.status === 'processing') // Allow processing docs for Streaming RAG
-    .map(d => ({ 
-      id: d.id, 
-      fileName: d.file_name, 
-      status: d.status,
-      type: d.document_type,
-      expiresAt: d.expires_at ?? undefined,
-    }))
-    .filter(d => d.type === 'main_textbook'), // Strict filter: ONLY main textbooks appear in chat selector
+  const documentList = useMemo(
+    () =>
+      apiDocuments
+        .filter((d) => d.document_type === 'main_textbook')
+        .map((d) => ({
+          id: d.id,
+          fileName: d.file_name,
+          status: d.status,
+          type: d.document_type,
+          expiresAt: d.expires_at ?? undefined,
+        })),
     [apiDocuments]
   );
 
@@ -280,7 +280,7 @@ export default function ChatPage() {
           handleDocSelection('global');
       } else {
           // Switch back to AU: Select first available document
-          const firstDoc = documentList[0];
+          const firstDoc = documentList.find((doc) => doc.status === 'completed') || documentList[0];
           if (firstDoc) {
               handleDocSelection(firstDoc.id);
           } else {
@@ -295,6 +295,10 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (selectedDocId && user && canChat && !isResponding && !isFetchingPrompts && !isSwitchingDocs && isInitialized) {
+        const activeDoc = documentList.find((doc) => doc.id === selectedDocId);
+        if (activeDoc && activeDoc.status !== 'completed') {
+          return;
+        }
         // Check if we already greeted for this doc
         const greetedKey = getGreetedKey(selectedDocId);
         const hasGreeted = localStorage.getItem(greetedKey);
@@ -317,7 +321,7 @@ export default function ChatPage() {
              });
         }
     }
-  }, [selectedDocId, user, isResponding, isFetchingPrompts, isSwitchingDocs, currentChatHistory.length, scanAndGreet, isInitialized]);
+  }, [selectedDocId, user, canChat, isResponding, isFetchingPrompts, isSwitchingDocs, isInitialized, documentList, currentChatHistory.length, scanAndGreet]);
 
   const handleCopy = (messageId: string, content: string) => {
     navigator.clipboard.writeText(content);
@@ -516,7 +520,8 @@ export default function ChatPage() {
     if (docsLoading || !user) return;
 
     if (documentList.length > 0) {
-        const docIds = documentList.map(doc => doc.id);
+        const completedDocIds = documentList.filter((doc) => doc.status === 'completed').map((doc) => doc.id);
+        const docIds = completedDocIds.length > 0 ? completedDocIds : documentList.map((doc) => doc.id);
         if (!selectedDocId || !docIds.includes(selectedDocId)) {
             handleDocSelection(docIds[0]);
         }
@@ -811,6 +816,14 @@ export default function ChatPage() {
       logOnce('warn', 'chat:send:blocked', '[chat] Send blocked (auth/online)');
       return;
     }
+    if (!selectedDoc || selectedDoc.status !== 'completed') {
+      toast({
+        variant: 'destructive',
+        title: 'Document not ready',
+        description: 'Wait for this document to complete processing before chatting.',
+      });
+      return;
+    }
 
     // Validate query before sending
     const validation = validateQuery(currentInput);
@@ -905,7 +918,7 @@ export default function ChatPage() {
               </SelectTrigger>
               <SelectContent>
                 {documentList.map(doc => (
-                  <SelectItem key={doc.id} value={doc.id} disabled={false}>
+                  <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
                     <div className="flex items-center gap-2">
                       <TruncatedText
                         text={doc.fileName}
@@ -1319,7 +1332,7 @@ export default function ChatPage() {
                     type="button"
                     variant="ghost"
                     size="icon"
-                    disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked}
+                    disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed'}
                     className={`absolute left-1.5 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 transition-all duration-300 hover:scale-110 ${summaryMode ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary'}`}
                   >
                     {summaryMode === 'short' ? <Scissors className="h-5 w-5" /> :
@@ -1354,6 +1367,8 @@ export default function ChatPage() {
                 placeholder={
                   !selectedDocId
                     ? "Please select a document to start chatting."
+                    : !selectedDoc || selectedDoc.status !== 'completed'
+                      ? `Document is ${selectedDoc?.status || 'not ready'}...`
                     : !isOnline
                       ? "Offline mode"
                       : !session?.access_token
@@ -1369,7 +1384,7 @@ export default function ChatPage() {
                     if (canChat) handleSendMessage(e);
                   }
                 }}
-                disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked}
+                disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed'}
               />
               {selectedDocId && !isOnline && (
                 <div className="mt-1 pl-3 text-xs text-muted-foreground">Offline mode</div>
@@ -1377,13 +1392,18 @@ export default function ChatPage() {
               {selectedDocId && !session?.access_token && isOnline && (
                 <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in required</div>
               )}
+              {selectedDocId && selectedDoc && selectedDoc.status !== 'completed' && (
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">
+                  Document is {selectedDoc.status}. Chat unlocks when processing is completed.
+                </div>
+              )}
             </div>
 
             <Button 
               type={isResponding ? "button" : "submit"} 
               size="icon" 
               className={`h-12 w-12 shrink-0 rounded-full transition-all ${isResponding ? 'bg-destructive hover:bg-destructive/90' : ''}`}
-              disabled={((!input.trim() || !selectedDocId || !canChat || upgradeBlocked) && !isResponding)}
+              disabled={((!input.trim() || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed') && !isResponding)}
               onClick={(e) => {
                   if (isResponding) {
                       e.preventDefault();
