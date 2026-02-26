@@ -1,7 +1,7 @@
 
 import { safeFetch } from '@/lib/api/safe-fetch';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
-import { getSupabaseAccessToken, invokeEdgeFunction } from '@/lib/supabase-client/client';
+import { getSupabaseAccessToken, invokeEdgeFunction, supabase } from '@/lib/supabase-client/client';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -212,32 +212,66 @@ export async function sendChatMessageStream(
     };
   }
 
-  const accessToken = await getSupabaseAccessToken();
-  if (!accessToken) throw { message: 'No active session', status: 401 };
-
-  const doRequest = async (token: string) => {
+  const doRequest = async (token: string | null) => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
-      Authorization: `Bearer ${token}`,
     };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
     if (anonKey) headers.apikey = anonKey;
 
     return await safeFetch(`/api/proxy/${endpoint}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(payload),
+      credentials: 'include',
       signal: opts?.signal,
       timeout: 120_000,
       silent: true,
     });
   };
 
-  const res = await doRequest(accessToken);
+  let accessToken = await getSupabaseAccessToken();
+  let res = await doRequest(accessToken);
+
+  if (res.status === 401) {
+    try {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (!error) {
+        accessToken = data.session?.access_token ?? null;
+      }
+    } catch {
+      // Keep the original unauthorized response.
+    }
+
+    if (accessToken) {
+      res = await doRequest(accessToken);
+    }
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Chat stream failed: ${res.status} ${res.statusText} ${text}`.trim());
+    let details: any = text;
+    try {
+      details = JSON.parse(text);
+    } catch {
+      // keep raw text
+    }
+
+    const message =
+      (details && typeof details === 'object'
+        ? (details as any).message || (details as any).error
+        : null) ||
+      res.statusText ||
+      'Chat stream failed';
+
+    throw {
+      message,
+      status: res.status,
+      details,
+    };
   }
 
   if (!res.body) throw new Error('Missing response body');

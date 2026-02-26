@@ -231,7 +231,7 @@ export async function invokeEdgeFunction<T = any>(
     const gate = guardRequest({
       isOnline,
       requireAuth,
-      accessToken,
+      accessToken: accessToken ?? (requireAuth ? '__cookie_session__' : null),
       allowOfflineRead: allowOffline,
       warnKey: `invoke-edge:${functionName}`,
       context: functionName,
@@ -245,13 +245,6 @@ export async function invokeEdgeFunction<T = any>(
           status: gate.reason === 'offline' ? 0 : 401,
         },
       };
-    }
-
-    if (requireAuth && !accessToken) {
-      return { data: null as T | null, error: { message: 'No active session', status: 401 } };
-    }
-    if (!accessToken && requireAuth) { // Double check consistency
-      return { data: null as T | null, error: { message: 'No active session', status: 401 } };
     }
 
     const headers = new Headers(options?.headers ?? {});
@@ -270,6 +263,7 @@ export async function invokeEdgeFunction<T = any>(
         method,
         headers,
         body: method === 'POST' ? JSON.stringify(options?.body ?? {}) : undefined,
+        credentials: 'include',
         timeout: timeoutMs,
         silent,
       });
@@ -287,7 +281,9 @@ export async function invokeEdgeFunction<T = any>(
     if (res.ok) return { data: payload as T, error: null };
 
     const message =
-      (payload && typeof payload === 'object' ? (payload as any).error : null) ||
+      (payload && typeof payload === 'object'
+        ? (payload as any).message || (payload as any).error
+        : null) ||
       res.statusText ||
       'Request failed';
 
@@ -295,7 +291,27 @@ export async function invokeEdgeFunction<T = any>(
   };
 
   const accessToken = await getSupabaseAccessToken();
-  return attemptOnce(accessToken);
+  const firstAttempt = await attemptOnce(accessToken);
+
+  if (!requireAuth || !firstAttempt.error || Number(firstAttempt.error?.status) !== 401) {
+    return firstAttempt;
+  }
+
+  let refreshedToken: string | null = accessToken;
+  try {
+    const { data, error } = await supabase.auth.refreshSession();
+    if (!error) {
+      refreshedToken = data.session?.access_token ?? null;
+    }
+  } catch {
+    // Fallback to first unauthorized result.
+  }
+
+  if (!refreshedToken && !accessToken) {
+    return firstAttempt;
+  }
+
+  return attemptOnce(refreshedToken);
 }
 
 /**

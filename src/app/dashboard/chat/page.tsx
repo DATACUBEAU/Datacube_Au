@@ -64,7 +64,7 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { safeFetch } from '@/lib/api/safe-fetch';
-import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
+import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { validateQuery } from '@/lib/upload/file-types';
 import { cn } from '@/lib/utils';
 import { TruncatedText } from '@/components/TruncatedText';
@@ -653,24 +653,14 @@ export default function ChatPage() {
       const documentContent = await getDocumentContent(selectedDocId);
       if (!documentContent) return;
 
-      const accessToken = await getSupabaseAccessToken();
-      if (!accessToken) {
-        toast({
-          variant: 'destructive',
-          title: 'Session expired',
-          description: 'Please sign in again to continue chatting.',
-          duration: 3000,
-        });
-        return;
-      }
-
-      const doRequest = async (token: string) =>
+      const doRequest = async (token: string | null) =>
         safeFetch(`/api/proxy/au-chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
+          credentials: 'include',
           body: JSON.stringify({ 
             messages: [{ 
               role: 'user', 
@@ -681,7 +671,28 @@ export default function ChatPage() {
           }),
         });
 
-      const result = await doRequest(accessToken);
+      let accessToken = await getSupabaseAccessToken();
+      let result = await doRequest(accessToken);
+
+      if (result.status === 401) {
+        try {
+          const { data, error } = await supabase.auth.refreshSession();
+          if (!error) {
+            accessToken = data.session?.access_token ?? null;
+          }
+        } catch {
+          // Keep original unauthorized response.
+        }
+
+        if (accessToken) {
+          result = await doRequest(accessToken);
+        }
+      }
+
+      if (!result.ok) {
+        const raw = await result.text().catch(() => '');
+        throw new Error(`Prompt starter request failed: ${result.status} ${raw}`.trim());
+      }
 
       const data = await result.json();
       let prompts: string[] = [];
@@ -751,24 +762,14 @@ export default function ChatPage() {
     try {
       const documentContent = await getDocumentContent(selectedDocId);
       const documentTitle = selectedDocName || 'Current Document';
-      const accessToken = await getSupabaseAccessToken();
-      if (!accessToken) {
-        toast({
-          variant: 'destructive',
-          title: 'Session expired',
-          description: 'Please sign in again to continue chatting.',
-          duration: 3000,
-        });
-        return;
-      }
-
-      const doRequest = async (token: string) =>
+      const doRequest = async (token: string | null) =>
         safeFetch(`/api/proxy/generate-prompt-starters`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
+          credentials: 'include',
           body: JSON.stringify({ 
             documentTitle,
             documentContent: documentContent.substring(0, 10000), // Limit content for efficiency
@@ -776,7 +777,28 @@ export default function ChatPage() {
           }),
         });
 
-      const result = await doRequest(accessToken);
+      let accessToken = await getSupabaseAccessToken();
+      let result = await doRequest(accessToken);
+
+      if (result.status === 401) {
+        try {
+          const { data, error } = await supabase.auth.refreshSession();
+          if (!error) {
+            accessToken = data.session?.access_token ?? null;
+          }
+        } catch {
+          // Keep original unauthorized response.
+        }
+
+        if (accessToken) {
+          result = await doRequest(accessToken);
+        }
+      }
+
+      if (!result.ok) {
+        const raw = await result.text().catch(() => '');
+        throw new Error(`Prompt enhancement request failed: ${result.status} ${raw}`.trim());
+      }
       
       const data = await result.json();
       const prompts = data.prompts || [];

@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 
@@ -12,20 +11,71 @@ function firstEnv(...keys: string[]): string | null {
   return null;
 }
 
-function functionsBaseUrl(): string {
+function functionsBaseUrl(): string | null {
   const supabaseUrl = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
-  if (!supabaseUrl) {
-    throw new Error('server_misconfigured:missing_supabase_url');
-  }
+  if (!supabaseUrl) return null;
   return `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
 }
 
-function corsHeaders(): HeadersInit {
-  return {
+function corsHeaders(requestId?: string): HeadersInit {
+  const headers: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, apikey, x-admin-token',
   };
+  if (requestId) headers['x-request-id'] = requestId;
+  return headers;
+}
+
+function applyResponseHeaders(source: Headers, requestId: string): Headers {
+  const headers = new Headers(source);
+  Object.entries(corsHeaders(requestId)).forEach(([key, value]) => headers.set(key, String(value)));
+  return headers;
+}
+
+function truncateForLog(value: unknown, limit = 1000): string {
+  const raw = typeof value === 'string' ? value : JSON.stringify(value);
+  if (!raw) return '';
+  return raw.length > limit ? `${raw.slice(0, limit)}...` : raw;
+}
+
+function tryParseJson(raw: string): any | null {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function parseErrorPayload(response: Response): Promise<{ details: unknown; raw: string }> {
+  const raw = await response.text().catch(() => '');
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    const parsed = tryParseJson(raw);
+    return { details: parsed ?? raw, raw };
+  }
+  return { details: raw, raw };
+}
+
+function messageFromFailure(status: number, details: unknown, statusText: string): string {
+  if (status === 401) return 'unauthorized';
+  if (status === 403) return 'forbidden';
+
+  if (details && typeof details === 'object') {
+    const candidate =
+      (details as any).message ||
+      (details as any).error ||
+      (details as any).code;
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  if (typeof details === 'string' && details.trim()) {
+    return details.trim().slice(0, 300);
+  }
+
+  return statusText || 'edge_function_error';
 }
 
 async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ functionName: string }> }) {
@@ -33,23 +83,54 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   const requestId = crypto.randomUUID();
 
   try {
-    const url = new URL(req.url);
-    const searchParams = url.searchParams;
+    const baseUrl = functionsBaseUrl();
+    const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+    if (!baseUrl || !anonKey) {
+      return NextResponse.json(
+        {
+          message: 'server_misconfigured',
+          error: 'server_misconfigured',
+          status: 503,
+          requestId,
+          details: {
+            missing: [
+              !baseUrl ? 'SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL' : null,
+              !anonKey ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY' : null,
+            ].filter(Boolean),
+          },
+        },
+        { status: 503, headers: corsHeaders(requestId) },
+      );
+    }
 
-    const targetUrl = new URL(`${functionsBaseUrl()}/${functionName}`);
-    searchParams.forEach((value, key) => {
+    const auth = await requireUserFromRequest(req);
+    if (!auth.ok) {
+      console.warn('[proxy] unauthorized request', {
+        requestId,
+        functionName,
+        reason: auth.reason,
+      });
+      return NextResponse.json(
+        {
+          message: 'unauthorized',
+          error: 'unauthorized',
+          status: 401,
+          requestId,
+          details: { reason: auth.reason },
+        },
+        { status: 401, headers: corsHeaders(requestId) },
+      );
+    }
+
+    const incomingUrl = new URL(req.url);
+    const targetUrl = new URL(`${baseUrl}/${functionName}`);
+    incomingUrl.searchParams.forEach((value, key) => {
       targetUrl.searchParams.append(key, value);
     });
 
     const headers = new Headers();
-    const auth = await requireUserFromRequest(req);
-    if (!auth.ok) {
-      return NextResponse.json(
-        { error: 'unauthorized' },
-        { status: 401, headers: corsHeaders() }
-      );
-    }
     headers.set('Authorization', `Bearer ${auth.accessToken}`);
+    headers.set('apikey', anonKey);
 
     const contentType = req.headers.get('content-type');
     if (contentType) headers.set('Content-Type', contentType);
@@ -57,10 +138,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     const accept = req.headers.get('accept');
     if (accept) headers.set('Accept', accept);
 
-    const adminToken = req.headers.get('x-admin-token');
-    if (adminToken) headers.set('x-admin-token', adminToken);
-
     const passthroughHeaders = [
+      'x-admin-token',
       'x-client-info',
       'x-device-id',
       'x-supabase-client-platform',
@@ -74,89 +153,68 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       if (value) headers.set(name, value);
     });
 
-    const apikey = req.headers.get('apikey');
-    if (apikey) {
-      headers.set('apikey', apikey);
-    } else {
-      const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
-      if (!anonKey) {
-        return NextResponse.json(
-          { error: 'server_misconfigured', message: 'Missing Supabase anon key.' },
-          { status: 503, headers: corsHeaders() }
-        );
-      }
-      headers.set('apikey', anonKey);
-    }
-
-    let body: BodyInit | null = null;
+    let body: BodyInit | undefined;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      body = req.body;
+      const rawBody = await req.arrayBuffer();
+      if (rawBody.byteLength > 0) {
+        body = rawBody;
+      }
     }
 
     const response = await fetch(targetUrl.toString(), {
       method: req.method,
       headers,
       body,
-      // @ts-ignore - duplex is needed for streaming body in some environments but Next.js edge runtime handles it
-      duplex: 'half',
     });
 
-    if (!response.ok) {
-      const ct = response.headers.get('content-type') || '';
-      const isEventStream = ct.includes('text/event-stream');
-      if (!isEventStream) {
-        const raw = await response.text().catch(() => '');
-        const lower = raw.toLowerCase();
+    const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
+    const isEventStream = contentTypeResponse.includes('text/event-stream');
 
-        const isRegisteredOnly =
-          lower.includes('registered user account required') ||
-          lower.includes('registered account required') ||
-          lower.includes('registered user required');
-        const isUnauthorized = lower.includes('unauthorized') || lower.includes('invalid jwt') || lower.includes('jwt expired');
-        const isForbidden = lower.includes('forbidden') || lower.includes('insufficient') || lower.includes('not allowed');
+    if (!response.ok && !isEventStream) {
+      const { details, raw } = await parseErrorPayload(response);
+      const message = messageFromFailure(response.status, details, response.statusText);
+      console.error('[proxy] edge function failed', {
+        requestId,
+        functionName,
+        userId: auth.userId,
+        status: response.status,
+        message,
+        errorBody: truncateForLog(raw || details),
+      });
 
-        if (response.status === 401 || (isUnauthorized && !isForbidden)) {
-          return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
-        }
-
-        if (response.status === 403 || isForbidden) {
-          return NextResponse.json({ error: 'forbidden' }, { status: 403, headers: corsHeaders() });
-        }
-
-        if (response.status >= 500 && (isRegisteredOnly || isForbidden)) {
-          return NextResponse.json({ error: 'forbidden' }, { status: 403, headers: corsHeaders() });
-        }
-
-        if (response.status >= 500 && isUnauthorized) {
-          return NextResponse.json({ error: 'unauthorized' }, { status: 401, headers: corsHeaders() });
-        }
-
-        const responseHeaders = new Headers(response.headers);
-        Object.entries(corsHeaders()).forEach(([k, v]) => responseHeaders.set(k, String(v)));
-        return new Response(raw, { status: response.status, statusText: response.statusText, headers: responseHeaders });
-      }
+      return NextResponse.json(
+        {
+          message,
+          error: message,
+          status: response.status,
+          requestId,
+          details,
+        },
+        { status: response.status, headers: corsHeaders(requestId) },
+      );
     }
-
-    const responseHeaders = new Headers(response.headers);
-    Object.entries(corsHeaders()).forEach(([k, v]) => responseHeaders.set(k, String(v)));
 
     return new Response(response.body, {
       status: response.status,
       statusText: response.statusText,
-      headers: responseHeaders,
+      headers: applyResponseHeaders(response.headers, requestId),
     });
   } catch (error: any) {
-    console.error(`[Proxy] Error calling function ${functionName}:`, error);
-    const message = String(error?.message || '');
-    if (message.startsWith('server_misconfigured:')) {
-      return NextResponse.json(
-        { error: 'server_misconfigured', requestId },
-        { status: 503, headers: corsHeaders() }
-      );
-    }
+    const message = String(error?.message || 'Unknown error');
+    console.error('[proxy] unexpected error', {
+      requestId,
+      functionName,
+      message,
+    });
     return NextResponse.json(
-      { error: 'internal_server_error', requestId },
-      { status: 500, headers: corsHeaders() }
+      {
+        message: 'internal_server_error',
+        error: 'internal_server_error',
+        status: 500,
+        requestId,
+        details: truncateForLog(message),
+      },
+      { status: 500, headers: corsHeaders(requestId) },
     );
   }
 }
@@ -169,7 +227,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ function
   return proxyRequest(req, props);
 }
 
-export async function OPTIONS(req: NextRequest) {
+export async function OPTIONS(_req: NextRequest) {
   return new NextResponse(null, {
     status: 200,
     headers: corsHeaders(),

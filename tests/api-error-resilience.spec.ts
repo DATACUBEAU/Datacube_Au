@@ -9,6 +9,8 @@ test.describe('API error resilience', () => {
 
     expect(response.status()).toBe(401);
     const payload = await response.json();
-    expect(payload.error).toBe('unauthorized');
+    expect(payload.message ?? payload.error).toBe('unauthorized');
+    expect(payload.status).toBe(401);
+    expect(typeof payload.requestId).toBe('string');
   });
 });

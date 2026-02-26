@@ -34,6 +34,24 @@ function safeJsonParse(value: string): any | null {
   }
 }
 
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function decodeBase64Flexible(raw: string): string | null {
+  const normalized = raw.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+  try {
+    return atob(padded);
+  } catch {
+    return null;
+  }
+}
+
 function normalizeBearerToken(raw: string | null): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
@@ -47,7 +65,7 @@ function normalizeBearerToken(raw: string | null): string | null {
 }
 
 function extractAccessTokenFromCookieValue(rawValue: string): string | null {
-  const decoded = decodeURIComponent(rawValue);
+  const decoded = safeDecodeURIComponent(rawValue);
   const parsed = safeJsonParse(decoded);
   if (parsed && typeof parsed === 'object') {
     if (typeof (parsed as any).access_token === 'string' && (parsed as any).access_token) {
@@ -59,10 +77,10 @@ function extractAccessTokenFromCookieValue(rawValue: string): string | null {
   }
 
   const b64Parsed = decoded.startsWith('base64-') ? decoded.slice('base64-'.length) : decoded;
-  if (b64Parsed && /^[A-Za-z0-9+/=]+$/.test(b64Parsed)) {
-    try {
-      const json = atob(b64Parsed);
-      const parsed2 = safeJsonParse(json);
+  if (b64Parsed) {
+    const decodedB64 = decodeBase64Flexible(b64Parsed);
+    if (decodedB64) {
+      const parsed2 = safeJsonParse(decodedB64);
       if (parsed2 && typeof parsed2 === 'object') {
         if (typeof (parsed2 as any).access_token === 'string' && (parsed2 as any).access_token) {
           return (parsed2 as any).access_token;
@@ -71,7 +89,6 @@ function extractAccessTokenFromCookieValue(rawValue: string): string | null {
           return parsed2[0];
         }
       }
-    } catch {
     }
   }
 
@@ -127,22 +144,25 @@ async function validateAccessToken(token: string): Promise<{ userId: string; ema
 export async function requireUserFromRequest(req: NextRequest): Promise<RequestAuthResult> {
   const headerToken = normalizeBearerToken(req.headers.get('authorization'));
   const cookieToken = extractAccessTokenFromCookies(req);
-  const token = headerToken ?? cookieToken;
+  const candidates = [cookieToken, headerToken].filter((value): value is string => Boolean(value));
+  const uniqueTokens = [...new Set(candidates)];
 
-  if (!token) {
+  if (uniqueTokens.length === 0) {
     return { ok: false, status: 401, error: 'unauthorized', reason: 'missing_token' };
   }
 
-  const validation = await validateAccessToken(token);
-  if (!validation?.userId) {
-    return { ok: false, status: 401, error: 'unauthorized', reason: 'invalid_token' };
+  for (const token of uniqueTokens) {
+    const validation = await validateAccessToken(token);
+    if (!validation?.userId) continue;
+
+    return {
+      ok: true,
+      accessToken: token,
+      userId: validation.userId,
+      email: validation.email,
+      source: token === cookieToken ? 'cookie' : 'header',
+    };
   }
 
-  return {
-    ok: true,
-    accessToken: token,
-    userId: validation.userId,
-    email: validation.email,
-    source: headerToken ? 'header' : 'cookie',
-  };
+  return { ok: false, status: 401, error: 'unauthorized', reason: 'invalid_token' };
 }
