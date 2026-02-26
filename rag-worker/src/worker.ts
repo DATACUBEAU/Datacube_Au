@@ -334,33 +334,56 @@ export class RAGWorker {
     return this.normalizeClaimedJob(claimed);
   }
 
-  private async markJobFailed(jobId: string, errorMessage: string) {
+  private async markJobFailed(
+    job: UploadJob,
+    errorMessage: string,
+    options?: { recoverable?: boolean; recoverableReason?: string },
+  ) {
+    const retryCount = Number((job as any)?.retry_count || 0);
+    const shouldMarkRecoverable = Boolean(options?.recoverable) && retryCount <= 0;
+    const metadataBase =
+      job?.metadata && typeof job.metadata === 'object' && !Array.isArray(job.metadata)
+        ? { ...(job.metadata as Record<string, unknown>) }
+        : {};
+
+    if (shouldMarkRecoverable) {
+      metadataBase.recoverable = true;
+      metadataBase.recoverable_reason = options?.recoverableReason || 'transient_worker_error';
+      metadataBase.recoverable_at = new Date().toISOString();
+    }
+
     const payload = {
       status: 'failed',
       error: errorMessage,
       locked_at: null,
       locked_until: null,
       updated_at: new Date().toISOString(),
+      ...(shouldMarkRecoverable ? { metadata: metadataBase } : {}),
     };
 
     const { error } = await this.supabase
       .from('au_worker_jobs')
       .update(payload)
-      .eq('id', jobId);
+      .eq('id', job.id);
 
     if (error && this.isMissingColumnError(error, 'error')) {
+      const fallbackPayload: Record<string, unknown> = {
+        status: 'failed',
+        updated_at: new Date().toISOString(),
+      };
+      if (shouldMarkRecoverable && !this.isMissingColumnError(error, 'metadata')) {
+        fallbackPayload.metadata = metadataBase;
+      }
+
       await this.supabase
         .from('au_worker_jobs')
-        .update({
-          status: 'failed',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', jobId);
+        .update(fallbackPayload)
+        .eq('id', job.id);
       return;
     }
 
     if (error) {
-      logger.error('Failed to mark job as failed', { jobId, error: error.message });
+      logger.error('Failed to mark job as failed', { jobId: job.id, error: error.message });
     }
   }
 
@@ -494,14 +517,21 @@ export class RAGWorker {
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
 
       const errorMessage = processErr instanceof Error ? processErr.message : String(processErr);
+      const isRecoverable = Boolean((processErr as any)?.recoverable);
+      const recoverableReason = isRecoverable ? 'fastembed_cache_corruption' : undefined;
 
       await this.logDebug('Job failed', {
         jobId: currentJob.id,
         error: errorMessage,
         stack: processErr instanceof Error ? processErr.stack : null,
+        recoverable: isRecoverable,
+        recoverableReason,
       });
 
-      await this.markJobFailed(currentJob.id, errorMessage);
+      await this.markJobFailed(currentJob, errorMessage, {
+        recoverable: isRecoverable,
+        recoverableReason,
+      });
       await this.markDocumentFailed(currentJob.document_id, errorMessage);
     } finally {
       stopHeartbeat();

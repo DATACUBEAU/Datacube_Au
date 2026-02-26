@@ -4,6 +4,13 @@ import { logger, computeHash } from './utils';
 import { FlagEmbedding, EmbeddingModel } from 'fastembed';
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { createHash } from 'crypto';
+import fs from 'fs';
+import { promises as fsp } from 'fs';
+import path from 'path';
+import https from 'https';
+import zlib from 'zlib';
+import { Writable } from 'stream';
+import { pipeline } from 'stream/promises';
 
 type ChunkRow = {
   id: string;
@@ -14,13 +21,60 @@ type ChunkRow = {
   text: string;
 };
 
+class RecoverableModelCacheError extends Error {
+  recoverable = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'RecoverableModelCacheError';
+  }
+}
+
+type StandardEmbeddingModel = Exclude<EmbeddingModel, EmbeddingModel.CUSTOM>;
+type EmbedderBackend =
+  | { kind: 'fastembed'; model: FlagEmbedding }
+  | { kind: 'transformers'; extractor: (texts: string[]) => Promise<number[][]> };
+
+type DownloadInfo = {
+  downloadedSizeBytes: number;
+  contentType: string;
+  previewText: string;
+  hasGzipMagic: boolean;
+  finalUrl: string;
+};
+
+class ModelDownloadBlockedError extends Error {
+  blockedByRegion = true;
+
+  constructor(
+    message: string,
+    readonly diagnostics: {
+      modelUrl: string;
+      finalUrl?: string;
+      contentType?: string;
+      downloadedSizeBytes?: number;
+      previewText?: string;
+      hasGzipMagic?: boolean;
+    },
+  ) {
+    super(message);
+    this.name = 'ModelDownloadBlockedError';
+  }
+}
+
 export class IngestionService {
-  private embeddingModel?: FlagEmbedding;
+  private embedderBackend?: EmbedderBackend;
   private qdrant: QdrantClient;
   private pipelineId: string;
   private chunkInsertBatchSize: number;
   private embedBatchSize: number;
   private qdrantRetryCount: number;
+  private modelCacheDir: string;
+  private modelLockTimeoutMs: number;
+  private modelLockStaleMs: number;
+  private transformersFallbackEnabled: boolean;
+  private transformersModelId: string;
+  private hfCacheDir: string;
 
   constructor(
     private supabase: SupabaseClient,
@@ -36,6 +90,14 @@ export class IngestionService {
     this.chunkInsertBatchSize = this.parsePositiveInt(process.env.CHUNK_INSERT_BATCH_SIZE, 250);
     this.embedBatchSize = this.parsePositiveInt(process.env.EMBED_BATCH_SIZE, 96);
     this.qdrantRetryCount = this.parsePositiveInt(process.env.QDRANT_RETRY_COUNT, 3);
+    const configuredCacheDir = (process.env.FASTEMBED_CACHE_DIR || '/root/rag-worker/local_cache').trim();
+    this.modelCacheDir = path.resolve(configuredCacheDir);
+    this.modelLockTimeoutMs = this.parsePositiveInt(process.env.FASTEMBED_MODEL_LOCK_TIMEOUT_MS, 120000);
+    this.modelLockStaleMs = this.parsePositiveInt(process.env.FASTEMBED_MODEL_LOCK_STALE_MS, 600000);
+    const fallbackRaw = String(process.env.TRANSFORMERS_FALLBACK_ENABLED ?? process.env.ENABLE_TRANSFORMERS_FALLBACK ?? 'true').toLowerCase();
+    this.transformersFallbackEnabled = !(fallbackRaw === 'false' || fallbackRaw === '0' || fallbackRaw === 'no');
+    this.transformersModelId = (process.env.TRANSFORMERS_EMBEDDING_MODEL || 'Xenova/all-MiniLM-L6-v2').trim();
+    this.hfCacheDir = path.resolve((process.env.HF_CACHE_DIR || path.join(this.modelCacheDir, 'hf-cache')).trim());
   }
 
   private parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -107,14 +169,526 @@ export class IngestionService {
     throw lastError instanceof Error ? lastError : new Error(`${label} failed`);
   }
 
-  private async getModel() {
-    if (!this.embeddingModel) {
-      logger.info('Initializing FastEmbed model: AllMiniLML6V2');
-      this.embeddingModel = await FlagEmbedding.init({
-        model: EmbeddingModel.AllMiniLML6V2,
-      });
+  private modelToArchiveModel(model: StandardEmbeddingModel): string {
+    if (model === EmbeddingModel.AllMiniLML6V2) {
+      return `sentence-transformers${model.substring(model.indexOf('-'))}`;
     }
-    return this.embeddingModel;
+    return model;
+  }
+
+  private modelArchiveUrl(model: StandardEmbeddingModel): string {
+    return `https://storage.googleapis.com/qdrant-fastembed/${this.modelToArchiveModel(model)}.tar.gz`;
+  }
+
+  private modelArchivePath(model: StandardEmbeddingModel): string {
+    return path.join(this.modelCacheDir, `${model}.tar.gz`);
+  }
+
+  private modelDirPath(model: StandardEmbeddingModel): string {
+    return path.join(this.modelCacheDir, model);
+  }
+
+  private isModelCacheCorruptionError(error: unknown): boolean {
+    const code = String((error as any)?.code || '').toUpperCase();
+    const message = String((error as any)?.message || '').toLowerCase();
+    return (
+      code.includes('TAR_BAD_ARCHIVE') ||
+      message.includes('tar_bad_archive') ||
+      message.includes('invalid gzip') ||
+      message.includes('gzip validation') ||
+      message.includes('unexpected end of file') ||
+      message.includes('required files are missing') ||
+      message.includes('incorrect header check')
+    );
+  }
+
+  private async isValidGzip(filePath: string): Promise<boolean> {
+    if (!fs.existsSync(filePath)) return false;
+    try {
+      await pipeline(
+        fs.createReadStream(filePath),
+        zlib.createGunzip(),
+        new Writable({
+          write(_chunk, _encoding, callback) {
+            callback();
+          },
+        }),
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async ensureModelFilesExist(modelDir: string): Promise<boolean> {
+    const required = [
+      'onnx/model.onnx',
+      'tokenizer.json',
+      'tokenizer_config.json',
+      'config.json',
+      'special_tokens_map.json',
+    ];
+
+    try {
+      for (const rel of required) {
+        await fsp.access(path.join(modelDir, rel));
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private hasGzipMagicBytes(buffer: Buffer): boolean {
+    return buffer.length >= 2 && buffer[0] === 0x1f && buffer[1] === 0x8b;
+  }
+
+  private toPreviewText(raw: string): string {
+    return raw.replace(/\s+/g, ' ').trim().slice(0, 500);
+  }
+
+  private isBlockedTextPayload(contentType: string, previewText: string): boolean {
+    const ct = String(contentType || '').toLowerCase();
+    const preview = String(previewText || '').toLowerCase();
+    const looksText = ct.includes('xml') || ct.includes('html') || ct.includes('text') || preview.startsWith('<');
+    if (!looksText) return false;
+    return (
+      preview.includes('accessdenied') ||
+      preview.includes('access denied') ||
+      preview.includes('service is not available in your location') ||
+      preview.includes('service unavailable in your location') ||
+      preview.includes('<error') ||
+      preview.includes('<html')
+    );
+  }
+
+  private async downloadToTempFile(url: string, tempPath: string): Promise<DownloadInfo> {
+    const headers = { 'User-Agent': 'DatacubeAU-RAGWorker/1.0' };
+
+    return new Promise((resolve, reject) => {
+      const request = https.get(url, { headers }, (response) => {
+        if (
+          response.statusCode &&
+          response.statusCode >= 300 &&
+          response.statusCode < 400 &&
+          response.headers.location
+        ) {
+          response.resume();
+          void this.downloadToTempFile(response.headers.location, tempPath).then(resolve).catch(reject);
+          return;
+        }
+
+        if (!response.statusCode || response.statusCode >= 400) {
+          const status = response.statusCode || 0;
+          const contentType = String(response.headers['content-type'] || '');
+          const chunks: Buffer[] = [];
+          let total = 0;
+          const maxPreview = 4096;
+
+          response.on('data', (chunk: Buffer) => {
+            if (total >= maxPreview) return;
+            const needed = maxPreview - total;
+            const slice = chunk.subarray(0, needed);
+            chunks.push(Buffer.from(slice));
+            total += slice.length;
+          });
+
+          response.on('end', () => {
+            const previewText = Buffer.concat(chunks).toString('utf8');
+            const preview = this.toPreviewText(previewText);
+            const blocked = this.isBlockedTextPayload(contentType, previewText) || [401, 403, 451].includes(status);
+            if (blocked) {
+              reject(
+                new ModelDownloadBlockedError(
+                  'model download blocked by region; using fallback embedder',
+                  {
+                    modelUrl: url,
+                    finalUrl: url,
+                    contentType,
+                    downloadedSizeBytes: 0,
+                    previewText: preview,
+                    hasGzipMagic: false,
+                  },
+                ),
+              );
+              return;
+            }
+            reject(new Error(`Failed to download model archive. status=${status}`));
+          });
+
+          response.on('error', (error) => {
+            reject(error);
+          });
+          return;
+        }
+
+        const out = fs.createWriteStream(tempPath);
+        let bytes = 0;
+        const previewChunks: Buffer[] = [];
+        let previewLength = 0;
+        const maxPreview = 4096;
+        let firstBytes = Buffer.alloc(0);
+        const contentType = String(response.headers['content-type'] || '');
+
+        response.on('data', (chunk: Buffer) => {
+          bytes += chunk.length;
+          if (firstBytes.length < 8) {
+            const needed = 8 - firstBytes.length;
+            firstBytes = Buffer.concat([firstBytes, chunk.subarray(0, needed)]);
+          }
+          if (previewLength < maxPreview) {
+            const needed = maxPreview - previewLength;
+            const slice = chunk.subarray(0, needed);
+            previewChunks.push(Buffer.from(slice));
+            previewLength += slice.length;
+          }
+        });
+
+        response.on('error', (error) => {
+          out.destroy(error);
+        });
+
+        out.on('error', (error) => {
+          reject(error);
+        });
+
+        out.on('finish', () => {
+          out.close();
+          const previewText = Buffer.concat(previewChunks).toString('utf8');
+          resolve({
+            downloadedSizeBytes: bytes,
+            contentType,
+            previewText,
+            hasGzipMagic: this.hasGzipMagicBytes(firstBytes),
+            finalUrl: url,
+          });
+        });
+
+        response.pipe(out);
+      });
+
+      request.on('error', (error) => {
+        reject(error);
+      });
+    });
+  }
+
+  private async cleanupModelCache(model: StandardEmbeddingModel): Promise<void> {
+    await fsp.rm(this.modelArchivePath(model), { force: true }).catch(() => {});
+    await fsp.rm(this.modelDirPath(model), { recursive: true, force: true }).catch(() => {});
+  }
+
+  private async acquireModelLock(lockPath: string) {
+    const started = Date.now();
+
+    while (true) {
+      try {
+        return await fsp.open(lockPath, 'wx');
+      } catch (error: any) {
+        if (error?.code !== 'EEXIST') {
+          throw error;
+        }
+
+        try {
+          const stat = await fsp.stat(lockPath);
+          if (Date.now() - stat.mtimeMs > this.modelLockStaleMs) {
+            await fsp.rm(lockPath, { force: true }).catch(() => {});
+            continue;
+          }
+        } catch {
+          // Ignore stat errors and keep waiting.
+        }
+
+        if (Date.now() - started > this.modelLockTimeoutMs) {
+          throw new Error(`Timed out waiting for FastEmbed model lock: ${lockPath}`);
+        }
+        await this.wait(300);
+      }
+    }
+  }
+
+  private async withModelCacheLock<T>(fn: () => Promise<T>): Promise<T> {
+    await fsp.mkdir(this.modelCacheDir, { recursive: true });
+    const lockPath = path.join(this.modelCacheDir, '.fastembed-model.lock');
+    const handle = await this.acquireModelLock(lockPath);
+    try {
+      return await fn();
+    } finally {
+      try {
+        await handle.close();
+      } catch {
+        // ignore
+      }
+      await fsp.rm(lockPath, { force: true }).catch(() => {});
+    }
+  }
+
+  private async ensureModelArchiveReady(model: StandardEmbeddingModel): Promise<void> {
+    const archivePath = this.modelArchivePath(model);
+    const url = this.modelArchiveUrl(model);
+
+    if (fs.existsSync(archivePath)) {
+      const valid = await this.isValidGzip(archivePath);
+      const stat = valid ? await fsp.stat(archivePath).catch(() => null) : null;
+      logger.info('FastEmbed model archive check', {
+        modelUrl: url,
+        cacheDir: this.modelCacheDir,
+        archivePath,
+        downloadedSizeBytes: stat?.size ?? null,
+        gzipValid: valid,
+      });
+      if (valid) return;
+      await fsp.rm(archivePath, { force: true }).catch(() => {});
+    }
+
+    const tempPath = `${archivePath}.tmp-${process.pid}-${Date.now()}`;
+    let downloadInfo: DownloadInfo | null = null;
+    try {
+      downloadInfo = await this.downloadToTempFile(url, tempPath);
+      const preview = this.toPreviewText(downloadInfo.previewText);
+      const blockedTextPayload = this.isBlockedTextPayload(downloadInfo.contentType, downloadInfo.previewText);
+      const nonGzipResponse = !downloadInfo.hasGzipMagic;
+
+      logger.info('FastEmbed model archive downloaded', {
+        modelUrl: url,
+        finalUrl: downloadInfo.finalUrl,
+        cacheDir: this.modelCacheDir,
+        archivePath,
+        downloadedSizeBytes: downloadInfo.downloadedSizeBytes,
+        contentType: downloadInfo.contentType || null,
+        hasGzipMagic: downloadInfo.hasGzipMagic,
+        blockedTextPayload,
+        previewText: preview,
+      });
+
+      if (blockedTextPayload || nonGzipResponse) {
+        throw new ModelDownloadBlockedError(
+          'model download blocked by region; using fallback embedder',
+          {
+            modelUrl: url,
+            finalUrl: downloadInfo.finalUrl,
+            contentType: downloadInfo.contentType,
+            downloadedSizeBytes: downloadInfo.downloadedSizeBytes,
+            previewText: preview,
+            hasGzipMagic: downloadInfo.hasGzipMagic,
+          },
+        );
+      }
+
+      const gzipValid = await this.isValidGzip(tempPath);
+      logger.info('FastEmbed model archive gzip validation', {
+        modelUrl: url,
+        finalUrl: downloadInfo.finalUrl,
+        cacheDir: this.modelCacheDir,
+        archivePath,
+        downloadedSizeBytes: downloadInfo.downloadedSizeBytes,
+        gzipValid,
+      });
+      if (!gzipValid) {
+        throw new Error('Downloaded FastEmbed archive failed gzip validation');
+      }
+      await fsp.rename(tempPath, archivePath);
+    } finally {
+      await fsp.rm(tempPath, { force: true }).catch(() => {});
+    }
+  }
+
+  private async extractModelArchive(model: StandardEmbeddingModel): Promise<void> {
+    const tar = await import('tar');
+    await tar.x({
+      file: this.modelArchivePath(model),
+      cwd: this.modelCacheDir,
+    });
+  }
+
+  private async ensureModelCacheReady(model: StandardEmbeddingModel): Promise<void> {
+    await this.withModelCacheLock(async () => {
+      const modelDir = this.modelDirPath(model);
+      const modelExists = await this.ensureModelFilesExist(modelDir);
+      if (modelExists) {
+        return;
+      }
+
+      await fsp.rm(modelDir, { recursive: true, force: true }).catch(() => {});
+      await this.ensureModelArchiveReady(model);
+      await this.extractModelArchive(model);
+
+      const extractedOk = await this.ensureModelFilesExist(modelDir);
+      if (!extractedOk) {
+        throw new Error(`Model extraction finished but required files are missing: ${modelDir}`);
+      }
+    });
+  }
+
+  private async initModelWithCacheRetry(model: StandardEmbeddingModel): Promise<FlagEmbedding> {
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      try {
+        await this.ensureModelCacheReady(model);
+        logger.info('Initializing FastEmbed model', {
+          model,
+          cacheDir: this.modelCacheDir,
+          attempt,
+        });
+        return await FlagEmbedding.init({
+          model,
+          cacheDir: this.modelCacheDir,
+          showDownloadProgress: false,
+        });
+      } catch (error) {
+        const cacheCorruption = this.isModelCacheCorruptionError(error);
+        if (!cacheCorruption || attempt >= 2) {
+          if (cacheCorruption) {
+            throw new RecoverableModelCacheError(
+              `FastEmbed cache corruption persisted after cleanup+retry: ${error instanceof Error ? error.message : String(error)}`
+            );
+          }
+          throw error;
+        }
+
+        logger.warn('FastEmbed cache corruption detected; cleaning cache and retrying', {
+          model,
+          cacheDir: this.modelCacheDir,
+          attempt,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        await this.withModelCacheLock(async () => {
+          await this.cleanupModelCache(model);
+        });
+      }
+    }
+
+    throw new Error('Failed to initialize FastEmbed model');
+  }
+
+  private l2Normalize(values: number[]): number[] {
+    const norm = Math.sqrt(values.reduce((sum, value) => sum + value * value, 0));
+    if (!Number.isFinite(norm) || norm <= 0) return values;
+    return values.map((value) => value / norm);
+  }
+
+  private coerceTransformersOutput(output: any, expectedCount: number): number[][] {
+    if (output && typeof output.tolist === 'function') {
+      const listed = output.tolist();
+      if (Array.isArray(listed) && Array.isArray(listed[0])) {
+        return (listed as any[]).map((row) => (row as any[]).map((value) => Number(value)));
+      }
+    }
+
+    if (Array.isArray(output) && Array.isArray(output[0])) {
+      return (output as any[]).map((row) => (row as any[]).map((value) => Number(value)));
+    }
+
+    const dims: number[] = Array.isArray(output?.dims) ? output.dims.map((v: any) => Number(v)) : [];
+    const dataSource = output?.data || output?.cpuData;
+    const rawData = dataSource ? Array.from(dataSource as Iterable<number>, (v) => Number(v)) : [];
+
+    if (dims.length === 2 && rawData.length === dims[0] * dims[1]) {
+      const [rows, cols] = dims;
+      const result: number[][] = [];
+      for (let row = 0; row < rows; row += 1) {
+        result.push(rawData.slice(row * cols, (row + 1) * cols));
+      }
+      return result;
+    }
+
+    if (dims.length === 3 && rawData.length === dims[0] * dims[1] * dims[2]) {
+      const [rows, seq, cols] = dims;
+      const result: number[][] = [];
+      for (let row = 0; row < rows; row += 1) {
+        const pooled = new Array(cols).fill(0);
+        for (let token = 0; token < seq; token += 1) {
+          const base = row * seq * cols + token * cols;
+          for (let col = 0; col < cols; col += 1) {
+            pooled[col] += rawData[base + col];
+          }
+        }
+        const mean = pooled.map((value) => value / Math.max(seq, 1));
+        result.push(this.l2Normalize(mean));
+      }
+      return result;
+    }
+
+    if (dims.length === 1 && expectedCount === 1 && rawData.length === dims[0]) {
+      return [rawData];
+    }
+
+    throw new Error(`Unexpected transformers embedding output shape: dims=${JSON.stringify(dims)}`);
+  }
+
+  private async initTransformersExtractor(): Promise<(texts: string[]) => Promise<number[][]>> {
+    const moduleName = '@huggingface/transformers';
+    let transformers: any;
+    try {
+      transformers = await import(moduleName);
+    } catch (error) {
+      throw new Error(
+        `model download blocked by region; fallback embedder disabled or unavailable. Install @huggingface/transformers and set TRANSFORMERS_FALLBACK_ENABLED=true. Details: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const envObj = transformers?.env;
+    if (envObj) {
+      envObj.cacheDir = this.hfCacheDir;
+      envObj.allowLocalModels = true;
+    }
+
+    await fsp.mkdir(this.hfCacheDir, { recursive: true });
+
+    logger.info('Initializing Transformers fallback embedder', {
+      model: this.transformersModelId,
+      cacheDir: this.hfCacheDir,
+    });
+
+    const pipelineFactory = transformers?.pipeline;
+    if (typeof pipelineFactory !== 'function') {
+      throw new Error('Transformers fallback pipeline() is unavailable');
+    }
+
+    const extractor = await pipelineFactory('feature-extraction', this.transformersModelId, {
+      cache_dir: this.hfCacheDir,
+    });
+
+    return async (texts: string[]) => {
+      if (!Array.isArray(texts) || texts.length === 0) return [];
+      const output = await extractor(texts, { pooling: 'mean', normalize: true });
+      const vectors = this.coerceTransformersOutput(output, texts.length);
+      return vectors.map((vector) => this.l2Normalize(vector));
+    };
+  }
+
+  private async getEmbedder(): Promise<EmbedderBackend> {
+    if (this.embedderBackend) return this.embedderBackend;
+
+    try {
+      const model = await this.initModelWithCacheRetry(EmbeddingModel.AllMiniLML6V2);
+      this.embedderBackend = { kind: 'fastembed', model };
+      return this.embedderBackend;
+    } catch (error) {
+      if (error instanceof ModelDownloadBlockedError) {
+        if (!this.transformersFallbackEnabled) {
+          throw new Error(
+            `model download blocked by region; fallback embedder disabled. Set TRANSFORMERS_FALLBACK_ENABLED=true and install @huggingface/transformers. Details: ${error.message}`,
+          );
+        }
+
+        logger.warn('model download blocked by region; using fallback embedder', {
+          modelUrl: error.diagnostics.modelUrl,
+          finalUrl: error.diagnostics.finalUrl || null,
+          contentType: error.diagnostics.contentType || null,
+          downloadedSizeBytes: error.diagnostics.downloadedSizeBytes ?? null,
+          previewText: error.diagnostics.previewText || null,
+          hasGzipMagic: error.diagnostics.hasGzipMagic ?? null,
+          fallbackEmbedder: 'transformers',
+          fallbackModel: this.transformersModelId,
+          hfCacheDir: this.hfCacheDir,
+        });
+
+        const extractor = await this.initTransformersExtractor();
+        this.embedderBackend = { kind: 'transformers', extractor };
+        return this.embedderBackend;
+      }
+      throw error;
+    }
   }
 
   private ownerFilter(documentId: string, ownerId: string) {
@@ -286,8 +860,12 @@ export class IngestionService {
     return 0;
   }
 
-  private async embedTexts(model: FlagEmbedding, texts: string[]): Promise<number[][]> {
-    const embeddingResult: any = model.embed(texts);
+  private async embedTexts(embedder: EmbedderBackend, texts: string[]): Promise<number[][]> {
+    if (embedder.kind === 'transformers') {
+      return embedder.extractor(texts);
+    }
+
+    const embeddingResult: any = embedder.model.embed(texts);
     const embeddings: number[][] = [];
 
     if (embeddingResult && typeof embeddingResult[Symbol.asyncIterator] === 'function') {
@@ -359,11 +937,11 @@ export class IngestionService {
       });
     }
 
-    const model = await this.getModel();
+    const embedder = await this.getEmbedder();
     let upserted = 0;
     for (let start = 0; start < chunkData.length; start += this.embedBatchSize) {
       const batch = chunkData.slice(start, start + this.embedBatchSize);
-      const embeddings = await this.embedTexts(model, batch.map((chunk) => chunk.text));
+      const embeddings = await this.embedTexts(embedder, batch.map((chunk) => chunk.text));
 
       if (embeddings.length !== batch.length) {
         throw new Error(`Embedding count mismatch in batch: expected ${batch.length}, got ${embeddings.length}`);
@@ -431,6 +1009,7 @@ export class IngestionService {
     logger.info('Document ingestion completed', {
       documentId,
       ownerId,
+      embedder: embedder.kind,
       chunkCount: chunkData.length,
       upserted,
       durationMs: Date.now() - startedAt,

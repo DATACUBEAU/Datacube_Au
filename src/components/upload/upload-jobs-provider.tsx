@@ -229,31 +229,20 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
       if (targetDocumentIds.length === 0) return rows;
 
-      const documentOwnershipConditions = [
-        `owner_id.eq.${user.id},user_id.eq.${user.id}`,
-        `user_id.eq.${user.id}`,
-      ];
+      const { data: documentRows, error: documentError } = await supabase
+        .from('au_documents')
+        .select('id,status,error,created_at')
+        .in('id', targetDocumentIds)
+        .limit(targetDocumentIds.length);
 
-      let documentRows: any[] | null = null;
-      for (const conditions of documentOwnershipConditions) {
-        const query = supabase
-          .from('au_documents')
-          .select('id,status,error,updated_at')
-          .in('id', targetDocumentIds)
-          .limit(targetDocumentIds.length);
-
-        applyOwnershipFilter(query, conditions);
-        const { data, error } = await query;
-        if (error) {
-          if (isMissingOwnerIdColumnError(error) && conditions.includes('owner_id')) {
-            continue;
-          }
-          break;
-        }
-        documentRows = data || [];
-        break;
+      if (documentError) {
+        console.warn('[upload-jobs] Failed to reconcile with au_documents', {
+          message: documentError.message,
+          details: documentError.details,
+          hint: documentError.hint,
+        });
+        return rows;
       }
-
       if (!documentRows) return rows;
 
       const docMap = new Map<string, any>();
@@ -267,14 +256,14 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (!doc) return job;
 
         const docStatus = String(doc.status || '').toLowerCase();
-        const docUpdatedAt = typeof doc.updated_at === 'string' ? doc.updated_at : job.updated_at;
+        const docTimestamp = typeof doc.created_at === 'string' ? doc.created_at : job.updated_at;
 
         if (docStatus === 'failed') {
           return {
             ...job,
             status: 'failed',
             error: (typeof doc.error === 'string' && doc.error) || job.error || 'Document processing failed.',
-            updated_at: docUpdatedAt,
+            updated_at: docTimestamp,
           };
         }
 
@@ -284,7 +273,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
             status: 'done',
             progress: 100,
             error: null,
-            updated_at: docUpdatedAt,
+            updated_at: docTimestamp,
           };
         }
 
@@ -293,7 +282,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
             ...job,
             status: 'processing',
             progress: Math.max(job.progress || 0, 92),
-            updated_at: docUpdatedAt,
+            updated_at: docTimestamp,
           };
         }
 
