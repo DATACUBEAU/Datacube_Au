@@ -23,6 +23,9 @@ import { TruncatedText } from '@/components/TruncatedText';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useStore } from '@/hooks/use-store';
+import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
+import { LimitAlertCard } from '@/components/limits/limit-alert-card';
+import { LimitToast } from '@/components/limits/limit-toast';
 
 // Use both MIME types and extensions for better browser compatibility
 const ACCEPT = 'application/pdf,.pdf,text/plain,.txt,text/markdown,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx';
@@ -85,6 +88,7 @@ export default function UploadCenter() {
   const [parentsLoading, setParentsLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [reattachJobId, setReattachJobId] = useState<string | null>(null);
+  const [pendingUploadSizeMb, setPendingUploadSizeMb] = useState<number | null>(null);
 
   const supportsUploads = Boolean(session?.access_token) && Boolean(user) && isOnline && !upgradeBlocked;
 
@@ -146,6 +150,13 @@ export default function UploadCenter() {
     async (files: File[]) => {
       if (!supportsUploads || !user || !session?.access_token) {
         return;
+      }
+
+      if (files.length > 0) {
+        const largestMb = Math.max(...files.map((file) => file.size)) / (1024 * 1024);
+        setPendingUploadSizeMb(Number.isFinite(largestMb) ? largestMb : null);
+      } else {
+        setPendingUploadSizeMb(null);
       }
 
       const accepted: File[] = [];
@@ -214,6 +225,7 @@ export default function UploadCenter() {
         await enqueueUploads(inputs);
         // Clear inputs on success
         setLabel('');
+        setPendingUploadSizeMb(null);
       } catch (e: any) {
         const message = typeof e?.message === 'string' ? e.message : 'Upload failed.';
         toast({ variant: 'destructive', title: 'Upload failed', description: message });
@@ -280,6 +292,17 @@ export default function UploadCenter() {
   // Use activeJobs from context instead of filtering here for consistency
   const jobsToDisplay = activeJobs;
   const jobsById = useMemo(() => new Map(jobsToDisplay.map((j) => [j.id, j])), [jobsToDisplay]);
+  const {
+    primaryAlert,
+    toastCandidate,
+    markToastShown,
+    dismissAlert,
+    clearLimitError,
+  } = useLimitationsAgent({
+    route: 'upload',
+    pendingFileSizeMb: pendingUploadSizeMb,
+    activeJobsCount: jobsToDisplay.filter((j) => j.status === 'queued' || j.status === 'uploaded' || j.status === 'processing').length,
+  });
 
   // Phase-scoped progress calculation
   const getPhaseProgress = (job: any) => {
@@ -356,6 +379,19 @@ export default function UploadCenter() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        <LimitToast alert={toastCandidate} onShown={markToastShown} />
+        {primaryAlert ? (
+          <LimitAlertCard
+            alert={primaryAlert}
+            onDismiss={(alertId) => {
+              dismissAlert(alertId);
+              if (alertId.startsWith('server:')) {
+                clearLimitError();
+              }
+            }}
+          />
+        ) : null}
+
         <input ref={inputRef} type="file" multiple accept={ACCEPT} onChange={onFilesChanged} className="hidden" />
         <input ref={retryFileInputRef} type="file" accept={ACCEPT} onChange={onRetryFileSelected} className="hidden" />
 

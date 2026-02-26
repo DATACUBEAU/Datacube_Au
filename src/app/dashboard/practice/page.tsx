@@ -74,6 +74,11 @@ export default function PracticePage() {
   }, [documents, selectedDocId]);
   const selectedDocReady = selectedDoc?.status === 'completed';
 
+  const [questions, setQuestions] = useState<QuestionState[]>([]);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  const [examFinished, setExamFinished] = useState(false);
+  const [score, setScore] = useState(0);
+
   const getDocumentExpiryMs = useCallback((docId: string): number | null => {
     const doc = allDocuments.find((item) => item.id === docId);
     if (!doc?.expires_at) return null;
@@ -114,11 +119,6 @@ export default function PracticePage() {
       return false;
     }
   }, [getDocumentExpiryMs, isOnline, toast, user]);
-
-  const [questions, setQuestions] = useState<QuestionState[]>([]);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [examFinished, setExamFinished] = useState(false);
-  const [score, setScore] = useState(0);
 
   // Sync examData from hook to local questions state
   useEffect(() => {

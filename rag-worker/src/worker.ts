@@ -405,6 +405,40 @@ export class RAGWorker {
     }
   }
 
+  private async incrementUsageCounters(ownerId: string, increments: Record<string, number>): Promise<void> {
+    const normalizedOwnerId = String(ownerId || '').trim();
+    if (!normalizedOwnerId) return;
+
+    try {
+      const payload = Object.entries(increments).reduce((acc, [key, value]) => {
+        if (!Number.isFinite(value)) return acc;
+        acc[key] = value;
+        return acc;
+      }, {} as Record<string, number>);
+
+      if (Object.keys(payload).length === 0) return;
+
+      const { error } = await this.supabase.rpc('increment_usage_counters', {
+        p_user_id: normalizedOwnerId,
+        p_increments: payload,
+        p_day: new Date().toISOString().slice(0, 10),
+      });
+      if (error) {
+        logger.warn('Failed to increment usage counters from worker', {
+          ownerId: normalizedOwnerId,
+          message: error.message,
+          increments: payload,
+        });
+      }
+    } catch (error) {
+      logger.warn('Usage counter increment threw in worker', {
+        ownerId: normalizedOwnerId,
+        increments,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   private async pollDeletions() {
     const bucket = process.env.BUCKET || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
     const { data: logs, error } = await this.supabase
@@ -478,6 +512,10 @@ export class RAGWorker {
         })
         .eq('id', currentJob.id);
 
+      await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
+        jobs_completed: 1,
+      });
+
       logger.info('Job completed', { jobId: currentJob.id });
 
       await this.logDebug('Job completed', { jobId: currentJob.id });
@@ -534,6 +572,9 @@ export class RAGWorker {
         recoverableReason,
       });
       await this.markDocumentFailed(currentJob.document_id, errorMessage);
+      await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
+        jobs_failed: 1,
+      });
     } finally {
       stopHeartbeat();
     }
@@ -589,11 +630,16 @@ export class RAGWorker {
     // - Billing enabled + paid pro: 30 days
     // - Otherwise: 14 days
     const now = new Date();
-    const [{ data: profile }, { data: conexConfig }, { data: legacyConfig }] = await Promise.all([
+    const [{ data: profile }, { data: billingFlag }, { data: conexConfig }, { data: legacyConfig }] = await Promise.all([
       this.supabase
         .from('au_user_profiles')
         .select('tier,tier_expires_at')
         .eq('user_id', ownerId)
+        .maybeSingle(),
+      this.supabase
+        .from('feature_flags')
+        .select('enabled')
+        .eq('key', 'billing_enabled')
         .maybeSingle(),
       this.supabase
         .from('au_conex_config')
@@ -607,7 +653,11 @@ export class RAGWorker {
         .maybeSingle(),
     ]);
 
-    const billingEnabled = conexConfig?.billing_enabled ?? legacyConfig?.billing_enabled ?? true;
+    const billingEnabled =
+      (typeof billingFlag?.enabled === 'boolean' ? billingFlag.enabled : null) ??
+      conexConfig?.billing_enabled ??
+      legacyConfig?.billing_enabled ??
+      true;
     const tier = String(profile?.tier || 'free').toLowerCase();
     const tierExpiry = profile?.tier_expires_at ? new Date(profile.tier_expires_at) : null;
 

@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock, Copy, Banknote } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
+import { invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
@@ -19,6 +19,8 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { useFlag } from '@/components/feature-flag-provider';
+import { useLimits } from '@/components/providers/limits-provider';
 
 const PRICING = {
   weekly: { amount: 1900, compare_at: 2500, label: 'Save 24%' },
@@ -27,7 +29,6 @@ const PRICING = {
 
 const BILLING_ROUTE = '/dashboard/settings/subscription';
 const BILLING_STATUS_SOURCE = 'billing-status';
-const BILLING_CONFIG_SOURCE = 'billing-config';
 const BILLING_CACHE_SCHEMA = 1;
 const BILLING_CACHE_TTL_MS = 1000 * 60 * 30;
 
@@ -37,6 +38,8 @@ export default function SubscriptionPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { isOnline } = useNetworkStatus();
+  const { enabled: billingFlagEnabled } = useFlag('billing_enabled');
+  const { usage: limitsUsage } = useLimits();
   
   const [tier, setTier] = useState<string>('free');
   const [expiry, setExpiry] = useState<string | null>(null);
@@ -74,6 +77,10 @@ export default function SubscriptionPage() {
   const proRetentionLabel = isPromoUnlocked
     ? '14-day history retention (promo mode)'
     : '30-day history retention';
+
+  useEffect(() => {
+      setBillingEnabled(billingFlagEnabled);
+  }, [billingFlagEnabled]);
 
   const applyBillingStatus = useCallback((data: any, options?: { fromCache?: boolean }) => {
       if (!data) return;
@@ -117,31 +124,6 @@ export default function SubscriptionPage() {
       });
   }, [user?.id]);
 
-  const readCachedBillingConfig = useCallback(async () => {
-      if (!user?.id) return { data: null as any, cachedAt: null as number | null };
-      return readUserCache<any>({
-          userId: user.id,
-          route: BILLING_ROUTE,
-          source: BILLING_CONFIG_SOURCE,
-          endpoint: 'get',
-          schemaVersion: BILLING_CACHE_SCHEMA,
-          maxAgeMs: BILLING_CACHE_TTL_MS,
-      });
-  }, [user?.id]);
-
-  const writeCachedBillingConfig = useCallback(async (data: any) => {
-      if (!user?.id) return;
-      await writeUserCache({
-          userId: user.id,
-          route: BILLING_ROUTE,
-          source: BILLING_CONFIG_SOURCE,
-          endpoint: 'get',
-          schemaVersion: BILLING_CACHE_SCHEMA,
-          ttlMs: BILLING_CACHE_TTL_MS,
-          data,
-      });
-  }, [user?.id]);
-
   const fetchBillingStatus = useCallback(async () => {
       if (!user?.id) return null;
       if (!isOnline || !session?.access_token) {
@@ -177,51 +159,6 @@ export default function SubscriptionPage() {
       }
       return null;
   }, [applyBillingStatus, isOnline, readCachedBillingStatus, session?.access_token, user?.id, writeCachedBillingStatus]);
-
-  const fetchBillingConfig = useCallback(async () => {
-      if (!user?.id) return;
-      if (!isOnline) {
-          const cached = await readCachedBillingConfig();
-          if (cached.data && typeof cached.data.billing_enabled === 'boolean') {
-              setBillingEnabled(cached.data.billing_enabled);
-              setIsUsingCachedData(true);
-              setCachedAt(cached.cachedAt);
-          }
-          return;
-      }
-      try {
-          const { data: conexConfig } = await supabase
-              .from('au_conex_config')
-              .select('billing_enabled')
-              .eq('id', 1)
-              .maybeSingle();
-
-          if (typeof conexConfig?.billing_enabled === 'boolean') {
-              setBillingEnabled(conexConfig.billing_enabled);
-              setIsUsingCachedData(false);
-              void writeCachedBillingConfig({ billing_enabled: conexConfig.billing_enabled });
-              return;
-          }
-
-          const { data: legacyConfig } = await supabase
-              .from('au_config')
-              .select('billing_enabled')
-              .limit(1)
-              .maybeSingle();
-          if (typeof legacyConfig?.billing_enabled === 'boolean') {
-              setBillingEnabled(legacyConfig.billing_enabled);
-              setIsUsingCachedData(false);
-              void writeCachedBillingConfig({ billing_enabled: legacyConfig.billing_enabled });
-          }
-      } catch {
-          const cached = await readCachedBillingConfig();
-          if (cached.data && typeof cached.data.billing_enabled === 'boolean') {
-              setBillingEnabled(cached.data.billing_enabled);
-              setIsUsingCachedData(true);
-              setCachedAt(cached.cachedAt);
-          }
-      }
-  }, [isOnline, readCachedBillingConfig, user?.id, writeCachedBillingConfig]);
 
   const generateReference = useCallback((planType: 'weekly' | 'monthly') => {
       const suffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
@@ -336,7 +273,7 @@ export default function SubscriptionPage() {
     setIsInitialLoading(true);
 
     const bootstrap = async () => {
-        await Promise.all([fetchBillingStatus(), fetchBillingConfig()]);
+        await Promise.all([fetchBillingStatus()]);
         if (canceled) return;
         setIsInitialLoading(false);
 
@@ -363,41 +300,7 @@ export default function SubscriptionPage() {
         canceled = true;
         stopPolling();
     };
-  }, [user, searchParams, fetchBillingConfig, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
-
-  useEffect(() => {
-      if (!user) return;
-
-      const channel = supabase
-          .channel(`subscription-billing-config-${user.id}`)
-          .on(
-              'postgres_changes',
-              { event: '*', schema: 'public', table: 'au_conex_config', filter: 'id=eq.1' },
-              (payload: any) => {
-                  const nextBillingEnabled = payload?.new?.billing_enabled;
-                  if (typeof nextBillingEnabled === 'boolean') {
-                      setBillingEnabled(nextBillingEnabled);
-                  }
-              },
-          )
-          .subscribe();
-
-      return () => {
-          void supabase.removeChannel(channel);
-      };
-  }, [user]);
-
-  useEffect(() => {
-      const onVisibility = () => {
-          if (document.visibilityState !== 'visible') return;
-          void fetchBillingConfig();
-      };
-
-      document.addEventListener('visibilitychange', onVisibility);
-      return () => {
-          document.removeEventListener('visibilitychange', onVisibility);
-      };
-  }, [fetchBillingConfig]);
+  }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
 
   useEffect(() => {
       if (!isPromoUnlocked) return;
@@ -504,14 +407,16 @@ export default function SubscriptionPage() {
 
   // --- Usage Meter ---
   const LimitBar = ({ label, used, limit }: any) => {
-    const percent = Math.min(100, (used / limit) * 100);
-    const isLimit = used >= limit;
+    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 1;
+    const safeUsed = Number.isFinite(used) ? used : 0;
+    const percent = Math.min(100, (safeUsed / safeLimit) * 100);
+    const isLimit = safeUsed >= safeLimit;
     return (
         <div>
             <div className="flex justify-between text-sm mb-1.5">
                 <span className="font-medium text-foreground">{label}</span>
                 <span className={cn("font-mono text-xs", isLimit ? "text-destructive font-bold" : "text-muted-foreground")}>
-                    {used} / {limit}
+                    {safeUsed} / {safeLimit}
                 </span>
             </div>
             <div className="h-2.5 bg-muted rounded-full overflow-hidden">
@@ -525,34 +430,56 @@ export default function SubscriptionPage() {
   };
 
   const UsageMeter = () => {
-    const [usage, setUsage] = useState<any>(null);
-    const [loading, setLoading] = useState(true);
+    if (limitsUsage.loading) return null;
 
-    useEffect(() => {
-        if (!isOnline || !session?.access_token) {
-            setLoading(false);
-            return;
-        }
-        invokeEdgeFunction<any>('usage-status', { method: 'GET', silent: true })
-            .then(({ data }) => setUsage(data))
-            .catch(() => {})
-            .finally(() => setLoading(false));
-    }, [isOnline, session?.access_token]);
-
-    if (loading) return null;
-    if (!usage || !usage.billingEnabled || usage.isPro) return null;
+    const planCode = String(limitsUsage.plan || tier || 'free').toLowerCase();
+    const isFreePlan = planCode === 'free';
+    const usageToday = limitsUsage.usageToday || {};
+    const usageTotal = limitsUsage.usageTotal || {};
+    const limits = limitsUsage.limits || {};
+    const resetAt = limitsUsage.resetAt;
 
     return (
         <div className="bg-card rounded-3xl shadow-sm p-6 border border-border mb-8 max-w-4xl mx-auto">
             <div className="flex items-center gap-2 mb-4">
                 <ShieldCheck className="h-5 w-5 text-primary" />
-                <h2 className="text-lg font-bold text-foreground">Daily Free Limits</h2>
+                <h2 className="text-lg font-bold text-foreground">Limits & Usage</h2>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <LimitBar label="Chat Messages" used={usage.usage.chat} limit={usage.limits.chat} />
-                <LimitBar label="Exam Generations" used={usage.usage.exam} limit={usage.limits.exam} />
-                <LimitBar label="Document Uploads" used={usage.usage.upload} limit={usage.limits.upload} />
+            <p className="mb-4 text-xs text-muted-foreground">
+              Plan: <span className="font-semibold text-foreground">{planCode.toUpperCase()}</span>
+              {resetAt ? ` • Resets at ${new Date(resetAt).toLocaleTimeString()}` : ''}
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <LimitBar
+                  label="Daily Messages"
+                  used={Number(usageToday.messages_count || 0)}
+                  limit={Number(limits.max_messages_per_day || 0)}
+                />
+                <LimitBar
+                  label="Daily Uploads"
+                  used={Number(usageToday.uploads_count || 0)}
+                  limit={Number(limits.max_uploads_per_day || 0)}
+                />
+                <LimitBar
+                  label="Daily Tokens"
+                  used={Number(usageToday.tokens_used || 0)}
+                  limit={Number(limits.max_tokens_per_day || 0)}
+                />
+                <LimitBar
+                  label="Storage (MB)"
+                  used={Math.round(Number(usageTotal.uploaded_mb || 0))}
+                  limit={Number(limits.max_storage_mb || 0)}
+                />
             </div>
+            {isFreePlan && billingEnabled ? (
+              <p className="mt-4 text-xs text-muted-foreground">
+                Free users get full visibility + limit alerts. Upgrade to increase caps instantly.
+              </p>
+            ) : (
+              <p className="mt-4 text-xs text-muted-foreground">
+                Paid plans get informational usage tracking with higher limits.
+              </p>
+            )}
         </div>
     );
   };

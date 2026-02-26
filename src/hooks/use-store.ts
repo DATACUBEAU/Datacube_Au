@@ -164,7 +164,7 @@ export const useStore = create<AppState>()(
         set({ isGeneratingPredictions: true, predictionData: null });
 
         try {
-          const { data, error } = await invokeEdgeFunction<GeneratePredictionsOutput>('generate-exam-predictions', {
+          const { data, error } = await invokeEdgeFunction<GeneratePredictionsOutput>('prediction-engine', {
             method: 'POST',
             requireAuth: true,
             timeoutMs: 120_000,

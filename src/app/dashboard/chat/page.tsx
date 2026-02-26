@@ -76,6 +76,9 @@ import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
 import { GlobalHistoryPrompt } from '@/components/global-history-prompt';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { ChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
+import { LimitAlertCard } from '@/components/limits/limit-alert-card';
+import { LimitToast } from '@/components/limits/limit-toast';
 
 import { type ChatMessage } from '@/lib/api/chat';
 
@@ -416,6 +419,16 @@ export default function ChatPage() {
 
   const selectedDoc = useMemo(() => documentList.find(doc => doc.id === selectedDocId), [documentList, selectedDocId]);
   const selectedDocName = useMemo(() => selectedDoc?.fileName, [selectedDoc]);
+  const {
+    primaryAlert: chatLimitAlert,
+    toastCandidate: chatLimitToast,
+    markToastShown: markChatLimitToastShown,
+    dismissAlert: dismissChatLimitAlert,
+    clearLimitError: clearChatLimitError,
+    reportLimitError: reportChatLimitError,
+  } = useLimitationsAgent({
+    route: 'chat',
+  });
 
   const getDocumentContent = useCallback(async (docId: string): Promise<string> => {
     if (!user) return '';
@@ -879,9 +892,11 @@ export default function ChatPage() {
         summaryMode: overrideMode || summaryMode,
         browsingMode
       });
+      clearChatLimitError();
       setGeneratedPrompts([]);
     } catch (error: any) {
       console.error("[ChatPage] Message error:", error);
+      reportChatLimitError(error);
       
       if (error.isThrottled) {
         setShowThrottlingDialog(true);
@@ -1306,6 +1321,21 @@ export default function ChatPage() {
 
       <div className="border-t bg-background px-4 pb-4 pt-2">
         <div className="relative mx-auto max-w-4xl">
+          <LimitToast alert={chatLimitToast} onShown={markChatLimitToastShown} />
+          {chatLimitAlert ? (
+            <div className="mb-3">
+              <LimitAlertCard
+                alert={chatLimitAlert}
+                onDismiss={(alertId) => {
+                  dismissChatLimitAlert(alertId);
+                  if (alertId.startsWith('server:')) {
+                    clearChatLimitError();
+                  }
+                }}
+              />
+            </div>
+          ) : null}
+
           <div className="mb-2 flex items-center justify-between gap-2">
             <div className="text-xs text-muted-foreground">
               {chatMode === 'global' ? (

@@ -63,7 +63,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       clearTimeout(timeoutId);
       if (signal) signal.removeEventListener('abort', onAbort);
 
-      // Client-only: emit upgrade event (handled by dashboard listener)
+      // Client-only: emit monetization/limit events (handled by dashboard listeners).
       if (typeof window !== 'undefined' && (response.status === 402 || response.status === 429)) {
         try {
           const clone = response.clone();
@@ -71,6 +71,17 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
           const context = body?.error?.code === 'UPGRADE_REQUIRED' ? body.error : body;
           if (context?.code === 'UPGRADE_REQUIRED') {
             window.dispatchEvent(new CustomEvent('au-upgrade-required', { detail: context }));
+          }
+          const limitContext = body?.code === 'LIMIT_EXCEEDED'
+            ? body
+            : (body?.details?.code === 'LIMIT_EXCEEDED' ? body.details : null);
+          if (limitContext?.code === 'LIMIT_EXCEEDED') {
+            window.dispatchEvent(new CustomEvent('au_limit_reached', {
+              detail: {
+                ...limitContext,
+                message: `Limit exceeded (${String(limitContext.limit || 'unknown')}).`,
+              },
+            }));
           }
         } catch {
         }

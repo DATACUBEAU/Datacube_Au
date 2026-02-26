@@ -98,20 +98,39 @@ function extractAccessTokenFromCookieValue(rawValue: string): string | null {
 
 function extractAccessTokenFromCookies(req: NextRequest): string | null {
   const cookies = req.cookies.getAll();
+  const groups = new Map<string, Array<{ name: string; value: string; index: number | null }>>();
   for (const c of cookies) {
-    const name = c.name.toLowerCase();
-    if (
-      name === 'sb-access-token' ||
-      name === 'access_token' ||
-      name === 'supabase-auth-token' ||
-      name.endsWith('-auth-token') ||
-      (name.includes('supabase') && name.includes('auth'))
-    ) {
-      const token = extractAccessTokenFromCookieValue(c.value);
-      if (!token) continue;
-      const normalized = normalizeBearerToken(token);
-      if (normalized) return normalized;
-    }
+    const nameLower = c.name.toLowerCase();
+    const baseName = nameLower.replace(/\.\d+$/, '');
+    const isAuthCookie =
+      baseName === 'sb-access-token' ||
+      baseName === 'access_token' ||
+      baseName === 'supabase-auth-token' ||
+      baseName.endsWith('-auth-token') ||
+      (baseName.includes('supabase') && baseName.includes('auth'));
+    if (!isAuthCookie) continue;
+
+    const match = nameLower.match(/\.(\d+)$/);
+    const index = match ? Number(match[1]) : null;
+    const parts = groups.get(baseName) ?? [];
+    parts.push({ name: nameLower, value: c.value, index: Number.isFinite(index) ? index : null });
+    groups.set(baseName, parts);
+  }
+
+  for (const parts of groups.values()) {
+    const hasIndexes = parts.some((p) => typeof p.index === 'number');
+    const combined = hasIndexes
+      ? parts
+          .slice()
+          .sort((a, b) => (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER))
+          .map((p) => p.value)
+          .join('')
+      : parts[0]?.value ?? '';
+
+    const token = combined ? extractAccessTokenFromCookieValue(combined) : null;
+    if (!token) continue;
+    const normalized = normalizeBearerToken(token);
+    if (normalized) return normalized;
   }
   return null;
 }

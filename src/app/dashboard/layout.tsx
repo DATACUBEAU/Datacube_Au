@@ -77,6 +77,7 @@ import { Badge } from '@/components/ui/badge';
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import { ToastAction } from '@/components/ui/toast';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
+import { useFlag } from '@/components/feature-flag-provider';
 
 type NavItem = {
   href: string;
@@ -265,6 +266,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const [planExpiresAt, setPlanExpiresAt] = useState<string | null>(null);
   const [isBillingDisabled, setIsBillingDisabled] = useState(false);
   const [isPlanStatusLoading, setIsPlanStatusLoading] = useState(false);
+  const { enabled: billingEnabledFlag } = useFlag('billing_enabled');
 
   const isAuthenticated = !!user;
 
@@ -313,23 +315,11 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
     setIsPlanStatusLoading(true);
     try {
-      const [profileResult, conexConfigResult, legacyConfigResult] = await Promise.all([
-        supabase
-          .from('au_user_profiles')
-          .select('tier, tier_expires_at')
-          .eq('user_id', user.id)
-          .maybeSingle(),
-        supabase
-          .from('au_conex_config')
-          .select('billing_enabled')
-          .eq('id', 1)
-          .maybeSingle(),
-        supabase
-          .from('au_config')
-          .select('billing_enabled')
-          .limit(1)
-          .maybeSingle(),
-      ]);
+      const profileResult = await supabase
+        .from('au_user_profiles')
+        .select('tier, tier_expires_at')
+        .eq('user_id', user.id)
+        .maybeSingle();
 
       if (profileResult.data?.tier) {
         setPlanTier(String(profileResult.data.tier));
@@ -342,18 +332,15 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           ? profileResult.data.tier_expires_at
           : null,
       );
-
-      const billingEnabled =
-        conexConfigResult.data?.billing_enabled ?? legacyConfigResult.data?.billing_enabled;
-      setIsBillingDisabled(billingEnabled === false);
+      setIsBillingDisabled(!billingEnabledFlag);
     } catch {
       setPlanTier('free');
       setPlanExpiresAt(null);
-      setIsBillingDisabled(false);
+      setIsBillingDisabled(!billingEnabledFlag);
     } finally {
       setIsPlanStatusLoading(false);
     }
-  }, [isOnline, user?.id]);
+  }, [billingEnabledFlag, isOnline, user?.id]);
 
   const normalizedPlanTier = useMemo(() => {
     if (isBillingDisabled) return 'premium';
@@ -522,35 +509,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       )
       .subscribe();
 
-    const billingChannel = supabase
-      .channel('dashboard-billing-config')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'au_config',
-        },
-        () => {
-          void refreshPlanStatus();
-        },
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'au_conex_config',
-        },
-        () => {
-          void refreshPlanStatus();
-        },
-      )
-      .subscribe();
-
     return () => {
       void supabase.removeChannel(profileChannel);
-      void supabase.removeChannel(billingChannel);
     };
   }, [isOnline, refreshPlanStatus, user?.id]);
 

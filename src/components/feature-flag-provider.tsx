@@ -1,215 +1,268 @@
-
 'use client';
 
-import React, { createContext, useContext, ReactNode, useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, {
+  createContext,
+  useContext,
+  ReactNode,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from 'react';
 import { supabase } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useSupabaseSession } from '@/hooks/use-supabase-auth';
 
-interface FeatureFlags {
-  global_chat_enabled?: boolean;
-  [key: string]: any;
-}
+export type FeatureFlagScope = 'global' | 'org' | 'user';
+
+export type FeatureFlagRecord = {
+  id: string;
+  key: string;
+  enabled: boolean;
+  category: string;
+  description: string;
+  scope: FeatureFlagScope;
+  org_id: string | null;
+  user_id: string | null;
+  config: Record<string, unknown>;
+  updated_at: string;
+};
+
+export type FeatureFlagsMap = Record<string, boolean>;
+export type FeatureFlagsRecordMap = Record<string, FeatureFlagRecord>;
+
+type SetFlagOptions = {
+  category?: string;
+  description?: string;
+  scope?: FeatureFlagScope;
+  config?: Record<string, unknown>;
+};
 
 interface FeatureFlagContextType {
-  flags: FeatureFlags;
+  flags: FeatureFlagsMap;
+  records: FeatureFlagsRecordMap;
   isEnabled: (feature: string) => boolean;
   loading: boolean;
   refreshFlags: () => Promise<void>;
+  setFlag: (key: string, enabled: boolean, options?: SetFlagOptions) => Promise<void>;
 }
+
+const DEFAULT_FLAGS: FeatureFlagsMap = {
+  global_chat_enabled: true,
+};
+
+const POLL_INTERVAL_MS = 45000;
 
 const FeatureFlagContext = createContext<FeatureFlagContextType>({
-  flags: {},
-  isEnabled: () => false,
+  flags: DEFAULT_FLAGS,
+  records: {},
+  isEnabled: () => true,
   loading: true,
   refreshFlags: async () => {},
+  setFlag: async () => {},
 });
 
-let hasWarnedFeatureFlagFetch = false;
-let hasWarnedFeatureFlagRealtime = false;
-const DEFAULT_FLAGS: FeatureFlags = { global_chat_enabled: true };
-const POLL_INTERVAL_MS = 45000;
-const CONEX_FLAG_COLUMNS = 'global_chat_enabled,premium_models_enabled,premium_models_paid_only,billing_enabled,paid_mode_enabled,free_pressure_mode_enabled,stripe_live_mode';
+function normalizeFlagRow(row: any): FeatureFlagRecord | null {
+  const key = typeof row?.key === 'string' ? row.key.trim() : '';
+  if (!key) return null;
 
-function extractConexFlags(value: any): FeatureFlags {
-  if (!value || typeof value !== 'object') {
-    return {};
-  }
+  const scopeRaw = typeof row?.scope === 'string' ? row.scope.trim().toLowerCase() : 'global';
+  const scope: FeatureFlagScope = scopeRaw === 'org' || scopeRaw === 'user' ? scopeRaw : 'global';
+
+  const config = row?.config && typeof row.config === 'object' && !Array.isArray(row.config)
+    ? row.config as Record<string, unknown>
+    : {};
+
   return {
-    global_chat_enabled: value.global_chat_enabled,
-    premium_models_enabled: value.premium_models_enabled,
-    premium_models_paid_only: value.premium_models_paid_only,
-    billing_enabled: value.billing_enabled,
-    paid_mode_enabled: value.paid_mode_enabled,
-    free_pressure_mode_enabled: value.free_pressure_mode_enabled,
-    stripe_live_mode: value.stripe_live_mode,
+    id: String(row?.id || ''),
+    key,
+    enabled: row?.enabled === true,
+    category: typeof row?.category === 'string' && row.category.trim()
+      ? row.category.trim()
+      : 'general',
+    description: typeof row?.description === 'string' ? row.description : '',
+    scope,
+    org_id: typeof row?.org_id === 'string' ? row.org_id : null,
+    user_id: typeof row?.user_id === 'string' ? row.user_id : null,
+    config,
+    updated_at: typeof row?.updated_at === 'string'
+      ? row.updated_at
+      : new Date().toISOString(),
   };
 }
 
-function mapFlagRows(rows: Array<{ key?: unknown; is_enabled?: unknown }> | null | undefined): FeatureFlags {
-  const mapped: FeatureFlags = {};
-  for (const row of rows || []) {
-    const key = typeof row?.key === 'string' ? row.key.trim() : '';
-    if (!key) continue;
-    mapped[key] = row.is_enabled === true;
+function rowsToState(rows: FeatureFlagRecord[]): { flags: FeatureFlagsMap; records: FeatureFlagsRecordMap } {
+  const records: FeatureFlagsRecordMap = {};
+  const flags: FeatureFlagsMap = { ...DEFAULT_FLAGS };
+
+  for (const row of rows) {
+    records[row.key] = row;
+    flags[row.key] = row.enabled;
   }
-  return mapped;
+
+  return { flags, records };
 }
 
-function mergeFlagState(conexConfig: FeatureFlags | null | undefined, tableFlags: FeatureFlags | null | undefined): FeatureFlags {
-  return {
-    ...DEFAULT_FLAGS,
-    ...(conexConfig || {}),
-    ...(tableFlags || {}),
-  };
+function mergeRow(prevRows: FeatureFlagRecord[], row: FeatureFlagRecord): FeatureFlagRecord[] {
+  const next = prevRows.filter((item) => item.key !== row.key);
+  next.push(row);
+  return next;
+}
+
+function removeRow(prevRows: FeatureFlagRecord[], key: string): FeatureFlagRecord[] {
+  return prevRows.filter((item) => item.key !== key);
 }
 
 export function FeatureFlagProvider({ children }: { children: ReactNode }) {
-  const [flags, setFlags] = useState<FeatureFlags>(DEFAULT_FLAGS);
+  const [rows, setRows] = useState<FeatureFlagRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const { isOnline } = useNetworkStatus();
-  const { session, loading: isLoadingAuth } = useSupabaseSession();
+  const { loading: isLoadingAuth } = useSupabaseSession();
   const isFetchingRef = useRef(false);
 
   const fetchFlags = useCallback(async (opts?: { silent?: boolean }) => {
-    if (isFetchingRef.current) {
-      return;
-    }
-
+    if (isFetchingRef.current) return;
     isFetchingRef.current = true;
-    if (!opts?.silent) {
-      setLoading(true);
-    }
-
-    if (!isOnline || !session?.access_token) {
-      setFlags((prev) => (Object.keys(prev).length > 0 ? prev : DEFAULT_FLAGS));
-      setLoading(false);
-      isFetchingRef.current = false;
-      return;
-    }
+    if (!opts?.silent) setLoading(true);
 
     try {
-      const [{ data: conexConfig, error: conexError }, { data: featureRows, error: flagError }] = await Promise.all([
-        supabase
-          .from('au_conex_config')
-          .select(CONEX_FLAG_COLUMNS)
-          .eq('id', 1)
-          .maybeSingle(),
-        supabase
-          .from('au_feature_flags')
-          .select('key,is_enabled'),
-      ]);
+      const { data, error } = await supabase
+        .from('feature_flags')
+        .select('id,key,enabled,category,description,scope,org_id,user_id,config,updated_at')
+        .order('updated_at', { ascending: false });
 
-      if (conexError || flagError) {
-        if (!hasWarnedFeatureFlagFetch) {
-          console.warn('[FeatureFlagProvider] Partial flag fetch failure; keeping defaults/fallback values.', {
-            conexError: conexError?.message,
-            featureFlagError: flagError?.message,
-          });
-          hasWarnedFeatureFlagFetch = true;
-        }
+      if (error) {
+        throw error;
       }
 
-      const merged = mergeFlagState(extractConexFlags(conexConfig), mapFlagRows(featureRows as any[]));
-      setFlags(merged);
-    } catch (err) {
-      if (!hasWarnedFeatureFlagFetch) {
-        console.warn('[FeatureFlagProvider] Error loading flags, using defaults.', err);
-        hasWarnedFeatureFlagFetch = true;
-      }
-      setFlags((prev) => (Object.keys(prev).length > 0 ? prev : DEFAULT_FLAGS));
+      const normalized = (data || [])
+        .map((row) => normalizeFlagRow(row))
+        .filter((row): row is FeatureFlagRecord => row !== null);
+
+      setRows(normalized);
+    } catch (error) {
+      console.warn('[FeatureFlagProvider] Failed to fetch feature flags.', error);
+      setRows((prev) => prev);
     } finally {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [isOnline, session?.access_token]);
+  }, []);
 
   useEffect(() => {
-    if (isLoadingAuth) {
-      return;
-    }
-
+    if (isLoadingAuth) return;
     void fetchFlags();
+  }, [fetchFlags, isLoadingAuth]);
 
-    if (!isOnline || !session?.access_token) {
-      return;
-    }
+  useEffect(() => {
+    if (isLoadingAuth || !isOnline) return;
 
     const channel = supabase
-      .channel('feature-flag-updates')
+      .channel('feature-flags-v2')
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_conex_config', filter: 'id=eq.1' },
+        { event: '*', schema: 'public', table: 'feature_flags' },
         (payload: any) => {
-          const nextConex = extractConexFlags(payload?.new);
-          if (Object.keys(nextConex).length === 0) {
+          const incoming = normalizeFlagRow(payload?.new ?? payload?.old);
+          if (!incoming) {
             void fetchFlags({ silent: true });
             return;
           }
-          setFlags((prev) => mergeFlagState({ ...prev, ...nextConex }, null));
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_feature_flags' },
-        (payload: any) => {
-          const row = (payload?.new ?? payload?.old) as { key?: unknown; is_enabled?: unknown } | undefined;
-          const key = typeof row?.key === 'string' ? row.key.trim() : '';
-          if (!key) {
-            return;
-          }
 
-          setFlags((prev) => {
-            const next = { ...prev };
+          setRows((prev) => {
             if (payload?.eventType === 'DELETE') {
-              delete next[key];
-            } else {
-              next[key] = row?.is_enabled === true;
+              return removeRow(prev, incoming.key);
             }
-            return mergeFlagState(next, null);
+            return mergeRow(prev, incoming);
           });
-        }
+        },
       )
       .subscribe((status) => {
-        if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && !hasWarnedFeatureFlagRealtime) {
-          console.warn('[FeatureFlagProvider] Realtime unavailable; switching to polling fallback.');
-          hasWarnedFeatureFlagRealtime = true;
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.warn('[FeatureFlagProvider] Realtime channel degraded, relying on polling fallback.');
         }
       });
 
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [fetchFlags, isLoadingAuth, isOnline, session?.access_token]);
+  }, [fetchFlags, isLoadingAuth, isOnline]);
 
   useEffect(() => {
-    if (isLoadingAuth || !isOnline || !session?.access_token) {
-      return;
-    }
-
+    if (isLoadingAuth || !isOnline) return;
     const timer = window.setInterval(() => {
       void fetchFlags({ silent: true });
     }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [fetchFlags, isLoadingAuth, isOnline]);
 
-    return () => {
-      window.clearInterval(timer);
-    };
-  }, [fetchFlags, isLoadingAuth, isOnline, session?.access_token]);
+  const setFlag = useCallback(
+    async (key: string, enabled: boolean, options?: SetFlagOptions) => {
+      const normalizedKey = String(key || '').trim();
+      if (!normalizedKey) throw new Error('Flag key is required.');
+
+      const snapshot = rows;
+      const existing = rows.find((row) => row.key === normalizedKey);
+
+      const optimisticRow: FeatureFlagRecord = {
+        id: existing?.id || `optimistic-${normalizedKey}`,
+        key: normalizedKey,
+        enabled,
+        category: options?.category || existing?.category || 'general',
+        description: options?.description || existing?.description || '',
+        scope: options?.scope || existing?.scope || 'global',
+        org_id: existing?.org_id || null,
+        user_id: existing?.user_id || null,
+        config: options?.config || existing?.config || {},
+        updated_at: new Date().toISOString(),
+      };
+
+      setRows((prev) => mergeRow(prev, optimisticRow));
+
+      const payload = {
+        p_key: normalizedKey,
+        p_enabled: enabled,
+        p_category: optimisticRow.category,
+        p_description: optimisticRow.description,
+        p_scope: optimisticRow.scope,
+        p_config: optimisticRow.config,
+      };
+
+      const { data, error } = await supabase.rpc('set_feature_flag', payload as any);
+      if (error) {
+        setRows(snapshot);
+        throw error;
+      }
+
+      const record = normalizeFlagRow(data);
+      if (record) {
+        setRows((prev) => mergeRow(prev, record));
+      } else {
+        void fetchFlags({ silent: true });
+      }
+    },
+    [fetchFlags, rows],
+  );
 
   const refreshFlags = useCallback(async () => {
     await fetchFlags();
   }, [fetchFlags]);
 
-  const value = useMemo(() => ({
-    flags,
-    isEnabled: (feature: string) => {
-        // If flag is undefined, default to true for backward compatibility unless specified otherwise
+  const value = useMemo<FeatureFlagContextType>(() => {
+    const { flags, records } = rowsToState(rows);
+    return {
+      flags,
+      records,
+      isEnabled: (feature: string) => {
         if (flags[feature] === undefined) return true;
         return !!flags[feature];
-    },
-    loading,
-    refreshFlags,
-  }), [flags, loading, refreshFlags]);
+      },
+      loading,
+      refreshFlags,
+      setFlag,
+    };
+  }, [loading, refreshFlags, rows, setFlag]);
 
   return (
     <FeatureFlagContext.Provider value={value}>
@@ -218,7 +271,19 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   );
 }
 
+export function useFeatureFlags() {
+  return useContext(FeatureFlagContext);
+}
+
+export function useFlag(feature: string) {
+  const { isEnabled, loading } = useFeatureFlags();
+  return {
+    enabled: isEnabled(feature),
+    loading,
+  };
+}
+
+// Backward-compatible alias used in existing pages.
 export function useFeatureFlag(feature: string) {
-  const { isEnabled, loading } = useContext(FeatureFlagContext);
-  return { enabled: isEnabled(feature), loading };
+  return useFlag(feature);
 }

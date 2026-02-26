@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Lock, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, Send, UserMinus, Search, Menu, FolderTree, Crown } from 'lucide-react';
@@ -27,6 +27,7 @@ import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { AdminPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -34,10 +35,12 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
   const [auConfig, setAuConfig] = useState<any>({});
-  const [flags, setFlags] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [flagQuery, setFlagQuery] = useState('');
+  const [flagCategory, setFlagCategory] = useState('all');
   const { toast } = useToast();
+  const { records: featureFlagRecords, setFlag, refreshFlags } = useFeatureFlags();
   const isFetchingRef = useRef(false);
 
   const normalizeConexConfig = useCallback((raw: any) => ({
@@ -77,11 +80,6 @@ const AdminBilling = ({ token }: { token: string }) => {
     }
 
     try {
-      await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'ensure_feature_flags' }),
-      });
-
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_conex_config' })
@@ -97,12 +95,6 @@ const AdminBilling = ({ token }: { token: string }) => {
       if (auRes.ok) {
         setAuConfig(normalizeAuConfig((auRes as any).config || {}));
       }
-
-      const flagsRes = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'get_feature_flags' })
-      });
-      if (flagsRes.ok) setFlags((flagsRes as any).flags || []);
 
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
@@ -136,8 +128,11 @@ const AdminBilling = ({ token }: { token: string }) => {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_feature_flags' },
-        scheduleRefresh,
+        { event: '*', schema: 'public', table: 'feature_flags' },
+        () => {
+          scheduleRefresh();
+          void refreshFlags();
+        },
       )
       .on(
         'postgres_changes',
@@ -157,22 +152,22 @@ const AdminBilling = ({ token }: { token: string }) => {
       }
       void supabase.removeChannel(channel);
     };
-  }, [fetchConfig]);
+  }, [fetchConfig, refreshFlags]);
 
-  const toggleFlag = async (key: string, current: boolean) => {
+  const setFeatureFlag = useCallback(async (key: string, nextEnabled: boolean) => {
+    const row = featureFlagRecords[key];
     try {
-        const res = await fetchAdmin('admin-handler', {
-            method: 'POST',
-            body: JSON.stringify({ action: 'update_feature_flag', key, is_enabled: !current })
-        });
-        if (res.ok) {
-            toast({ title: 'Updated', description: `Flag ${key} updated.` });
-            fetchConfig();
-        }
+      await setFlag(key, nextEnabled, {
+        category: row?.category || 'billing',
+        description: row?.description || '',
+        scope: row?.scope || 'global',
+        config: row?.config || {},
+      });
+      toast({ title: 'Updated', description: `${key} is now ${nextEnabled ? 'enabled' : 'disabled'}.` });
     } catch (e: any) {
-        toast({ title: 'Error', description: e.message, variant: 'destructive' });
+      toast({ title: 'Flag update failed', description: e?.message || String(e), variant: 'destructive' });
     }
-  };
+  }, [featureFlagRecords, setFlag, toast]);
 
   const handleSave = async (newConfig: any) => {
     setSaving(true);
@@ -211,8 +206,24 @@ const AdminBilling = ({ token }: { token: string }) => {
 
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
+  const allFlags = Object.values(featureFlagRecords).sort((a, b) => a.key.localeCompare(b.key));
+  const flagCategories = Array.from(new Set(allFlags.map((f) => (f.category || 'general').trim().toLowerCase())))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  const filteredFlags = allFlags.filter((flag) => {
+    const category = (flag.category || 'general').trim().toLowerCase();
+    if (flagCategory !== 'all' && category !== flagCategory) return false;
+    const haystack = `${flag.key} ${flag.description} ${category} ${flag.scope}`.toLowerCase();
+    return haystack.includes(flagQuery.trim().toLowerCase());
+  });
+
+  const premiumEnabled = featureFlagRecords.premium_models_enabled?.enabled ?? true;
+  const premiumPaidOnly = featureFlagRecords.premium_models_paid_only?.enabled ?? true;
+  const billingEnabled = featureFlagRecords.billing_enabled?.enabled ?? !!auConfig.billing_enabled;
+
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
+    <div className="space-y-6 max-w-5xl mx-auto">
         <Tabs defaultValue="config">
             <TabsList>
                 <TabsTrigger value="config">Configuration</TabsTrigger>
@@ -225,37 +236,55 @@ const AdminBilling = ({ token }: { token: string }) => {
                         <h3 className="text-lg font-medium">Billing Controls</h3>
                         <Button onClick={() => handleSave(config)} disabled={saving}>
                             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                            Save Changes
+                            Save Non-Flag Config
                         </Button>
                     </div>
 
                     <div className="grid gap-4">
                         <Card>
                             <CardHeader>
-                                <CardTitle>Global Limits</CardTitle>
+                                <CardTitle>Plan & Premium</CardTitle>
+                                <CardDescription>Primary plan switches and premium behavior controls.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                      <Label>Billing Enabled</Label>
+                                      <p className="text-xs text-muted-foreground">Master monetization switch.</p>
+                                    </div>
+                                    <Switch checked={billingEnabled} onCheckedChange={(c) => void setFeatureFlag('billing_enabled', c)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                      <Label>Premium Models Enabled</Label>
+                                      <p className="text-xs text-muted-foreground">Master switch for premium model availability.</p>
+                                    </div>
+                                    <Switch checked={premiumEnabled} onCheckedChange={(c) => void setFeatureFlag('premium_models_enabled', c)} />
+                                </div>
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                      <Label>Premium Models Paid Only</Label>
+                                      <p className="text-xs text-muted-foreground">Restrict premium models to paid plans.</p>
+                                    </div>
+                                    <Switch
+                                      checked={premiumPaidOnly}
+                                      disabled={!premiumEnabled}
+                                      onCheckedChange={(c) => void setFeatureFlag('premium_models_paid_only', c)}
+                                    />
+                                </div>
                                 <div className="flex items-center justify-between p-4 border rounded-lg bg-red-50 dark:bg-red-900/10">
                                     <div>
                                         <Label className="text-red-900 dark:text-red-200 font-bold">Free Pressure Mode</Label>
-                                        <p className="text-xs text-red-700 dark:text-red-300">
-                                            Strictly limit free users (2 docs, low speed, 1 active doc/week) to drive upgrades.
-                                        </p>
+                                        <p className="text-xs text-red-700 dark:text-red-300">Strict free-tier pressure controls to drive upgrades.</p>
                                     </div>
-                                    <Switch checked={config.free_pressure_mode_enabled} onCheckedChange={(c) => setConfig({...config, free_pressure_mode_enabled: c})} />
+                                    <Switch checked={featureFlagRecords.free_pressure_mode_enabled?.enabled ?? false} onCheckedChange={(c) => void setFeatureFlag('free_pressure_mode_enabled', c)} />
                                 </div>
                                 <div className="flex items-center justify-between p-4 border rounded-lg bg-blue-50 dark:bg-blue-900/10">
                                     <div>
-                                        <Label className="text-blue-900 dark:text-blue-200 font-bold">Paid Models Only</Label>
-                                        <p className="text-xs text-blue-700 dark:text-blue-300">
-                                            Disable "Auto-Switch" across free keys. Enforce use of Primary/Paid keys only.
-                                        </p>
+                                        <Label className="text-blue-900 dark:text-blue-200 font-bold">Paid Mode Enabled</Label>
+                                        <p className="text-xs text-blue-700 dark:text-blue-300">Force paid model path and key routing.</p>
                                     </div>
-                                    <Switch checked={config.paid_mode_enabled} onCheckedChange={(c) => setConfig({...config, paid_mode_enabled: c})} />
-                                </div>
-                                <div className="flex items-center justify-between">
-                                    <Label>Billing Enabled</Label>
-                                    <Switch checked={!!auConfig.billing_enabled} onCheckedChange={(c) => setAuConfig({ ...auConfig, billing_enabled: c })} />
+                                    <Switch checked={featureFlagRecords.paid_mode_enabled?.enabled ?? false} onCheckedChange={(c) => void setFeatureFlag('paid_mode_enabled', c)} />
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-4 pt-2">
@@ -297,57 +326,54 @@ const AdminBilling = ({ token }: { token: string }) => {
 
                         <Card>
                             <CardHeader>
-                                <CardTitle>Pro Tier Features</CardTitle>
+                                <CardTitle>Billing Feature Flags</CardTitle>
+                                <CardDescription>Search and manage all feature flags in real time.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <Label>100MB Upload Limit</Label>
-                                        <p className="text-xs text-muted-foreground">
-                                            Allow Pro users to upload files up to 100MB (Default: 50MB).
-                                        </p>
-                                    </div>
-                                    <Switch 
-                                        checked={flags.find(f => f.key === 'pro_upload_100mb')?.is_enabled ?? false} 
-                                        onCheckedChange={() => toggleFlag('pro_upload_100mb', flags.find(f => f.key === 'pro_upload_100mb')?.is_enabled ?? false)} 
-                                    />
+                                <div className="grid gap-3 md:grid-cols-[1fr_220px]">
+                                  <Input
+                                    placeholder="Search flags by key, description, scope..."
+                                    value={flagQuery}
+                                    onChange={(e) => setFlagQuery(e.target.value)}
+                                  />
+                                  <Select value={flagCategory} onValueChange={setFlagCategory}>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="All categories" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="all">All categories</SelectItem>
+                                      {flagCategories.map((category) => (
+                                        <SelectItem key={category} value={category}>{category}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
                                 </div>
-                            </CardContent>
-                        </Card>
 
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Feature Gating</CardTitle>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <Label>Global Chat</Label>
-                                        <p className="text-xs text-muted-foreground">Enable the global assistant.</p>
+                                <div className="space-y-2">
+                                  {filteredFlags.length === 0 && (
+                                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                                      No flags match your filter.
                                     </div>
-                                    <Switch checked={config.global_chat_enabled} onCheckedChange={(c) => setConfig({...config, global_chat_enabled: c})} />
-                                </div>
-                                <div className="space-y-4 border rounded-lg p-4 bg-muted/10">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <Label>Premium Models Enabled</Label>
-                                            <p className="text-xs text-muted-foreground">Master switch to enable premium models in the system.</p>
+                                  )}
+                                  {filteredFlags.map((flag) => (
+                                    <div key={flag.key} className="rounded-md border p-4">
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="space-y-1">
+                                          <div className="font-medium">{flag.key}</div>
+                                          <p className="text-xs text-muted-foreground">{flag.description || 'No description.'}</p>
+                                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                                            <Badge variant="outline">{flag.category || 'general'}</Badge>
+                                            <Badge variant="outline">{flag.scope}</Badge>
+                                            <span>Updated {new Date(flag.updated_at).toLocaleString()}</span>
+                                          </div>
                                         </div>
-                                        <Switch checked={config.premium_models_enabled} onCheckedChange={(c) => setConfig({...config, premium_models_enabled: c})} />
+                                        <Switch
+                                          checked={flag.enabled}
+                                          onCheckedChange={(next) => void setFeatureFlag(flag.key, next)}
+                                        />
+                                      </div>
                                     </div>
-
-                                    {config.premium_models_enabled && (
-                                        <div className="flex items-center justify-between pl-4 border-l-2 border-primary/20 ml-1">
-                                            <div>
-                                                <Label>Paid Plans Only</Label>
-                                                <p className="text-xs text-muted-foreground">
-                                                    <strong>ON:</strong> Only Pro/Enterprise users access paid models.<br/>
-                                                    <strong>OFF:</strong> Everyone (including Free tier) accesses paid models.
-                                                </p>
-                                            </div>
-                                            <Switch checked={config.premium_models_paid_only} onCheckedChange={(c) => setConfig({...config, premium_models_paid_only: c})} />
-                                        </div>
-                                    )}
+                                  ))}
                                 </div>
                             </CardContent>
                         </Card>
@@ -369,7 +395,7 @@ const AdminBilling = ({ token }: { token: string }) => {
                                 </div>
                                 <div className="flex items-center justify-between">
                                     <Label>Live Mode</Label>
-                                    <Switch checked={config.stripe_live_mode} onCheckedChange={(c) => setConfig({...config, stripe_live_mode: c})} />
+                                    <Switch checked={featureFlagRecords.stripe_live_mode?.enabled ?? !!config.stripe_live_mode} onCheckedChange={(c) => void setFeatureFlag('stripe_live_mode', c)} />
                                 </div>
                             </CardContent>
                         </Card>

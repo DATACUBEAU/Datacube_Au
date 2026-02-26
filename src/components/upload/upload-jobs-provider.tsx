@@ -20,6 +20,9 @@ import { v4 as uuidv4 } from 'uuid';
 import { useToast } from '@/hooks/use-toast';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { guardRequest } from '@/lib/api/request-guard';
+import { useFlag } from '@/components/feature-flag-provider';
+import { useLimits } from '@/components/providers/limits-provider';
+import { extractLimitExceededPayload } from '@/lib/limits/limit-errors';
 
 type UploadJobsContextValue = {
   jobs: UploadJobRow[];
@@ -103,6 +106,8 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const { session, loading: isLoadingAuth } = useSupabaseSession();
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
+  const { enabled: isProUpload100mbEnabled } = useFlag('pro_upload_100mb');
+  const { reportServerLimitError } = useLimits();
 
   const [jobs, setJobs] = useState<UploadJobRow[]>([]);
   const [isThrottled, setIsThrottled] = useState(false);
@@ -130,20 +135,15 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     return [combined, effective];
   }, [user]);
 
-  // Fetch Limit on Load
+  // Fetch plan and resolve effective upload size from centralized feature flags.
   useEffect(() => {
     async function fetchLimit() {
        if (!user || !isOnline) return;
        try {
-           // 1. Get Tier
            const { data: profile } = await supabase.from("au_user_profiles").select("tier").eq("user_id", user.id).maybeSingle();
            const tier = profile?.tier || "free";
-           
-           // 2. Get Flag
-           const { data: flag } = await supabase.from("au_feature_flags").select("is_enabled").eq("key", "pro_upload_100mb").maybeSingle();
-           const is100MB = flag?.is_enabled === true;
-           
-           if (tier === 'pro' && is100MB) {
+
+           if (tier === 'pro' && isProUpload100mbEnabled) {
                setMaxUploadSize(100 * 1024 * 1024);
            } else {
                setMaxUploadSize(50 * 1024 * 1024);
@@ -153,7 +153,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
        }
     }
     fetchLimit();
-  }, [isOnline, user]);
+  }, [isOnline, isProUpload100mbEnabled, user]);
 
   const mergeJobs = useCallback((remoteJobs: UploadJobRow[]) => {
     setJobs(currentJobs => {
@@ -686,15 +686,22 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         try { await deleteJobFile(job.id); } catch {}
         
       } catch (e: any) {
+        const limitPayload = extractLimitExceededPayload(e);
+        if (limitPayload) {
+          reportServerLimitError(limitPayload);
+        }
+
         const errorMsg = e.message || '';
 
         if (e.isThrottled) {
           setIsThrottled(true);
         }
 
-        const isRetryable = errorMsg.includes('storage_error') || 
-                           errorMsg.includes('server_error') ||
-                           e.status >= 500;
+        const isRetryable = !limitPayload && (
+          errorMsg.includes('storage_error') ||
+          errorMsg.includes('server_error') ||
+          e.status >= 500
+        );
 
         if (isRetryable && retryAttempt < 3) {
           const delay = Math.pow(2, retryAttempt) * 1000;
@@ -706,7 +713,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         } else if (e?.name === 'AbortError') {
           updateJobLocal(job.id, { status: 'cancelled' });
         } else {
-          updateJobLocal(job.id, { status: 'failed', error: errorMsg || 'Upload failed.' });
+          const friendlyLimitError = limitPayload
+            ? `Limit exceeded (${String(limitPayload.limit || 'unknown')}).`
+            : '';
+          updateJobLocal(job.id, {
+            status: 'failed',
+            error: friendlyLimitError || errorMsg || 'Upload failed.',
+          });
         }
       } finally {
         controllersRef.current.delete(job.id);

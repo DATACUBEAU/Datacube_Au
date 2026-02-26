@@ -7,6 +7,7 @@ import { GlobalListeners } from '@/components/global-listeners';
 import { SmartAuthProvider } from '@/hooks/use-smart-auth';
 import { NetworkStatusProvider } from '@/components/providers/network-status-provider';
 import { FeatureFlagProvider } from '@/components/feature-flag-provider';
+import { LimitsProvider } from '@/components/providers/limits-provider';
 import './globals.css';
 
 const APP_NAME = 'DataCube AU';
@@ -56,14 +57,16 @@ export default function RootLayout({
           <NetworkStatusProvider>
             <SmartAuthProvider>
               <FeatureFlagProvider>
-                <div className="relative isolate">
-                  <BackgroundController />
-                  <div className="relative z-10">
-                    <UploadJobsProvider>{children}</UploadJobsProvider>
-                    <GlobalListeners />
-                    <Toaster />
+                <LimitsProvider>
+                  <div className="relative isolate">
+                    <BackgroundController />
+                    <div className="relative z-10">
+                      <UploadJobsProvider>{children}</UploadJobsProvider>
+                      <GlobalListeners />
+                      <Toaster />
+                    </div>
                   </div>
-                </div>
+                </LimitsProvider>
               </FeatureFlagProvider>
             </SmartAuthProvider>
           </NetworkStatusProvider>

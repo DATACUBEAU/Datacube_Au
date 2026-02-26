@@ -63,11 +63,16 @@ export async function resolveDocumentRetentionDays(userId: string | null | undef
 
   try {
     const now = new Date();
-    const [{ data: profile }, { data: conexConfig }, { data: legacyConfig }] = await Promise.all([
+    const [{ data: profile }, { data: billingFlag }, { data: conexConfig }, { data: legacyConfig }] = await Promise.all([
       supabase
         .from('au_user_profiles')
         .select('tier,tier_expires_at')
         .eq('user_id', userId)
+        .maybeSingle(),
+      supabase
+        .from('feature_flags')
+        .select('enabled')
+        .eq('key', 'billing_enabled')
         .maybeSingle(),
       supabase
         .from('au_conex_config')
@@ -81,7 +86,11 @@ export async function resolveDocumentRetentionDays(userId: string | null | undef
         .maybeSingle(),
     ]);
 
-    const billingEnabled = conexConfig?.billing_enabled ?? legacyConfig?.billing_enabled ?? true;
+    const billingEnabled =
+      (typeof billingFlag?.enabled === 'boolean' ? billingFlag.enabled : null) ??
+      conexConfig?.billing_enabled ??
+      legacyConfig?.billing_enabled ??
+      true;
     if (!billingEnabled) {
       retentionCache.set(userId, { value: FREE_RETENTION_DAYS, ts: Date.now() });
       return FREE_RETENTION_DAYS;

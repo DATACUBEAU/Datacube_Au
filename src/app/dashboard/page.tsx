@@ -37,6 +37,9 @@ import type { UploadJobStatus } from '@/lib/upload/types';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { DashboardPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
+import { LimitAlertCard } from '@/components/limits/limit-alert-card';
+import { LimitToast } from '@/components/limits/limit-toast';
 
 const quickAccessItems = [
   {
@@ -82,6 +85,15 @@ export default function DashboardPage() {
   } = useAuDocuments();
   const { jobs } = useUploadJobs();
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(documentsLoading);
+  const {
+    primaryAlert: dashboardLimitAlert,
+    toastCandidate: dashboardLimitToast,
+    markToastShown: markDashboardLimitToastShown,
+    dismissAlert: dismissDashboardLimitAlert,
+    clearLimitError: clearDashboardLimitError,
+  } = useLimitationsAgent({
+    route: 'dashboard',
+  });
 
   const recentDocuments = useMemo(() => {
     if (!user) return [];
@@ -156,11 +168,23 @@ export default function DashboardPage() {
 
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
+      <LimitToast alert={dashboardLimitToast} onShown={markDashboardLimitToastShown} />
       {showSlowNotice && documentsLoading ? <SlowNetworkNotice onRetry={() => void refresh()} /> : null}
       {isUsingCachedData && !isOnline ? (
         <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
           Offline • showing cached dashboard data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
         </div>
+      ) : null}
+      {dashboardLimitAlert ? (
+        <LimitAlertCard
+          alert={dashboardLimitAlert}
+          onDismiss={(alertId) => {
+            dismissDashboardLimitAlert(alertId);
+            if (alertId.startsWith('server:')) {
+              clearDashboardLimitError();
+            }
+          }}
+        />
       ) : null}
 
       <div className="flex items-center">
