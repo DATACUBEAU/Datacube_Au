@@ -72,15 +72,17 @@ function normalizeFlagRow(row: any): FeatureFlagRecord | null {
 
   const config = row?.config && typeof row.config === 'object' && !Array.isArray(row.config)
     ? row.config as Record<string, unknown>
-    : {};
+    : (row?.value_json && typeof row.value_json === 'object' && !Array.isArray(row.value_json)
+      ? row.value_json as Record<string, unknown>
+      : {});
 
   return {
     id: String(row?.id || ''),
     key,
-    enabled: row?.enabled === true,
+    enabled: row?.enabled === true || row?.is_enabled === true,
     category: typeof row?.category === 'string' && row.category.trim()
       ? row.category.trim()
-      : 'general',
+      : 'billing',
     description: typeof row?.description === 'string' ? row.description : '',
     scope,
     org_id: typeof row?.org_id === 'string' ? row.org_id : null,
@@ -90,6 +92,17 @@ function normalizeFlagRow(row: any): FeatureFlagRecord | null {
       ? row.updated_at
       : new Date().toISOString(),
   };
+}
+
+function isSchemaDriftError(error: any): boolean {
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === '42703' ||
+    message.includes('relation') && message.includes('does not exist') ||
+    message.includes('column') && message.includes('does not exist')
+  );
 }
 
 function rowsToState(rows: FeatureFlagRecord[]): { flags: FeatureFlagsMap; records: FeatureFlagsRecordMap } {
@@ -132,11 +145,24 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         .select('id,key,enabled,category,description,scope,org_id,user_id,config,updated_at')
         .order('updated_at', { ascending: false });
 
+      let sourceRows = data || [];
+
       if (error) {
-        throw error;
+        if (!isSchemaDriftError(error)) throw error;
+
+        const { data: legacyData, error: legacyError } = await supabase
+          .from('au_feature_flags')
+          .select('*')
+          .order('updated_at', { ascending: false });
+
+        if (legacyError) {
+          throw legacyError;
+        }
+
+        sourceRows = legacyData || [];
       }
 
-      const normalized = (data || [])
+      const normalized = (sourceRows || [])
         .map((row) => normalizeFlagRow(row))
         .filter((row): row is FeatureFlagRecord => row !== null);
 
@@ -229,10 +255,51 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         p_config: optimisticRow.config,
       };
 
-      const { data, error } = await supabase.rpc('set_feature_flag', payload as any);
-      if (error) {
-        setRows(snapshot);
-        throw error;
+      let data: any = null;
+      let rpcError: any = null;
+
+      {
+        const rpcResult = await supabase.rpc('set_feature_flag', payload as any);
+        data = rpcResult.data;
+        rpcError = rpcResult.error;
+      }
+
+      if (rpcError) {
+        try {
+          const adminToken = typeof window !== 'undefined'
+            ? window.localStorage.getItem('conex_admin_token')
+            : null;
+
+          const fallbackRes = await fetch('/api/proxy/admin-handler', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
+            },
+            body: JSON.stringify({
+              action: 'update_feature_flag',
+              key: normalizedKey,
+              enabled,
+            }),
+          });
+
+          const fallbackJson = await fallbackRes.json().catch(() => null);
+          if (!fallbackRes.ok) {
+            const fallbackMessage =
+              fallbackJson?.error ||
+              fallbackJson?.message ||
+              `admin-handler fallback failed (${fallbackRes.status})`;
+            throw new Error(String(fallbackMessage));
+          }
+
+          data = fallbackJson?.flag ?? fallbackJson?.data?.flag ?? fallbackJson;
+        } catch (fallbackErr) {
+          setRows(snapshot);
+          throw fallbackErr instanceof Error
+            ? fallbackErr
+            : new Error(String((fallbackErr as any)?.message || rpcError?.message || 'Failed to update feature flag.'));
+        }
       }
 
       const record = normalizeFlagRow(data);
