@@ -456,6 +456,7 @@ export function useAuChat(selectedDocId: string | null) {
       }
       const msg = String(err?.message || '');
       const status = typeof err?.status === 'number' ? err.status : null;
+      const aiUnavailable = msg.toLowerCase().includes('all ai models are currently unavailable');
       if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
         logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', err);
       } else {
@@ -467,6 +468,14 @@ export function useAuChat(selectedDocId: string | null) {
           message: msg.slice(0, 400),
           route: activeRequestRef.current?.route ?? null,
           selectedDocId,
+        });
+      }
+      if (aiUnavailable && !shouldDedupe('event:chat:send:ai_unavailable')) {
+        logEvent('ai_models_unavailable', {
+          status,
+          route: activeRequestRef.current?.route ?? null,
+          selectedDocId,
+          message: msg.slice(0, 400),
         });
       }
       setHistory(prev => prev.filter(m => m.id !== loadingId));

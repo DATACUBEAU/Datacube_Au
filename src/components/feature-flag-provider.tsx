@@ -11,6 +11,7 @@ import React, {
   useRef,
 } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
+import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useSupabaseSession } from '@/hooks/use-supabase-auth';
 
@@ -255,50 +256,86 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         p_config: optimisticRow.config,
       };
 
-      let data: any = null;
-      let rpcError: any = null;
+      const adminToken = typeof window !== 'undefined'
+        ? window.localStorage.getItem('conex_admin_token')
+        : null;
 
-      {
-        const rpcResult = await supabase.rpc('set_feature_flag', payload as any);
-        data = rpcResult.data;
-        rpcError = rpcResult.error;
+      const parseAdminPayload = async (res: any) => {
+        if (res?.data && typeof res.data === 'object') return res.data;
+        return await res.clone().json().catch(() => null);
+      };
+
+      const runAdminHandlerUpdate = async (): Promise<any> => {
+        const res = await fetchAdmin('admin-handler', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'update_feature_flag',
+            key: normalizedKey,
+            enabled,
+          }),
+        });
+        const payload = await parseAdminPayload(res as any);
+        if (!res.ok) {
+          const message =
+            payload?.error ||
+            payload?.message ||
+            `admin-handler update_feature_flag failed (${res.status})`;
+          throw new Error(String(message));
+        }
+        return payload?.flag ?? payload?.data?.flag ?? payload;
+      };
+
+      const runAdminHandlerWithRefreshRetry = async (): Promise<any> => {
+        try {
+          return await runAdminHandlerUpdate();
+        } catch (firstErr) {
+          const firstMessage = String((firstErr as any)?.message || '');
+          const shouldRetryAuth =
+            firstMessage.toLowerCase().includes('unauthorized') ||
+            firstMessage.toLowerCase().includes('invalid_token') ||
+            firstMessage.toLowerCase().includes('expired');
+          if (!shouldRetryAuth) throw firstErr;
+
+          await supabase.auth.getSession();
+          await supabase.auth.refreshSession().catch(() => null);
+          return await runAdminHandlerUpdate();
+        }
+      };
+
+      let data: any = null;
+      let lastError: any = null;
+
+      // In Conex (admin token present), prefer admin-handler first to avoid
+      // brittle RPC drift issues.
+      if (adminToken) {
+        try {
+          data = await runAdminHandlerWithRefreshRetry();
+        } catch (adminErr) {
+          lastError = adminErr;
+        }
       }
 
-      if (rpcError) {
-        try {
-          const adminToken = typeof window !== 'undefined'
-            ? window.localStorage.getItem('conex_admin_token')
-            : null;
+      if (!data) {
+        const rpcResult = await supabase.rpc('set_feature_flag', payload as any);
+        data = rpcResult.data;
+        const rpcError = rpcResult.error;
 
-          const fallbackRes = await fetch('/api/proxy/admin-handler', {
-            method: 'POST',
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(adminToken ? { 'X-Admin-Token': adminToken } : {}),
-            },
-            body: JSON.stringify({
-              action: 'update_feature_flag',
-              key: normalizedKey,
-              enabled,
-            }),
-          });
-
-          const fallbackJson = await fallbackRes.json().catch(() => null);
-          if (!fallbackRes.ok) {
-            const fallbackMessage =
-              fallbackJson?.error ||
-              fallbackJson?.message ||
-              `admin-handler fallback failed (${fallbackRes.status})`;
-            throw new Error(String(fallbackMessage));
+        if (rpcError && !data) {
+          try {
+            data = await runAdminHandlerWithRefreshRetry();
+          } catch (fallbackErr) {
+            setRows(snapshot);
+            throw fallbackErr instanceof Error
+              ? fallbackErr
+              : new Error(
+                String(
+                  (fallbackErr as any)?.message ||
+                  rpcError?.message ||
+                  lastError?.message ||
+                  'Failed to update feature flag.',
+                ),
+              );
           }
-
-          data = fallbackJson?.flag ?? fallbackJson?.data?.flag ?? fallbackJson;
-        } catch (fallbackErr) {
-          setRows(snapshot);
-          throw fallbackErr instanceof Error
-            ? fallbackErr
-            : new Error(String((fallbackErr as any)?.message || rpcError?.message || 'Failed to update feature flag.'));
         }
       }
 

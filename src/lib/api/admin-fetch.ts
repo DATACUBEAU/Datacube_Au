@@ -96,7 +96,21 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     headers.set('X-Admin-Token', adminToken);
   }
 
-  const res = await executeWithToken(accessToken);
+  let res = await executeWithToken(accessToken);
+
+  // One retry for expired auth cookies/session.
+  if (res.status === 401 && !hadExplicitAuthorization) {
+    try {
+      await supabase.auth.getSession();
+      await supabase.auth.refreshSession();
+      const refreshed = await getSupabaseAccessToken();
+      if (refreshed) {
+        accessToken = refreshed;
+        res = await executeWithToken(accessToken);
+      }
+    } catch {
+    }
+  }
 
   try {
     const ct = res.headers.get('content-type') || '';
