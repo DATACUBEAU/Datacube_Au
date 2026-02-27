@@ -73,10 +73,9 @@ export default function SubscriptionPage() {
   }>(PRICING);
   const isPromoUnlocked = billingEnabled === false;
   const hasPaidProAccess = billingEnabled && tier === 'pro';
-  const freeRetentionLabel = '14-day history retention';
-  const proRetentionLabel = isPromoUnlocked
-    ? '14-day history retention (promo mode)'
-    : '30-day history retention';
+  const retentionPolicyLabel = '7-day signed-out cleanup / 14-day inactivity cleanup';
+  const freeRetentionLabel = retentionPolicyLabel;
+  const proRetentionLabel = retentionPolicyLabel;
 
   useEffect(() => {
       setBillingEnabled(billingFlagEnabled);
@@ -407,16 +406,17 @@ export default function SubscriptionPage() {
 
   // --- Usage Meter ---
   const LimitBar = ({ label, used, limit }: any) => {
-    const safeLimit = Number.isFinite(limit) && limit > 0 ? limit : 1;
+    const isUnlimited = !Number.isFinite(limit) || Number(limit) <= 0;
+    const safeLimit = isUnlimited ? 1 : Number(limit);
     const safeUsed = Number.isFinite(used) ? used : 0;
-    const percent = Math.min(100, (safeUsed / safeLimit) * 100);
-    const isLimit = safeUsed >= safeLimit;
+    const percent = isUnlimited ? 0 : Math.min(100, (safeUsed / safeLimit) * 100);
+    const isLimit = !isUnlimited && safeUsed >= safeLimit;
     return (
         <div>
             <div className="flex justify-between text-sm mb-1.5">
                 <span className="font-medium text-foreground">{label}</span>
                 <span className={cn("font-mono text-xs", isLimit ? "text-destructive font-bold" : "text-muted-foreground")}>
-                    {safeUsed} / {safeLimit}
+                    {isUnlimited ? `${safeUsed} / Unlimited` : `${safeUsed} / ${safeLimit}`}
                 </span>
             </div>
             <div className="h-2.5 bg-muted rounded-full overflow-hidden">
@@ -434,10 +434,8 @@ export default function SubscriptionPage() {
 
     const planCode = String(limitsUsage.plan || tier || 'free').toLowerCase();
     const isFreePlan = planCode === 'free';
-    const usageToday = limitsUsage.usageToday || {};
     const usageTotal = limitsUsage.usageTotal || {};
     const limits = limitsUsage.limits || {};
-    const resetAt = limitsUsage.resetAt;
 
     return (
         <div className="bg-card rounded-3xl shadow-sm p-6 border border-border mb-8 max-w-4xl mx-auto">
@@ -447,28 +445,28 @@ export default function SubscriptionPage() {
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
               Plan: <span className="font-semibold text-foreground">{planCode.toUpperCase()}</span>
-              {resetAt ? ` • Resets at ${new Date(resetAt).toLocaleTimeString()}` : ''}
+              {' • Fixed plan caps (no daily reset)'}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <LimitBar
-                  label="Daily Messages"
-                  used={Number(usageToday.messages_count || 0)}
-                  limit={Number(limits.max_messages_per_day || 0)}
+                  label="Chat Messages"
+                  used={Number(usageTotal.used_chats ?? usageTotal.messages_count ?? 0)}
+                  limit={Number(limits.max_chats_total ?? 0)}
                 />
                 <LimitBar
-                  label="Daily Uploads"
-                  used={Number(usageToday.uploads_count || 0)}
-                  limit={Number(limits.max_uploads_per_day || 0)}
+                  label="Uploads"
+                  used={Number(usageTotal.used_uploads ?? usageTotal.uploads_count ?? 0)}
+                  limit={Number(limits.max_uploads_total ?? 0)}
                 />
                 <LimitBar
-                  label="Daily Tokens"
-                  used={Number(usageToday.tokens_used || 0)}
-                  limit={Number(limits.max_tokens_per_day || 0)}
+                  label="Tokens"
+                  used={Number(usageTotal.used_tokens ?? usageTotal.tokens_used ?? 0)}
+                  limit={Number(limits.max_tokens_total ?? 0)}
                 />
                 <LimitBar
                   label="Storage (MB)"
-                  used={Math.round(Number(usageTotal.uploaded_mb || 0))}
-                  limit={Number(limits.max_storage_mb || 0)}
+                  used={Math.round(Number(usageTotal.used_storage_mb ?? usageTotal.uploaded_mb ?? 0))}
+                  limit={Number(limits.max_storage_mb ?? 0)}
                 />
             </div>
             {isFreePlan && billingEnabled ? (
@@ -711,7 +709,7 @@ export default function SubscriptionPage() {
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <CheckCircle2 className="h-5 w-5 text-primary" />
-                                    <span className="font-medium">30-day history retention</span>
+                                    <span className="font-medium">7-day signed-out / 14-day inactivity cleanup</span>
                                 </div>
                             </div>
                             <div className="bg-muted/40 rounded-2xl p-6">
@@ -830,7 +828,7 @@ export default function SubscriptionPage() {
                                         Enjoy the ultimate features while it lasts! We&apos;ve unlocked Pro capabilities for everyone temporarily.
                                     </p>
                                     <p className="mb-4 text-xs text-muted-foreground">
-                                        Note: Document history retention remains 14 days in promo mode.
+                                        Note: retention policy is always 7-day signed-out cleanup and 14-day inactivity cleanup.
                                     </p>
                                     <Badge variant="outline" className="border-primary/20 bg-primary/5">Limited Time Offer</Badge>
                                 </div>

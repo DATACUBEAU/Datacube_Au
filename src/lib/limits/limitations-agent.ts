@@ -70,16 +70,21 @@ function getSuggestions(limitKey: string): string[] {
         'Compress the PDF before uploading.',
         'Split the file into multiple smaller documents.',
       ];
-    case 'max_uploads_per_day':
+    case 'max_uploads_total':
       return [
-        'Batch uploads and prioritize the most important files.',
-        'Wait until daily counters reset.',
+        'Delete unused documents before uploading new ones.',
+        'Batch uploads and prioritize the most important files first.',
       ];
-    case 'max_messages_per_day':
-    case 'max_tokens_per_day':
+    case 'max_chats_total':
+    case 'max_tokens_total':
       return [
         'Use shorter prompts and concise replies to reduce token usage.',
-        'Wait until daily counters reset.',
+        'Upgrade your plan for higher or unlimited caps.',
+      ];
+    case 'max_exams_total':
+      return [
+        'Generate exams only after finalizing your study scope.',
+        'Upgrade your plan for higher or unlimited exam caps.',
       ];
     case 'max_storage_mb':
       return [
@@ -210,7 +215,6 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
   }
 
   const route = String(input.route || '').toLowerCase();
-  const today = input.usageToday || {};
   const total = input.usageTotal || {};
   const ctx = input.context || {};
 
@@ -238,11 +242,11 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
     }
 
     const uploadsAlert = maybeUsageAlert({
-      id: 'upload:max_uploads_per_day',
-      title: 'Daily upload usage',
-      limitKey: 'max_uploads_per_day',
-      current: asNumber(today.uploads_count, 0),
-      max: asNumber(input.limits.max_uploads_per_day, 0),
+      id: 'upload:max_uploads_total',
+      title: 'Upload cap usage',
+      limitKey: 'max_uploads_total',
+      current: asNumber(total.used_uploads, asNumber(total.uploads_count, 0)),
+      max: asNumber(input.limits.max_uploads_total, 0),
       warnLevels,
       blockLevels,
       upsellEnabled,
@@ -290,11 +294,11 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
 
   if (route === 'chat' || route === 'global-chat') {
     const messagesAlert = maybeUsageAlert({
-      id: 'chat:max_messages_per_day',
-      title: 'Daily chat messages',
-      limitKey: 'max_messages_per_day',
-      current: asNumber(today.messages_count, 0),
-      max: asNumber(input.limits.max_messages_per_day, 0),
+      id: 'chat:max_chats_total',
+      title: 'Chat cap usage',
+      limitKey: 'max_chats_total',
+      current: asNumber(total.used_chats, asNumber(total.messages_count, 0)),
+      max: asNumber(input.limits.max_chats_total, 0),
       warnLevels,
       blockLevels,
       upsellEnabled,
@@ -302,11 +306,11 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
     if (messagesAlert) alerts.push(messagesAlert);
 
     const tokensAlert = maybeUsageAlert({
-      id: 'chat:max_tokens_per_day',
-      title: 'Daily token usage',
-      limitKey: 'max_tokens_per_day',
-      current: asNumber(today.tokens_used, 0),
-      max: asNumber(input.limits.max_tokens_per_day, 0),
+      id: 'chat:max_tokens_total',
+      title: 'Token cap usage',
+      limitKey: 'max_tokens_total',
+      current: asNumber(total.used_tokens, asNumber(total.tokens_used, 0)),
+      max: asNumber(input.limits.max_tokens_total, 0),
       warnLevels,
       blockLevels,
       upsellEnabled,

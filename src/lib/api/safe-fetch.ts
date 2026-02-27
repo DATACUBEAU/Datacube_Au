@@ -1,4 +1,5 @@
 import { toast } from '@/hooks/use-toast';
+import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
 export class OfflineError extends Error {
   constructor(message = "You are offline") {
@@ -85,6 +86,14 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
           }
         } catch {
         }
+      }
+
+      if (typeof window !== 'undefined' && (response.status === 401 || response.status === 403)) {
+        dispatchSessionExpired({
+          status: response.status,
+          source: 'safeFetch',
+          reason: 'http_auth_error',
+        });
       }
       
       return response;

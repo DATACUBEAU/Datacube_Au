@@ -51,7 +51,9 @@ export type AppContext = {
   current_page?: string;
   last_pages?: string[];
   session_flags?: {
-    free_pressure_mode_enabled?: boolean;
+    billing_enabled?: boolean;
+    promo_enabled?: boolean;
+    limits_alerts_enabled?: boolean;
   };
   timestamps?: {
     client_time_iso?: string;

@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
+import { clearAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
 
 interface SmartUser {
   id: string;
@@ -75,6 +76,19 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let mounted = true;
+    const recordSignIn = (userId: string) => {
+      void (async () => {
+        try {
+          await supabase.rpc('record_user_activity', {
+            p_user_id: userId,
+            p_event: 'sign_in',
+            p_metadata: {},
+          });
+        } catch {
+          // best-effort audit update
+        }
+      })();
+    };
 
     const syncInitialSession = async () => {
       const offlineAtBoot =
@@ -99,6 +113,10 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
           force: true,
           offlineBootstrap: Boolean(!data.session && nextSession?.user),
         });
+        if (nextSession?.user?.id) {
+          clearAuthActionsDisabled();
+          recordSignIn(nextSession.user.id);
+        }
       } catch {
         if (!mounted) return;
         const persisted = readPersistedSupabaseSession();
@@ -106,6 +124,9 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
           force: true,
           offlineBootstrap: Boolean(persisted?.user),
         });
+        if (persisted?.user?.id) {
+          clearAuthActionsDisabled();
+        }
       }
     };
 
@@ -116,6 +137,10 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       applySessionState(session);
       if (event !== 'SIGNED_OUT') {
         setIsOfflineSession(false);
+      }
+      if (event === 'SIGNED_IN' && session?.user?.id) {
+        clearAuthActionsDisabled();
+        recordSignIn(session.user.id);
       }
 
       // Ensure user consistency on sign-in
@@ -144,6 +169,9 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
             force: !data.session,
             offlineBootstrap: Boolean(!data.session && nextSession.user),
           });
+          if (nextSession?.user?.id) {
+            clearAuthActionsDisabled();
+          }
           setIsOfflineSession(!data.session);
         }).catch(() => {
           if (!mounted) return;

@@ -14,6 +14,7 @@ import { supabase } from '@/lib/supabase-client/client';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useSupabaseSession } from '@/hooks/use-supabase-auth';
+import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
 export type FeatureFlagScope = 'global' | 'org' | 'user';
 
@@ -312,6 +313,19 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
           data = await runAdminHandlerWithRefreshRetry();
         } catch (adminErr) {
           lastError = adminErr;
+        }
+      }
+
+      if (!data && adminToken && lastError) {
+        const adminMessage = String((lastError as any)?.message || '').toLowerCase();
+        if (adminMessage.includes('unauthorized') || adminMessage.includes('forbidden')) {
+          dispatchSessionExpired({
+            status: 401,
+            source: 'FeatureFlagProvider.setFlag',
+            reason: 'admin_handler_auth_error',
+          });
+          setRows(snapshot);
+          throw new Error('Session expired. Please sign in again and retry.');
         }
       }
 

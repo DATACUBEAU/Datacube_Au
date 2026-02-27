@@ -1,6 +1,7 @@
 import { safeFetch } from './safe-fetch';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { guardRequest } from './request-guard';
+import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
 /**
  * Centralized utility for all admin-related API requests.
@@ -43,6 +44,14 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     if (token) return token;
 
     try {
+      await supabase.auth.getSession();
+      await supabase.auth.refreshSession().catch(() => null);
+      token = await getSupabaseAccessToken();
+      if (token) return token;
+    } catch {
+    }
+
+    try {
       const { data, error } = await supabase.auth.getUser();
       if (!error && data.user) {
         token = await getSupabaseAccessToken();
@@ -75,6 +84,11 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   } else {
     accessToken = await resolveAccessToken();
     if (!accessToken) {
+      dispatchSessionExpired({
+        status: 401,
+        source: 'fetchAdmin',
+        reason: 'missing_access_token',
+      });
       return new Response(JSON.stringify({ error: 'unauthorized' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
@@ -84,6 +98,11 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   }
 
   if (!accessToken) {
+    dispatchSessionExpired({
+      status: 401,
+      source: 'fetchAdmin',
+      reason: 'no_resolved_access_token',
+    });
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
@@ -110,6 +129,14 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
       }
     } catch {
     }
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    dispatchSessionExpired({
+      status: res.status,
+      source: 'fetchAdmin',
+      reason: 'admin_proxy_auth_error',
+    });
   }
 
   try {

@@ -12,6 +12,7 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { logOnce, shouldDedupe } from '@/lib/log/dedupe';
 import { logEvent } from '@/lib/analytics';
 import { guardRequest } from '@/lib/api/request-guard';
+import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
 const CHAT_EVENT_STARTED = 'au-chat:started';
 const CHAT_EVENT_COMPLETED = 'au-chat:completed';
@@ -231,6 +232,11 @@ export function useAuChat(selectedDocId: string | null) {
     const accessToken = await ensureAccessToken();
     if (!accessToken) {
       logOnce('warn', 'chat:send:no_token', '[chat] Send blocked (no access token)');
+      dispatchSessionExpired({
+        status: 401,
+        source: 'useAuChat.sendMessage',
+        reason: 'missing_access_token',
+      });
       toast({
         variant: 'destructive',
         title: 'Session expired',
@@ -459,6 +465,11 @@ export function useAuChat(selectedDocId: string | null) {
       const aiUnavailable = msg.toLowerCase().includes('all ai models are currently unavailable');
       if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
         logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', err);
+        dispatchSessionExpired({
+          status: 401,
+          source: 'useAuChat.sendMessage',
+          reason: 'chat_unauthorized',
+        });
       } else {
         console.error('[useAuChat] Message error:', err);
       }

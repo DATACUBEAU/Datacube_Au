@@ -20,7 +20,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { useToast } from '@/hooks/use-toast';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { guardRequest } from '@/lib/api/request-guard';
-import { useFlag } from '@/components/feature-flag-provider';
 import { useLimits } from '@/components/providers/limits-provider';
 import { extractLimitExceededPayload } from '@/lib/limits/limit-errors';
 
@@ -106,8 +105,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const { session, loading: isLoadingAuth } = useSupabaseSession();
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
-  const { enabled: isProUpload100mbEnabled } = useFlag('pro_upload_100mb');
-  const { reportServerLimitError } = useLimits();
+  const { usage: limitsUsage, reportServerLimitError } = useLimits();
 
   const [jobs, setJobs] = useState<UploadJobRow[]>([]);
   const [isThrottled, setIsThrottled] = useState(false);
@@ -135,25 +133,19 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     return [combined, effective];
   }, [user]);
 
-  // Fetch plan and resolve effective upload size from centralized feature flags.
+  // Derive upload size cap from server-provided effective limits.
   useEffect(() => {
-    async function fetchLimit() {
-       if (!user || !isOnline) return;
-       try {
-           const { data: profile } = await supabase.from("au_user_profiles").select("tier").eq("user_id", user.id).maybeSingle();
-           const tier = profile?.tier || "free";
-
-           if (tier === 'pro' && isProUpload100mbEnabled) {
-               setMaxUploadSize(100 * 1024 * 1024);
-           } else {
-               setMaxUploadSize(50 * 1024 * 1024);
-           }
-       } catch (e) {
-           console.warn("[upload-jobs] Failed to fetch upload limit, defaulting to 50MB", e);
-       }
+    const maxFileMb = Number((limitsUsage?.limits || {})?.max_file_mb);
+    if (!Number.isFinite(maxFileMb)) {
+      setMaxUploadSize(50 * 1024 * 1024);
+      return;
     }
-    fetchLimit();
-  }, [isOnline, isProUpload100mbEnabled, user]);
+    if (maxFileMb <= 0) {
+      setMaxUploadSize(Number.MAX_SAFE_INTEGER);
+      return;
+    }
+    setMaxUploadSize(Math.floor(maxFileMb * 1024 * 1024));
+  }, [limitsUsage?.limits]);
 
   const mergeJobs = useCallback((remoteJobs: UploadJobRow[]) => {
     setJobs(currentJobs => {
@@ -726,7 +718,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         runningRef.current.delete(job.id);
       }
     },
-    [isOnline, session?.access_token, updateJobLocal, updateJobRow, user, maxUploadSize]
+    [isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
   );
 
   useEffect(() => {

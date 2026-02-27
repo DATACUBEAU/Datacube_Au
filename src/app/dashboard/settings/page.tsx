@@ -29,9 +29,10 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PwaInstallButton from '@/components/pwa-install-button';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
+import { setAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
 
 import {
   Dialog,
@@ -161,28 +162,16 @@ export default function SettingsPage() {
     setSignOutStep('processing');
     
     try {
-      // 1. Call wipe-user action in Edge Function
-      await invokeEdgeFunction('document-management', {
-        method: 'POST',
-        requireAuth: true,
-        body: { action: 'wipe-user' }
-      });
-
-      // Cool animation delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      // 2. Clear local storage items
+      await new Promise(resolve => setTimeout(resolve, 900));
       if (user?.id) {
         localStorage.removeItem(`au_assistant_progress_${user.id}`);
         localStorage.removeItem(`au_assistant_settings_${user.id}`);
       }
-
-      // 3. Final sign out
+      setAuthActionsDisabled(false);
       await explicitSignOut(user?.id ?? null);
       router.push('/');
     } catch (error) {
-      console.error("[signOut] Error wiping data:", error);
-      // Even if wipe fails, we should sign out for safety
+      console.error("[signOut] Error signing out:", error);
       await explicitSignOut(user?.id ?? null);
       router.push('/');
     }
@@ -236,8 +225,7 @@ export default function SettingsPage() {
             Policy Update: Data Security Notice
           </AlertTitle>
           <AlertDescription className="text-red-700 dark:text-red-300">
-            Inactive accounts will be automatically deleted after <strong>14 DAYS</strong> to ensure data security. 
-            Sign in regularly to keep your account active.
+            If you stay signed out for <strong>7 days</strong>, uploaded documents are deleted. If inactive for <strong>14 days</strong>, uploaded documents and derived chunks/embeddings are deleted.
           </AlertDescription>
         </Alert>
       </div>
@@ -464,13 +452,13 @@ export default function SettingsPage() {
                       <div className="mx-auto w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
                         <AlertTriangle className="w-8 h-8 text-destructive" />
                       </div>
-                      <DialogTitle className="text-center font-headline text-2xl text-destructive">Warning: Account Deletion</DialogTitle>
+                      <DialogTitle className="text-center font-headline text-2xl text-destructive">Sign-out retention notice</DialogTitle>
                       <DialogDescription className="text-center text-base pt-2">
-                        If you sign out now, your account will be <span className="font-bold text-destructive">deleted automatically</span> from the system.
+                        If you stay signed out for <span className="font-bold text-destructive">7 days</span>, uploaded documents are deleted.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-4 text-sm text-destructive font-medium text-center">
-                      All your documents, chat history, and generated knowledge will be permanently erased.
+                      If your account is inactive for <span className="font-bold">14 days</span>, uploaded documents and derived chunks/embeddings are deleted.
                     </div>
                     <div className="flex flex-col sm:flex-row gap-3 pt-2">
                       <Button variant="outline" onClick={() => setShowSignOutPopup(false)} className="flex-1">
@@ -497,12 +485,12 @@ export default function SettingsPage() {
                       </div>
                       <DialogTitle className="text-center font-headline text-2xl text-destructive uppercase tracking-tight">Final Confirmation</DialogTitle>
                       <DialogDescription className="text-center text-base pt-2 font-bold">
-                        THIS ACTION CANNOT BE STOPPED OR UNDONE.
+                        You are signing out of this device.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="text-center space-y-2">
                       <p className="text-sm text-muted-foreground">
-                        Are you absolutely certain? This is your last chance to turn back.
+                        Retention rules above continue to apply while signed out or inactive.
                       </p>
                     </div>
                     <Button 
@@ -510,7 +498,7 @@ export default function SettingsPage() {
                       onClick={handleSignOutFinal}
                       className="w-full h-12 text-lg font-black shadow-lg shadow-destructive/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
                     >
-                      ERASE EVERYTHING & SIGN OUT
+                      SIGN OUT NOW
                     </Button>
                   </motion.div>
                 )}
@@ -542,7 +530,7 @@ export default function SettingsPage() {
                     <div className="text-center space-y-2">
                       <h3 className="text-xl font-bold text-destructive">Clearing Data...</h3>
                       <p className="text-sm text-muted-foreground animate-pulse">
-                        Wiping your session and permanent records...
+                        Ending your session securely...
                       </p>
                     </div>
                   </motion.div>
@@ -555,4 +543,3 @@ export default function SettingsPage() {
     </main>
   );
 }
-

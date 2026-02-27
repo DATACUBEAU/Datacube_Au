@@ -1,6 +1,7 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
 import { guardRequest } from '@/lib/api/request-guard';
+import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
 const publicEnv = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -238,6 +239,13 @@ export async function invokeEdgeFunction<T = any>(
     });
 
     if (!gate.ok) {
+      if (gate.reason === 'unauthenticated' && requireAuth) {
+        dispatchSessionExpired({
+          status: 401,
+          source: `invokeEdgeFunction:${functionName}`,
+          reason: 'request_guard_unauthenticated',
+        });
+      }
       return {
         data: null as T | null,
         error: {
@@ -294,6 +302,13 @@ export async function invokeEdgeFunction<T = any>(
   const firstAttempt = await attemptOnce(accessToken);
 
   if (!requireAuth || !firstAttempt.error || Number(firstAttempt.error?.status) !== 401) {
+    if (requireAuth && firstAttempt.error && [401, 403].includes(Number(firstAttempt.error?.status))) {
+      dispatchSessionExpired({
+        status: Number(firstAttempt.error?.status),
+        source: `invokeEdgeFunction:${functionName}`,
+        reason: 'edge_response_auth_error',
+      });
+    }
     return firstAttempt;
   }
 
@@ -308,10 +323,22 @@ export async function invokeEdgeFunction<T = any>(
   }
 
   if (!refreshedToken && !accessToken) {
+    dispatchSessionExpired({
+      status: 401,
+      source: `invokeEdgeFunction:${functionName}`,
+      reason: 'refresh_failed_no_token',
+    });
     return firstAttempt;
   }
-
-  return attemptOnce(refreshedToken);
+  const retryAttempt = await attemptOnce(refreshedToken);
+  if (requireAuth && retryAttempt.error && [401, 403].includes(Number(retryAttempt.error?.status))) {
+    dispatchSessionExpired({
+      status: Number(retryAttempt.error?.status),
+      source: `invokeEdgeFunction:${functionName}`,
+      reason: 'edge_retry_auth_error',
+    });
+  }
+  return retryAttempt;
 }
 
 /**
@@ -431,6 +458,16 @@ export async function updateUserActivity(
         const raw = await response.text().catch(() => '');
         if (response.status === 406) return;
         console.warn('[client] Activity update error:', { status: response.status, body: raw });
+      }
+
+      try {
+        await supabase.rpc('record_user_activity', {
+          p_user_id: user.id,
+          p_event: 'activity',
+          p_metadata: {},
+        } as any);
+      } catch {
+        // Activity heartbeat best-effort: skip RPC failures.
       }
     }
   } catch (e) {

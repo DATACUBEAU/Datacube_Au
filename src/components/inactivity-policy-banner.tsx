@@ -47,13 +47,11 @@ export function InactivityPolicyBanner() {
             <AlertDescription className="text-red-700 dark:text-red-300 text-sm leading-relaxed">
               {isSignedIn ? (
                 <>
-                  Policy Update: Inactive accounts will be automatically deleted after <strong>14 DAYS</strong> to ensure data security.
-                  Sign in regularly to keep your account active.
+                  If you stay signed out for <strong>7 DAYS</strong>, uploaded documents are deleted. If inactive for <strong>14 DAYS</strong>, uploaded documents and derived chunks/embeddings are deleted.
                 </>
               ) : (
                 <>
-                  Policy Update: Inactive accounts will be automatically deleted after <strong>14 DAYS</strong> to ensure data security.
-                  Sign in to keep your account active.
+                  If you stay signed out for <strong>7 DAYS</strong>, uploaded documents are deleted. If inactive for <strong>14 DAYS</strong>, uploaded documents and derived chunks/embeddings are deleted.
                 </>
               )}
             </AlertDescription>

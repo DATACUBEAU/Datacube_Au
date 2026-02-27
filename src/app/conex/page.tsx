@@ -34,7 +34,8 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
-  const [auConfig, setAuConfig] = useState<any>({});
+  const [planLimitsByPlan, setPlanLimitsByPlan] = useState<Record<string, Record<string, any>>>({});
+  const [selectedPlan, setSelectedPlan] = useState<'free' | 'pro' | 'premium'>('free');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [flagQuery, setFlagQuery] = useState('');
@@ -49,7 +50,6 @@ const AdminBilling = ({ token }: { token: string }) => {
     premium_models_enabled: raw?.premium_models_enabled !== false,
     premium_models_paid_only: raw?.premium_models_paid_only !== false,
     paid_mode_enabled: raw?.paid_mode_enabled === true,
-    free_pressure_mode_enabled: raw?.free_pressure_mode_enabled === true,
     stripe_live_mode: raw?.stripe_live_mode === true,
     stripe_price_weekly:
       typeof raw?.stripe_price_weekly === 'string'
@@ -61,14 +61,16 @@ const AdminBilling = ({ token }: { token: string }) => {
         : (typeof raw?.stripe_price_monthly_id === 'string' ? raw.stripe_price_monthly_id : ''),
   }), []);
 
-  const normalizeAuConfig = useCallback((raw: any) => ({
-    ...raw,
-    billing_enabled: raw?.billing_enabled === true,
-    free_chat_daily_limit: Number(raw?.free_chat_daily_limit ?? 10),
-    free_exam_daily_limit: Number(raw?.free_exam_daily_limit ?? 2),
-    free_upload_daily_limit: Number(raw?.free_upload_daily_limit ?? 3),
-    free_max_upload_mb: Number(raw?.free_max_upload_mb ?? 10),
-  }), []);
+  const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> = [
+    { key: 'max_file_mb', label: 'Max file size (MB)', description: 'Per-file upload size limit.' },
+    { key: 'max_uploads_total', label: 'Max uploads total', description: 'Total uploads allowed for the account.' },
+    { key: 'max_docs_total', label: 'Max documents total', description: 'Total documents stored for the account.' },
+    { key: 'max_chats_total', label: 'Max chats total', description: 'Total chat messages allowed.' },
+    { key: 'max_exams_total', label: 'Max exams total', description: 'Total generated exams allowed.' },
+    { key: 'max_tokens_total', label: 'Max tokens total', description: 'Total token budget for AI usage.' },
+    { key: 'max_storage_mb', label: 'Max storage (MB)', description: 'Storage cap across all uploaded files.' },
+    { key: 'max_jobs_concurrent', label: 'Max concurrent jobs', description: 'Maximum simultaneous ingestion jobs.' },
+  ];
 
   const fetchConfig = useCallback(async (opts?: { silent?: boolean }) => {
     if (isFetchingRef.current) {
@@ -88,12 +90,22 @@ const AdminBilling = ({ token }: { token: string }) => {
         setConfig(normalizeConexConfig((res as any).config || {}));
       }
 
-      const auRes = await fetchAdmin('admin-handler', {
+      const planLimitsRes = await fetchAdmin('admin-handler', {
         method: 'POST',
-        body: JSON.stringify({ action: 'get_au_config' })
+        body: JSON.stringify({ action: 'get_plan_limits' })
       });
-      if (auRes.ok) {
-        setAuConfig(normalizeAuConfig((auRes as any).config || {}));
+      if (planLimitsRes.ok) {
+        const payload = (planLimitsRes as any).data || (planLimitsRes as any);
+        const nextMap = (payload?.limitsByPlan && typeof payload.limitsByPlan === 'object')
+          ? payload.limitsByPlan
+          : {};
+        const normalizedMap: Record<string, Record<string, any>> = {};
+        for (const plan of ['free', 'pro', 'premium']) {
+          normalizedMap[plan] = {
+            ...((nextMap as any)?.[plan]?.limits || {}),
+          };
+        }
+        setPlanLimitsByPlan(normalizedMap);
       }
 
     } catch (e: any) {
@@ -102,7 +114,7 @@ const AdminBilling = ({ token }: { token: string }) => {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [normalizeAuConfig, normalizeConexConfig, toast]);
+  }, [normalizeConexConfig, toast]);
 
   useEffect(() => { void fetchConfig(); }, [fetchConfig]);
 
@@ -172,12 +184,6 @@ const AdminBilling = ({ token }: { token: string }) => {
   const handleSave = async (newConfig: any) => {
     setSaving(true);
     try {
-      const auSave = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'update_au_config', config: auConfig })
-      });
-      if (!auSave.ok) throw new Error((auSave as any).error || 'Failed to update AU config');
-
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'update_conex_config', config: newConfig })
@@ -193,6 +199,49 @@ const AdminBilling = ({ token }: { token: string }) => {
         setSaving(false);
     }
   };
+
+  const updateSelectedPlanLimit = useCallback((limitKey: string, value: number | null) => {
+    setPlanLimitsByPlan((prev) => {
+      const currentPlanLimits = { ...(prev[selectedPlan] || {}) };
+      currentPlanLimits[limitKey] = value;
+      return {
+        ...prev,
+        [selectedPlan]: currentPlanLimits,
+      };
+    });
+  }, [selectedPlan]);
+
+  const saveSelectedPlanLimits = useCallback(async () => {
+    const limits = planLimitsByPlan[selectedPlan] || {};
+    setSaving(true);
+    try {
+      const res = await fetchAdmin('admin-handler', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'update_plan_limits',
+          plan: selectedPlan,
+          limits,
+        }),
+      });
+      if (!res.ok) {
+        const payload = (res as any).data || {};
+        throw new Error(payload?.error || payload?.message || `Failed to save ${selectedPlan} limits`);
+      }
+      toast({
+        title: 'Saved',
+        description: `${selectedPlan.toUpperCase()} limits updated.`,
+      });
+      void fetchConfig({ silent: true });
+    } catch (e: any) {
+      toast({
+        title: 'Save failed',
+        description: e?.message || String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [fetchConfig, planLimitsByPlan, selectedPlan, toast]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -220,7 +269,8 @@ const AdminBilling = ({ token }: { token: string }) => {
 
   const premiumEnabled = featureFlagRecords.premium_models_enabled?.enabled ?? true;
   const premiumPaidOnly = featureFlagRecords.premium_models_paid_only?.enabled ?? true;
-  const billingEnabled = featureFlagRecords.billing_enabled?.enabled ?? !!auConfig.billing_enabled;
+  const billingEnabled = featureFlagRecords.billing_enabled?.enabled ?? !!config.billing_enabled;
+  const promoEnabled = featureFlagRecords.promo_enabled?.enabled ?? false;
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -254,6 +304,13 @@ const AdminBilling = ({ token }: { token: string }) => {
                                     </div>
                                     <Switch checked={billingEnabled} onCheckedChange={(c) => void setFeatureFlag('billing_enabled', c)} />
                                 </div>
+                                <div className="flex items-center justify-between p-4 border rounded-lg bg-amber-50 dark:bg-amber-900/10">
+                                    <div>
+                                      <Label className="text-amber-900 dark:text-amber-200 font-bold">Promo Mode</Label>
+                                      <p className="text-xs text-amber-700 dark:text-amber-300">Promo and billing are mutually exclusive. Enabling promo forces billing off.</p>
+                                    </div>
+                                    <Switch checked={promoEnabled} onCheckedChange={(c) => void setFeatureFlag('promo_enabled', c)} />
+                                </div>
                                 <div className="flex items-center justify-between">
                                     <div>
                                       <Label>Premium Models Enabled</Label>
@@ -272,13 +329,6 @@ const AdminBilling = ({ token }: { token: string }) => {
                                       onCheckedChange={(c) => void setFeatureFlag('premium_models_paid_only', c)}
                                     />
                                 </div>
-                                <div className="flex items-center justify-between p-4 border rounded-lg bg-red-50 dark:bg-red-900/10">
-                                    <div>
-                                        <Label className="text-red-900 dark:text-red-200 font-bold">Free Pressure Mode</Label>
-                                        <p className="text-xs text-red-700 dark:text-red-300">Strict free-tier pressure controls to drive upgrades.</p>
-                                    </div>
-                                    <Switch checked={featureFlagRecords.free_pressure_mode_enabled?.enabled ?? false} onCheckedChange={(c) => void setFeatureFlag('free_pressure_mode_enabled', c)} />
-                                </div>
                                 <div className="flex items-center justify-between p-4 border rounded-lg bg-blue-50 dark:bg-blue-900/10">
                                     <div>
                                         <Label className="text-blue-900 dark:text-blue-200 font-bold">Paid Mode Enabled</Label>
@@ -286,41 +336,63 @@ const AdminBilling = ({ token }: { token: string }) => {
                                     </div>
                                     <Switch checked={featureFlagRecords.paid_mode_enabled?.enabled ?? false} onCheckedChange={(c) => void setFeatureFlag('paid_mode_enabled', c)} />
                                 </div>
+                            </CardContent>
+                        </Card>
 
-                                <div className="grid grid-cols-2 gap-4 pt-2">
-                                  <div className="space-y-2">
-                                    <Label>Free Chat Daily Limit</Label>
-                                    <Input
-                                      type="number"
-                                      value={auConfig.free_chat_daily_limit ?? 10}
-                                      onChange={(e) => setAuConfig({ ...auConfig, free_chat_daily_limit: Number(e.target.value) })}
-                                    />
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Label>Free Exam Daily Limit</Label>
-                                    <Input
-                                      type="number"
-                                      value={auConfig.free_exam_daily_limit ?? 2}
-                                      onChange={(e) => setAuConfig({ ...auConfig, free_exam_daily_limit: Number(e.target.value) })}
-                                    />
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Label>Free Upload Daily Limit</Label>
-                                    <Input
-                                      type="number"
-                                      value={auConfig.free_upload_daily_limit ?? 3}
-                                      onChange={(e) => setAuConfig({ ...auConfig, free_upload_daily_limit: Number(e.target.value) })}
-                                    />
-                                  </div>
-                                  <div className="space-y-2">
-                                    <Label>Free Max Upload MB</Label>
-                                    <Input
-                                      type="number"
-                                      value={auConfig.free_max_upload_mb ?? 10}
-                                      onChange={(e) => setAuConfig({ ...auConfig, free_max_upload_mb: Number(e.target.value) })}
-                                    />
-                                  </div>
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Limits & Usage Caps</CardTitle>
+                                <CardDescription>Edit fixed plan caps. Set a value to <span className="font-semibold">0</span> for unlimited.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div className="w-full md:w-56">
+                                  <Label className="mb-2 block">Plan</Label>
+                                  <Select value={selectedPlan} onValueChange={(value) => setSelectedPlan(value as 'free' | 'pro' | 'premium')}>
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="free">Free</SelectItem>
+                                      <SelectItem value="pro">Pro</SelectItem>
+                                      <SelectItem value="premium">Premium</SelectItem>
+                                    </SelectContent>
+                                  </Select>
                                 </div>
+                                <Button onClick={() => void saveSelectedPlanLimits()} disabled={saving}>
+                                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                                  Save {selectedPlan.toUpperCase()} Limits
+                                </Button>
+                              </div>
+
+                              <div className="grid gap-4 md:grid-cols-2">
+                                {LIMIT_FIELDS.map((field) => {
+                                  const rawValue = planLimitsByPlan[selectedPlan]?.[field.key];
+                                  const numericValue = Number(rawValue);
+                                  const isUnlimited = rawValue === null || rawValue === undefined || (Number.isFinite(numericValue) && numericValue <= 0);
+                                  return (
+                                    <div key={field.key} className="rounded-md border p-3 space-y-2">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div>
+                                          <Label>{field.label}</Label>
+                                          <p className="text-xs text-muted-foreground">{field.description}</p>
+                                        </div>
+                                        <Badge variant={isUnlimited ? 'secondary' : 'outline'}>
+                                          {isUnlimited ? 'Unlimited' : 'Capped'}
+                                        </Badge>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <Input
+                                          type="number"
+                                          min={0}
+                                          value={isUnlimited ? 0 : Number.isFinite(numericValue) ? numericValue : 0}
+                                          onChange={(e) => updateSelectedPlanLimit(field.key, Number(e.target.value))}
+                                        />
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </CardContent>
                         </Card>
 

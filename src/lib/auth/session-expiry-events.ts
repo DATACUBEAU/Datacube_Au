@@ -1,0 +1,65 @@
+export const AUTH_SESSION_EXPIRED_EVENT = 'dcau:auth-session-expired';
+export const AUTH_ACTIONS_DISABLED_KEY = 'dcau:auth-actions-disabled';
+
+const DISPATCH_COOLDOWN_MS = 15000;
+let lastDispatchAt = 0;
+
+type SessionExpiredDetail = {
+  status?: number;
+  source?: string;
+  reason?: string;
+  at: string;
+};
+
+export function areAuthActionsDisabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = window.localStorage.getItem(AUTH_ACTIONS_DISABLED_KEY);
+    if (!raw) return false;
+    const value = String(raw).trim().toLowerCase();
+    return value === '1' || value === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setAuthActionsDisabled(disabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (disabled) {
+      window.localStorage.setItem(AUTH_ACTIONS_DISABLED_KEY, '1');
+    } else {
+      window.localStorage.removeItem(AUTH_ACTIONS_DISABLED_KEY);
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export function clearAuthActionsDisabled(): void {
+  setAuthActionsDisabled(false);
+}
+
+export function dispatchSessionExpired(detail?: {
+  status?: number;
+  source?: string;
+  reason?: string;
+}): void {
+  if (typeof window === 'undefined') return;
+
+  const now = Date.now();
+  if (now - lastDispatchAt < DISPATCH_COOLDOWN_MS) {
+    return;
+  }
+  lastDispatchAt = now;
+  setAuthActionsDisabled(true);
+
+  const payload: SessionExpiredDetail = {
+    status: detail?.status,
+    source: detail?.source,
+    reason: detail?.reason,
+    at: new Date(now).toISOString(),
+  };
+
+  window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT, { detail: payload }));
+}

@@ -1,8 +1,7 @@
-import { supabase } from '@/lib/supabase-client/client';
 import type { AuDocumentRow, AuDocumentStatus, AuDocumentType } from '@/lib/au/types';
 
 export const FREE_RETENTION_DAYS = 14;
-export const PRO_RETENTION_DAYS = 30;
+export const PRO_RETENTION_DAYS = 14;
 
 const RETENTION_CACHE_TTL_MS = 5 * 60 * 1000;
 const retentionCache = new Map<string, { value: number; ts: number }>();
@@ -54,74 +53,18 @@ export function computeFallbackExpiresAt(createdAt: string | null | undefined, r
 }
 
 export async function resolveDocumentRetentionDays(userId: string | null | undefined): Promise<number> {
-  if (!userId) return FREE_RETENTION_DAYS;
-
-  const cached = retentionCache.get(userId);
+  const cacheKey = userId || '__default__';
+  const cached = retentionCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < RETENTION_CACHE_TTL_MS) {
     return cached.value;
   }
 
-  try {
-    const now = new Date();
-    const [{ data: profile }, { data: billingFlag }, { data: conexConfig }, { data: legacyConfig }] = await Promise.all([
-      supabase
-        .from('au_user_profiles')
-        .select('tier,tier_expires_at')
-        .eq('user_id', userId)
-        .maybeSingle(),
-      supabase
-        .from('feature_flags')
-        .select('enabled')
-        .eq('key', 'billing_enabled')
-        .maybeSingle(),
-      supabase
-        .from('au_conex_config')
-        .select('billing_enabled')
-        .eq('id', 1)
-        .maybeSingle(),
-      supabase
-        .from('au_config')
-        .select('billing_enabled')
-        .limit(1)
-        .maybeSingle(),
-    ]);
-
-    const billingEnabled =
-      (typeof billingFlag?.enabled === 'boolean' ? billingFlag.enabled : null) ??
-      conexConfig?.billing_enabled ??
-      legacyConfig?.billing_enabled ??
-      true;
-    if (!billingEnabled) {
-      retentionCache.set(userId, { value: FREE_RETENTION_DAYS, ts: Date.now() });
-      return FREE_RETENTION_DAYS;
-    }
-
-    const tier = String(profile?.tier || 'free').toLowerCase();
-    if (tier !== 'pro') {
-      retentionCache.set(userId, { value: FREE_RETENTION_DAYS, ts: Date.now() });
-      return FREE_RETENTION_DAYS;
-    }
-
-    const tierExpiry = profile?.tier_expires_at ? new Date(profile.tier_expires_at) : null;
-    if (!tierExpiry || tierExpiry > now) {
-      retentionCache.set(userId, { value: PRO_RETENTION_DAYS, ts: Date.now() });
-      return PRO_RETENTION_DAYS;
-    }
-
-    const { data: activeSubscription } = await supabase
-      .from('au_subscriptions')
-      .select('id')
-      .eq('owner_id', userId)
-      .in('status', ['active', 'non_renewing'])
-      .gt('current_period_end', now.toISOString())
-      .maybeSingle();
-
-    const retentionDays = activeSubscription ? PRO_RETENTION_DAYS : FREE_RETENTION_DAYS;
-    retentionCache.set(userId, { value: retentionDays, ts: Date.now() });
-    return retentionDays;
-  } catch {
-    return FREE_RETENTION_DAYS;
-  }
+  // Retention is governed by backend policy:
+  // - 7 days signed-out cleanup for uploaded documents
+  // - 14 days inactivity cleanup for documents + derived data.
+  const retentionDays = FREE_RETENTION_DAYS;
+  retentionCache.set(cacheKey, { value: retentionDays, ts: Date.now() });
+  return retentionDays;
 }
 
 export function normalizeAuDocumentRow(row: any, retentionDays: number, fallbackOwnerId?: string | null): AuDocumentRow {

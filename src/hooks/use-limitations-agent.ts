@@ -57,6 +57,7 @@ function toInformational(alert: LimitAlert): LimitAlert {
 
 export function useLimitationsAgent(context: AgentContext): UseLimitationsAgentResult {
   const [user] = useSupabaseUser();
+  const userId = user?.id ?? null;
   const {
     usage,
     flags,
@@ -113,15 +114,15 @@ export function useLimitationsAgent(context: AgentContext): UseLimitationsAgentR
   const primaryAlert = alerts.length > 0 ? alerts[0] : null;
 
   const toastCandidate = useMemo(() => {
-    if (!user?.id) return null;
+    if (!userId) return null;
     for (const alert of alerts) {
       if (alert.severity === 'info') continue;
-      if (!isInCooldown(user.id, alert.id, flags.cooldownMinutes)) {
+      if (!isInCooldown(userId, alert.id, flags.cooldownMinutes)) {
         return alert;
       }
     }
     return null;
-  }, [alerts, flags.cooldownMinutes, user?.id]);
+  }, [alerts, flags.cooldownMinutes, userId]);
 
   const reportLimitError = useCallback((errorLike: unknown) => {
     const payload = extractLimitExceededPayload(errorLike);
@@ -130,10 +131,10 @@ export function useLimitationsAgent(context: AgentContext): UseLimitationsAgentR
   }, [reportServerLimitError]);
 
   const markToastShown = useCallback((alert: LimitAlert) => {
-    if (!user?.id || typeof window === 'undefined') return;
-    const key = cooldownKey(user.id, alert.id);
+    if (!userId || typeof window === 'undefined') return;
+    const key = cooldownKey(userId, alert.id);
     window.localStorage.setItem(key, String(Date.now()));
-  }, [user?.id]);
+  }, [userId]);
 
   const dismissAlert = useCallback((alertId: string) => {
     setDismissedIds((prev) => {
