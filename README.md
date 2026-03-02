@@ -113,3 +113,54 @@ Contributions are welcome! Please follow these steps:
 ## 📄 License
 
 [MIT](LICENSE)
+
+## Billing And Entitlements Architecture
+
+-   **Checkout lifecycle**:
+    `POST /api/billing/checkout` creates a Paystack transaction (card subscription or pay-with-transfer one-time) and records a pending `billing_transactions` row with a unique reference.
+-   **Webhook lifecycle**:
+    `POST /api/billing/webhook` verifies `x-paystack-signature`, writes an idempotency record (`billing_webhook_events`), verifies transactions server-side, then updates `billing_transactions`, `billing_subscriptions`, and `entitlement_grants`.
+-   **Entitlement lifecycle**:
+    Pro access is derived from active `entitlement_grants` (and promo window where applicable). `entitlement_audit` records every grant/update/revocation transition.
+-   **Promo Pro window**:
+    Promo is treated as server truth and ends at **2026-04-02T00:00:00 Africa/Lagos** (`2026-04-01T23:00:00Z`). After this point, only active paid entitlement keeps Pro.
+-   **Bypass prevention**:
+    Client redirects/success pages do not grant value. Access is granted only after verified webhook + server verification and persisted entitlement rows.
+-   **Reconciliation**:
+    `POST /api/billing/reconcile` verifies stale pending transactions and revokes expired access paths. Run nightly via cron.
+
+## Model Routing Architecture
+
+-   Single routing source of truth: `selectProviderAndModel(...)` in [`src/lib/server/ai-routing.ts`](./src/lib/server/ai-routing.ts).
+-   Flag behavior:
+    - `model_routing.tier_split_enabled = false` => all users route to paid (`pro`) tier.
+    - `model_routing.tier_split_enabled = true` => free users stay free tier, paid users stay pro tier.
+-   Paid safety guard:
+    pro routing blocks any model ending with `:free`.
+-   Fallback policy:
+    retry model/key candidates only within the selected tier; no cross-tier fallback.
+-   Observability:
+    structured server logs + `ai_routing_audit` table, with response debug headers (`x-au-model`, `x-au-service`, `x-au-tier`) in non-production/admin contexts.
+
+## Billing Test Checklist
+
+1.  `tier_split_enabled=false`: free user chat routes to paid service/model (no `:free`).
+2.  `tier_split_enabled=false`: pro user chat routes to paid service/model.
+3.  `tier_split_enabled=false`: no request routes to `metadata.tier='free'` keys.
+4.  `tier_split_enabled=true`: free user routes only to free-tier keys/models.
+5.  `tier_split_enabled=true`: pro user routes only to pro-tier keys/models.
+6.  `tier_split_enabled=true`: pro routing failure does not fall back to free.
+7.  AI upstream 429 returns HTTP 429 to client with `Retry-After`.
+8.  Chat UI shows rate-limit toast with retry action and cooldown.
+9.  Card checkout success: webhook `charge.success` grants Pro entitlement.
+10. Transfer checkout success: webhook `charge.success` grants one-time Pro (7/30 days).
+11. Transfer flow is labeled one-time/manual renewal in UI.
+12. Duplicate webhook delivery does not double-grant entitlement.
+13. Failed charge events mark transaction failed and do not grant access.
+14. `subscription.disable` / `subscription.not_renew` updates subscription status.
+15. Expired entitlements are revoked by reconciliation job.
+16. User redirected to success page without verified webhook remains Free.
+17. Promo users see in-app Promo banner with April 2, 2026 Lagos end date.
+18. After promo end (`2026-04-02 Africa/Lagos`), users without paid entitlement are downgraded automatically.
+19. `/api/billing/status` reflects server truth for entitlement and subscription.
+20. `/api/billing/cancel` sets non-renewing state and disables auto-renew.

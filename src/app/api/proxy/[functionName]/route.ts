@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
+import {
+  buildRoutingCandidates,
+  logRoutingDecision,
+  noteRoutingFailure,
+  noteRoutingSuccess,
+  type RoutingCandidate,
+  type RoutingRequestType,
+  ModelRoutingError,
+} from '@/lib/server/ai-routing';
+import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
+import { getProEntitlementStatus } from '@/lib/server/entitlements';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 function firstEnv(...keys: string[]): string | null {
   for (const key of keys) {
@@ -76,6 +87,85 @@ function messageFromFailure(status: number, details: unknown, statusText: string
   }
 
   return statusText || 'edge_function_error';
+}
+
+function isJsonContentType(contentType: string | null): boolean {
+  return String(contentType || '').toLowerCase().includes('application/json');
+}
+
+function getRequestTypeForFunction(functionName: string): RoutingRequestType | null {
+  const normalized = String(functionName || '').trim().toLowerCase();
+  if (normalized === 'au-chat' || normalized === 'chat') return 'chat';
+  if (normalized === 'global-chat') return 'global_chat';
+  if (normalized === 'prediction-engine' || normalized === 'generate-exam-predictions') return 'prediction_engine';
+  if (normalized === 'exam-generator' || normalized === 'generate-practice-exam') return 'exam_generator';
+  if (normalized === 'generate-knowledge') return 'knowledge';
+  return null;
+}
+
+function withDebugHeaders(
+  headers: Headers,
+  candidate: RoutingCandidate | null,
+  request: NextRequest
+): Headers {
+  if (!candidate) return headers;
+  const isAdminDebug = Boolean(request.headers.get('x-admin-token'));
+  const allowDebug = process.env.NODE_ENV !== 'production' || isAdminDebug;
+  if (!allowDebug) return headers;
+
+  headers.set('x-au-model', candidate.model);
+  headers.set('x-au-service', candidate.service);
+  headers.set('x-au-tier', candidate.tierWanted);
+  return headers;
+}
+
+async function getUserPlan(userId: string): Promise<string> {
+  const supabase = createSupabaseAdminClient();
+  const entitlement = await getProEntitlementStatus(supabase, userId).catch(() => null);
+  if (entitlement?.hasPro) return 'pro';
+
+  const { data, error } = await supabase
+    .from('au_user_profiles')
+    .select('tier')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (error) {
+    console.warn('[proxy] failed to load user plan, defaulting to free', {
+      userId,
+      message: error.message,
+    });
+    return 'free';
+  }
+  return String((data as any)?.tier || 'free');
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function writeRoutingAudit(
+  userId: string,
+  plan: string,
+  requestType: RoutingRequestType,
+  candidate: RoutingCandidate
+) {
+  try {
+    const supabase = createSupabaseAdminClient();
+    await supabase.from('ai_routing_audit').insert({
+      user_id: userId,
+      plan,
+      request_type: requestType,
+      tier_wanted: candidate.tierWanted,
+      service: candidate.service,
+      model: candidate.model,
+      tier_split_enabled: candidate.flags.tierSplitEnabled,
+      metadata: {
+        request_source: 'next_proxy',
+      },
+    });
+  } catch {
+    // Audit persistence is best-effort.
+  }
 }
 
 async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ functionName: string }> }) {
@@ -153,24 +243,37 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       if (value) headers.set(name, value);
     });
 
-    let body: BodyInit | undefined;
+    const requestType = getRequestTypeForFunction(functionName);
+    let routeWithModelSelector =
+      requestType !== null &&
+      req.method === 'POST' &&
+      isJsonContentType(contentType);
+
+    let rawBody: ArrayBuffer | null = null;
+    let rawBodyText = '';
     if (req.method !== 'GET' && req.method !== 'HEAD') {
-      const rawBody = await req.arrayBuffer();
-      if (rawBody.byteLength > 0) {
-        body = rawBody;
+      rawBody = await req.arrayBuffer();
+      if (rawBody.byteLength > 0 && routeWithModelSelector) {
+        rawBodyText = new TextDecoder().decode(rawBody);
+        try {
+          const preview = JSON.parse(rawBodyText);
+          if (String(preview?.action || '').toLowerCase() === 'get_models') {
+            routeWithModelSelector = false;
+          }
+        } catch {
+        }
       }
     }
 
-    const response = await fetch(targetUrl.toString(), {
-      method: req.method,
-      headers,
-      body,
-    });
+    const forwardOnce = async (attemptHeaders: Headers, attemptBody?: BodyInit) => {
+      return fetch(targetUrl.toString(), {
+        method: req.method,
+        headers: attemptHeaders,
+        body: attemptBody,
+      });
+    };
 
-    const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
-    const isEventStream = contentTypeResponse.includes('text/event-stream');
-
-    if (!response.ok && !isEventStream) {
+    const failFromResponse = async (response: Response, candidate: RoutingCandidate | null) => {
       const { details, raw } = await parseErrorPayload(response);
       const message = messageFromFailure(response.status, details, response.statusText);
       console.error('[proxy] edge function failed', {
@@ -180,7 +283,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         status: response.status,
         message,
         errorBody: truncateForLog(raw || details),
+        routedModel: candidate?.model || null,
+        routedService: candidate?.service || null,
       });
+
+      const outHeaders = new Headers(corsHeaders(requestId));
+      const retryAfter = response.headers.get('retry-after');
+      if (retryAfter) outHeaders.set('retry-after', retryAfter);
+      const debugHeaders = withDebugHeaders(outHeaders, candidate, req);
 
       return NextResponse.json(
         {
@@ -190,8 +300,134 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           requestId,
           details,
         },
-        { status: response.status, headers: corsHeaders(requestId) },
+        { status: response.status, headers: debugHeaders },
       );
+    };
+
+    if (routeWithModelSelector) {
+      const supabase = createSupabaseAdminClient();
+      const plan = await getUserPlan(auth.userId);
+
+      let parsedBody: any = {};
+      if (rawBodyText.trim()) {
+        try {
+          parsedBody = JSON.parse(rawBodyText);
+        } catch {
+          parsedBody = {};
+        }
+      }
+
+      let routed;
+      try {
+        routed = await buildRoutingCandidates({
+          supabase,
+          userId: auth.userId,
+          plan,
+          requestType: requestType!,
+        });
+      } catch (error: any) {
+        if (error instanceof ModelRoutingError) {
+          return NextResponse.json(
+            {
+              message: error.message,
+              error: error.code,
+              status: error.status,
+              requestId,
+              details: error.details || {},
+            },
+            { status: error.status, headers: corsHeaders(requestId) },
+          );
+        }
+        throw error;
+      }
+
+      let lastFailure: { response: Response; candidate: RoutingCandidate } | null = null;
+      for (const candidate of routed.candidates) {
+        const attemptHeaders = new Headers(headers);
+        attemptHeaders.set('x-au-model', candidate.model);
+        attemptHeaders.set('x-au-service', candidate.service);
+        attemptHeaders.set('x-au-tier', candidate.tierWanted);
+        attemptHeaders.set('x-au-openrouter-key', candidate.apiKey);
+
+        const payload = {
+          ...(parsedBody && typeof parsedBody === 'object' ? parsedBody : {}),
+          model: candidate.model,
+        };
+        const attemptBody = JSON.stringify(payload);
+
+        logRoutingDecision({
+          requestType: requestType!,
+          userId: auth.userId,
+          plan,
+          candidate,
+        });
+        await writeRoutingAudit(auth.userId, plan, requestType!, candidate);
+
+        for (let localAttempt = 0; localAttempt < 2; localAttempt += 1) {
+          const response = await forwardOnce(attemptHeaders, attemptBody);
+          const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
+          const isEventStream = contentTypeResponse.includes('text/event-stream');
+          if (response.ok || (isEventStream && response.status < 400)) {
+            try {
+              await noteRoutingSuccess(supabase, candidate);
+            } catch {
+            }
+            const outHeaders = applyResponseHeaders(response.headers, requestId);
+            const debugHeaders = withDebugHeaders(outHeaders, candidate, req);
+            return new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: debugHeaders,
+            });
+          }
+
+          const status = Number(response.status || 500);
+          const retryAfter = response.headers.get('retry-after');
+          try {
+            await noteRoutingFailure(supabase, candidate, status, retryAfter);
+          } catch {
+          }
+
+          const retryable = status === 429 || status >= 500 || status === 408;
+          if (retryable && localAttempt === 0) {
+            const waitMs = status === 429 ? 600 : 350;
+            await wait(waitMs);
+            lastFailure = { response, candidate };
+            continue;
+          }
+
+          if (retryable) {
+            lastFailure = { response, candidate };
+            break;
+          }
+
+          return failFromResponse(response, candidate);
+        }
+      }
+
+      if (lastFailure) {
+        return failFromResponse(lastFailure.response, lastFailure.candidate);
+      }
+
+      return NextResponse.json(
+        {
+          message: 'routing_failed',
+          error: 'routing_failed',
+          status: 503,
+          requestId,
+          details: { reason: 'No candidate succeeded.' },
+        },
+        { status: 503, headers: corsHeaders(requestId) },
+      );
+    }
+
+    const body = rawBody && rawBody.byteLength > 0 ? rawBody : undefined;
+    const response = await forwardOnce(headers, body);
+    const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
+    const isEventStream = contentTypeResponse.includes('text/event-stream');
+
+    if (!response.ok && !isEventStream) {
+      return failFromResponse(response, null);
     }
 
     return new Response(response.body, {

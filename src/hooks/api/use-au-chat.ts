@@ -1,8 +1,9 @@
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { sendChatMessage, sendChatMessageStream, generatePromptStarters, getAvailableModels, type ChatMessage } from '@/lib/api/chat';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
 import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
 import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summaries';
@@ -57,6 +58,7 @@ export function useAuChat(selectedDocId: string | null) {
   const [isResponding, setIsResponding] = useState(false);
   const [promptStarters, setPromptStarters] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const rateLimitCooldownUntilRef = useRef<number>(0);
   const activeRequestRef = useRef<{
     requestId: string;
     route: '/dashboard/chat' | '/dashboard/global-chat';
@@ -463,6 +465,37 @@ export function useAuChat(selectedDocId: string | null) {
       const msg = String(err?.message || '');
       const status = typeof err?.status === 'number' ? err.status : null;
       const aiUnavailable = msg.toLowerCase().includes('all ai models are currently unavailable');
+      if (status === 429) {
+        const retryAfterRaw = Number(err?.retryAfter || err?.details?.retry_after || 8);
+        const retryAfterSeconds = Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
+          ? Math.ceil(retryAfterRaw)
+          : 8;
+        const cooldownUntil = Date.now() + retryAfterSeconds * 1000;
+        rateLimitCooldownUntilRef.current = cooldownUntil;
+        toast({
+          variant: 'destructive',
+          title: 'High demand / rate limited — retry shortly.',
+          description: `Please wait about ${retryAfterSeconds}s before retrying.`,
+          action: React.createElement(
+            ToastAction,
+            {
+              altText: 'Retry',
+              onClick: () => {
+                const waitMs = rateLimitCooldownUntilRef.current - Date.now();
+                if (waitMs > 0) {
+                  toast({
+                    title: 'Retry cooldown active',
+                    description: `Please wait ${Math.ceil(waitMs / 1000)}s.`,
+                  });
+                  return;
+                }
+                void sendMessage(content, options);
+              },
+            },
+            'Retry',
+          ) as any,
+        });
+      }
       if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
         logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', err);
         dispatchSessionExpired({

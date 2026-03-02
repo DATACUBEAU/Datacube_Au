@@ -1,27 +1,15 @@
 import { NextResponse } from 'next/server';
 
-export const runtime = 'edge';
-
-function requiredEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) throw new Error(`Missing environment variable: ${key}`);
-  return value;
-}
-
-function functionsBaseUrl(): string {
-  return `${requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '')}/functions/v1`;
-}
+export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
   try {
     const authorization = req.headers.get('authorization') ?? undefined;
     const body = await req.json();
-    const apikey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-
-    const res = await fetch(`${functionsBaseUrl()}/exam-generator`, {
+    const proxyUrl = new URL('/api/proxy/exam-generator', req.url);
+    const res = await fetch(proxyUrl.toString(), {
       method: 'POST',
       headers: {
-        apikey,
         'Content-Type': 'application/json',
         ...(authorization ? { Authorization: authorization } : {}),
       },

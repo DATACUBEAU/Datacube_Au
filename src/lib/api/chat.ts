@@ -255,6 +255,7 @@ export async function sendChatMessageStream(
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
+    const retryAfter = res.headers.get('retry-after');
     let details: any = text;
     try {
       details = JSON.parse(text);
@@ -273,6 +274,7 @@ export async function sendChatMessageStream(
       message,
       status: res.status,
       details,
+      retryAfter,
     };
   }
 

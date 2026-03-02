@@ -135,9 +135,26 @@ export default function PredictionsPage() {
 
   const getDocumentExpiryMs = useCallback((docId: string): number | null => {
     const doc = allDocuments.find((item) => item.id === docId);
-    if (!doc?.expires_at) return null;
-    const expiryMs = new Date(doc.expires_at).getTime();
-    return Number.isFinite(expiryMs) ? expiryMs : null;
+    if (!doc) return null;
+
+    const directExpiryMs = doc.expires_at ? new Date(doc.expires_at).getTime() : Number.NaN;
+    const hasDirectExpiry = Number.isFinite(directExpiryMs);
+
+    const isPastQuestion = doc.document_type === 'past_questions' || doc.document_type === 'exam_questions';
+    if (!isPastQuestion || !doc.parent_id) {
+      return hasDirectExpiry ? directExpiryMs : null;
+    }
+
+    const parent = allDocuments.find((item) => item.id === doc.parent_id);
+    const parentExpiryMs = parent?.expires_at ? new Date(parent.expires_at).getTime() : Number.NaN;
+    const hasParentExpiry = Number.isFinite(parentExpiryMs);
+
+    if (hasDirectExpiry && hasParentExpiry) {
+      // Enforce inheritance on client cache validation even for legacy rows.
+      return Math.min(directExpiryMs, parentExpiryMs);
+    }
+    if (hasParentExpiry) return parentExpiryMs;
+    return hasDirectExpiry ? directExpiryMs : null;
   }, [allDocuments]);
 
   const parseTopicWeights = useCallback((weights: any) => {

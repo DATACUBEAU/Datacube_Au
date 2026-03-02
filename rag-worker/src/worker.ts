@@ -625,10 +625,18 @@ export class RAGWorker {
       throw new Error('Chunking produced no usable chunks');
     }
 
+    const { data: currentDoc } = await this.supabase
+      .from('au_documents')
+      .select('document_type,parent_id,expires_at')
+      .eq('id', job.document_id)
+      .maybeSingle();
+
     // Retention policy:
-    // - Billing disabled (promo mode): 14 days for everyone
-    // - Billing enabled + paid pro: 30 days
-    // - Otherwise: 14 days
+    // - Past questions / exam questions inherit their parent textbook expiry.
+    // - Otherwise:
+    //   - Billing disabled (promo mode): 14 days for everyone
+    //   - Billing enabled + paid pro: 30 days
+    //   - Otherwise: 14 days
     const now = new Date();
     const [{ data: profile }, { data: billingFlag }, { data: conexConfig }, { data: legacyConfig }] = await Promise.all([
       this.supabase
@@ -677,8 +685,27 @@ export class RAGWorker {
       }
     }
 
+    const normalizedDocType = String((currentDoc as any)?.document_type || '').toLowerCase();
+    const parentId = String((currentDoc as any)?.parent_id || '').trim();
+    let inheritedParentExpiryMs: number | null = null;
+    if ((normalizedDocType === 'past_questions' || normalizedDocType === 'exam_questions') && parentId) {
+      const { data: parentDoc } = await this.supabase
+        .from('au_documents')
+        .select('expires_at')
+        .eq('id', parentId)
+        .maybeSingle();
+      const parentExpiryRaw = String((parentDoc as any)?.expires_at || '').trim();
+      const parentExpiryMs = parentExpiryRaw ? new Date(parentExpiryRaw).getTime() : Number.NaN;
+      if (Number.isFinite(parentExpiryMs)) {
+        inheritedParentExpiryMs = parentExpiryMs;
+      }
+    }
+
     const retentionDays = isPaidPro ? 30 : 14;
-    const expiresAt = Math.floor(Date.now() / 1000) + (retentionDays * 24 * 60 * 60);
+    const expiresAt = inheritedParentExpiryMs
+      ? Math.floor(inheritedParentExpiryMs / 1000)
+      : Math.floor(Date.now() / 1000) + (retentionDays * 24 * 60 * 60);
+    const expirySource = inheritedParentExpiryMs ? 'parent_textbook' : 'policy';
 
     await this.updateJobProgress(job.id, 70);
     await this.ingestion.processDocument(
@@ -698,6 +725,7 @@ export class RAGWorker {
       chunkingMs: chunkDurationMs,
       totalMs: Date.now() - jobStartedAt,
       retentionDays,
+      expirySource,
     });
   }
 }

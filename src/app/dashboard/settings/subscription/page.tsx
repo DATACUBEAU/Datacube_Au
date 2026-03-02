@@ -3,9 +3,8 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock, Copy, Banknote } from 'lucide-react';
+import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock, Banknote } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { invokeEdgeFunction } from '@/lib/supabase-client/client';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
@@ -16,14 +15,14 @@ import { cn } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
+import { safeFetch } from '@/lib/api/safe-fetch';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
-import { useFlag } from '@/components/feature-flag-provider';
 import { useLimits } from '@/components/providers/limits-provider';
 
 const PRICING = {
-  weekly: { amount: 1900, compare_at: 2500, label: 'Save 24%' },
+  weekly: { amount: 1500, compare_at: 2500, label: 'Save 40%' },
   monthly: { amount: 4500, compare_at: 6000, label: 'Save 25%' },
 } as const;
 
@@ -38,7 +37,6 @@ export default function SubscriptionPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const { isOnline } = useNetworkStatus();
-  const { enabled: billingFlagEnabled } = useFlag('billing_enabled');
   const { usage: limitsUsage } = useLimits();
   
   const [tier, setTier] = useState<string>('free');
@@ -56,9 +54,10 @@ export default function SubscriptionPage() {
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [billingEnabled, setBillingEnabled] = useState(true);
   const [showBankTransfer, setShowBankTransfer] = useState(false);
-  const [manualPaymentRef, setManualPaymentRef] = useState('');
   const [manualPlan, setManualPlan] = useState<'weekly' | 'monthly'>('monthly');
-  const [manualPaymentStatus, setManualPaymentStatus] = useState<'idle' | 'submitting' | 'success'>('idle');
+  const [promoActive, setPromoActive] = useState(false);
+  const [promoEndsAtLabel, setPromoEndsAtLabel] = useState('April 2nd, 2026');
+  const [entitlementSource, setEntitlementSource] = useState<'paid' | 'promo' | 'none'>('none');
   
   const [paymentState, setPaymentState] = useState<'idle' | 'redirecting' | 'confirming' | 'success' | 'pending' | 'error'>('idle');
   const [pollCount, setPollCount] = useState(0);
@@ -71,15 +70,53 @@ export default function SubscriptionPage() {
     weekly: { amount: number; compare_at: number; label: string };
     monthly: { amount: number; compare_at: number; label: string };
   }>(PRICING);
-  const isPromoUnlocked = billingEnabled === false;
-  const hasPaidProAccess = billingEnabled && tier === 'pro';
+  const isPromoUnlocked = promoActive;
+  const hasPaidProAccess = tier === 'pro' && entitlementSource === 'paid';
   const retentionPolicyLabel = '7-day signed-out cleanup / 14-day inactivity cleanup';
   const freeRetentionLabel = retentionPolicyLabel;
   const proRetentionLabel = retentionPolicyLabel;
 
-  useEffect(() => {
-      setBillingEnabled(billingFlagEnabled);
-  }, [billingFlagEnabled]);
+  const billingRequest = useCallback(async <T,>(path: string, init?: RequestInit): Promise<{ data: T; retryAfter: string | null }> => {
+      const headers = new Headers(init?.headers || {});
+      if (session?.access_token) {
+          headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      if (!headers.has('Content-Type') && init?.body) {
+          headers.set('Content-Type', 'application/json');
+      }
+
+      const res = await safeFetch(`/api/billing/${path}`, {
+          method: init?.method || 'GET',
+          body: init?.body,
+          headers,
+          credentials: 'include',
+          timeout: 15000,
+          silent: true,
+      });
+
+      const retryAfter = res.headers.get('retry-after');
+      const raw = await res.text();
+      let parsed: any = null;
+      try {
+          parsed = raw ? JSON.parse(raw) : {};
+      } catch {
+          parsed = { message: raw };
+      }
+
+      if (!res.ok) {
+          const err = new Error(parsed?.message || parsed?.error || `Request failed (${res.status})`) as Error & {
+              status?: number;
+              payload?: any;
+              retryAfter?: string | null;
+          };
+          err.status = res.status;
+          err.payload = parsed;
+          err.retryAfter = retryAfter;
+          throw err;
+      }
+
+      return { data: parsed as T, retryAfter };
+  }, [session?.access_token]);
 
   const applyBillingStatus = useCallback((data: any, options?: { fromCache?: boolean }) => {
       if (!data) return;
@@ -87,6 +124,20 @@ export default function SubscriptionPage() {
       setExpiry(data.tier_expires_at ?? null);
       setSubscription(data.subscription ?? null);
       setPayments(Array.isArray(data.payments) ? data.payments : []);
+      setBillingEnabled(data.billingEnabled ?? true);
+      setEntitlementSource((data.entitlementSource || 'none') as 'paid' | 'promo' | 'none');
+      setPromoActive(Boolean(data?.promo?.active));
+      if (typeof data?.promo?.ends_at_lagos === 'string' && data.promo.ends_at_lagos.trim()) {
+          const label = new Date(data.promo.ends_at_lagos).toLocaleString('en-US', {
+              timeZone: 'Africa/Lagos',
+              month: 'long',
+              day: 'numeric',
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit',
+          });
+          setPromoEndsAtLabel(label);
+      }
       if (data.pricing) {
           setPricing(data.pricing);
       }
@@ -134,18 +185,13 @@ export default function SubscriptionPage() {
           return cached.data;
       }
       try {
-          const { data, error } = await invokeEdgeFunction<any>('billing-status', {
-              method: 'GET',
-              requireAuth: true,
-              timeoutMs: 10000,
-              silent: true,
-          });
-          if (!error && data) {
-              applyBillingStatus(data);
+          const res = await billingRequest<any>('status', { method: 'GET' });
+          if (res.data) {
+              applyBillingStatus(res.data);
               setIsUsingCachedData(false);
               setCachedAt(Date.now());
-              void writeCachedBillingStatus(data);
-              return data;
+              void writeCachedBillingStatus(res.data);
+              return res.data;
           }
       } catch (e) {
           console.error("Failed to fetch billing status", e);
@@ -157,14 +203,7 @@ export default function SubscriptionPage() {
           }
       }
       return null;
-  }, [applyBillingStatus, isOnline, readCachedBillingStatus, session?.access_token, user?.id, writeCachedBillingStatus]);
-
-  const generateReference = useCallback((planType: 'weekly' | 'monthly') => {
-      const suffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-      const userPrefix = (user?.id ?? 'anon').slice(0, 4).toUpperCase();
-      const planPrefix = planType === 'weekly' ? 'WK' : 'MO';
-      return `PAY-${planPrefix}-${userPrefix}-${suffix}`;
-  }, [user?.id]);
+  }, [applyBillingStatus, billingRequest, isOnline, readCachedBillingStatus, session?.access_token, user?.id, writeCachedBillingStatus]);
 
   const openManualBankTransfer = useCallback((planType: 'weekly' | 'monthly') => {
       if (isPromoUnlocked) {
@@ -175,41 +214,8 @@ export default function SubscriptionPage() {
           return;
       }
       setManualPlan(planType);
-      setManualPaymentRef(generateReference(planType));
-      setManualPaymentStatus('idle');
       setShowBankTransfer(true);
-  }, [generateReference, isPromoUnlocked, toast]);
-
-  const handleManualPaymentSubmit = useCallback(async () => {
-      if (!user) return;
-      setManualPaymentStatus('submitting');
-      try {
-          const { error } = await invokeEdgeFunction<any>('submit-manual-payment', {
-              method: 'POST',
-              requireAuth: true,
-              body: {
-                  plan: manualPlan,
-                  amount: pricing[manualPlan].amount,
-                  reference: manualPaymentRef,
-              },
-          });
-          if (error) throw error;
-
-          setManualPaymentStatus('success');
-          toast({
-              title: 'Payment Submitted',
-              description: 'Your transfer has been submitted for confirmation.',
-          });
-          void fetchBillingStatus();
-      } catch (error: any) {
-          setManualPaymentStatus('idle');
-          toast({
-              variant: 'destructive',
-              title: 'Submission Failed',
-              description: error?.message || 'Unable to submit transfer proof.',
-          });
-      }
-  }, [fetchBillingStatus, manualPaymentRef, manualPlan, pricing, toast, user]);
+  }, [isPromoUnlocked, toast]);
 
   const stopPolling = useCallback(() => {
       if (pollTimerRef.current) {
@@ -240,19 +246,13 @@ export default function SubscriptionPage() {
       }, 3000);
   }, [fetchBillingStatus, stopPolling]);
 
-  const verifyPayment = useCallback(async (ref: string) => {
+  const verifyPayment = useCallback(async () => {
       if (!isOnline) return;
       if (!session?.access_token) return;
       try {
-          const { data, error } = await invokeEdgeFunction<any>(`paystack-verify?reference=${encodeURIComponent(ref)}`, {
-              method: 'GET',
-              requireAuth: true,
-              timeoutMs: 10000,
-              silent: true,
-          });
-          if (!error && data?.status === 'success') {
+          const data = await fetchBillingStatus();
+          if (data?.tier === 'pro') {
               setPaymentState('success');
-              fetchBillingStatus();
               return;
           }
       } catch (e) {
@@ -282,7 +282,7 @@ export default function SubscriptionPage() {
         
         if (reference) {
             setPaymentState('confirming');
-            void verifyPayment(reference);
+            void verifyPayment();
         } else if (success === 'true') {
             setPaymentState('confirming');
             startPolling();
@@ -304,10 +304,12 @@ export default function SubscriptionPage() {
   useEffect(() => {
       if (!isPromoUnlocked) return;
       setShowBankTransfer(false);
-      setManualPaymentStatus('idle');
   }, [isPromoUnlocked]);
 
-  const handlePaystack = async (planType: 'weekly' | 'monthly') => {
+  const handlePaystack = async (
+      planType: 'weekly' | 'monthly',
+      methodOverride?: 'subscription' | 'transfer'
+  ) => {
       if (!isOnline) {
           toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
           return;
@@ -323,34 +325,20 @@ export default function SubscriptionPage() {
       setLoadingPlan(planType);
       
       try {
-          const returnUrl = `${window.location.origin}/dashboard/settings/subscription`;
-          
-          // If Auto-renew: Subscription Mode, Card only
-          // If Manual: One-time Mode, Bank Transfer + Card
-          const mode = isAutoRenew ? 'subscription' : 'one_time';
-          const channels = isAutoRenew ? ['card'] : ['bank_transfer', 'card'];
-
-          const { data, error: invokeError } = await invokeEdgeFunction<any>('paystack-initiate', {
+          const planKey = planType === 'weekly' ? 'pro_weekly' : 'pro_monthly';
+          const paymentMethod = methodOverride || (isAutoRenew ? 'subscription' : 'transfer');
+          const response = await billingRequest<{ authorization_url: string; reference: string }>('checkout', {
               method: 'POST',
-              requireAuth: true,
-              body: { 
-                  email: user?.email,
-                  planType,
-                  channels,
-                  mode,
-                  redirectUrls: {
-                      success: `${returnUrl}?success=true`,
-                      cancel: `${returnUrl}?cancelled=true`
-                  }
-              }
+              body: JSON.stringify({
+                  plan_key: planKey,
+                  payment_method: paymentMethod,
+              }),
           });
 
-          if (invokeError) throw new Error(invokeError.message || 'Failed to initiate payment');
-          const { url, error } = data || {};
-          if (error) throw new Error(error);
-          
+          const url = response.data?.authorization_url;
           if (url) {
               setPaymentState('redirecting');
+              setShowBankTransfer(false);
               window.location.href = url;
           } else {
               throw new Error('No authorization URL returned');
@@ -358,7 +346,15 @@ export default function SubscriptionPage() {
 
       } catch (e: any) {
           console.error(e);
-          toast({ variant: 'destructive', title: 'Payment Error', description: e?.message || 'Failed to initialize payment' });
+          if (Number(e?.status || 0) === 429) {
+              toast({
+                  variant: 'destructive',
+                  title: 'High demand / rate limited — retry shortly.',
+                  description: 'Checkout is temporarily rate limited. Please retry in a few seconds.',
+              });
+          } else {
+              toast({ variant: 'destructive', title: 'Payment Error', description: e?.message || 'Failed to initialize payment' });
+          }
           setLoadingPlan(null);
           setPaymentState('idle');
       }
@@ -380,13 +376,10 @@ export default function SubscriptionPage() {
 
       setIsCancelling(true);
       try {
-          const { data, error } = await invokeEdgeFunction('paystack-cancel-subscription', {
+          await billingRequest('cancel', {
               method: 'POST',
-              requireAuth: true,
-              body: { reason: cancelReason }
+              body: JSON.stringify({ reason: cancelReason }),
           });
-
-          if (error) throw new Error(error.message || 'Failed to cancel');
           
           toast({ title: "Subscription Canceled", description: "Your plan will not renew." });
           setIsCancelDialogOpen(false);
@@ -663,7 +656,7 @@ export default function SubscriptionPage() {
                 {tier !== 'pro' && (
                     <div className="flex flex-wrap items-center justify-center gap-4 pt-6">
                         <span className={cn("text-sm font-medium transition-colors", !isAutoRenew ? "text-foreground" : "text-muted-foreground") }>
-                            One-time Payment
+                            One-time Transfer (manual renew)
                         </span>
                         <Switch
                             checked={isAutoRenew}
@@ -682,6 +675,17 @@ export default function SubscriptionPage() {
         {/* Pricing Cards Grid */}
         <div className="container max-w-6xl mx-auto px-4 pt-10 relative z-20">
             <UsageMeter />
+            {isPromoUnlocked ? (
+                <div className="mb-8 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm">
+                    <p className="font-semibold">You are currently on Promo Pro.</p>
+                    <p className="text-muted-foreground">
+                        On April 2nd, 2026, Pro becomes NGN 4,500/month or NGN 1,500/week.
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        Promo ends at {promoEndsAtLabel} Africa/Lagos time.
+                    </p>
+                </div>
+            ) : null}
             {hasPaidProAccess ? (
                 // Active Pro View
                 <div className="max-w-4xl mx-auto space-y-8">
@@ -825,10 +829,10 @@ export default function SubscriptionPage() {
                                     </div>
                                     <h3 className="mb-2 text-xl font-bold font-headline">Free Premium Access</h3>
                                     <p className="mb-4 text-muted-foreground">
-                                        Enjoy the ultimate features while it lasts! We&apos;ve unlocked Pro capabilities for everyone temporarily.
+                                        You are currently on Promo Pro. Access remains active until April 2nd, 2026 (Africa/Lagos).
                                     </p>
                                     <p className="mb-4 text-xs text-muted-foreground">
-                                        Note: retention policy is always 7-day signed-out cleanup and 14-day inactivity cleanup.
+                                        After promo ends, only active paid entitlements retain Pro access.
                                     </p>
                                     <Badge variant="outline" className="border-primary/20 bg-primary/5">Limited Time Offer</Badge>
                                 </div>
@@ -900,13 +904,13 @@ export default function SubscriptionPage() {
                                 <OfflineGuard asChild>
                                     <Button variant="outline" onClick={() => openManualBankTransfer('monthly')}>
                                         <Banknote className="mr-2 h-4 w-4" />
-                                        Pay via Bank Transfer (Monthly)
+                                        Pay with Transfer (Monthly)
                                     </Button>
                                 </OfflineGuard>
                                 <OfflineGuard asChild>
                                     <Button variant="outline" onClick={() => openManualBankTransfer('weekly')}>
                                         <Banknote className="mr-2 h-4 w-4" />
-                                        Pay via Bank Transfer (Weekly)
+                                        Pay with Transfer (Weekly)
                                     </Button>
                                 </OfflineGuard>
                             </div>
@@ -927,74 +931,32 @@ export default function SubscriptionPage() {
         <Dialog open={showBankTransfer} onOpenChange={setShowBankTransfer}>
             <DialogContent className="sm:max-w-[430px]">
                 <DialogHeader>
-                    <DialogTitle>Bank Transfer Payment</DialogTitle>
+                    <DialogTitle>Pay With Transfer</DialogTitle>
                     <DialogDescription>
-                        Transfer the exact amount below and submit for verification.
+                        This uses Paystack's automated transfer channel. It is one-time and does not auto-renew.
                     </DialogDescription>
                 </DialogHeader>
-
-                {manualPaymentStatus === 'success' ? (
-                    <div className="flex flex-col items-center justify-center py-8 space-y-4 text-center">
-                        <div className="h-16 w-16 bg-green-100 text-green-600 rounded-full flex items-center justify-center">
-                            <CheckCircle2 className="h-8 w-8" />
-                        </div>
-                        <div>
-                            <h3 className="font-bold text-lg">Payment Submitted</h3>
-                            <p className="text-sm text-muted-foreground mt-1">
-                                We will activate your Pro access once the transfer is confirmed.
-                            </p>
-                        </div>
-                        <Button onClick={() => setShowBankTransfer(false)} className="w-full">Close</Button>
+                <div className="space-y-4 py-2">
+                    <div className="rounded-lg border bg-muted/40 p-4 text-sm">
+                        <p className="font-medium">Selected plan: {manualPlan === 'weekly' ? 'Pro Weekly' : 'Pro Monthly'}</p>
+                        <p className="text-muted-foreground">Amount: NGN {pricing[manualPlan].amount.toLocaleString()}</p>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                            Transfer purchases are one-time only. Renew manually each period.
+                        </p>
                     </div>
-                ) : (
-                    <div className="space-y-6 py-1">
-                        <div className="p-4 bg-muted rounded-lg space-y-3">
-                            <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Bank Name:</span>
-                                <span className="font-bold">Moniepoint / OPay</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                                <span className="text-muted-foreground">Account Name:</span>
-                                <span className="font-bold">Datacube AU Systems</span>
-                            </div>
-                            <div className="flex justify-between text-sm items-center">
-                                <span className="text-muted-foreground">Account Number:</span>
-                                <div className="flex items-center gap-2">
-                                    <span className="font-mono font-bold text-lg">8023456789</span>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6"
-                                        onClick={() => {
-                                            navigator.clipboard.writeText('8023456789');
-                                            toast({ title: 'Copied' });
-                                        }}
-                                    >
-                                        <Copy className="h-3 w-3" />
-                                    </Button>
-                                </div>
-                            </div>
-                            <div className="flex justify-between text-sm pt-2 border-t border-dashed border-border">
-                                <span className="text-muted-foreground">Amount:</span>
-                                <span className="font-bold text-primary">NGN {pricing[manualPlan].amount.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-sm items-center">
-                                <span className="text-muted-foreground">Reference Code:</span>
-                                <span className="font-mono font-bold bg-background px-2 py-1 rounded border select-all">{manualPaymentRef}</span>
-                            </div>
-                        </div>
-
-                        <div className="text-xs text-amber-800 bg-amber-50 p-3 rounded border border-amber-200">
-                            <p className="font-bold flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Important</p>
-                            Include the reference code in your transfer narration for faster confirmation.
-                        </div>
-
-                        <Button onClick={handleManualPaymentSubmit} disabled={manualPaymentStatus === 'submitting'} className="w-full">
-                            {manualPaymentStatus === 'submitting' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-                            I Have Made the Transfer
-                        </Button>
-                    </div>
-                )}
+                    <Button
+                        className="w-full"
+                        onClick={() => void handlePaystack(manualPlan, 'transfer')}
+                        disabled={loadingPlan === manualPlan}
+                    >
+                        {loadingPlan === manualPlan ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                            <Banknote className="mr-2 h-4 w-4" />
+                        )}
+                        Continue to Paystack Transfer
+                    </Button>
+                </div>
             </DialogContent>
         </Dialog>
     </div>

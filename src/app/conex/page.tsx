@@ -40,6 +40,7 @@ const AdminBilling = ({ token }: { token: string }) => {
   const [saving, setSaving] = useState(false);
   const [flagQuery, setFlagQuery] = useState('');
   const [flagCategory, setFlagCategory] = useState('all');
+  const [modelRoutingDebug, setModelRoutingDebug] = useState<any>(null);
   const { toast } = useToast();
   const { records: featureFlagRecords, setFlag, refreshFlags } = useFeatureFlags();
   const isFetchingRef = useRef(false);
@@ -106,6 +107,21 @@ const AdminBilling = ({ token }: { token: string }) => {
           };
         }
         setPlanLimitsByPlan(normalizedMap);
+      }
+
+      const accessToken = await getSupabaseAccessToken();
+      if (accessToken) {
+        const debugRes = await fetch('/api/admin/model-routing', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+          credentials: 'include',
+        });
+        if (debugRes.ok) {
+          const debugPayload = await debugRes.json().catch(() => null);
+          setModelRoutingDebug(debugPayload);
+        }
       }
 
     } catch (e: any) {
@@ -341,6 +357,52 @@ const AdminBilling = ({ token }: { token: string }) => {
 
                         <Card>
                             <CardHeader>
+                                <CardTitle>Model Routing</CardTitle>
+                                <CardDescription>Tier-aware OpenRouter routing controls.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="flex items-center justify-between rounded-lg border p-4">
+                                    <div>
+                                      <Label>Tier Split Enabled</Label>
+                                      <p className="text-xs text-muted-foreground">
+                                        OFF: everyone uses paid models. ON: free users use free models, Pro users use paid models.
+                                      </p>
+                                    </div>
+                                    <Switch
+                                      checked={featureFlagRecords['model_routing.tier_split_enabled']?.enabled ?? false}
+                                      onCheckedChange={(c) => void setFeatureFlag('model_routing.tier_split_enabled', c)}
+                                    />
+                                </div>
+                                <div className="flex items-center justify-between rounded-lg border p-4 bg-muted/30">
+                                    <div>
+                                      <Label>Paid Default Enabled</Label>
+                                      <p className="text-xs text-muted-foreground">Safety default: paid routing when tier split is OFF.</p>
+                                    </div>
+                                    <Switch
+                                      checked={featureFlagRecords['model_routing.paid_default_enabled']?.enabled ?? true}
+                                      disabled
+                                    />
+                                </div>
+                                <div className="rounded-lg border p-4 text-xs text-muted-foreground space-y-1">
+                                  <p className="font-medium text-foreground">Latest Routed Model (Debug)</p>
+                                  <p>
+                                    Service: <span className="font-mono">{modelRoutingDebug?.latest?.service || 'n/a'}</span>
+                                  </p>
+                                  <p>
+                                    Model: <span className="font-mono">{modelRoutingDebug?.latest?.model || 'n/a'}</span>
+                                  </p>
+                                  <p>
+                                    Tier: <span className="font-mono">{modelRoutingDebug?.latest?.tier_wanted || 'n/a'}</span>
+                                  </p>
+                                  <p>
+                                    At: <span className="font-mono">{modelRoutingDebug?.latest?.created_at || 'n/a'}</span>
+                                  </p>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader>
                                 <CardTitle>Limits & Usage Caps</CardTitle>
                                 <CardDescription>Edit fixed plan caps. Set a value to <span className="font-semibold">0</span> for unlimited.</CardDescription>
                             </CardHeader>
@@ -510,31 +572,37 @@ const AdminBilling = ({ token }: { token: string }) => {
   );
 };
 
-const AdminManualPayments = ({ token }: { token: string }) => {
-    const [manualPayments, setManualPayments] = useState<any[]>([]);
-    const [cardPayments, setCardPayments] = useState<any[]>([]);
+const AdminManualPayments = (_props: { token: string }) => {
+    const [transactions, setTransactions] = useState<any[]>([]);
+    const [subscriptions, setSubscriptions] = useState<any[]>([]);
+    const [entitlementAudit, setEntitlementAudit] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const { toast } = useToast();
 
     const fetchPayments = useCallback(async () => {
         setLoading(true);
         try {
-            const [manualRes, cardRes] = await Promise.all([
-                fetchAdmin('admin-handler', {
-                    method: 'POST',
-                    body: JSON.stringify({ action: 'get_manual_payments' })
-                }),
-                fetchAdmin('admin-handler', {
-                    method: 'POST',
-                    body: JSON.stringify({ action: 'get_card_payments' })
-                })
-            ]);
-
-            if (manualRes.ok) setManualPayments((manualRes as any).payments || []);
-            if (cardRes.ok) setCardPayments((cardRes as any).payments || []);
+            const accessToken = await getSupabaseAccessToken();
+            if (!accessToken) {
+              throw new Error('Missing access token');
+            }
+            const res = await fetch('/api/admin/billing/overview', {
+              method: 'GET',
+              headers: {
+                Authorization: `Bearer ${accessToken}`,
+              },
+              credentials: 'include',
+            });
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+              throw new Error(payload?.message || payload?.error || `Request failed (${res.status})`);
+            }
+            setTransactions(Array.isArray(payload?.transactions) ? payload.transactions : []);
+            setSubscriptions(Array.isArray(payload?.subscriptions) ? payload.subscriptions : []);
+            setEntitlementAudit(Array.isArray(payload?.entitlementAudit) ? payload.entitlementAudit : []);
         } catch (e) {
             console.error(e);
-            toast({ title: 'Error', description: 'Failed to load payment queues.', variant: 'destructive' });
+            toast({ title: 'Error', description: 'Failed to load billing overview.', variant: 'destructive' });
         } finally {
             setLoading(false);
         }
@@ -542,36 +610,15 @@ const AdminManualPayments = ({ token }: { token: string }) => {
 
     useEffect(() => { void fetchPayments(); }, [fetchPayments]);
 
-    const handleProcess = async (id: string, status: 'confirmed' | 'rejected') => {
-        if (!confirm(`Are you sure you want to ${status} this payment?`)) return;
-        try {
-            const res = await fetchAdmin('admin-handler', {
-                method: 'POST',
-                body: JSON.stringify({ action: 'process_manual_payment', paymentId: id, status })
-            });
-            if (res.ok) {
-                toast({ title: 'Success', description: `Payment ${status}.` });
-                void fetchPayments();
-            }
-        } catch (e: any) {
-            toast({ title: 'Error', description: e.message, variant: 'destructive' });
+    const renderStatus = (statusRaw: string) => {
+        const status = String(statusRaw || '').toLowerCase();
+        if (status === 'success' || status === 'active') {
+          return <Badge className="bg-green-600 hover:bg-green-600">{status}</Badge>;
         }
-    };
-
-    const getUserName = (payment: any) => payment?.au_user_profiles?.full_name || payment?.au_user_profiles?.[0]?.full_name || 'User';
-    const getUserEmail = (payment: any) => payment?.au_users?.email || 'N/A';
-    const getReference = (payment: any) => payment?.reference_code || payment?.reference || payment?.provider_ref || '-';
-    const getAmount = (payment: any) => Number(payment?.amount ?? payment?.amount_ngn ?? 0);
-    const getStatus = (payment: any) => String(payment?.status || payment?.status_label || payment?.status_normalized || 'pending').toLowerCase();
-
-    const renderStatus = (status: string) => {
-        if (status === 'confirmed' || status === 'success' || status === 'succeeded') {
-            return <Badge className="bg-green-600 hover:bg-green-600">confirmed</Badge>;
+        if (status === 'failed' || status === 'canceled' || status === 'rejected') {
+          return <Badge variant="destructive">{status}</Badge>;
         }
-        if (status === 'rejected' || status === 'failed') {
-            return <Badge variant="destructive">rejected</Badge>;
-        }
-        return <Badge variant="secondary">pending</Badge>;
+        return <Badge variant="secondary">{status || 'pending'}</Badge>;
     };
 
     if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
@@ -587,15 +634,16 @@ const AdminManualPayments = ({ token }: { token: string }) => {
 
             <Tabs defaultValue="manual">
                 <TabsList>
-                    <TabsTrigger value="manual">Pending Bank Transfers</TabsTrigger>
-                    <TabsTrigger value="card">Card Payments</TabsTrigger>
+                    <TabsTrigger value="manual">Transactions</TabsTrigger>
+                    <TabsTrigger value="card">Subscriptions</TabsTrigger>
+                    <TabsTrigger value="audit">Entitlement Audit</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="manual">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Pending Bank Transfers</CardTitle>
-                            <CardDescription>Review and approve manual payments.</CardDescription>
+                            <CardTitle>Transactions</CardTitle>
+                            <CardDescription>Automated payment records (no manual approval flow).</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <div className="rounded-md border overflow-x-auto">
@@ -603,43 +651,26 @@ const AdminManualPayments = ({ token }: { token: string }) => {
                                     <thead className="bg-muted">
                                         <tr>
                                             <th className="p-3 text-left">Date</th>
-                                            <th className="p-3 text-left">User</th>
-                                            <th className="p-3 text-left">Ref Code</th>
+                                            <th className="p-3 text-left">User ID</th>
+                                            <th className="p-3 text-left">Reference</th>
                                             <th className="p-3 text-left">Amount</th>
+                                            <th className="p-3 text-left">Channel</th>
                                             <th className="p-3 text-left">Status</th>
-                                            <th className="p-3 text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {manualPayments.length === 0 ? (
-                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No manual payments found.</td></tr>
+                                        {transactions.length === 0 ? (
+                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No transactions found.</td></tr>
                                         ) : (
-                                            manualPayments.map((payment) => {
-                                                const status = getStatus(payment);
+                                            transactions.map((payment) => {
                                                 return (
-                                                    <tr key={payment.id} className="border-t hover:bg-muted/30">
+                                                    <tr key={payment.reference} className="border-t hover:bg-muted/30">
                                                         <td className="p-3 whitespace-nowrap">{new Date(payment.created_at).toLocaleDateString()}</td>
-                                                        <td className="p-3">
-                                                            <div className="flex flex-col">
-                                                                <span className="font-medium">{getUserName(payment)}</span>
-                                                                <span className="text-xs text-muted-foreground">{getUserEmail(payment)}</span>
-                                                            </div>
-                                                        </td>
-                                                        <td className="p-3 font-mono">{getReference(payment)}</td>
-                                                        <td className="p-3 font-bold">N{getAmount(payment).toLocaleString()}</td>
-                                                        <td className="p-3">{renderStatus(status)}</td>
-                                                        <td className="p-3 text-right space-x-2">
-                                                            {status === 'pending' && (
-                                                                <>
-                                                                    <Button size="sm" variant="outline" className="text-green-600 hover:text-green-700 hover:bg-green-50" onClick={() => handleProcess(payment.id, 'confirmed')}>
-                                                                        <CheckCircle2 className="h-4 w-4" />
-                                                                    </Button>
-                                                                    <Button size="sm" variant="outline" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={() => handleProcess(payment.id, 'rejected')}>
-                                                                        <Trash2 className="h-4 w-4" />
-                                                                    </Button>
-                                                                </>
-                                                            )}
-                                                        </td>
+                                                        <td className="p-3 font-mono text-xs">{payment.user_id || '-'}</td>
+                                                        <td className="p-3 font-mono text-xs">{payment.reference}</td>
+                                                        <td className="p-3 font-bold">N{Math.round(Number(payment.amount_kobo || 0) / 100).toLocaleString()}</td>
+                                                        <td className="p-3">{payment.channel || '-'}</td>
+                                                        <td className="p-3">{renderStatus(String(payment.status || 'pending'))}</td>
                                                     </tr>
                                                 );
                                             })
@@ -654,44 +685,78 @@ const AdminManualPayments = ({ token }: { token: string }) => {
                 <TabsContent value="card">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Card Payments</CardTitle>
-                            <CardDescription>Recent Stripe/Paystack card transactions.</CardDescription>
+                            <CardTitle>Subscriptions</CardTitle>
+                            <CardDescription>Auto-renew status and renewal window.</CardDescription>
                         </CardHeader>
                         <CardContent>
                             <div className="rounded-md border overflow-x-auto">
                                 <table className="w-full text-sm">
                                     <thead className="bg-muted">
                                         <tr>
-                                            <th className="p-3 text-left">Date</th>
-                                            <th className="p-3 text-left">User</th>
-                                            <th className="p-3 text-left">Provider</th>
-                                            <th className="p-3 text-left">Reference</th>
-                                            <th className="p-3 text-left">Amount</th>
+                                            <th className="p-3 text-left">Updated</th>
+                                            <th className="p-3 text-left">User ID</th>
+                                            <th className="p-3 text-left">Plan</th>
+                                            <th className="p-3 text-left">Period</th>
                                             <th className="p-3 text-left">Status</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {cardPayments.length === 0 ? (
-                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No card payments found.</td></tr>
+                                        {subscriptions.length === 0 ? (
+                                            <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No subscriptions found.</td></tr>
                                         ) : (
-                                            cardPayments.map((payment) => {
-                                                const status = getStatus(payment);
+                                            subscriptions.map((subscription) => {
                                                 return (
-                                                    <tr key={payment.id} className="border-t hover:bg-muted/30">
-                                                        <td className="p-3 whitespace-nowrap">{new Date(payment.created_at).toLocaleDateString()}</td>
-                                                        <td className="p-3">
-                                                            <div className="flex flex-col">
-                                                                <span className="font-medium">{getUserName(payment)}</span>
-                                                                <span className="text-xs text-muted-foreground">{getUserEmail(payment)}</span>
-                                                            </div>
+                                                    <tr key={`${subscription.user_id}-${subscription.updated_at}`} className="border-t hover:bg-muted/30">
+                                                        <td className="p-3 whitespace-nowrap">{new Date(subscription.updated_at).toLocaleDateString()}</td>
+                                                        <td className="p-3 font-mono text-xs">{subscription.user_id}</td>
+                                                        <td className="p-3">{subscription.plan_key}</td>
+                                                        <td className="p-3 text-xs">
+                                                          {subscription.starts_at || '-'}<br />
+                                                          {subscription.ends_at || '-'}
                                                         </td>
-                                                        <td className="p-3 capitalize">{String(payment.provider || 'unknown')}</td>
-                                                        <td className="p-3 font-mono">{getReference(payment)}</td>
-                                                        <td className="p-3 font-bold">N{getAmount(payment).toLocaleString()}</td>
-                                                        <td className="p-3">{renderStatus(status)}</td>
+                                                        <td className="p-3">{renderStatus(String(subscription.status || 'active'))}</td>
                                                     </tr>
                                                 );
                                             })
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                <TabsContent value="audit">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Entitlement Audit</CardTitle>
+                            <CardDescription>Server-side entitlement transitions.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="rounded-md border overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-muted">
+                                        <tr>
+                                            <th className="p-3 text-left">Time</th>
+                                            <th className="p-3 text-left">User ID</th>
+                                            <th className="p-3 text-left">Action</th>
+                                            <th className="p-3 text-left">Source</th>
+                                            <th className="p-3 text-left">Trace</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {entitlementAudit.length === 0 ? (
+                                            <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No entitlement audit rows found.</td></tr>
+                                        ) : (
+                                            entitlementAudit.map((row) => (
+                                                <tr key={`${row.trace_id || row.created_at}-${row.user_id}`} className="border-t hover:bg-muted/30">
+                                                    <td className="p-3 whitespace-nowrap">{new Date(row.created_at).toLocaleString()}</td>
+                                                    <td className="p-3 font-mono text-xs">{row.user_id}</td>
+                                                    <td className="p-3">{row.action}</td>
+                                                    <td className="p-3">{row.source}</td>
+                                                    <td className="p-3 font-mono text-xs">{row.trace_id || '-'}</td>
+                                                </tr>
+                                            ))
                                         )}
                                     </tbody>
                                 </table>
