@@ -54,6 +54,8 @@ docs/
 docker-compose.yml
 Dockerfile
 .dockerignore
+!rag-worker/docker-compose.yml
+!rag-worker/Dockerfile
 
 # Misc
 .last-run.json

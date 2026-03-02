@@ -142,6 +142,23 @@ Contributions are welcome! Please follow these steps:
 -   Observability:
     structured server logs + `ai_routing_audit` table, with response debug headers (`x-au-model`, `x-au-service`, `x-au-tier`) in non-production/admin contexts.
 
+## RAG Worker Transformers-Only Mode
+
+-   Worker path: [`rag-worker/`](./rag-worker)
+-   `TRANSFORMERS_FALLBACK_ENABLED=true` now forces **Transformers-first** embeddings and skips FastEmbed cache/init/download entirely.
+-   Model env:
+    - `TRANSFORMERS_EMBEDDING_MODEL` (default: `Xenova/all-MiniLM-L6-v2`)
+    - `HF_CACHE_DIR` (recommended persistent volume path, e.g. `/app/local_cache/hf`)
+    - `FASTEMBED_CACHE_DIR` (used only when transformers mode is disabled)
+-   Startup safety:
+    - worker fails fast if `TRANSFORMERS_FALLBACK_ENABLED=true` but `@huggingface/transformers` is missing.
+-   Expected logs in transformers-only mode:
+    - `Transformers-only embedder mode enabled; FastEmbed initialization skipped`
+    - `Initializing Transformers fallback embedder`
+    - completion record with `"embedder":"transformers"`
+-   Smoke test:
+    - `cd rag-worker && SMOKE_OWNER_ID=<existing_user_uuid> TRANSFORMERS_FALLBACK_ENABLED=true npm run smoke:transformers`
+
 ## Billing Test Checklist
 
 1.  `tier_split_enabled=false`: free user chat routes to paid service/model (no `:free`).

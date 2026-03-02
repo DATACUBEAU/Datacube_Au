@@ -103,6 +103,18 @@ export class IngestionService {
     this.transformersModelId = (process.env.TRANSFORMERS_EMBEDDING_MODEL || 'Xenova/all-MiniLM-L6-v2').trim();
     this.hfCacheDir = path.resolve((process.env.HF_CACHE_DIR || path.join(this.modelCacheDir, 'hf-cache')).trim());
     this.preparedCollections = new Set<string>();
+    this.assertTransformersDependencyReady();
+  }
+
+  private assertTransformersDependencyReady(): void {
+    if (!this.transformersFallbackEnabled) return;
+    try {
+      require.resolve('@huggingface/transformers');
+    } catch (error) {
+      throw new Error(
+        `TRANSFORMERS_FALLBACK_ENABLED=true but @huggingface/transformers is missing. Install worker dependencies with npm ci and rebuild the image. Details: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   private parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -664,33 +676,33 @@ export class IngestionService {
   private async getEmbedder(): Promise<EmbedderBackend> {
     if (this.embedderBackend) return this.embedderBackend;
 
+    if (this.transformersFallbackEnabled) {
+      logger.info('Transformers-only embedder mode enabled; FastEmbed initialization skipped', {
+        model: this.transformersModelId,
+        hfCacheDir: this.hfCacheDir,
+      });
+      const extractor = await this.initTransformersExtractor();
+      this.embedderBackend = { kind: 'transformers', extractor };
+      return this.embedderBackend;
+    }
+
     try {
       const model = await this.initModelWithCacheRetry(EmbeddingModel.AllMiniLML6V2);
       this.embedderBackend = { kind: 'fastembed', model };
       return this.embedderBackend;
     } catch (error) {
       if (error instanceof ModelDownloadBlockedError) {
-        if (!this.transformersFallbackEnabled) {
-          throw new Error(
-            `model download blocked by region; fallback embedder disabled. Set TRANSFORMERS_FALLBACK_ENABLED=true and install @huggingface/transformers. Details: ${error.message}`,
-          );
-        }
-
-        logger.warn('model download blocked by region; using fallback embedder', {
+        logger.warn('model download blocked by region while transformers fallback is disabled', {
           modelUrl: error.diagnostics.modelUrl,
           finalUrl: error.diagnostics.finalUrl || null,
           contentType: error.diagnostics.contentType || null,
           downloadedSizeBytes: error.diagnostics.downloadedSizeBytes ?? null,
           previewText: error.diagnostics.previewText || null,
           hasGzipMagic: error.diagnostics.hasGzipMagic ?? null,
-          fallbackEmbedder: 'transformers',
-          fallbackModel: this.transformersModelId,
-          hfCacheDir: this.hfCacheDir,
         });
-
-        const extractor = await this.initTransformersExtractor();
-        this.embedderBackend = { kind: 'transformers', extractor };
-        return this.embedderBackend;
+        throw new Error(
+          `model download blocked by region; TRANSFORMERS_FALLBACK_ENABLED is disabled. Enable TRANSFORMERS_FALLBACK_ENABLED=true to force Transformers embeddings.`,
+        );
       }
       throw error;
     }

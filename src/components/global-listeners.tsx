@@ -2,13 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { ToastAction } from '@/components/ui/toast';
 import { CommunityPopup } from '@/components/community-popup';
 import {
   AlertDialog,
   AlertDialogAction,
-  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -20,8 +19,9 @@ import { supabase } from '@/lib/supabase-client/client';
 import {
   AUTH_SESSION_EXPIRED_EVENT,
   clearAuthActionsDisabled,
-  setAuthActionsDisabled,
 } from '@/lib/auth/session-expiry-events';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { explicitSignOut } from '@/lib/auth/explicit-signout';
 
 /**
  * Global component to mount all real-time listeners (Broadcasts, Direct Messages).
@@ -30,40 +30,23 @@ import {
 export function GlobalListeners() {
   const { toast } = useToast();
   const router = useRouter();
+  const pathname = usePathname();
+  const { isAuthed } = useSmartAuth();
   const [showReauthModal, setShowReauthModal] = useState(false);
   const [isReauthing, setIsReauthing] = useState(false);
 
   const handleReLogin = useCallback(async () => {
     setIsReauthing(true);
     try {
-      await supabase.auth.getSession();
-      await supabase.auth.refreshSession().catch(() => null);
-      const { data, error } = await supabase.auth.getUser();
-      if (!error && data.user?.id) {
-        clearAuthActionsDisabled();
-        setShowReauthModal(false);
-        toast({
-          title: 'Session restored',
-          description: 'You can continue where you left off.',
-        });
-        return;
-      }
-      router.push('/login?reauth=1');
+      await explicitSignOut(null);
     } catch {
-      router.push('/login?reauth=1');
+      // Continue with redirect even if sign-out cleanup partially fails.
     } finally {
       setIsReauthing(false);
+      setShowReauthModal(false);
+      router.replace('/login?reauth=1');
     }
-  }, [router, toast]);
-
-  const handleReauthCancel = useCallback(() => {
-    setAuthActionsDisabled(true);
-    setShowReauthModal(false);
-    toast({
-      title: 'Actions disabled',
-      description: 'Sign in again to continue uploads, chat, and generation.',
-    });
-  }, [toast]);
+  }, [router]);
   
   useEffect(() => {
       const handleLimitReached = (e: any) => {
@@ -82,16 +65,21 @@ export function GlobalListeners() {
 
   useEffect(() => {
     const handleExpired = () => {
+      if (!isAuthed) return;
+      if (pathname?.startsWith('/login')) return;
       setShowReauthModal(true);
     };
     window.addEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpired as EventListener);
     return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpired as EventListener);
-  }, []);
+  }, [isAuthed, pathname]);
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_IN' && session?.user) {
         clearAuthActionsDisabled();
+        setShowReauthModal(false);
+      }
+      if (event === 'SIGNED_OUT') {
         setShowReauthModal(false);
       }
     });
@@ -106,11 +94,7 @@ export function GlobalListeners() {
       <AlertDialog
         open={showReauthModal}
         onOpenChange={(open) => {
-          if (!open && showReauthModal) {
-            handleReauthCancel();
-            return;
-          }
-          setShowReauthModal(open);
+          if (open) setShowReauthModal(true);
         }}
       >
         <AlertDialogContent>
@@ -121,12 +105,9 @@ export function GlobalListeners() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isReauthing}>
-              Cancel
-            </AlertDialogCancel>
             <AlertDialogAction onClick={() => void handleReLogin()} disabled={isReauthing}>
               {isReauthing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-              Re-login
+              Re-login now
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

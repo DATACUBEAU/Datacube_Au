@@ -98,3 +98,51 @@ export async function clearUserScopedClientCaches(userId: string | null | undefi
   ]);
 }
 
+const AUTH_STORAGE_EXACT_KEYS = new Set<string>([
+  'conex_admin_token',
+  'conex_session_id',
+  'conex_auth_step',
+  'dcau:auth-actions-disabled',
+]);
+
+function shouldClearAuthStorageKey(key: string): boolean {
+  const lower = key.toLowerCase();
+  if (AUTH_STORAGE_EXACT_KEYS.has(key)) return true;
+  if (lower.includes('auth-token')) return true;
+  if (lower === 'sb-access-token' || lower.startsWith('sb-access-token.')) return true;
+  if (lower.startsWith('sb-') && lower.includes('-auth-token')) return true;
+  if (lower.includes('supabase') && lower.includes('auth')) return true;
+  return false;
+}
+
+function removeMatchingStorageKeys(store: Storage): void {
+  const toRemove: string[] = [];
+  for (let i = 0; i < store.length; i += 1) {
+    const key = store.key(i);
+    if (!key) continue;
+    if (!shouldClearAuthStorageKey(key)) continue;
+    toRemove.push(key);
+  }
+
+  for (const key of toRemove) {
+    try {
+      store.removeItem(key);
+    } catch {
+      // Ignore per-key storage failures.
+    }
+  }
+}
+
+export function clearClientAuthStorageArtifacts(): void {
+  if (typeof window === 'undefined') return;
+  try {
+    removeMatchingStorageKeys(window.localStorage);
+  } catch {
+    // Ignore localStorage failures.
+  }
+  try {
+    removeMatchingStorageKeys(window.sessionStorage);
+  } catch {
+    // Ignore sessionStorage failures.
+  }
+}

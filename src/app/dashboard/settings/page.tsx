@@ -16,12 +16,9 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
   LogOut, 
   Save, 
-  User as UserIcon, 
   Bot, 
   Loader2, 
-  AlertTriangle, 
-  ShieldAlert, 
-  Trash2
+  ShieldAlert
 } from 'lucide-react';
 import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
@@ -32,7 +29,6 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { setAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
 
 import {
   Dialog,
@@ -40,7 +36,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogDescription,
-  DialogFooter,
 } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -86,7 +81,7 @@ export default function SettingsPage() {
   const [showAuthPopup, setShowAuthPopup] = useState(false);
   const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
-  const [signOutStep, setSignOutStep] = useState<'idle' | 'warning' | 'final' | 'processing'>('idle');
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
   useEffect(() => {
     if (user) {
@@ -204,30 +199,28 @@ export default function SettingsPage() {
   }, [currentDisplayName]);
 
   const startSignOutFlow = () => {
-    setSignOutStep('warning');
     setShowSignOutPopup(true);
   };
 
-  const proceedToFinalWarning = () => {
-    setSignOutStep('final');
-  };
+  const handleSignOutConfirm = async () => {
+    if (isSigningOut) return;
+    setIsSigningOut(true);
 
-  const handleSignOutFinal = async () => {
-    setSignOutStep('processing');
-    
     try {
-      await new Promise(resolve => setTimeout(resolve, 900));
       if (user?.id) {
         localStorage.removeItem(`au_assistant_progress_${user.id}`);
         localStorage.removeItem(`au_assistant_settings_${user.id}`);
       }
-      setAuthActionsDisabled(false);
       await explicitSignOut(user?.id ?? null);
-      router.push('/');
     } catch (error) {
-      console.error("[signOut] Error signing out:", error);
-      await explicitSignOut(user?.id ?? null);
-      router.push('/');
+      console.error('[signOut] Error signing out:', error);
+    } finally {
+      setShowSignOutPopup(false);
+      if (typeof window !== 'undefined') {
+        window.location.replace('/');
+        return;
+      }
+      router.replace('/');
     }
   };
 
@@ -517,118 +510,25 @@ export default function SettingsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Sign Out & Deletion Flow */}
-      <AnimatePresence mode="wait">
-        {showSignOutPopup && (
-          <Dialog open={showSignOutPopup} onOpenChange={(open) => {
-            if (signOutStep === 'warning') setShowSignOutPopup(open);
-          }}>
-            <DialogContent 
-              className="sm:max-w-[450px] overflow-hidden [&>button]:hidden"
-              onPointerDownOutside={(e) => signOutStep !== 'warning' && e.preventDefault()}
-              onEscapeKeyDown={(e) => signOutStep !== 'warning' && e.preventDefault()}
-            >
-              <AnimatePresence mode="wait">
-                {signOutStep === 'warning' && (
-                  <motion.div
-                    key="warning"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="space-y-6 py-4"
-                  >
-                    <DialogHeader>
-                      <div className="mx-auto w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
-                        <AlertTriangle className="w-8 h-8 text-destructive" />
-                      </div>
-                      <DialogTitle className="text-center font-headline text-2xl text-destructive">Sign-out retention notice</DialogTitle>
-                      <DialogDescription className="text-center text-base pt-2">
-                        If you stay signed out for <span className="font-bold text-destructive">7 days</span>, uploaded documents are deleted.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="bg-destructive/5 border border-destructive/20 rounded-lg p-4 text-sm text-destructive font-medium text-center">
-                      If your account is inactive for <span className="font-bold">14 days</span>, uploaded documents and derived chunks/embeddings are deleted.
-                    </div>
-                    <div className="flex flex-col sm:flex-row gap-3 pt-2">
-                      <Button variant="outline" onClick={() => setShowSignOutPopup(false)} className="flex-1">
-                        Cancel
-                      </Button>
-                      <Button variant="destructive" onClick={proceedToFinalWarning} className="flex-1 font-bold">
-                        I Understand, Sign Out
-                      </Button>
-                    </div>
-                  </motion.div>
-                )}
-
-                {signOutStep === 'final' && (
-                  <motion.div
-                    key="final"
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    exit={{ opacity: 0, x: -20 }}
-                    className="space-y-6 py-4"
-                  >
-                    <DialogHeader>
-                      <div className="mx-auto w-16 h-16 rounded-full bg-destructive/20 flex items-center justify-center mb-4 animate-pulse">
-                        <ShieldAlert className="w-8 h-8 text-destructive" />
-                      </div>
-                      <DialogTitle className="text-center font-headline text-2xl text-destructive uppercase tracking-tight">Final Confirmation</DialogTitle>
-                      <DialogDescription className="text-center text-base pt-2 font-bold">
-                        You are signing out of this device.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="text-center space-y-2">
-                      <p className="text-sm text-muted-foreground">
-                        Retention rules above continue to apply while signed out or inactive.
-                      </p>
-                    </div>
-                    <Button 
-                      variant="destructive" 
-                      onClick={handleSignOutFinal}
-                      className="w-full h-12 text-lg font-black shadow-lg shadow-destructive/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
-                    >
-                      SIGN OUT NOW
-                    </Button>
-                  </motion.div>
-                )}
-
-                {signOutStep === 'processing' && (
-                  <motion.div
-                    key="processing"
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className="flex flex-col items-center justify-center py-12 space-y-8"
-                  >
-                    <div className="relative w-24 h-24">
-                      <motion.div
-                        className="absolute inset-0 border-4 border-destructive/20 border-t-destructive rounded-full"
-                        animate={{ rotate: -360 }}
-                        transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-                      />
-                      <motion.div
-                        className="absolute inset-0 flex items-center justify-center"
-                        animate={{ 
-                          scale: [1, 0.8, 1.2, 0.5, 1],
-                          opacity: [1, 0.8, 1, 0.5, 1]
-                        }}
-                        transition={{ duration: 2, repeat: Infinity }}
-                      >
-                        <Trash2 className="w-10 h-10 text-destructive" />
-                      </motion.div>
-                    </div>
-                    <div className="text-center space-y-2">
-                      <h3 className="text-xl font-bold text-destructive">Clearing Data...</h3>
-                      <p className="text-sm text-muted-foreground animate-pulse">
-                        Ending your session securely...
-                      </p>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </DialogContent>
-          </Dialog>
-        )}
-      </AnimatePresence>
+      <AlertDialog open={showSignOutPopup} onOpenChange={(open) => {
+        if (!isSigningOut) setShowSignOutPopup(open);
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Sign out now?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This immediately ends your session on this device and returns you to the home page.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSigningOut}>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleSignOutConfirm()} disabled={isSigningOut}>
+              {isSigningOut ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Sign out
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </main>
   );
 }
