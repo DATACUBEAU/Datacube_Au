@@ -14,6 +14,41 @@ import { enforceModelAccess, enforceProxyTierAccess, TierAccessError } from '@/l
 
 export const runtime = 'nodejs';
 
+const BLOCKED_UPSTREAM_RESPONSE_HEADERS = new Set<string>([
+  'content-encoding',
+  'content-length',
+  'transfer-encoding',
+  'connection',
+  'keep-alive',
+  'vary',
+]);
+
+const SAFE_UPSTREAM_RESPONSE_HEADERS = new Set<string>([
+  'content-type',
+  'cache-control',
+  'pragma',
+  'expires',
+  'etag',
+  'last-modified',
+  'retry-after',
+  'content-disposition',
+  'accept-ranges',
+]);
+
+type BodyRelayMode = 'empty' | 'stream' | 'json' | 'text' | 'binary';
+
+class ProxyTimeoutError extends Error {
+  timeoutMs: number;
+  upstreamUrl: string;
+
+  constructor(timeoutMs: number, upstreamUrl: string) {
+    super(`Proxy upstream timeout after ${timeoutMs}ms`);
+    this.name = 'ProxyTimeoutError';
+    this.timeoutMs = timeoutMs;
+    this.upstreamUrl = upstreamUrl;
+  }
+}
+
 function firstEnv(...keys: string[]): string | null {
   for (const key of keys) {
     const value = process.env[key];
@@ -38,8 +73,44 @@ function corsHeaders(requestId?: string): HeadersInit {
   return headers;
 }
 
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw ?? '');
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function isProxyDebugEnabled(): boolean {
+  return process.env.PROXY_DEBUG === '1';
+}
+
+function shouldForwardUpstreamHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (BLOCKED_UPSTREAM_RESPONSE_HEADERS.has(lower)) return false;
+  if (SAFE_UPSTREAM_RESPONSE_HEADERS.has(lower)) return true;
+  if (lower.startsWith('x-')) return true;
+  return false;
+}
+
+function headersToObject(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    out[key] = value;
+  });
+  return out;
+}
+
 function applyResponseHeaders(source: Headers, requestId: string): Headers {
-  const headers = new Headers(source);
+  const headers = new Headers();
+  source.forEach((value, key) => {
+    if (!shouldForwardUpstreamHeader(key)) return;
+    headers.set(key, value);
+  });
+  if (!headers.has('cache-control')) {
+    headers.set('cache-control', 'no-store');
+  }
+  if (isProxyDebugEnabled()) {
+    headers.set('x-proxy-debug', '1');
+  }
   Object.entries(corsHeaders(requestId)).forEach(([key, value]) => headers.set(key, String(value)));
   return headers;
 }
@@ -91,6 +162,17 @@ function messageFromFailure(status: number, details: unknown, statusText: string
 
 function isJsonContentType(contentType: string | null): boolean {
   return String(contentType || '').toLowerCase().includes('application/json');
+}
+
+function isTextContentType(contentType: string | null): boolean {
+  const lower = String(contentType || '').toLowerCase();
+  return (
+    lower.startsWith('text/') ||
+    lower.includes('application/xml') ||
+    lower.includes('application/xhtml+xml') ||
+    lower.includes('application/javascript') ||
+    lower.includes('application/x-www-form-urlencoded')
+  );
 }
 
 function toStructuredTierPayload(details: unknown): Record<string, unknown> | null {
@@ -162,6 +244,127 @@ function wait(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function forwardWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error: any) {
+    if (error?.name === 'AbortError') {
+      throw new ProxyTimeoutError(timeoutMs, url);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function relaySuccessfulResponse(
+  response: Response,
+  req: NextRequest,
+  requestId: string,
+  candidate: RoutingCandidate | null,
+): Promise<{ response: Response; bodyMode: BodyRelayMode; forwardedHeaders: Headers }> {
+  const outHeaders = withDebugHeaders(applyResponseHeaders(response.headers, requestId), candidate, req);
+  const contentType = response.headers.get('content-type');
+  const isEventStream = String(contentType || '').toLowerCase().includes('text/event-stream');
+
+  if (isEventStream) {
+    return {
+      response: new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: outHeaders,
+      }),
+      bodyMode: 'stream',
+      forwardedHeaders: outHeaders,
+    };
+  }
+
+  if (req.method === 'HEAD' || response.status === 204 || response.status === 304) {
+    return {
+      response: new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: outHeaders,
+      }),
+      bodyMode: 'empty',
+      forwardedHeaders: outHeaders,
+    };
+  }
+
+  const rawBuffer = Buffer.from(await response.arrayBuffer());
+  if (rawBuffer.length === 0) {
+    return {
+      response: new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: outHeaders,
+      }),
+      bodyMode: 'empty',
+      forwardedHeaders: outHeaders,
+    };
+  }
+
+  if (isJsonContentType(contentType)) {
+    const text = rawBuffer.toString('utf8');
+    const parsed = tryParseJson(text);
+    if (parsed !== null) {
+      outHeaders.set('Content-Type', 'application/json; charset=utf-8');
+      return {
+        response: NextResponse.json(parsed, {
+          status: response.status,
+          headers: outHeaders,
+        }),
+        bodyMode: 'json',
+        forwardedHeaders: outHeaders,
+      };
+    }
+
+    outHeaders.set('Content-Type', 'text/plain; charset=utf-8');
+    return {
+      response: new Response(text, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: outHeaders,
+      }),
+      bodyMode: 'text',
+      forwardedHeaders: outHeaders,
+    };
+  }
+
+  if (isTextContentType(contentType)) {
+    outHeaders.set('Content-Type', contentType || 'text/plain; charset=utf-8');
+    return {
+      response: new Response(rawBuffer.toString('utf8'), {
+        status: response.status,
+        statusText: response.statusText,
+        headers: outHeaders,
+      }),
+      bodyMode: 'text',
+      forwardedHeaders: outHeaders,
+    };
+  }
+
+  outHeaders.set('Content-Type', contentType || 'application/octet-stream');
+  return {
+    response: new Response(rawBuffer, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: outHeaders,
+    }),
+    bodyMode: 'binary',
+    forwardedHeaders: outHeaders,
+  };
+}
+
 async function writeRoutingAudit(
   userId: string,
   plan: string,
@@ -190,6 +393,11 @@ async function writeRoutingAudit(
 async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ functionName: string }> }) {
   const { functionName } = await params;
   const requestId = crypto.randomUUID();
+  const proxyDebugEnabled = isProxyDebugEnabled();
+  const requestPath = req.nextUrl.pathname;
+  const requestMethod = req.method;
+  const startedAt = Date.now();
+  const upstreamTimeoutMs = parsePositiveInt(process.env.PROXY_UPSTREAM_TIMEOUT_MS, 30000);
 
   try {
     const baseUrl = functionsBaseUrl();
@@ -235,6 +443,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     const targetUrl = new URL(`${baseUrl}/${functionName}`);
     incomingUrl.searchParams.forEach((value, key) => {
       targetUrl.searchParams.append(key, value);
+    });
+
+    console.info('[proxy] request received', {
+      requestId,
+      method: requestMethod,
+      path: requestPath,
+      upstreamUrl: targetUrl.toString(),
+      timeoutMs: upstreamTimeoutMs,
     });
 
     const headers = new Headers();
@@ -327,11 +543,11 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }));
 
     const forwardOnce = async (attemptHeaders: Headers, attemptBody?: BodyInit) => {
-      return fetch(targetUrl.toString(), {
+      return forwardWithTimeout(targetUrl.toString(), {
         method: req.method,
         headers: attemptHeaders,
         body: attemptBody,
-      });
+      }, upstreamTimeoutMs);
     };
 
     const failFromResponse = async (response: Response, candidate: RoutingCandidate | null) => {
@@ -348,13 +564,36 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         routedService: candidate?.service || null,
       });
 
-      const outHeaders = new Headers(corsHeaders(requestId));
+      const outHeaders = withDebugHeaders(applyResponseHeaders(response.headers, requestId), candidate, req);
       const retryAfter = response.headers.get('retry-after');
       if (retryAfter) outHeaders.set('retry-after', retryAfter);
-      const debugHeaders = withDebugHeaders(outHeaders, candidate, req);
+      if (proxyDebugEnabled) {
+        console.info('[proxy] upstream non-2xx', {
+          requestId,
+          method: requestMethod,
+          path: requestPath,
+          upstreamUrl: targetUrl.toString(),
+          upstreamStatus: response.status,
+          upstreamHeaders: headersToObject(response.headers),
+          forwardedHeaders: headersToObject(outHeaders),
+          bodyMode: 'buffered-error-text',
+          elapsedMs: Date.now() - startedAt,
+        });
+      } else {
+        console.info('[proxy] upstream non-2xx', {
+          requestId,
+          method: requestMethod,
+          path: requestPath,
+          upstreamUrl: targetUrl.toString(),
+          upstreamStatus: response.status,
+          forwardedHeaderKeys: Array.from(outHeaders.keys()),
+          bodyMode: 'buffered-error-text',
+          elapsedMs: Date.now() - startedAt,
+        });
+      }
       const structured = toStructuredTierPayload(details);
       if (structured && (response.status === 402 || response.status === 429)) {
-        return NextResponse.json(structured, { status: response.status, headers: debugHeaders });
+        return NextResponse.json(structured, { status: response.status, headers: outHeaders });
       }
 
       return NextResponse.json(
@@ -365,7 +604,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           requestId,
           details,
         },
-        { status: response.status, headers: debugHeaders },
+        { status: response.status, headers: outHeaders },
       );
     };
 
@@ -440,13 +679,32 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               await noteRoutingSuccess(supabase, candidate);
             } catch {
             }
-            const outHeaders = applyResponseHeaders(response.headers, requestId);
-            const debugHeaders = withDebugHeaders(outHeaders, candidate, req);
-            return new Response(response.body, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: debugHeaders,
-            });
+            const relay = await relaySuccessfulResponse(response, req, requestId, candidate);
+            if (proxyDebugEnabled) {
+              console.info('[proxy] upstream success', {
+                requestId,
+                method: requestMethod,
+                path: requestPath,
+                upstreamUrl: targetUrl.toString(),
+                upstreamStatus: response.status,
+                upstreamHeaders: headersToObject(response.headers),
+                forwardedHeaders: headersToObject(relay.forwardedHeaders),
+                bodyMode: relay.bodyMode,
+                elapsedMs: Date.now() - startedAt,
+              });
+            } else {
+              console.info('[proxy] upstream success', {
+                requestId,
+                method: requestMethod,
+                path: requestPath,
+                upstreamUrl: targetUrl.toString(),
+                upstreamStatus: response.status,
+                forwardedHeaderKeys: Array.from(relay.forwardedHeaders.keys()),
+                bodyMode: relay.bodyMode,
+                elapsedMs: Date.now() - startedAt,
+              });
+            }
+            return relay.response;
           }
 
           const status = Number(response.status || 500);
@@ -504,17 +762,67 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       return failFromResponse(response, null);
     }
 
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers: applyResponseHeaders(response.headers, requestId),
-    });
+    const relay = await relaySuccessfulResponse(response, req, requestId, null);
+    if (proxyDebugEnabled) {
+      console.info('[proxy] upstream success', {
+        requestId,
+        method: requestMethod,
+        path: requestPath,
+        upstreamUrl: targetUrl.toString(),
+        upstreamStatus: response.status,
+        upstreamHeaders: headersToObject(response.headers),
+        forwardedHeaders: headersToObject(relay.forwardedHeaders),
+        bodyMode: relay.bodyMode,
+        elapsedMs: Date.now() - startedAt,
+      });
+    } else {
+      console.info('[proxy] upstream success', {
+        requestId,
+        method: requestMethod,
+        path: requestPath,
+        upstreamUrl: targetUrl.toString(),
+        upstreamStatus: response.status,
+        forwardedHeaderKeys: Array.from(relay.forwardedHeaders.keys()),
+        bodyMode: relay.bodyMode,
+        elapsedMs: Date.now() - startedAt,
+      });
+    }
+    return relay.response;
   } catch (error: any) {
+    if (error instanceof ProxyTimeoutError) {
+      console.error('[proxy] upstream timeout', {
+        requestId,
+        functionName,
+        method: requestMethod,
+        path: requestPath,
+        upstreamUrl: error.upstreamUrl,
+        timeoutMs: error.timeoutMs,
+        elapsedMs: Date.now() - startedAt,
+      });
+      return NextResponse.json(
+        {
+          message: 'upstream_timeout',
+          error: 'upstream_timeout',
+          status: 504,
+          requestId,
+          details: {
+            timeoutMs: error.timeoutMs,
+            upstreamUrl: error.upstreamUrl,
+          },
+        },
+        { status: 504, headers: corsHeaders(requestId) },
+      );
+    }
+
     const message = String(error?.message || 'Unknown error');
     console.error('[proxy] unexpected error', {
       requestId,
       functionName,
+      method: requestMethod,
+      path: requestPath,
+      upstreamUrl: functionsBaseUrl() ? `${functionsBaseUrl()}/${functionName}` : null,
       message,
+      elapsedMs: Date.now() - startedAt,
     });
     return NextResponse.json(
       {

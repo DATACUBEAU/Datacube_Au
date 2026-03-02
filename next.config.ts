@@ -12,18 +12,63 @@ const withPWA = withPWAInit({
   fallbacks: {
     document: '/~offline',
   },
-  extendDefaultRuntimeCaching: true,
+  extendDefaultRuntimeCaching: false,
   workboxOptions: {
     skipWaiting: true,
     clientsClaim: true,
     runtimeCaching: [
       {
-        urlPattern: /^https:\/\/.*\.supabase\.co\/.*/i,
+        urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/api/'),
+        method: 'GET',
+        handler: 'NetworkOnly',
+        options: { cacheName: 'api-get-no-cache' },
+      },
+      {
+        urlPattern: ({ sameOrigin }) => sameOrigin,
+        method: 'POST',
+        handler: 'NetworkOnly',
+        options: { cacheName: 'post-no-cache' },
+      },
+      {
+        urlPattern: ({ sameOrigin }) => sameOrigin,
+        method: 'PUT',
+        handler: 'NetworkOnly',
+        options: { cacheName: 'put-no-cache' },
+      },
+      {
+        urlPattern: ({ sameOrigin }) => sameOrigin,
+        method: 'PATCH',
+        handler: 'NetworkOnly',
+        options: { cacheName: 'patch-no-cache' },
+      },
+      {
+        urlPattern: ({ sameOrigin }) => sameOrigin,
+        method: 'DELETE',
+        handler: 'NetworkOnly',
+        options: { cacheName: 'delete-no-cache' },
+      },
+      {
+        urlPattern: ({ request, sameOrigin }) =>
+          request.method === 'GET' &&
+          sameOrigin &&
+          request.destination !== '' &&
+          ['style', 'script', 'font', 'image', 'worker'].includes(request.destination),
+        handler: 'StaleWhileRevalidate',
+        options: {
+          cacheName: 'static-assets',
+          expiration: {
+            maxEntries: 256,
+            maxAgeSeconds: 30 * 24 * 60 * 60,
+          },
+        },
+      },
+      {
+        urlPattern: ({ request, url }) => request.method === 'GET' && /^https:\/\/.*\.supabase\.co\/.*/i.test(url.toString()),
         handler: 'NetworkOnly',
         options: { cacheName: 'supabase-no-cache' },
       },
       {
-        urlPattern: /\/api\/health$/i,
+        urlPattern: ({ request, url }) => request.method === 'GET' && /\/api\/health$/i.test(url.pathname),
         handler: 'NetworkOnly',
         options: {
           cacheName: 'health-no-cache',
@@ -39,7 +84,7 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: /manifest\.webmanifest$/i,
+        urlPattern: ({ request, url }) => request.method === 'GET' && /manifest\.webmanifest$/i.test(url.pathname),
         handler: 'StaleWhileRevalidate',
         options: {
           cacheName: 'manifest-cache',
@@ -50,18 +95,18 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: /^https:\/\/www\.google\.com\/images\/cleardot\.gif/i,
+        urlPattern: ({ request, url }) => request.method === 'GET' && /^https:\/\/www\.google\.com\/images\/cleardot\.gif/i.test(url.toString()),
         handler: 'NetworkOnly',
         options: { cacheName: 'google-pixel-no-cache' },
       },
       {
-        urlPattern: /^https:\/\/www\.googletagmanager\.com\/.*/i,
+        urlPattern: ({ request, url }) => request.method === 'GET' && /^https:\/\/www\.googletagmanager\.com\/.*/i.test(url.toString()),
         handler: 'NetworkOnly',
         options: { cacheName: 'gtm-no-cache' },
       },
       {
         // Keep Next.js data payloads around longer so already-visited pages reopen offline.
-        urlPattern: /\/_next\/data\/.+\/.+\.json$/i,
+        urlPattern: ({ request, url }) => request.method === 'GET' && /\/_next\/data\/.+\/.+\.json$/i.test(url.pathname),
         handler: 'StaleWhileRevalidate',
         options: {
           cacheName: 'next-data',
@@ -74,6 +119,7 @@ const withPWA = withPWAInit({
       {
         // App Router prefetch payloads should fail over to cache quickly when offline.
         urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
+          request.method === 'GET' &&
           request.headers.get('RSC') === '1' &&
           request.headers.get('Next-Router-Prefetch') === '1' &&
           sameOrigin &&
@@ -91,6 +137,7 @@ const withPWA = withPWAInit({
       {
         // Route payloads should not block UI for long on flaky networks.
         urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
+          request.method === 'GET' &&
           request.headers.get('RSC') === '1' &&
           sameOrigin &&
           !pathname.startsWith('/api/'),
@@ -107,6 +154,7 @@ const withPWA = withPWAInit({
       {
         // Main HTML navigation fallback for instant offline/poor-network transitions.
         urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
+          request.method === 'GET' &&
           request.mode === 'navigate' && sameOrigin && !pathname.startsWith('/api/'),
         handler: 'NetworkFirst',
         options: {
