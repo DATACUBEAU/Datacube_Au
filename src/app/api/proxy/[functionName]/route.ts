@@ -10,7 +10,12 @@ import {
   ModelRoutingError,
 } from '@/lib/server/ai-routing';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
-import { enforceModelAccess, enforceProxyTierAccess, TierAccessError } from '@/lib/server/tier-enforcement';
+import {
+  enforceModelAccess,
+  enforceProxyTierAccess,
+  isTierGuardedFunction,
+  TierAccessError,
+} from '@/lib/server/tier-enforcement';
 
 export const runtime = 'nodejs';
 
@@ -508,7 +513,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
     }
 
-    const supabase = createSupabaseAdminClient();
+    const needsTierGuards = isTierGuardedFunction(functionName);
+    const supabase = needsTierGuards ? createSupabaseAdminClient() : null;
     let tierContext: any = null;
     let guardedBody = parsedBody;
     let appliedGuards: string[] = [];
@@ -610,6 +616,9 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     if (routeWithModelSelector) {
       const plan = tierContext?.planForRouting || 'free';
+      if (!supabase) {
+        throw new Error('Routing requires a Supabase admin client, but none was initialized.');
+      }
 
       let routed;
       try {

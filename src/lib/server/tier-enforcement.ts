@@ -35,7 +35,7 @@ export type TierContext = {
 };
 
 export type ProxyTierGuardInput = {
-  supabase: SupabaseClient;
+  supabase?: SupabaseClient | null;
   userId: string;
   functionName: string;
   method: string;
@@ -66,6 +66,21 @@ function normalizeFunctionName(functionName: string): string {
 
 function normalizeMethod(method: string): string {
   return String(method || 'GET').trim().toUpperCase();
+}
+
+function quotaTierForRpc(tier: TierRuntime): 'free' | 'pro' {
+  // Some DB functions only support free/pro tiers. Promo Pro should behave like Pro.
+  return tier === 'free' ? 'free' : 'pro';
+}
+
+function defaultTierContext(): TierContext {
+  return {
+    tier: 'FREE',
+    runtimeTier: 'free',
+    planForRouting: 'free',
+    entitlementSource: 'none',
+    expiresAt: null,
+  };
 }
 
 function isUndefinedFunctionError(error: any): boolean {
@@ -171,7 +186,7 @@ async function consumeQuotaOrThrow(input: {
     const rpcResult = await input.supabase.rpc('consume_quota_counter', {
       p_user_id: input.userId,
       p_key: input.quotaKey,
-      p_tier: input.tierContext.runtimeTier,
+      p_tier: quotaTierForRpc(input.tierContext.runtimeTier),
       p_increment: increment,
     });
     if (rpcResult.error) throw rpcResult.error;
@@ -280,7 +295,7 @@ async function enforceDocumentUploadQuotaOrThrow(input: {
     const rpcResult = await input.supabase.rpc('consume_document_upload_quota', {
       p_user_id: input.userId,
       p_document_id: documentId,
-      p_tier: input.tierContext.runtimeTier,
+      p_tier: quotaTierForRpc(input.tierContext.runtimeTier),
     });
     if (rpcResult.error) throw rpcResult.error;
     const data = (rpcResult.data || {}) as QuotaConsumeResponse & { consumed?: boolean };
@@ -392,6 +407,10 @@ function resolveFeatureFromFunction(functionName: string): TierFeatureKey | null
   return null;
 }
 
+export function isTierGuardedFunction(functionName: string): boolean {
+  return resolveFeatureFromFunction(functionName) !== null;
+}
+
 export function requireTier(
   tierContext: TierContext,
   featureKey: TierFeatureKey,
@@ -446,7 +465,33 @@ export async function resolveUserTierContext(
   supabase: SupabaseClient,
   userId: string
 ): Promise<TierContext> {
-  const entitlement = await getProEntitlementStatus(supabase, userId);
+  let entitlement: {
+    hasPro: boolean;
+    source: 'paid' | 'promo' | 'none';
+    endsAt: string | null;
+  } = {
+    hasPro: false,
+    source: 'none',
+    endsAt: null as string | null,
+  };
+
+  try {
+    const resolved = await getProEntitlementStatus(supabase, userId);
+    entitlement = {
+      hasPro: resolved.hasPro,
+      source: resolved.source,
+      endsAt: resolved.endsAt,
+    };
+  } catch (error: any) {
+    const code = String(error?.code || '').trim();
+    const message = String(error?.message || '').toLowerCase();
+    const schemaDrift =
+      code === '42P01' ||
+      code === '42703' ||
+      (message.includes('relation') && message.includes('does not exist')) ||
+      (message.includes('column') && message.includes('does not exist'));
+    if (!schemaDrift) throw error;
+  }
 
   let tier: TierId = 'FREE';
   if (entitlement.hasPro) {
@@ -486,15 +531,20 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
   const { supabase, userId, functionName, requestPath } = input;
   const method = normalizeMethod(input.method);
   const featureKey = resolveFeatureFromFunction(functionName);
-  const tierContext = await resolveUserTierContext(supabase, userId);
   const appliedGuards: string[] = [];
 
   let body = input.body;
   const isWrite = method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE';
 
   if (!featureKey) {
-    return { tierContext, body, appliedGuards };
+    return { tierContext: defaultTierContext(), body, appliedGuards };
   }
+
+  if (!supabase) {
+    throw new Error('Tier enforcement requires an admin Supabase client for guarded functions.');
+  }
+
+  const tierContext = await resolveUserTierContext(supabase, userId);
 
   if (!isFeatureAllowedForTier(featureKey, tierContext.tier)) {
     await logLimitEvent({

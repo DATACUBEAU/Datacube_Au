@@ -266,6 +266,32 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         return await res.clone().json().catch(() => null);
       };
 
+      const runLocalApiUpdate = async (): Promise<any> => {
+        const res = await fetch('/api/admin/feature-flags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            key: normalizedKey,
+            enabled,
+            category: optimisticRow.category,
+            description: optimisticRow.description,
+            scope: optimisticRow.scope,
+            config: optimisticRow.config,
+          }),
+        });
+
+        const payload = await res.clone().json().catch(() => null);
+        if (!res.ok) {
+          const message =
+            payload?.error ||
+            payload?.message ||
+            `feature-flag API update failed (${res.status})`;
+          throw new Error(String(message));
+        }
+
+        return payload?.flag ?? payload?.data?.flag ?? payload;
+      };
+
       const runAdminHandlerUpdate = async (): Promise<any> => {
         const res = await fetchAdmin('admin-handler', {
           method: 'POST',
@@ -306,9 +332,15 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       let data: any = null;
       let lastError: any = null;
 
+      try {
+        data = await runLocalApiUpdate();
+      } catch (localErr) {
+        lastError = localErr;
+      }
+
       // In Conex (admin token present), prefer admin-handler first to avoid
       // brittle RPC drift issues.
-      if (adminToken) {
+      if (!data && adminToken) {
         try {
           data = await runAdminHandlerWithRefreshRetry();
         } catch (adminErr) {
