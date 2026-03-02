@@ -69,20 +69,41 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         try {
           const clone = response.clone();
           const body = await clone.json();
-          const context = body?.error?.code === 'UPGRADE_REQUIRED' ? body.error : body;
-          if (context?.code === 'UPGRADE_REQUIRED') {
-            window.dispatchEvent(new CustomEvent('au-upgrade-required', { detail: context }));
+          const rootErrorCode = typeof body?.error === 'string' ? body.error : '';
+          const nestedErrorCode = typeof body?.error?.code === 'string' ? body.error.code : '';
+          const bodyCode = typeof body?.code === 'string' ? body.code : '';
+          const code = rootErrorCode || nestedErrorCode || bodyCode;
+
+          const upgradeContext = {
+            code: code || (body?.error?.code || null),
+            key: body?.key || body?.limit || body?.error?.key || body?.error?.limit,
+            reason: body?.message || body?.error?.message || body?.error?.reason || body?.details?.reason,
+            message: body?.message || body?.error?.message || body?.details?.message,
+            cta: body?.upgrade?.cta || body?.error?.cta || 'Upgrade to Pro',
+            upgradeUrl: body?.upgrade?.href || body?.error?.upgradeUrl || '/pricing',
+            used: body?.used ?? body?.current ?? body?.error?.used ?? body?.error?.current,
+            limit: body?.limit ?? body?.max ?? body?.error?.limit ?? body?.error?.max,
+            resetsAt: body?.reset_at ?? body?.resetAt ?? body?.error?.reset_at ?? body?.error?.resetsAt ?? null,
+          };
+
+          if (['UPGRADE_REQUIRED', 'PRO_REQUIRED'].includes(String(upgradeContext.code || ''))) {
+            window.dispatchEvent(new CustomEvent('au-upgrade-required', { detail: upgradeContext }));
           }
-          const limitContext = body?.code === 'LIMIT_EXCEEDED'
-            ? body
-            : (body?.details?.code === 'LIMIT_EXCEEDED' ? body.details : null);
-          if (limitContext?.code === 'LIMIT_EXCEEDED') {
+
+          const limitCode =
+            code === 'LIMIT_REACHED' || code === 'LIMIT_EXCEEDED'
+              ? code
+              : (typeof body?.details?.code === 'string' ? body.details.code : '');
+          if (['LIMIT_REACHED', 'LIMIT_EXCEEDED'].includes(String(limitCode || ''))) {
             window.dispatchEvent(new CustomEvent('au_limit_reached', {
               detail: {
-                ...limitContext,
-                message: `Limit exceeded (${String(limitContext.limit || 'unknown')}).`,
+                ...(body || {}),
+                code: limitCode,
+                limit: body?.limit || body?.key || body?.details?.limit || body?.details?.key,
+                message: body?.message || `Limit exceeded (${String(body?.limit || body?.key || 'unknown')}).`,
               },
             }));
+            window.dispatchEvent(new CustomEvent('au-upgrade-required', { detail: upgradeContext }));
           }
         } catch {
         }

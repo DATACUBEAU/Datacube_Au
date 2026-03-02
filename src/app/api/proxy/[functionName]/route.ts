@@ -10,7 +10,7 @@ import {
   ModelRoutingError,
 } from '@/lib/server/ai-routing';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
-import { getProEntitlementStatus } from '@/lib/server/entitlements';
+import { enforceModelAccess, enforceProxyTierAccess, TierAccessError } from '@/lib/server/tier-enforcement';
 
 export const runtime = 'nodejs';
 
@@ -93,6 +93,45 @@ function isJsonContentType(contentType: string | null): boolean {
   return String(contentType || '').toLowerCase().includes('application/json');
 }
 
+function toStructuredTierPayload(details: unknown): Record<string, unknown> | null {
+  if (!details || typeof details !== 'object') return null;
+  const row = details as any;
+  const code = String(row?.error || row?.code || row?.error?.code || '').trim().toUpperCase();
+
+  if (!code) return null;
+
+  if (code === 'UPGRADE_REQUIRED' || code === 'PRO_REQUIRED') {
+    const key = String(row?.key || row?.reason || 'pro_feature').toLowerCase();
+    return {
+      error: 'PRO_REQUIRED',
+      key,
+      message: String(row?.message || row?.reason || 'This feature requires Pro.'),
+      upgrade: {
+        cta: String(row?.upgrade?.cta || row?.cta || 'Upgrade to Pro'),
+        href: String(row?.upgrade?.href || row?.upgradeUrl || `/pricing?source=feature_${encodeURIComponent(key)}`),
+      },
+    };
+  }
+
+  if (code === 'LIMIT_REACHED' || code === 'LIMIT_EXCEEDED') {
+    const key = String(row?.key || row?.limit || 'unknown_limit');
+    return {
+      error: 'LIMIT_REACHED',
+      key,
+      message: String(row?.message || `Limit reached (${key}).`),
+      used: typeof row?.used === 'number' ? row.used : row?.current,
+      limit: typeof row?.limit === 'number' ? row.limit : row?.max,
+      reset_at: row?.reset_at || row?.resetAt || null,
+      upgrade: {
+        cta: String(row?.upgrade?.cta || 'Upgrade to Pro'),
+        href: String(row?.upgrade?.href || `/pricing?source=limit_${encodeURIComponent(key)}`),
+      },
+    };
+  }
+
+  return null;
+}
+
 function getRequestTypeForFunction(functionName: string): RoutingRequestType | null {
   const normalized = String(functionName || '').trim().toLowerCase();
   if (normalized === 'au-chat' || normalized === 'chat') return 'chat';
@@ -117,26 +156,6 @@ function withDebugHeaders(
   headers.set('x-au-service', candidate.service);
   headers.set('x-au-tier', candidate.tierWanted);
   return headers;
-}
-
-async function getUserPlan(userId: string): Promise<string> {
-  const supabase = createSupabaseAdminClient();
-  const entitlement = await getProEntitlementStatus(supabase, userId).catch(() => null);
-  if (entitlement?.hasPro) return 'pro';
-
-  const { data, error } = await supabase
-    .from('au_user_profiles')
-    .select('tier')
-    .eq('user_id', userId)
-    .maybeSingle();
-  if (error) {
-    console.warn('[proxy] failed to load user plan, defaulting to free', {
-      userId,
-      message: error.message,
-    });
-    return 'free';
-  }
-  return String((data as any)?.tier || 'free');
 }
 
 function wait(ms: number): Promise<void> {
@@ -253,17 +272,59 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     let rawBodyText = '';
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       rawBody = await req.arrayBuffer();
-      if (rawBody.byteLength > 0 && routeWithModelSelector) {
+      if (rawBody.byteLength > 0 && isJsonContentType(contentType)) {
         rawBodyText = new TextDecoder().decode(rawBody);
-        try {
-          const preview = JSON.parse(rawBodyText);
-          if (String(preview?.action || '').toLowerCase() === 'get_models') {
-            routeWithModelSelector = false;
-          }
-        } catch {
-        }
       }
     }
+
+    let parsedBody: any = {};
+    if (rawBodyText.trim()) {
+      try {
+        parsedBody = JSON.parse(rawBodyText);
+      } catch {
+        parsedBody = {};
+      }
+    }
+
+    if (routeWithModelSelector) {
+      if (String(parsedBody?.action || '').toLowerCase() === 'get_models') {
+        routeWithModelSelector = false;
+      }
+    }
+
+    const supabase = createSupabaseAdminClient();
+    let tierContext: any = null;
+    let guardedBody = parsedBody;
+    let appliedGuards: string[] = [];
+    try {
+      const guard = await enforceProxyTierAccess({
+        supabase,
+        userId: auth.userId,
+        functionName,
+        method: req.method,
+        body: parsedBody,
+        requestPath: `/api/proxy/${functionName}`,
+      });
+      tierContext = guard.tierContext;
+      guardedBody = guard.body;
+      appliedGuards = guard.appliedGuards;
+    } catch (error: any) {
+      if (error instanceof TierAccessError) {
+        const payload = error.payload || { error: 'tier_access_denied', message: error.message };
+        return NextResponse.json(payload, { status: error.status, headers: corsHeaders(requestId) });
+      }
+      throw error;
+    }
+
+    console.info('[tier-access]', JSON.stringify({
+      requestId,
+      userId: auth.userId,
+      functionName,
+      requestType: requestType || 'other',
+      tier: tierContext?.tier || 'FREE',
+      plan: tierContext?.planForRouting || 'free',
+      guards: appliedGuards,
+    }));
 
     const forwardOnce = async (attemptHeaders: Headers, attemptBody?: BodyInit) => {
       return fetch(targetUrl.toString(), {
@@ -291,6 +352,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       const retryAfter = response.headers.get('retry-after');
       if (retryAfter) outHeaders.set('retry-after', retryAfter);
       const debugHeaders = withDebugHeaders(outHeaders, candidate, req);
+      const structured = toStructuredTierPayload(details);
+      if (structured && (response.status === 402 || response.status === 429)) {
+        return NextResponse.json(structured, { status: response.status, headers: debugHeaders });
+      }
 
       return NextResponse.json(
         {
@@ -305,17 +370,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     };
 
     if (routeWithModelSelector) {
-      const supabase = createSupabaseAdminClient();
-      const plan = await getUserPlan(auth.userId);
-
-      let parsedBody: any = {};
-      if (rawBodyText.trim()) {
-        try {
-          parsedBody = JSON.parse(rawBodyText);
-        } catch {
-          parsedBody = {};
-        }
-      }
+      const plan = tierContext?.planForRouting || 'free';
 
       let routed;
       try {
@@ -343,6 +398,19 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
       let lastFailure: { response: Response; candidate: RoutingCandidate } | null = null;
       for (const candidate of routed.candidates) {
+        try {
+          enforceModelAccess({
+            tierContext,
+            model: candidate.model,
+            strictFreeMode: candidate.flags.tierSplitEnabled,
+          });
+        } catch (error: any) {
+          if (error instanceof TierAccessError) {
+            return NextResponse.json(error.payload, { status: error.status, headers: corsHeaders(requestId) });
+          }
+          throw error;
+        }
+
         const attemptHeaders = new Headers(headers);
         attemptHeaders.set('x-au-model', candidate.model);
         attemptHeaders.set('x-au-service', candidate.service);
@@ -350,7 +418,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         attemptHeaders.set('x-au-openrouter-key', candidate.apiKey);
 
         const payload = {
-          ...(parsedBody && typeof parsedBody === 'object' ? parsedBody : {}),
+          ...(guardedBody && typeof guardedBody === 'object' ? guardedBody : {}),
           model: candidate.model,
         };
         const attemptBody = JSON.stringify(payload);
@@ -421,8 +489,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       );
     }
 
-    const body = rawBody && rawBody.byteLength > 0 ? rawBody : undefined;
-    const response = await forwardOnce(headers, body);
+    let forwardBody: BodyInit | undefined = rawBody && rawBody.byteLength > 0 ? rawBody : undefined;
+    if (req.method !== 'GET' && req.method !== 'HEAD' && isJsonContentType(contentType)) {
+      forwardBody = JSON.stringify(
+        guardedBody && typeof guardedBody === 'object' ? guardedBody : {}
+      );
+    }
+
+    const response = await forwardOnce(headers, forwardBody);
     const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
     const isEventStream = contentTypeResponse.includes('text/event-stream');
 

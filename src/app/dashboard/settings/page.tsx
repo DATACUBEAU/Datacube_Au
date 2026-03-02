@@ -28,7 +28,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PwaInstallButton from '@/components/pwa-install-button';
-import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
@@ -59,9 +59,16 @@ import { SettingsPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/
 
 export default function SettingsPage() {
   const [user, , isUserLoading] = useSupabaseUser();
+  const { session } = useSupabaseSession();
   const { toast } = useToast();
   const router = useRouter();
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isUserLoading);
+  const [planStatus, setPlanStatus] = useState<{
+    tier: 'free' | 'pro' | 'promo_pro';
+    source: 'paid' | 'promo' | 'none';
+    expiresAt: string | null;
+    loading: boolean;
+  }>({ tier: 'free', source: 'none', expiresAt: null, loading: true });
 
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
@@ -94,6 +101,53 @@ export default function SettingsPage() {
       return () => window.removeEventListener('au_assistant_settings_updated', handleSettingsUpdate);
     }
   }, [user]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadStatus = async () => {
+      if (!user?.id || !session?.access_token) {
+        if (!cancelled) {
+          setPlanStatus({ tier: 'free', source: 'none', expiresAt: null, loading: false });
+        }
+        return;
+      }
+      if (!cancelled) {
+        setPlanStatus((prev) => ({ ...prev, loading: true }));
+      }
+      try {
+        const res = await fetch('/api/billing/status', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          credentials: 'include',
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        if (!res.ok) {
+          setPlanStatus({ tier: 'free', source: 'none', expiresAt: null, loading: false });
+          return;
+        }
+        const tier = String(payload?.tier || 'free').toLowerCase();
+        const source = String(payload?.entitlementSource || 'none').toLowerCase();
+        setPlanStatus({
+          tier: tier === 'pro' ? 'pro' : 'free',
+          source: source === 'promo' ? 'promo' : (source === 'paid' ? 'paid' : 'none'),
+          expiresAt: typeof payload?.tier_expires_at === 'string' ? payload.tier_expires_at : null,
+          loading: false,
+        });
+      } catch {
+        if (!cancelled) {
+          setPlanStatus((prev) => ({ ...prev, loading: false }));
+        }
+      }
+    };
+
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.access_token, user?.id]);
 
   const handleToggleAssistant = (enabled: boolean) => {
     setIsAssistantEnabled(enabled);
@@ -283,6 +337,41 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="rounded-xl border bg-muted/20 p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-wide text-muted-foreground">Plan Status</p>
+                    <p className="text-base font-semibold">
+                      {planStatus.loading
+                        ? 'Updating...'
+                        : (planStatus.source === 'promo'
+                          ? 'Promo Pro'
+                          : planStatus.tier === 'pro'
+                            ? 'Pro'
+                            : 'Free')}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {planStatus.expiresAt
+                        ? `Expires: ${new Date(planStatus.expiresAt).toLocaleString(undefined, {
+                            year: 'numeric',
+                            month: 'short',
+                            day: 'numeric',
+                          })}`
+                        : 'No expiry set'}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link href="/dashboard/settings/subscription">Manage</Link>
+                    </Button>
+                    {planStatus.tier !== 'pro' ? (
+                      <Button asChild size="sm">
+                        <Link href="/pricing">Upgrade</Link>
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
               <div className="rounded-xl border bg-card p-5">
                 <p className="text-sm text-muted-foreground">
                   Use the standalone Subscription page for payment methods, plan upgrades, and billing history.

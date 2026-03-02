@@ -98,8 +98,7 @@ export async function assertProEntitlement(
       code: 'UPGRADE_REQUIRED',
       reason: 'pro_entitlement_missing',
       cta: 'Upgrade to Pro to continue.',
-      upgradeUrl: '/dashboard/settings/subscription',
+      upgradeUrl: '/pricing?source=feature_pro_access',
     }
   );
 }
-

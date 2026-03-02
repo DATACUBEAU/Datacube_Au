@@ -133,7 +133,7 @@ function makeAlert(params: {
     severity: params.severity,
     title: params.title,
     message: params.message,
-    cta: params.upsellEnabled ? { label: 'Upgrade plan', href: '/dashboard/settings/subscription' } : undefined,
+    cta: params.upsellEnabled ? { label: 'Upgrade to Pro', href: '/pricing' } : undefined,
     dismissible: params.severity !== 'block',
     cooldownKey: params.id,
     reasoning: {
@@ -184,20 +184,32 @@ function maybeUsageAlert(params: {
 }
 
 function fromServerLimitError(payload: LimitExceededPayload, upsellEnabled: boolean): LimitAlert {
-  const limitName = String(payload.limit || 'unknown_limit');
+  const limitName = String(payload.limit || payload.key || 'unknown_limit');
   const current = asNumber(payload.current, 0);
   const max = asNumber(payload.max, 0);
-  return makeAlert({
+  const isProRequired = payload.code === 'PRO_REQUIRED';
+  const message = typeof payload.message === 'string' && payload.message.trim()
+    ? payload.message
+    : (isProRequired
+      ? 'This action is available on Pro.'
+      : `This action exceeded ${limitName}${max > 0 ? ` (${current}/${max})` : ''}.`);
+  const alert = makeAlert({
     id: `server:${limitName}`,
     severity: 'block',
-    title: 'Action blocked by plan limit',
-    message: `This action exceeded ${limitName}${max > 0 ? ` (${current}/${max})` : ''}.`,
+    title: isProRequired ? 'Pro feature locked' : 'Action blocked by plan limit',
+    message,
     limitName,
     current,
     max,
     threshold: 100,
     upsellEnabled,
   });
+  if (upsellEnabled && payload?.upgrade && typeof payload.upgrade === 'object') {
+    const href = typeof payload.upgrade.href === 'string' ? payload.upgrade.href : '/pricing';
+    const label = typeof payload.upgrade.cta === 'string' ? payload.upgrade.cta : 'Upgrade to Pro';
+    return { ...alert, cta: { label, href } };
+  }
+  return alert;
 }
 
 export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert[] {
@@ -206,8 +218,9 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
   const blockLevels = normalizeThresholds(input.flags.thresholds.block, [100]);
   const upsellEnabled = input.flags.upsellEnabled;
 
-  if (input.serverLimitError?.code === 'LIMIT_EXCEEDED') {
-    alerts.push(fromServerLimitError(input.serverLimitError, upsellEnabled));
+  const serverLimitError = input.serverLimitError || null;
+  if (serverLimitError && ['LIMIT_EXCEEDED', 'LIMIT_REACHED', 'PRO_REQUIRED'].includes(String(serverLimitError.code || ''))) {
+    alerts.push(fromServerLimitError(serverLimitError, upsellEnabled));
   }
 
   if (!input.flags.alertsEnabled) {

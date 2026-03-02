@@ -164,3 +164,48 @@ Contributions are welcome! Please follow these steps:
 18. After promo end (`2026-04-02 Africa/Lagos`), users without paid entitlement are downgraded automatically.
 19. `/api/billing/status` reflects server truth for entitlement and subscription.
 20. `/api/billing/cancel` sets non-renewing state and disables auto-renew.
+
+## Free vs Pro Tier System
+
+-   Single source of truth policy:
+    - `src/lib/tier/policy.ts`
+    - Defines tiers (`FREE`, `PRO`, `PROMO_PRO`), feature access map, quota map, and hard constraints.
+-   Shared backend guard:
+    - `src/lib/server/tier-enforcement.ts`
+    - Used by `src/app/api/proxy/[functionName]/route.ts` before forwarding any edge-function call.
+-   Structured limit/pro-required payloads:
+    - `PRO_REQUIRED` (HTTP 402)
+    - `LIMIT_REACHED` (HTTP 429)
+    - Includes upgrade CTA payload (`/pricing?source=...`).
+-   Atomic quota tracking:
+    - Migration: `supabase/migrations/20260302193000_tier_enforcement_and_quota_counters.sql`
+    - Tables: `quota_policies`, `quota_usage_counters`, `limit_events`
+    - RPCs: `consume_quota_counter`, `consume_document_upload_quota`
+-   Hard constraints implemented:
+    - Upload file size: 50MB default for everyone.
+    - `upload_100mb` flag ON => 100MB for everyone.
+    - Lifetime uploaded documents: Free 4, Pro 10.
+-   Capability discovery surface:
+    - API: `GET /api/tier/capability-matrix`
+    - UI: `/pricing` auto-renders feature matrix and quota table from shared policy.
+
+## Tier QA Checklist
+
+1.  Free user calls `/api/proxy/global-chat` and receives `PRO_REQUIRED` (402).
+2.  Free user calls `/api/proxy/prediction-engine` and receives `PRO_REQUIRED` (402).
+3.  Free user calls `/api/proxy/exam-generator` and receives `PRO_REQUIRED` (402).
+4.  Pro user can call `global-chat`, `prediction-engine`, and `exam-generator`.
+5.  Free user chat calls consume `messages_per_day` quota atomically.
+6.  Concurrent free chat requests cannot bypass daily limits.
+7.  `generate-knowledge` consumes `knowledge_generations_per_day`.
+8.  `generate-prompt-starters` consumes `prompt_starters_per_day`.
+9.  Upload initiate/complete rejects files larger than 50MB when `upload_100mb=false`.
+10. Upload initiate/complete allows up to 100MB when `upload_100mb=true`.
+11. Free user hits lifetime document quota at 4 uploads and receives `LIMIT_REACHED`.
+12. Pro user hits lifetime document quota at 10 uploads and receives `LIMIT_REACHED`.
+13. Repeated `complete` for the same document does not double-consume upload quota.
+14. Limit hits insert rows into `limit_events` with `user_id`, `key`, `route`, `tier`.
+15. Upgrade modal opens from structured `PRO_REQUIRED` payload.
+16. Upgrade modal opens from structured `LIMIT_REACHED` payload.
+17. `/pricing` table reflects policy changes from `src/lib/tier/policy.ts` automatically.
+18. Settings page shows server-truth plan status from `/api/billing/status`.

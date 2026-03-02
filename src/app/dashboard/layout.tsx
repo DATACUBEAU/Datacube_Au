@@ -87,11 +87,12 @@ type NavItem = {
   isLoading?: boolean;
   tourId?: string;
   onClick?: () => void;
-  badge?: number;
+  badge?: number | string;
+  proOnly?: boolean;
 };
 
 // --- Memoized Sidebar Nav Menu ---
-const SidebarNavMenu = ({ navItems, pathname }: { navItems: NavItem[]; pathname: string }) => (
+const SidebarNavMenu = ({ navItems, pathname, isProUnlocked }: { navItems: NavItem[]; pathname: string; isProUnlocked: boolean }) => (
   <SidebarContent className="p-2">
     <SidebarMenu>
       {navItems.map((item: NavItem) => (
@@ -107,9 +108,14 @@ const SidebarNavMenu = ({ navItems, pathname }: { navItems: NavItem[]; pathname:
               <button className="flex items-center gap-2 w-full h-full">
                 {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
                 <span>{item.label}</span>
+                {item.proOnly && !isProUnlocked ? (
+                    <span className="ml-auto rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                      PRO
+                    </span>
+                ) : null}
                 {item.badge ? (
                     <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
-                        {item.badge > 9 ? '9+' : item.badge}
+                        {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
                     </span>
                 ) : null}
               </button>
@@ -117,9 +123,14 @@ const SidebarNavMenu = ({ navItems, pathname }: { navItems: NavItem[]; pathname:
               <Link href={item.href} prefetch className="flex items-center gap-2 w-full h-full">
                 {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
                 <span className="flex-1">{item.label}</span>
+                {item.proOnly && !isProUnlocked ? (
+                    <span className="ml-auto rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                      PRO
+                    </span>
+                ) : null}
                 {item.badge ? (
                     <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
-                        {item.badge > 9 ? '9+' : item.badge}
+                        {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
                     </span>
                 ) : null}
               </Link>
@@ -355,6 +366,10 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     return 'Free';
   }, [isBillingDisabled, normalizedPlanTier]);
 
+  const isProUnlocked = useMemo(() => {
+    return normalizedPlanTier === 'pro' || normalizedPlanTier === 'admin' || normalizedPlanTier === 'premium';
+  }, [normalizedPlanTier]);
+
   const planStatusMeta = useMemo(() => {
     if (isBillingDisabled) return 'Promo mode: premium unlocked for all users';
     if (!planExpiresAt) return 'No expiry set';
@@ -409,11 +424,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         href: '/dashboard/global-chat',
         icon: Globe,
         label: 'Global Chat',
+        proOnly: true,
       },
       { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge },
       { href: '/dashboard/messages', icon: Inbox, label: 'Messages', badge: unreadCount > 0 ? unreadCount : undefined },
-      { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section' },
-      { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section' },
+      { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section', proOnly: true },
+      { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section', proOnly: true },
       { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
       { href: '/dashboard/settings/subscription', icon: CreditCard, label: 'Subscription' },
     ];
@@ -553,7 +569,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const handler = (event: any) => {
       const detail = event?.detail;
-      if (detail?.code === 'UPGRADE_REQUIRED') {
+      const code = String(detail?.code || '').toUpperCase();
+      if (['UPGRADE_REQUIRED', 'PRO_REQUIRED', 'LIMIT_REACHED', 'LIMIT_EXCEEDED'].includes(code)) {
         setUpgradeModalOpen(true, detail);
       }
     };
@@ -846,7 +863,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               </Link>
             </SidebarHeader>
 
-            <SidebarNavMenu navItems={navItems} pathname={pathname} />
+            <SidebarNavMenu navItems={navItems} pathname={pathname} isProUnlocked={isProUnlocked} />
             <SidebarFooterMenu
               footerItems={footerItems}
               isOnline={isOnline}
