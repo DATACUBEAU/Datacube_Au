@@ -657,14 +657,15 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
       if (action === 'complete') {
         await enforceConcurrentJobLimitOrThrow({ supabase, userId, tierContext });
         appliedGuards.push('limit:max_jobs_concurrent');
-        await enforceDocumentUploadQuotaOrThrow({
-          supabase,
-          userId,
-          tierContext,
-          documentId: String(body?.documentId || ''),
-          route: requestPath,
-        });
-        appliedGuards.push('quota:max_documents_uploaded_total');
+        // Quota enforcement moved to finalize_document_upload (RPC)
+        // await enforceDocumentUploadQuotaOrThrow({
+        //   supabase,
+        //   userId,
+        //   tierContext,
+        //   documentId: String(body?.documentId || ''),
+        //   route: requestPath,
+        // });
+        // appliedGuards.push('quota:max_documents_uploaded_total');
       }
     }
   }

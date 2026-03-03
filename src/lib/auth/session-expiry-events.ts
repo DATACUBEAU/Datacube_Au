@@ -166,12 +166,12 @@ export function dispatchSessionExpired(detail?: {
 }): void {
   if (typeof window === 'undefined') return;
 
-  const now = Date.now();
   const state = getAuthRuntimeState();
-  if (state === 'EXPIRED' && now - lastDispatchAt < DISPATCH_COOLDOWN_MS) {
+  if (state === 'EXPIRED' || state === 'REAUTH_IN_PROGRESS') {
     return;
   }
 
+  const now = Date.now();
   if (now - lastDispatchAt < DISPATCH_COOLDOWN_MS && state !== 'AUTHENTICATED') {
     return;
   }

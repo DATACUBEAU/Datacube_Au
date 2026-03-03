@@ -13,22 +13,21 @@ export function AuthLockOverlay() {
   const { user, session, isAuthLocked, runtimeAuthState, startReauth } = useSmartAuth();
   const [isRedirecting, setIsRedirecting] = useState(false);
   const actionButtonRef = useRef<HTMLButtonElement | null>(null);
+  const lastVisibleRef = useRef<boolean>(false);
 
   const shouldShow = isAuthLocked && !pathname?.startsWith('/login');
 
   useEffect(() => {
-    if (!shouldShow) return;
-    actionButtonRef.current?.focus();
     const appShell = document.getElementById('app-shell');
-    if (appShell) {
-      appShell.setAttribute('aria-hidden', 'true');
-      (appShell as any).inert = true;
+    if (shouldShow) {
+      actionButtonRef.current?.focus();
+      if (appShell) {
+        appShell.setAttribute('aria-hidden', 'true');
+        (appShell as any).inert = true;
+      }
+      document.body.style.overflow = 'hidden';
     }
-    document.body.style.overflow = 'hidden';
-    console.info('[auth-overlay] shown', {
-      runtimeAuthState,
-      pathname,
-    });
+
     return () => {
       if (appShell) {
         appShell.removeAttribute('aria-hidden');
@@ -36,12 +35,15 @@ export function AuthLockOverlay() {
       }
       document.body.style.overflow = '';
     };
-  }, [runtimeAuthState, pathname, shouldShow]);
+  }, [shouldShow]);
 
   useEffect(() => {
-    if (shouldShow) return;
-    setIsRedirecting(false);
-    console.info('[auth-overlay] hidden', {
+    if (lastVisibleRef.current === shouldShow) return;
+    lastVisibleRef.current = shouldShow;
+    if (!shouldShow) {
+      setIsRedirecting(false);
+    }
+    console.info(shouldShow ? '[auth-overlay] shown' : '[auth-overlay] hidden', {
       runtimeAuthState,
       pathname,
     });

@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
+import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   AUTH_STATE_CHANGED_EVENT,
   clearAuthActionsDisabled,
@@ -38,6 +39,7 @@ interface SmartAuthContextType {
 }
 
 const SmartAuthContext = createContext<SmartAuthContextType | undefined>(undefined);
+const SESSION_EXPIRY_SKEW_MS = 5_000;
 
 export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<SmartUser | null>(null);
@@ -66,22 +68,33 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     return `${nextSession.user.id}:${tokenTail}:${expires}`;
   }, []);
 
+  const normalizeSession = useCallback((candidate: Session | null): Session | null => {
+    if (!candidate?.user?.id || !candidate?.access_token) return null;
+    const expiresAt = typeof candidate.expires_at === 'number' ? candidate.expires_at : null;
+    if (expiresAt !== null && expiresAt * 1000 <= Date.now() + SESSION_EXPIRY_SKEW_MS) {
+      return null;
+    }
+    return candidate;
+  }, []);
+
   const applySessionState = useCallback(
     (nextSession: Session | null, options?: { offlineBootstrap?: boolean; force?: boolean }) => {
-      const signature = signatureFromSession(nextSession);
+      const normalizedSession = normalizeSession(nextSession);
+      const signature = signatureFromSession(normalizedSession);
       if (!options?.force && signature && signature === sessionSignatureRef.current) {
         return;
       }
 
       sessionSignatureRef.current = signature;
-      setSession(nextSession);
-      setUser(sessionToUser(nextSession));
-      const nextAuthState = nextSession?.user ? 'authenticated' : 'unauthenticated';
+      syncServerAuthSessionCookie(normalizedSession);
+      setSession(normalizedSession);
+      setUser(sessionToUser(normalizedSession));
+      const nextAuthState = normalizedSession?.user ? 'authenticated' : 'unauthenticated';
       authStateRef.current = nextAuthState;
       setAuthState(nextAuthState);
-      setIsOfflineSession(Boolean(options?.offlineBootstrap && nextSession?.user));
+      setIsOfflineSession(Boolean(options?.offlineBootstrap && normalizedSession?.user));
     },
-    [sessionToUser, signatureFromSession],
+    [normalizeSession, sessionToUser, signatureFromSession],
   );
 
   useEffect(() => {

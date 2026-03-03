@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase-client/client';
 import { clearClientAuthStorageArtifacts, clearUserScopedClientCaches } from '@/lib/auth/session-storage';
 import { clearAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
+import { clearServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 
 export async function explicitSignOut(
   userId?: string | null,
@@ -22,6 +23,7 @@ export async function explicitSignOut(
 
   await clearUserScopedClientCaches(userId ?? null);
   clearClientAuthStorageArtifacts();
+  clearServerAuthSessionCookie();
 
   try {
     await supabase.auth.signOut({ scope: 'local' });
@@ -34,6 +36,7 @@ export async function explicitSignOut(
   }
 
   clearClientAuthStorageArtifacts();
+  clearServerAuthSessionCookie();
   if (!options?.preserveAuthLock) {
     clearAuthActionsDisabled();
   }

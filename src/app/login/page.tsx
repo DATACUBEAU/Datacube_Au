@@ -15,7 +15,8 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
+import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
+import { hasServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { explicitSignOut } from '@/lib/auth/explicit-signout';
 
 export default function LoginPage() {
   const { signInWithGoogle, isLoading: isSmartLoading } = useSmartAuth();
@@ -65,14 +67,33 @@ export default function LoginPage() {
     const resolveRedirect = async () => {
       try {
         setIsResolvingRedirect(true);
+        const token = await getSupabaseAccessToken();
+        if (!token) {
+          await explicitSignOut(user?.id ?? null);
+          if (!cancelled) {
+            setIsResolvingRedirect(false);
+          }
+          return;
+        }
+
+        const { data: validated, error: validateError } = await supabase.auth.getUser(token);
+        if (validateError || !validated?.user?.id) {
+          await explicitSignOut(user?.id ?? null);
+          if (!cancelled) {
+            setIsResolvingRedirect(false);
+          }
+          return;
+        }
+
+        if (!hasServerAuthSessionCookie()) {
+          await explicitSignOut(user?.id ?? null);
+          if (!cancelled) {
+            setIsResolvingRedirect(false);
+          }
+          return;
+        }
 
         if (safeRedirectPath.startsWith('/conex')) {
-          const token = await getSupabaseAccessToken();
-          if (!token) {
-            setIsResolvingRedirect(false);
-            return;
-          }
-
           const res = await fetch('/conex/users?mode=access', {
             method: 'GET',
             headers: {
@@ -95,7 +116,10 @@ export default function LoginPage() {
           }
 
           if (res.status === 401) {
-            router.replace('/login?redirectTo=/conex');
+            await explicitSignOut(user?.id ?? null);
+            if (!cancelled) {
+              setIsResolvingRedirect(false);
+            }
             return;
           }
 
@@ -105,7 +129,10 @@ export default function LoginPage() {
 
         router.replace(safeRedirectPath);
       } catch {
-        if (!cancelled) router.replace('/dashboard');
+        await explicitSignOut(user?.id ?? null);
+        if (!cancelled) {
+          setIsResolvingRedirect(false);
+        }
       }
     };
 
