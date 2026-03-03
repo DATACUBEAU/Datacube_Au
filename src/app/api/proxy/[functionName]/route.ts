@@ -84,6 +84,14 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   return Math.floor(parsed);
 }
 
+function correlationIdFromBody(body: any): string | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null;
+  const candidate =
+    String(body?.correlationId || body?.correlation_id || body?.uploadId || body?.upload_id || body?.jobId || '')
+      .trim();
+  return candidate.length > 0 ? candidate : null;
+}
+
 function isProxyDebugEnabled(): boolean {
   return process.env.PROXY_DEBUG === '1';
 }
@@ -398,6 +406,7 @@ async function writeRoutingAudit(
 async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ functionName: string }> }) {
   const { functionName } = await params;
   const requestId = crypto.randomUUID();
+  let correlationId = req.headers.get('x-correlation-id')?.trim() || requestId;
   const proxyDebugEnabled = isProxyDebugEnabled();
   const requestPath = req.nextUrl.pathname;
   const requestMethod = req.method;
@@ -452,6 +461,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     console.info('[proxy] request received', {
       requestId,
+      correlationId,
       method: requestMethod,
       path: requestPath,
       upstreamUrl: targetUrl.toString(),
@@ -507,6 +517,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
     }
 
+    const bodyCorrelationId = correlationIdFromBody(parsedBody);
+    if (bodyCorrelationId) correlationId = bodyCorrelationId;
+    headers.set('x-correlation-id', correlationId);
+
     if (routeWithModelSelector) {
       if (String(parsedBody?.action || '').toLowerCase() === 'get_models') {
         routeWithModelSelector = false;
@@ -561,6 +575,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       const message = messageFromFailure(response.status, details, response.statusText);
       console.error('[proxy] edge function failed', {
         requestId,
+        correlationId,
         functionName,
         userId: auth.userId,
         status: response.status,
@@ -608,6 +623,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           error: message,
           status: response.status,
           requestId,
+          correlation_id: correlationId,
           details,
         },
         { status: response.status, headers: outHeaders },
@@ -692,6 +708,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             if (proxyDebugEnabled) {
               console.info('[proxy] upstream success', {
                 requestId,
+                correlationId,
                 method: requestMethod,
                 path: requestPath,
                 upstreamUrl: targetUrl.toString(),
@@ -704,6 +721,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             } else {
               console.info('[proxy] upstream success', {
                 requestId,
+                correlationId,
                 method: requestMethod,
                 path: requestPath,
                 upstreamUrl: targetUrl.toString(),
@@ -750,6 +768,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           error: 'routing_failed',
           status: 503,
           requestId,
+          correlation_id: correlationId,
           details: { reason: 'No candidate succeeded.' },
         },
         { status: 503, headers: corsHeaders(requestId) },
@@ -775,6 +794,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     if (proxyDebugEnabled) {
       console.info('[proxy] upstream success', {
         requestId,
+        correlationId,
         method: requestMethod,
         path: requestPath,
         upstreamUrl: targetUrl.toString(),
@@ -787,6 +807,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     } else {
       console.info('[proxy] upstream success', {
         requestId,
+        correlationId,
         method: requestMethod,
         path: requestPath,
         upstreamUrl: targetUrl.toString(),
@@ -814,6 +835,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           error: 'upstream_timeout',
           status: 504,
           requestId,
+          correlation_id: correlationId,
           details: {
             timeoutMs: error.timeoutMs,
             upstreamUrl: error.upstreamUrl,
@@ -826,6 +848,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     const message = String(error?.message || 'Unknown error');
     console.error('[proxy] unexpected error', {
       requestId,
+      correlationId,
       functionName,
       method: requestMethod,
       path: requestPath,
@@ -839,6 +862,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         error: 'internal_server_error',
         status: 500,
         requestId,
+        correlation_id: correlationId,
         details: truncateForLog(message),
       },
       { status: 500, headers: corsHeaders(requestId) },

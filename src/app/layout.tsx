@@ -8,6 +8,8 @@ import { SmartAuthProvider } from '@/hooks/use-smart-auth';
 import { NetworkStatusProvider } from '@/components/providers/network-status-provider';
 import { FeatureFlagProvider } from '@/components/feature-flag-provider';
 import { LimitsProvider } from '@/components/providers/limits-provider';
+import { AuthLockOverlay } from '@/components/auth-lock-overlay';
+import { SessionDebugPanel } from '@/components/session-debug-panel';
 import './globals.css';
 
 const APP_NAME = 'DataCube AU';
@@ -63,6 +65,8 @@ export default function RootLayout({
                     <div className="relative z-10">
                       <UploadJobsProvider>{children}</UploadJobsProvider>
                       <GlobalListeners />
+                      <AuthLockOverlay />
+                      <SessionDebugPanel />
                       <Toaster />
                     </div>
                   </div>

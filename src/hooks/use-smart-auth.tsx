@@ -5,7 +5,13 @@ import { supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { clearAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
+import {
+  AUTH_STATE_CHANGED_EVENT,
+  clearAuthActionsDisabled,
+  getAuthRuntimeState,
+  markReauthInProgress,
+  type AuthRuntimeState,
+} from '@/lib/auth/session-expiry-events';
 
 interface SmartUser {
   id: string;
@@ -19,12 +25,15 @@ interface SmartAuthContextType {
   user: SmartUser | null;
   session: Session | null;
   authState: 'loading' | 'authenticated' | 'unauthenticated';
+  runtimeAuthState: AuthRuntimeState;
   isOfflineSession: boolean;
+  isAuthLocked: boolean;
   isAuthed: boolean;
   isLoadingAuth: boolean;
   isLoading: boolean;
   signInWithGoogle: (redirectPath?: string) => Promise<void>;
   signOut: () => Promise<void>;
+  startReauth: (source?: string) => void;
   getToken: () => Promise<string | null>;
 }
 
@@ -35,6 +44,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [isOfflineSession, setIsOfflineSession] = useState(false);
+  const [runtimeAuthState, setRuntimeAuthState] = useState<AuthRuntimeState>('AUTHENTICATED');
   const sessionSignatureRef = useRef<string | null>(null);
   const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>('loading');
 
@@ -75,6 +85,14 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   useEffect(() => {
+    setRuntimeAuthState(getAuthRuntimeState());
+    const handleRuntimeAuthStateChange = (event: Event) => {
+      const detail = (event as CustomEvent)?.detail || {};
+      const next = typeof detail?.next === 'string' ? detail.next : getAuthRuntimeState();
+      setRuntimeAuthState(next as AuthRuntimeState);
+    };
+    window.addEventListener(AUTH_STATE_CHANGED_EVENT, handleRuntimeAuthStateChange as EventListener);
+
     let mounted = true;
     const recordSignIn = (userId: string) => {
       void (async () => {
@@ -201,6 +219,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       subscription.unsubscribe();
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener(AUTH_STATE_CHANGED_EVENT, handleRuntimeAuthStateChange as EventListener);
     };
   }, [applySessionState]);
 
@@ -236,6 +255,11 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     applySessionState(null, { force: true });
   }, [applySessionState, session?.user?.id]);
 
+  const startReauth = useCallback((source?: string) => {
+    markReauthInProgress(source || 'useSmartAuth.startReauth');
+    setRuntimeAuthState('REAUTH_IN_PROGRESS');
+  }, []);
+
   const getToken = useCallback(async () => {
     // If we have a session in state, use it (it's kept up to date by the listener)
     if (session?.access_token) return session.access_token;
@@ -248,21 +272,38 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
   const isAuthed = authState === 'authenticated';
   const isLoading = authState === 'loading';
+  const isAuthLocked = runtimeAuthState === 'EXPIRED' || runtimeAuthState === 'REAUTH_IN_PROGRESS';
 
   const value = useMemo(
     () => ({
       user,
       session,
       authState,
+      runtimeAuthState,
       isOfflineSession,
+      isAuthLocked,
       isAuthed,
       isLoadingAuth: isLoading,
       isLoading,
       signInWithGoogle,
       signOut,
+      startReauth,
       getToken,
     }),
-    [user, session, authState, isOfflineSession, isAuthed, isLoading, signInWithGoogle, signOut, getToken]
+    [
+      user,
+      session,
+      authState,
+      runtimeAuthState,
+      isOfflineSession,
+      isAuthLocked,
+      isAuthed,
+      isLoading,
+      signInWithGoogle,
+      signOut,
+      startReauth,
+      getToken,
+    ]
   );
 
   return (

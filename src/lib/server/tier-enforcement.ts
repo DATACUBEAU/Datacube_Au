@@ -86,7 +86,14 @@ function defaultTierContext(): TierContext {
 function isUndefinedFunctionError(error: any): boolean {
   const code = String(error?.code || '').trim();
   const message = String(error?.message || '').toLowerCase();
-  return code === '42883' || message.includes('function') && message.includes('does not exist');
+  const details = String(error?.details || '').toLowerCase();
+  return (
+    code === '42883' ||
+    code === 'PGRST202' ||
+    (message.includes('function') && message.includes('does not exist')) ||
+    (message.includes('schema cache') && message.includes('function')) ||
+    (details.includes('schema cache') && details.includes('function'))
+  );
 }
 
 function isUndefinedColumnError(error: any): boolean {
@@ -194,6 +201,10 @@ async function consumeQuotaOrThrow(input: {
   } catch (error: any) {
     if (isUndefinedFunctionError(error)) {
       // Safety fallback for environments not migrated yet: skip new quota enforcement.
+      console.warn('[tier-access] Missing quota RPC, skipping consume_quota_counter.', {
+        code: error?.code || null,
+        message: error?.message || null,
+      });
       return;
     }
     throw error;
@@ -327,6 +338,10 @@ async function enforceDocumentUploadQuotaOrThrow(input: {
     );
   } catch (error: any) {
     if (isUndefinedFunctionError(error)) {
+      console.warn('[tier-access] Missing upload-quota RPC, falling back to consume_quota_counter.', {
+        code: error?.code || null,
+        message: error?.message || null,
+      });
       await consumeQuotaOrThrow({
         supabase: input.supabase,
         userId: input.userId,

@@ -64,8 +64,11 @@ export async function initiateUpload(
     fileSize: number;
     documentType: string;
     jobId: string;
+    uploadId?: string;
+    correlationId?: string;
     documentId: string;
     parentId?: string;
+    parentDocumentId?: string;
     metadata?: any;
   },
   accessToken?: string
@@ -73,6 +76,7 @@ export async function initiateUpload(
   const { data, error } = await invokeEdgeFunction('document-upload', {
     method: 'POST',
     requireAuth: true,
+    headers: metadata.correlationId ? { 'x-correlation-id': metadata.correlationId } : undefined,
     body: {
       action: 'initiate',
       ...metadata
@@ -80,9 +84,18 @@ export async function initiateUpload(
   });
 
   if (error) {
-    console.error('[API] initiateUpload error:', error);
-    // Mimic the error object structure expected by callers if needed, or just throw
-    throw error;
+    const message = String(error?.message || 'Upload initiation failed');
+    const wrapped = new Error(message);
+    (wrapped as any).status = error?.status;
+    (wrapped as any).code = error?.details?.code || error?.code || null;
+    (wrapped as any).details = error?.details || null;
+    console.error('[API] initiateUpload error:', {
+      status: (wrapped as any).status,
+      code: (wrapped as any).code,
+      message,
+      details: (wrapped as any).details,
+    });
+    throw wrapped;
   }
 
   return data;
@@ -96,9 +109,13 @@ export async function completeUpload(
   metadata: {
     documentId: string;
     jobId: string;
+    uploadId?: string;
+    correlationId?: string;
     fileName: string;
     fileSize: number;
     mimeType?: string;
+    path?: string;
+    bucket?: string;
     metadata?: any;
   },
   accessToken?: string
@@ -106,6 +123,7 @@ export async function completeUpload(
   const { data, error } = await invokeEdgeFunction('document-upload', {
     method: 'POST',
     requireAuth: true,
+    headers: metadata.correlationId ? { 'x-correlation-id': metadata.correlationId } : undefined,
     body: {
       action: 'complete',
       ...metadata
@@ -113,8 +131,18 @@ export async function completeUpload(
   });
 
   if (error) {
-    console.error('[API] completeUpload error:', error);
-    throw error;
+    const message = String(error?.message || 'Upload completion failed');
+    const wrapped = new Error(message);
+    (wrapped as any).status = error?.status;
+    (wrapped as any).code = error?.details?.code || error?.code || null;
+    (wrapped as any).details = error?.details || null;
+    console.error('[API] completeUpload error:', {
+      status: (wrapped as any).status,
+      code: (wrapped as any).code,
+      message,
+      details: (wrapped as any).details,
+    });
+    throw wrapped;
   }
 
   return data;

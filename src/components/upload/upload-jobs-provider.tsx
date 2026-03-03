@@ -22,6 +22,7 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { guardRequest } from '@/lib/api/request-guard';
 import { useLimits } from '@/components/providers/limits-provider';
 import { extractLimitExceededPayload } from '@/lib/limits/limit-errors';
+import { isRetryableUploadError } from '@/lib/upload/retry-policy';
 
 type UploadJobsContextValue = {
   jobs: UploadJobRow[];
@@ -525,6 +526,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       controllersRef.current.set(job.id, controller);
 
       try {
+        const correlationId = job.id;
         const gate = guardRequest({
           isOnline,
           requireAuth: true,
@@ -576,7 +578,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         updateJobLocal(job.id, { status: 'uploading', progress: 5 });
 
         // 4. Initiate Upload (Server-side validation)
-        console.log(`[upload-jobs] Initiating upload for ${job.id}...`);
+        console.log(`[upload-jobs] [${correlationId}] Initiating upload for ${job.id}...`);
         const initResult = await initiateUpload(
             user, 
             {
@@ -584,6 +586,8 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
                 fileSize: file.size,
                 documentType: effectiveDocumentType,
                 jobId: job.id,
+                uploadId: job.id,
+                correlationId,
                 documentId: job.document_id,
                 parentId: effectiveParentId,
             },
@@ -602,7 +606,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           : new File([file], file.name, { type: uploadMimeType, lastModified: file.lastModified });
 
         // 5. Upload File (PUT to Signed URL)
-        console.log(`[upload-jobs] Uploading to Signed URL...`);
+        console.log(`[upload-jobs] [${correlationId}] Uploading to Signed URL...`);
         updateJobLocal(job.id, { status: 'uploading', progress: 10 });
 
         let uploaded = false;
@@ -645,15 +649,19 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         updateJobLocal(job.id, { progress: 90 });
 
         // 6. Complete Upload (Register Job)
-        console.log(`[upload-jobs] Completing upload...`);
+        console.log(`[upload-jobs] [${correlationId}] Completing upload...`);
         const completeResult = await completeUpload(
             user,
             {
                 documentId: job.document_id,
                 jobId: job.id,
+                uploadId: job.id,
+                correlationId,
                 fileName: job.file_name,
                 fileSize: file.size,
-                mimeType: uploadMimeType
+                mimeType: uploadMimeType,
+                path: initResult.path,
+                bucket: bucketName,
             },
             accessToken || undefined
         );
@@ -662,7 +670,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
             throw new Error((completeResult as any).error || "Upload completion failed");
         }
 
-        console.log(`[upload-jobs] Registration success for ${job.id}.`);
+        console.log(`[upload-jobs] [${correlationId}] Registration success for ${job.id}.`);
 
         updateJobLocal(job.id, {
           status: 'queued',
@@ -683,21 +691,32 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           reportServerLimitError(limitPayload);
         }
 
-        const errorMsg = e.message || '';
+        const errorMsg = e?.message || '';
+        const errorStatus = typeof e?.status === 'number' ? e.status : Number((e as any)?.details?.status || 0);
+        const errorCode = String((e as any)?.code || (e as any)?.details?.code || '').trim().toLowerCase();
 
         if (e.isThrottled) {
           setIsThrottled(true);
         }
 
-        const isRetryable = !limitPayload && (
-          errorMsg.includes('storage_error') ||
-          errorMsg.includes('server_error') ||
-          e.status >= 500
-        );
+        const isRetryable = !limitPayload && isRetryableUploadError({
+          status: errorStatus,
+          code: errorCode,
+          message: errorMsg,
+          details: (e as any)?.details || null,
+        });
 
         if (isRetryable && retryAttempt < 3) {
           const delay = Math.pow(2, retryAttempt) * 1000;
-          console.warn(`[upload-jobs] Retryable error, attempt ${retryAttempt + 1} in ${delay}ms:`, errorMsg);
+          console.warn(
+            `[upload-jobs] Retryable error, attempt ${retryAttempt + 1} in ${delay}ms:`,
+            {
+              message: errorMsg,
+              status: errorStatus || null,
+              code: errorCode || null,
+              details: (e as any)?.details || null,
+            },
+          );
           
           await new Promise(resolve => setTimeout(resolve, delay));
           runningRef.current.delete(job.id);

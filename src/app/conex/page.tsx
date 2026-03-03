@@ -28,22 +28,62 @@ import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { AdminPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
+import {
+  buildPromoCopy,
+  DEFAULT_PROMO_CONTENT_CONFIG,
+  formatPromoEndsAtLabel,
+  normalizePromoContentConfig,
+  toPromoContentDraft,
+  validatePromoContentDraft,
+  type PromoContentDraft,
+} from '@/lib/conex/promo-content';
+import {
+  formatPlanLabel,
+  orderPlanKeys,
+  parsePlanLimitsPayload,
+  sanitizeLimitInput,
+  toPlanLimitDraftByPlan,
+  validatePlanLimitDraft,
+  type PlanLimitDraftByPlan,
+  type PlanLimitsByPlan,
+} from '@/lib/conex/plan-management';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PROMO_CONTENT_FLAG_KEY = 'promo_content';
+const FALLBACK_PLAN_KEYS = ['free', 'pro', 'premium'] as const;
+const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> = [
+  { key: 'max_file_mb', label: 'Max file size (MB)', description: 'Per-file upload size limit.' },
+  { key: 'max_uploads_total', label: 'Max uploads total', description: 'Total uploads allowed for the account.' },
+  { key: 'max_docs_total', label: 'Max documents total', description: 'Total documents stored for the account.' },
+  { key: 'max_chats_total', label: 'Max chats total', description: 'Total chat messages allowed.' },
+  { key: 'max_exams_total', label: 'Max exams total', description: 'Total generated exams allowed.' },
+  { key: 'max_tokens_total', label: 'Max tokens total', description: 'Total token budget for AI usage.' },
+  { key: 'max_storage_mb', label: 'Max storage (MB)', description: 'Storage cap across all uploaded files.' },
+  { key: 'max_jobs_concurrent', label: 'Max concurrent jobs', description: 'Maximum simultaneous ingestion jobs.' },
+];
+const LIMIT_FIELD_KEYS = LIMIT_FIELDS.map((field) => field.key);
 
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
-  const [planLimitsByPlan, setPlanLimitsByPlan] = useState<Record<string, Record<string, any>>>({});
-  const [selectedPlan, setSelectedPlan] = useState<'free' | 'pro' | 'premium'>('free');
+  const [planLimitsByPlan, setPlanLimitsByPlan] = useState<PlanLimitsByPlan>({});
+  const [planLimitDraftByPlan, setPlanLimitDraftByPlan] = useState<PlanLimitDraftByPlan>({});
+  const [planOptions, setPlanOptions] = useState<string[]>([...FALLBACK_PLAN_KEYS]);
+  const [selectedPlan, setSelectedPlan] = useState<string>('free');
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [savingPlanLimits, setSavingPlanLimits] = useState(false);
+  const [savingPromoContent, setSavingPromoContent] = useState(false);
   const [flagQuery, setFlagQuery] = useState('');
   const [flagCategory, setFlagCategory] = useState('all');
   const [modelRoutingDebug, setModelRoutingDebug] = useState<any>(null);
+  const [promoDraft, setPromoDraft] = useState<PromoContentDraft>(() => toPromoContentDraft(DEFAULT_PROMO_CONTENT_CONFIG));
   const { toast } = useToast();
   const { records: featureFlagRecords, setFlag, refreshFlags } = useFeatureFlags();
   const isFetchingRef = useRef(false);
+  const limitDirtyRef = useRef(false);
+  const promoDirtyRef = useRef(false);
+  const limitsSaveVersionRef = useRef(0);
 
   const normalizeConexConfig = useCallback((raw: any) => ({
     ...raw,
@@ -61,17 +101,6 @@ const AdminBilling = ({ token }: { token: string }) => {
         ? raw.stripe_price_monthly
         : (typeof raw?.stripe_price_monthly_id === 'string' ? raw.stripe_price_monthly_id : ''),
   }), []);
-
-  const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> = [
-    { key: 'max_file_mb', label: 'Max file size (MB)', description: 'Per-file upload size limit.' },
-    { key: 'max_uploads_total', label: 'Max uploads total', description: 'Total uploads allowed for the account.' },
-    { key: 'max_docs_total', label: 'Max documents total', description: 'Total documents stored for the account.' },
-    { key: 'max_chats_total', label: 'Max chats total', description: 'Total chat messages allowed.' },
-    { key: 'max_exams_total', label: 'Max exams total', description: 'Total generated exams allowed.' },
-    { key: 'max_tokens_total', label: 'Max tokens total', description: 'Total token budget for AI usage.' },
-    { key: 'max_storage_mb', label: 'Max storage (MB)', description: 'Storage cap across all uploaded files.' },
-    { key: 'max_jobs_concurrent', label: 'Max concurrent jobs', description: 'Maximum simultaneous ingestion jobs.' },
-  ];
 
   const fetchConfig = useCallback(async (opts?: { silent?: boolean }) => {
     if (isFetchingRef.current) {
@@ -97,16 +126,29 @@ const AdminBilling = ({ token }: { token: string }) => {
       });
       if (planLimitsRes.ok) {
         const payload = (planLimitsRes as any).data || (planLimitsRes as any);
-        const nextMap = (payload?.limitsByPlan && typeof payload.limitsByPlan === 'object')
-          ? payload.limitsByPlan
-          : {};
-        const normalizedMap: Record<string, Record<string, any>> = {};
-        for (const plan of ['free', 'pro', 'premium']) {
-          normalizedMap[plan] = {
-            ...((nextMap as any)?.[plan]?.limits || {}),
-          };
+        const parsed = parsePlanLimitsPayload(payload, LIMIT_FIELD_KEYS);
+        const fallbackLimitsByPlan: PlanLimitsByPlan = {};
+        for (const plan of FALLBACK_PLAN_KEYS) {
+          fallbackLimitsByPlan[plan] = parsed.limitsByPlan[plan] || Object.fromEntries(
+            LIMIT_FIELD_KEYS.map((key) => [key, null]),
+          );
         }
-        setPlanLimitsByPlan(normalizedMap);
+        const mergedLimitsByPlan =
+          Object.keys(parsed.limitsByPlan).length > 0
+            ? parsed.limitsByPlan
+            : fallbackLimitsByPlan;
+        const planKeys = orderPlanKeys(
+          Object.keys(mergedLimitsByPlan).length > 0
+            ? Object.keys(mergedLimitsByPlan)
+            : [...FALLBACK_PLAN_KEYS],
+        );
+
+        if (!opts?.silent || !limitDirtyRef.current) {
+          setPlanLimitsByPlan(mergedLimitsByPlan);
+          setPlanLimitDraftByPlan(toPlanLimitDraftByPlan(mergedLimitsByPlan, LIMIT_FIELD_KEYS));
+          setPlanOptions(planKeys);
+          setSelectedPlan((current) => (planKeys.includes(current) ? current : (planKeys[0] || 'free')));
+        }
       }
 
       const accessToken = await getSupabaseAccessToken();
@@ -197,8 +239,23 @@ const AdminBilling = ({ token }: { token: string }) => {
     }
   }, [featureFlagRecords, setFlag, toast]);
 
+  const persistedPromoConfig = useMemo(
+    () => normalizePromoContentConfig(featureFlagRecords[PROMO_CONTENT_FLAG_KEY]?.config || {}),
+    [featureFlagRecords],
+  );
+  const promoPreview = useMemo(() => {
+    const validated = validatePromoContentDraft(promoDraft);
+    const endsLabel = formatPromoEndsAtLabel(validated.config.promoEndsAtLagosIso);
+    return buildPromoCopy(validated.config, endsLabel);
+  }, [promoDraft]);
+
+  useEffect(() => {
+    if (promoDirtyRef.current) return;
+    setPromoDraft(toPromoContentDraft(persistedPromoConfig));
+  }, [persistedPromoConfig]);
+
   const handleSave = async (newConfig: any) => {
-    setSaving(true);
+    setSavingConfig(true);
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
@@ -212,14 +269,26 @@ const AdminBilling = ({ token }: { token: string }) => {
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
-        setSaving(false);
+        setSavingConfig(false);
     }
   };
 
-  const updateSelectedPlanLimit = useCallback((limitKey: string, value: number | null) => {
+  const updateSelectedPlanLimit = useCallback((limitKey: string, rawValue: string) => {
+    const sanitized = sanitizeLimitInput(rawValue);
+    limitDirtyRef.current = true;
+
+    setPlanLimitDraftByPlan((prev) => {
+      const currentPlanDraft = { ...(prev[selectedPlan] || {}) };
+      currentPlanDraft[limitKey] = sanitized;
+      return {
+        ...prev,
+        [selectedPlan]: currentPlanDraft,
+      };
+    });
+
     setPlanLimitsByPlan((prev) => {
       const currentPlanLimits = { ...(prev[selectedPlan] || {}) };
-      currentPlanLimits[limitKey] = value;
+      currentPlanLimits[limitKey] = sanitized === '' ? null : Number(sanitized);
       return {
         ...prev,
         [selectedPlan]: currentPlanLimits,
@@ -228,26 +297,56 @@ const AdminBilling = ({ token }: { token: string }) => {
   }, [selectedPlan]);
 
   const saveSelectedPlanLimits = useCallback(async () => {
-    const limits = planLimitsByPlan[selectedPlan] || {};
-    setSaving(true);
+    const validation = validatePlanLimitDraft(planLimitDraftByPlan, selectedPlan, LIMIT_FIELD_KEYS);
+    if (!validation.ok) {
+      toast({
+        title: 'Validation failed',
+        description: validation.errors[0] || 'Please use non-negative integer values only.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const nextLimits = {
+      ...(planLimitsByPlan[selectedPlan] || {}),
+      ...validation.limits,
+    };
+
+    setPlanLimitsByPlan((prev) => ({
+      ...prev,
+      [selectedPlan]: nextLimits,
+    }));
+    setPlanLimitDraftByPlan((prev) => ({
+      ...prev,
+      [selectedPlan]: {
+        ...(prev[selectedPlan] || {}),
+        ...validation.sanitizedDraft,
+      },
+    }));
+
+    const saveVersion = ++limitsSaveVersionRef.current;
+    setSavingPlanLimits(true);
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({
           action: 'update_plan_limits',
           plan: selectedPlan,
-          limits,
+          limits: nextLimits,
         }),
       });
       if (!res.ok) {
         const payload = (res as any).data || {};
         throw new Error(payload?.error || payload?.message || `Failed to save ${selectedPlan} limits`);
       }
-      toast({
-        title: 'Saved',
-        description: `${selectedPlan.toUpperCase()} limits updated.`,
-      });
-      void fetchConfig({ silent: true });
+      if (saveVersion === limitsSaveVersionRef.current) {
+        limitDirtyRef.current = false;
+        toast({
+          title: 'Saved',
+          description: `${formatPlanLabel(selectedPlan)} limits updated.`,
+        });
+        void fetchConfig({ silent: true });
+      }
     } catch (e: any) {
       toast({
         title: 'Save failed',
@@ -255,9 +354,48 @@ const AdminBilling = ({ token }: { token: string }) => {
         variant: 'destructive',
       });
     } finally {
-      setSaving(false);
+      if (saveVersion === limitsSaveVersionRef.current) {
+        setSavingPlanLimits(false);
+      }
     }
-  }, [fetchConfig, planLimitsByPlan, selectedPlan, toast]);
+  }, [fetchConfig, planLimitDraftByPlan, planLimitsByPlan, selectedPlan, toast]);
+
+  const savePromoContent = useCallback(async () => {
+    const validated = validatePromoContentDraft(promoDraft);
+    if (!validated.ok) {
+      toast({
+        title: 'Validation failed',
+        description: validated.errors[0] || 'Please review promo content fields.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    const record = featureFlagRecords[PROMO_CONTENT_FLAG_KEY];
+    setSavingPromoContent(true);
+    try {
+      await setFlag(PROMO_CONTENT_FLAG_KEY, true, {
+        category: record?.category || 'billing',
+        description: record?.description || 'Editable promotional banner copy and pricing metadata.',
+        scope: record?.scope || 'global',
+        config: validated.config,
+      });
+      promoDirtyRef.current = false;
+      setPromoDraft(toPromoContentDraft(validated.config));
+      toast({
+        title: 'Saved',
+        description: 'Promotional message updated and synced.',
+      });
+    } catch (e: any) {
+      toast({
+        title: 'Save failed',
+        description: e?.message || String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingPromoContent(false);
+    }
+  }, [featureFlagRecords, promoDraft, setFlag, toast]);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -300,8 +438,8 @@ const AdminBilling = ({ token }: { token: string }) => {
                 <div className="space-y-6">
                     <div className="flex items-center justify-between">
                         <h3 className="text-lg font-medium">Billing Controls</h3>
-                        <Button onClick={() => handleSave(config)} disabled={saving}>
-                            {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                        <Button onClick={() => handleSave(config)} disabled={savingConfig}>
+                            {savingConfig ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                             Save Non-Flag Config
                         </Button>
                     </div>
@@ -352,6 +490,121 @@ const AdminBilling = ({ token }: { token: string }) => {
                                     </div>
                                     <Switch checked={featureFlagRecords.paid_mode_enabled?.enabled ?? false} onCheckedChange={(c) => void setFeatureFlag('paid_mode_enabled', c)} />
                                 </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Promo Content</CardTitle>
+                                <CardDescription>
+                                  Edit the promotional copy shown across upgrade and subscription UI. Use placeholders:
+                                  {' '}
+                                  <code>{'{effectiveDate}'}</code>, <code>{'{monthlyPrice}'}</code>, <code>{'{weeklyPrice}'}</code>, <code>{'{promoEndsAt}'}</code>, <code>{'{timezone}'}</code>.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              <div className="grid gap-4 md:grid-cols-2">
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>Intro text</Label>
+                                  <Input
+                                    value={promoDraft.introText}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, introText: e.target.value }));
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Effective date label</Label>
+                                  <Input
+                                    value={promoDraft.effectiveDateLabel}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, effectiveDateLabel: e.target.value }));
+                                    }}
+                                    placeholder="April 2nd, 2026"
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Promo ends at (ISO-like)</Label>
+                                  <Input
+                                    value={promoDraft.promoEndsAtLagosIso}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, promoEndsAtLagosIso: e.target.value }));
+                                    }}
+                                    placeholder="2026-04-02T00:00:00+01:00"
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Monthly price (NGN)</Label>
+                                  <Input
+                                    inputMode="numeric"
+                                    value={promoDraft.monthlyPriceNgn}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, monthlyPriceNgn: sanitizeLimitInput(e.target.value) }));
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-2">
+                                  <Label>Weekly price (NGN)</Label>
+                                  <Input
+                                    inputMode="numeric"
+                                    value={promoDraft.weeklyPriceNgn}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, weeklyPriceNgn: sanitizeLimitInput(e.target.value) }));
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>Timezone label</Label>
+                                  <Input
+                                    value={promoDraft.timezoneLabel}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, timezoneLabel: e.target.value }));
+                                    }}
+                                    placeholder="Africa/Lagos"
+                                  />
+                                </div>
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>Pricing template</Label>
+                                  <Textarea
+                                    value={promoDraft.pricingTemplate}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, pricingTemplate: e.target.value }));
+                                    }}
+                                    rows={2}
+                                  />
+                                </div>
+                                <div className="space-y-2 md:col-span-2">
+                                  <Label>Ending template</Label>
+                                  <Textarea
+                                    value={promoDraft.endsTemplate}
+                                    onChange={(e) => {
+                                      promoDirtyRef.current = true;
+                                      setPromoDraft((prev) => ({ ...prev, endsTemplate: e.target.value }));
+                                    }}
+                                    rows={2}
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="rounded-md border bg-muted/30 p-3 text-sm space-y-1">
+                                <p className="font-semibold">{promoPreview.intro}</p>
+                                <p className="text-muted-foreground">{promoPreview.pricing}</p>
+                                <p className="text-xs text-muted-foreground">{promoPreview.ending}</p>
+                              </div>
+
+                              <div className="flex justify-end">
+                                <Button onClick={() => void savePromoContent()} disabled={savingPromoContent}>
+                                  {savingPromoContent ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                                  Save Promo Content
+                                </Button>
+                              </div>
                             </CardContent>
                         </Card>
 
@@ -410,28 +663,28 @@ const AdminBilling = ({ token }: { token: string }) => {
                               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                 <div className="w-full md:w-56">
                                   <Label className="mb-2 block">Plan</Label>
-                                  <Select value={selectedPlan} onValueChange={(value) => setSelectedPlan(value as 'free' | 'pro' | 'premium')}>
+                                  <Select value={selectedPlan} onValueChange={(value) => setSelectedPlan(value)}>
                                     <SelectTrigger>
                                       <SelectValue />
                                     </SelectTrigger>
                                     <SelectContent>
-                                      <SelectItem value="free">Free</SelectItem>
-                                      <SelectItem value="pro">Pro</SelectItem>
-                                      <SelectItem value="premium">Premium</SelectItem>
+                                      {planOptions.map((plan) => (
+                                        <SelectItem key={plan} value={plan}>{formatPlanLabel(plan)}</SelectItem>
+                                      ))}
                                     </SelectContent>
                                   </Select>
                                 </div>
-                                <Button onClick={() => void saveSelectedPlanLimits()} disabled={saving}>
-                                  {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                                  Save {selectedPlan.toUpperCase()} Limits
+                                <Button onClick={() => void saveSelectedPlanLimits()} disabled={savingPlanLimits}>
+                                  {savingPlanLimits ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                                  Save {formatPlanLabel(selectedPlan)} Limits
                                 </Button>
                               </div>
 
                               <div className="grid gap-4 md:grid-cols-2">
                                 {LIMIT_FIELDS.map((field) => {
-                                  const rawValue = planLimitsByPlan[selectedPlan]?.[field.key];
-                                  const numericValue = Number(rawValue);
-                                  const isUnlimited = rawValue === null || rawValue === undefined || (Number.isFinite(numericValue) && numericValue <= 0);
+                                  const value = String(planLimitDraftByPlan[selectedPlan]?.[field.key] ?? '');
+                                  const numericValue = Number(value);
+                                  const isUnlimited = !value || (Number.isFinite(numericValue) && numericValue <= 0);
                                   return (
                                     <div key={field.key} className="rounded-md border p-3 space-y-2">
                                       <div className="flex items-center justify-between gap-2">
@@ -445,10 +698,10 @@ const AdminBilling = ({ token }: { token: string }) => {
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <Input
-                                          type="number"
-                                          min={0}
-                                          value={isUnlimited ? 0 : Number.isFinite(numericValue) ? numericValue : 0}
-                                          onChange={(e) => updateSelectedPlanLimit(field.key, Number(e.target.value))}
+                                          inputMode="numeric"
+                                          value={value}
+                                          onChange={(e) => updateSelectedPlanLimit(field.key, e.target.value)}
+                                          placeholder="0"
                                         />
                                       </div>
                                     </div>

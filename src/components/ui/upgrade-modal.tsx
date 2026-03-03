@@ -4,13 +4,21 @@ import { useStore } from "@/hooks/use-store";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
+import { useMemo } from "react";
 import { Sparkles, CheckCircle2 } from "lucide-react";
-import { getUpgradeBenefits, isPromoWindowActive, PROMO_PRO_END_LAGOS_ISO } from "@/lib/tier/policy";
+import { getUpgradeBenefits, isPromoWindowActive } from "@/lib/tier/policy";
+import { useFeatureFlags } from "@/components/feature-flag-provider";
+import {
+  buildPromoCopy,
+  formatPromoEndsAtLabel,
+  normalizePromoContentConfig,
+} from "@/lib/conex/promo-content";
 
 export function UpgradeModal() {
   const open = useStore((state) => state.upgradeModalOpen);
   const context = useStore((state) => state.upgradeContext);
   const setOpen = useStore((state) => state.setUpgradeModalOpen);
+  const { records: featureFlagRecords } = useFeatureFlags();
   const router = useRouter();
 
   if (!context) return null;
@@ -28,6 +36,14 @@ export function UpgradeModal() {
   const limitKey = String(key || limit || "general").trim();
   const benefits = getUpgradeBenefits({ limitKey });
   const promoActive = isPromoWindowActive();
+  const promoContent = useMemo(
+    () => normalizePromoContentConfig(featureFlagRecords.promo_content?.config || {}),
+    [featureFlagRecords],
+  );
+  const promoCopy = useMemo(() => {
+    const endsLabel = formatPromoEndsAtLabel(promoContent.promoEndsAtLagosIso);
+    return buildPromoCopy(promoContent, endsLabel);
+  }, [promoContent]);
 
   const handleUpgrade = () => {
     setOpen(false);
@@ -53,8 +69,9 @@ export function UpgradeModal() {
 
         {promoActive ? (
           <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs">
-            You are currently on Promo Pro. On April 2nd, 2026, Pro becomes NGN 4,500/month or NGN 1,500/week.
-            Promo ends at {new Date(PROMO_PRO_END_LAGOS_ISO).toLocaleString("en-US", { timeZone: "Africa/Lagos" })}.
+            <p className="font-semibold">{promoCopy.intro}</p>
+            <p>{promoCopy.pricing}</p>
+            <p>{promoCopy.ending}</p>
           </div>
         ) : null}
         

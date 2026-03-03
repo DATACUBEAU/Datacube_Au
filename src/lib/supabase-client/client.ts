@@ -1,7 +1,7 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
 import { guardRequest } from '@/lib/api/request-guard';
-import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
+import { areAuthActionsDisabled, dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
 const publicEnv = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -33,9 +33,18 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
   
   const supabaseUrl = publicEnv.NEXT_PUBLIC_SUPABASE_URL || '';
   const isSupabaseRequest = supabaseUrl && url.includes(supabaseUrl);
+  const isSupabaseAuthRequest = /\/auth\/v1\//i.test(url);
   
   if (!isSupabaseRequest) {
     return fetch(input, init);
+  }
+
+  if (areAuthActionsDisabled() && !isSupabaseAuthRequest) {
+    const authError: any = new Error('Session expired. Re-authentication required.');
+    authError.name = 'AuthRequiredError';
+    authError.status = 401;
+    authError.code = 'AUTH_REQUIRED';
+    throw authError;
   }
 
   // Clone init to avoid mutating the original

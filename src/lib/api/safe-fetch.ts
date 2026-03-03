@@ -1,5 +1,9 @@
 import { toast } from '@/hooks/use-toast';
-import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
+import {
+  dispatchSessionExpired,
+  isAuthLocked,
+  registerAuthBoundAbortController,
+} from '@/lib/auth/session-expiry-events';
 
 export class OfflineError extends Error {
   constructor(message = "You are offline") {
@@ -12,6 +16,7 @@ interface SafeFetchOptions extends RequestInit {
   timeout?: number;
   silent?: boolean; // If true, suppresses global toast on offline/error
   allowOffline?: boolean; // If true, caller handles offline fallback manually
+  allowWhenAuthLocked?: boolean; // If true, bypasses auth-lock guard (used for login/reauth flows)
 }
 
 /**
@@ -28,7 +33,20 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         (window as any).__DCAU_NETWORK_STATE.isOnline === false));
 
   // 1. Offline Check
-  const { timeout = 10000, signal, allowOffline = false, ...fetchOptions } = options;
+  const {
+    timeout = 10000,
+    signal,
+    allowOffline = false,
+    allowWhenAuthLocked = false,
+    ...fetchOptions
+  } = options;
+
+  if (!allowWhenAuthLocked && isAuthLocked()) {
+    const err: any = new Error('Session expired. Sign in again.');
+    err.status = 401;
+    err.code = 'AUTH_REQUIRED';
+    throw err;
+  }
 
   if (!allowOffline && isOfflineNow()) {
     if (!options.silent) {
@@ -47,6 +65,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
 
   while (attempt <= MAX_RETRIES) {
     const controller = new AbortController();
+    const unregisterAbort = registerAuthBoundAbortController(controller);
     const timeoutId = setTimeout(() => controller.abort(), timeout);
     const onAbort = () => controller.abort();
 
@@ -62,6 +81,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       });
 
       clearTimeout(timeoutId);
+      unregisterAbort();
       if (signal) signal.removeEventListener('abort', onAbort);
 
       // Client-only: emit monetization/limit events (handled by dashboard listeners).
@@ -110,6 +130,10 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       }
 
       if (typeof window !== 'undefined' && (response.status === 401 || response.status === 403)) {
+        console.warn('[safeFetch] auth error detected', {
+          status: response.status,
+          url,
+        });
         dispatchSessionExpired({
           status: response.status,
           source: 'safeFetch',
@@ -120,12 +144,21 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       return response;
     } catch (error: any) {
       clearTimeout(timeoutId);
+      unregisterAbort();
       if (signal) signal.removeEventListener('abort', onAbort);
       
       const isAbort = error?.name === 'AbortError';
       const isUserAbort = isAbort && !!signal?.aborted;
-      const isTimeoutAbort = isAbort && !signal?.aborted;
+      const isAuthAbort = isAbort && !signal?.aborted && controller.signal.aborted && isAuthLocked();
+      const isTimeoutAbort = isAbort && !signal?.aborted && !isAuthAbort;
       const isNetworkError = !isAbort; // Fetch only throws on network error (DNS, etc)
+
+      if (isAuthAbort) {
+        const authError: any = new Error('Session expired. Sign in again.');
+        authError.status = 401;
+        authError.code = 'AUTH_REQUIRED';
+        throw authError;
+      }
 
       // User-requested abort should never retry.
       if (isUserAbort) {

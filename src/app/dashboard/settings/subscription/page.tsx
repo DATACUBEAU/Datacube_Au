@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { CheckCircle2, Loader2, AlertTriangle, ShieldCheck, Lock, Check, Clock, Banknote } from 'lucide-react';
@@ -20,6 +20,12 @@ import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useLimits } from '@/components/providers/limits-provider';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
+import {
+  buildPromoCopy,
+  formatPromoEndsAtLabel,
+  normalizePromoContentConfig,
+} from '@/lib/conex/promo-content';
 
 const PRICING = {
   weekly: { amount: 1500, compare_at: 2500, label: 'Save 40%' },
@@ -38,6 +44,7 @@ export default function SubscriptionPage() {
   const router = useRouter();
   const { isOnline } = useNetworkStatus();
   const { usage: limitsUsage } = useLimits();
+  const { records: featureFlagRecords } = useFeatureFlags();
   
   const [tier, setTier] = useState<string>('free');
   const [expiry, setExpiry] = useState<string | null>(null);
@@ -56,7 +63,7 @@ export default function SubscriptionPage() {
   const [showBankTransfer, setShowBankTransfer] = useState(false);
   const [manualPlan, setManualPlan] = useState<'weekly' | 'monthly'>('monthly');
   const [promoActive, setPromoActive] = useState(false);
-  const [promoEndsAtLabel, setPromoEndsAtLabel] = useState('April 2nd, 2026');
+  const [promoEndsAtLabel, setPromoEndsAtLabel] = useState('');
   const [entitlementSource, setEntitlementSource] = useState<'paid' | 'promo' | 'none'>('none');
   
   const [paymentState, setPaymentState] = useState<'idle' | 'redirecting' | 'confirming' | 'success' | 'pending' | 'error'>('idle');
@@ -72,6 +79,25 @@ export default function SubscriptionPage() {
   }>(PRICING);
   const isPromoUnlocked = promoActive;
   const hasPaidProAccess = tier === 'pro' && entitlementSource === 'paid';
+  const promoContent = useMemo(
+    () => normalizePromoContentConfig(featureFlagRecords.promo_content?.config || {}),
+    [featureFlagRecords],
+  );
+  const hasPromoContentOverride = useMemo(() => {
+    const config = featureFlagRecords.promo_content?.config;
+    return Boolean(config && typeof config === 'object' && Object.keys(config as Record<string, unknown>).length > 0);
+  }, [featureFlagRecords]);
+  const promoDisplayEndsAtLabel = useMemo(() => {
+    if (hasPromoContentOverride) {
+      return formatPromoEndsAtLabel(promoContent.promoEndsAtLagosIso);
+    }
+    if (promoEndsAtLabel.trim()) return promoEndsAtLabel;
+    return formatPromoEndsAtLabel(promoContent.promoEndsAtLagosIso);
+  }, [hasPromoContentOverride, promoContent.promoEndsAtLagosIso, promoEndsAtLabel]);
+  const promoCopy = useMemo(
+    () => buildPromoCopy(promoContent, promoDisplayEndsAtLabel),
+    [promoContent, promoDisplayEndsAtLabel],
+  );
   const retentionPolicyLabel = '7-day signed-out cleanup / 14-day inactivity cleanup';
   const freeRetentionLabel = retentionPolicyLabel;
   const proRetentionLabel = retentionPolicyLabel;
@@ -677,13 +703,9 @@ export default function SubscriptionPage() {
             <UsageMeter />
             {isPromoUnlocked ? (
                 <div className="mb-8 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm">
-                    <p className="font-semibold">You are currently on Promo Pro.</p>
-                    <p className="text-muted-foreground">
-                        On April 2nd, 2026, Pro becomes NGN 4,500/month or NGN 1,500/week.
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        Promo ends at {promoEndsAtLabel} Africa/Lagos time.
-                    </p>
+                    <p className="font-semibold">{promoCopy.intro}</p>
+                    <p className="text-muted-foreground">{promoCopy.pricing}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{promoCopy.ending}</p>
                 </div>
             ) : null}
             {hasPaidProAccess ? (
@@ -828,9 +850,9 @@ export default function SubscriptionPage() {
                                         <CheckCircle2 className="h-6 w-6 text-primary" />
                                     </div>
                                     <h3 className="mb-2 text-xl font-bold font-headline">Free Premium Access</h3>
-                                    <p className="mb-4 text-muted-foreground">
-                                        You are currently on Promo Pro. Access remains active until April 2nd, 2026 (Africa/Lagos).
-                                    </p>
+                                    <p className="mb-2 text-muted-foreground">{promoCopy.intro}</p>
+                                    <p className="mb-2 text-sm text-muted-foreground">{promoCopy.pricing}</p>
+                                    <p className="mb-4 text-xs text-muted-foreground">{promoCopy.ending}</p>
                                     <p className="mb-4 text-xs text-muted-foreground">
                                         After promo ends, only active paid entitlements retain Pro access.
                                     </p>
