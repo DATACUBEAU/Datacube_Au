@@ -16,12 +16,14 @@ import { initiateUpload, completeUpload, deleteDocument } from '@/lib/api/docume
 import type { UploadJobRow, CreateUploadJobInput, UploadJobStatus } from '@/lib/upload/types';
 import { deleteJobFile, getJobFile, putJobFile } from '@/lib/upload/idb';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from '@/hooks/use-toast';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { guardRequest } from '@/lib/api/request-guard';
 import { useLimits } from '@/components/providers/limits-provider';
 import { extractLimitExceededPayload } from '@/lib/limits/limit-errors';
+import { registerAuthBoundAbortController } from '@/lib/auth/session-expiry-events';
 import { isRetryableUploadError } from '@/lib/upload/retry-policy';
 
 type UploadJobsContextValue = {
@@ -104,6 +106,7 @@ function isMissingOwnerIdColumnError(error: any): boolean {
 export function UploadJobsProvider({ children }: { children: React.ReactNode }) {
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
+  const { isAuthLocked } = useSmartAuth();
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
   const { usage: limitsUsage, reportServerLimitError } = useLimits();
@@ -289,6 +292,10 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     if (isLoadingAuth) {
       return;
     }
+    if (isAuthLocked) {
+      setJobs([]);
+      return;
+    }
     if (!user || !session?.access_token) {
       setJobs([]);
       return;
@@ -397,6 +404,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     }
   }, [
     getWorkerOwnershipConditions,
+    isAuthLocked,
     isLoadingAuth,
     isOnline,
     mergeJobs,
@@ -409,6 +417,10 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
   useEffect(() => {
     if (isLoadingAuth) return;
+    if (isAuthLocked) {
+      setJobs([]);
+      return;
+    }
     if (!user || !session?.access_token) {
       setJobs([]);
       return;
@@ -427,9 +439,10 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       });
     }, 2000);
     return () => clearInterval(interval);
-  }, [isLoadingAuth, isOnline, refreshJobs, session?.access_token, user]);
+  }, [isAuthLocked, isLoadingAuth, isOnline, refreshJobs, session?.access_token, user]);
 
   useEffect(() => {
+    if (isAuthLocked) return;
     const PROCESSING_STUCK_MS = 10 * 60 * 1000;
     const UPLOADING_STUCK_MS = 5 * 60 * 1000;
     const QUEUED_STUCK_MS = 3 * 60 * 1000;
@@ -464,7 +477,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       });
     }, 15000);
     return () => clearInterval(interval);
-  }, [jobs, toast]);
+  }, [isAuthLocked, jobs, toast]);
 
   const updateJobRow = useCallback(
     async (jobId: string, patch: Partial<UploadJobRow>) => {
@@ -524,8 +537,12 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
       const controller = new AbortController();
       controllersRef.current.set(job.id, controller);
+      const unregisterAuthAbort = registerAuthBoundAbortController(controller);
 
       try {
+        if (isAuthLocked) {
+          throw new Error('Session expired. Please sign in again.');
+        }
         const correlationId = job.id;
         const gate = guardRequest({
           isOnline,
@@ -735,13 +752,15 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       } finally {
         controllersRef.current.delete(job.id);
         runningRef.current.delete(job.id);
+        unregisterAuthAbort();
       }
     },
-    [isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
+    [isAuthLocked, isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
   );
 
   useEffect(() => {
     if (!user) return;
+    if (isAuthLocked) return;
     if (!isOnline) return;
     if (isLoadingAuth) return;
     if (!session?.access_token) return;
@@ -754,10 +773,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         runUpload(j);
       }
     });
-  }, [isLoadingAuth, isOnline, jobs, runUpload, session?.access_token, user]);
+  }, [isAuthLocked, isLoadingAuth, isOnline, jobs, runUpload, session?.access_token, user]);
 
   const enqueueUploads = useCallback(
     async (inputs: CreateUploadJobInput[]) => {
+      if (isAuthLocked) {
+        throw new Error('Session expired. Please sign in again.');
+      }
       const gate = guardRequest({
         isOnline,
         requireAuth: true,
@@ -838,7 +860,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
+    [isAuthLocked, isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
   );
 
   const cancelJob = useCallback(
@@ -909,6 +931,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const retryJob = useCallback(
     async (jobId: string) => {
       if (!user) return;
+      if (isAuthLocked) return;
       const job = jobs.find((j) => j.id === jobId);
       if (!job) return;
 
@@ -944,7 +967,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       applyOwnershipFilter(docUpdateQuery, conditions);
       await docUpdateQuery;
     },
-    [jobs, updateJobLocal, updateJobRow, user]
+    [isAuthLocked, jobs, updateJobLocal, updateJobRow, user]
   );
 
   const attachFileToJob = useCallback(

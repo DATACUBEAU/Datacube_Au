@@ -79,6 +79,7 @@ export function normalizeAuDocumentRow(row: any, retentionDays: number, fallback
     status: normalizeAuDocumentStatus(row?.status),
     expires_at: expiresAt,
     parent_id: row?.parent_id ?? null,
+    parent_document_id: row?.parent_document_id ?? row?.parent_id ?? null,
     error: row?.error ?? null,
   } as AuDocumentRow;
 }

@@ -75,6 +75,7 @@ import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import { ToastAction } from '@/components/ui/toast';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useFlag } from '@/components/feature-flag-provider';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 
 type NavItem = {
   href: string;
@@ -253,6 +254,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const hasWarmedRoutesRef = useRef(false);
 
   const [user, , isUserLoading] = useSupabaseUser();
+  const { isAuthLocked } = useSmartAuth();
   const [showWhatsappDialog, setShowWhatsappDialog] = useState(false);
   const [showGlobalChatDevDialog, setShowGlobalChatDevDialog] = useState(false);
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
@@ -477,15 +479,15 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const currentPageTitle = navItems.find((item) => item.href === pathname)?.label || 'DataCube AU';
 
   useEffect(() => {
-    if (!isUserLoading && user) {
+    if (!isUserLoading && user && !isAuthLocked) {
       updateUserActivity(user, { isOnline });
       const activityInterval = setInterval(() => updateUserActivity(user, { isOnline }), 60 * 1000);
       return () => clearInterval(activityInterval);
     }
-  }, [user, isUserLoading, toast, isOnline]);
+  }, [isAuthLocked, user, isUserLoading, toast, isOnline]);
 
   useEffect(() => {
-    if (!user?.id || !isOnline) return;
+    if (!user?.id || !isOnline || isAuthLocked) return;
 
     void refreshPlanStatus();
 
@@ -508,10 +510,10 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     return () => {
       void supabase.removeChannel(profileChannel);
     };
-  }, [isOnline, refreshPlanStatus, user?.id]);
+  }, [isAuthLocked, isOnline, refreshPlanStatus, user?.id]);
 
   useEffect(() => {
-    if (!isAuthenticated || !isOnline || hasWarmedRoutesRef.current) return;
+    if (!isAuthenticated || !isOnline || isAuthLocked || hasWarmedRoutesRef.current) return;
 
     const prefetchAll = () => {
       for (const route of prefetchRoutes) {
@@ -545,17 +547,17 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         idleWindow.cancelIdleCallback(idleId);
       }
     };
-  }, [isAuthenticated, isOnline, pathname, prefetchRoutes, router]);
+  }, [isAuthLocked, isAuthenticated, isOnline, pathname, prefetchRoutes, router]);
 
   useEffect(() => {
-    if (!isAuthenticated || !isOnline || !('serviceWorker' in navigator)) return;
+    if (!isAuthenticated || !isOnline || isAuthLocked || !('serviceWorker' in navigator)) return;
 
     navigator.serviceWorker.ready
       .then((registration) => {
         registration.active?.postMessage({ type: 'PWA_WARM_ROUTES' });
       })
       .catch(() => {});
-  }, [isAuthenticated, isOnline]);
+  }, [isAuthLocked, isAuthenticated, isOnline]);
 
 
   useEffect(() => {

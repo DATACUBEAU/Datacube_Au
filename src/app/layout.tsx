@@ -60,7 +60,7 @@ export default function RootLayout({
             <SmartAuthProvider>
               <FeatureFlagProvider>
                 <LimitsProvider>
-                  <div className="relative isolate">
+                  <div className="relative isolate" id="app-shell">
                     <BackgroundController />
                     <div className="relative z-10">
                       <UploadJobsProvider>{children}</UploadJobsProvider>

@@ -7,7 +7,7 @@ import {
   resolveDocumentRetentionDays,
 } from '@/lib/au/document-normalization';
 
-const SAFE_DOC_COLUMNS = 'id, owner_id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, error';
+const SAFE_DOC_COLUMNS = 'id, owner_id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, parent_document_id, error';
 
 function isMissingColumnError(error: unknown, column: string): boolean {
   const message = String((error as any)?.message || '').toLowerCase();

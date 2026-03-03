@@ -13,6 +13,7 @@ export type UploadJobStatus =
 
 export type UploadJobRow = {
   id: string;
+  upload_id?: string | null;
   user_id: string | null;
   owner_id?: string | null;
   document_id: string;

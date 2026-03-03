@@ -7,6 +7,7 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { useFeatureFlags } from '@/components/feature-flag-provider';
 import type { LimitExceededPayload } from '@/lib/limits/limit-errors';
 import type { LimitsFlagsConfig } from '@/lib/limits/limitations-agent';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 
 type UsageSnapshot = {
   plan: string;
@@ -105,6 +106,7 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
   const { session, loading: isLoadingAuth } = useSupabaseSession();
   const { isOnline } = useNetworkStatus();
   const { records: featureFlagRecords } = useFeatureFlags();
+  const { isAuthLocked } = useSmartAuth();
   const [usage, setUsage] = useState<UsageSnapshot>(defaultUsage);
   const [serverLimitError, setServerLimitError] = useState<LimitExceededPayload | null>(null);
   const isFetchingRef = useRef(false);
@@ -113,6 +115,10 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
 
   const fetchUsage = useCallback(async (opts?: { silent?: boolean }) => {
     if (!user?.id || !session?.access_token) {
+      setUsage((prev) => ({ ...prev, loading: false }));
+      return;
+    }
+    if (isAuthLocked) {
       setUsage((prev) => ({ ...prev, loading: false }));
       return;
     }
@@ -151,7 +157,7 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
     } finally {
       isFetchingRef.current = false;
     }
-  }, [session?.access_token, user?.id]);
+  }, [isAuthLocked, session?.access_token, user?.id]);
 
   useEffect(() => {
     if (isLoadingAuth) return;
@@ -159,15 +165,19 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
       setUsage(defaultUsage);
       return;
     }
+    if (isAuthLocked) {
+      setUsage((prev) => ({ ...prev, loading: false }));
+      return;
+    }
     if (!isOnline) {
       setUsage((prev) => ({ ...prev, loading: false }));
       return;
     }
     void fetchUsage();
-  }, [fetchUsage, isLoadingAuth, isOnline, user?.id]);
+  }, [fetchUsage, isAuthLocked, isLoadingAuth, isOnline, user?.id]);
 
   useEffect(() => {
-    if (!user?.id || !isOnline) return;
+    if (!user?.id || !isOnline || isAuthLocked) return;
 
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
@@ -225,15 +235,15 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
       if (refreshTimeout) clearTimeout(refreshTimeout);
       void supabase.removeChannel(channel);
     };
-  }, [fetchUsage, isOnline, user?.id]);
+  }, [fetchUsage, isAuthLocked, isOnline, user?.id]);
 
   useEffect(() => {
-    if (!user?.id || !session?.access_token || !isOnline) return;
+    if (!user?.id || !session?.access_token || !isOnline || isAuthLocked) return;
     const timer = window.setInterval(() => {
       void fetchUsage({ silent: true });
     }, 20000);
     return () => window.clearInterval(timer);
-  }, [fetchUsage, isOnline, session?.access_token, user?.id]);
+  }, [fetchUsage, isAuthLocked, isOnline, session?.access_token, user?.id]);
 
   const value = useMemo<LimitsContextValue>(() => ({
     usage,

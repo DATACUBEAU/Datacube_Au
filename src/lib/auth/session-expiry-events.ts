@@ -1,4 +1,5 @@
 export const AUTH_SESSION_EXPIRED_EVENT = 'dcau:auth-session-expired';
+export const AUTH_REQUIRED_EVENT = 'dcau:auth-required';
 export const AUTH_STATE_CHANGED_EVENT = 'dcau:auth-state-changed';
 export const AUTH_ACTIONS_DISABLED_KEY = 'dcau:auth-actions-disabled';
 export const AUTH_RUNTIME_STATE_KEY = 'dcau:auth-runtime-state';
@@ -191,4 +192,5 @@ export function dispatchSessionExpired(detail?: {
   };
 
   window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT, { detail: payload }));
+  window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, { detail: payload }));
 }

@@ -2,7 +2,10 @@ import { supabase } from '@/lib/supabase-client/client';
 import { clearClientAuthStorageArtifacts, clearUserScopedClientCaches } from '@/lib/auth/session-storage';
 import { clearAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
 
-export async function explicitSignOut(userId?: string | null): Promise<void> {
+export async function explicitSignOut(
+  userId?: string | null,
+  options?: { preserveAuthLock?: boolean },
+): Promise<void> {
   if (userId) {
     void (async () => {
       try {
@@ -31,5 +34,7 @@ export async function explicitSignOut(userId?: string | null): Promise<void> {
   }
 
   clearClientAuthStorageArtifacts();
-  clearAuthActionsDisabled();
+  if (!options?.preserveAuthLock) {
+    clearAuthActionsDisabled();
+  }
 }

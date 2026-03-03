@@ -5,6 +5,7 @@ import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 
 let hasWarnedDocumentsRealtime = false;
 let hasWarnedDocumentsFetch = false;
@@ -29,6 +30,7 @@ export function useAuDocuments(pollInterval = 0) {
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
   const { isOnline } = useNetworkStatus();
+  const { isAuthLocked } = useSmartAuth();
   const [documents, setDocuments] = useState<AuDocumentRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [isUsingCachedData, setIsUsingCachedData] = useState(false);
@@ -75,6 +77,10 @@ export function useAuDocuments(pollInterval = 0) {
       setCachedAt(null);
       return;
     }
+    if (isAuthLocked) {
+      setLoading(false);
+      return;
+    }
     if (!isOnline) {
       const cached = await readCachedDocuments();
       if (cached.data) {
@@ -113,7 +119,7 @@ export function useAuDocuments(pollInterval = 0) {
     } finally {
       setLoading(false);
     }
-  }, [isOnline, readCachedDocuments, session?.access_token, user, writeCachedDocuments]);
+  }, [isAuthLocked, isOnline, readCachedDocuments, session?.access_token, user, writeCachedDocuments]);
 
   useEffect(() => {
     if (isLoadingAuth) return;
@@ -154,6 +160,10 @@ export function useAuDocuments(pollInterval = 0) {
       setCachedAt(null);
       return;
     }
+    if (isAuthLocked) {
+      setLoading(false);
+      return;
+    }
     if (!isOnline) {
       setLoading(false);
       return;
@@ -188,7 +198,7 @@ export function useAuDocuments(pollInterval = 0) {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [fetchDocs, isLoadingAuth, isOnline, session?.access_token, user]);
+  }, [fetchDocs, isAuthLocked, isLoadingAuth, isOnline, session?.access_token, user]);
 
   const remove = useCallback(async (id: string) => {
     // 1. Optimistic Update: Immediately remove from UI
@@ -227,11 +237,11 @@ export function useAuDocuments(pollInterval = 0) {
 
   useEffect(() => {
     if (pollInterval <= 0) return;
-    if (!user || !session?.access_token || !isOnline) return;
+    if (!user || !session?.access_token || !isOnline || isAuthLocked) return;
 
     const interval = setInterval(fetchDocs, pollInterval);
     return () => clearInterval(interval);
-  }, [fetchDocs, isOnline, pollInterval, session?.access_token, user]);
+  }, [fetchDocs, isAuthLocked, isOnline, pollInterval, session?.access_token, user]);
 
   return {
     documents,

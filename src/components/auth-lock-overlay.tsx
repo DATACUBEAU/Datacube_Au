@@ -19,10 +19,23 @@ export function AuthLockOverlay() {
   useEffect(() => {
     if (!shouldShow) return;
     actionButtonRef.current?.focus();
+    const appShell = document.getElementById('app-shell');
+    if (appShell) {
+      appShell.setAttribute('aria-hidden', 'true');
+      (appShell as any).inert = true;
+    }
+    document.body.style.overflow = 'hidden';
     console.info('[auth-overlay] shown', {
       runtimeAuthState,
       pathname,
     });
+    return () => {
+      if (appShell) {
+        appShell.removeAttribute('aria-hidden');
+        (appShell as any).inert = false;
+      }
+      document.body.style.overflow = '';
+    };
   }, [runtimeAuthState, pathname, shouldShow]);
 
   useEffect(() => {
@@ -41,7 +54,7 @@ export function AuthLockOverlay() {
 
     const redirectTarget = pathname || '/dashboard';
     try {
-      await explicitSignOut(session?.user?.id ?? user?.id ?? null);
+      await explicitSignOut(session?.user?.id ?? user?.id ?? null, { preserveAuthLock: true });
     } catch {
       // Continue to login redirect regardless of local sign-out cleanup outcome.
     } finally {

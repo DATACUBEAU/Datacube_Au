@@ -15,6 +15,7 @@
     "test:au-chat-proxy-auth": "node tests/manual-au-chat-proxy-auth.mjs",
     "test:ai-endpoints-smoke": "node tests/manual-ai-endpoints-smoke.mjs",
     "test:feature-flags-smoke": "node tests/manual-feature-flags-smoke.mjs",
+    "repro:upload-complete": "node scripts/repro-complete-upload.mjs",
     "supabase:db:push": "supabase --workdir backend db push",
     "supabase:functions:deploy": "supabase --workdir backend functions deploy"
   },

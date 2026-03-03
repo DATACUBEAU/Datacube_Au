@@ -1,5 +1,5 @@
 import { logOnce } from '@/lib/log/dedupe';
-import { areAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
+import { areAuthActionsDisabled, isAuthLocked } from '@/lib/auth/session-expiry-events';
 
 export type GuardFailureReason = 'offline' | 'unauthenticated';
 
@@ -48,6 +48,18 @@ export function guardRequest(input: GuardInput): GuardResult {
         'warn',
         `guard:${input.warnKey}:auth_disabled`,
         `[request-guard] ${input.context || 'request'} blocked: auth actions disabled`,
+      );
+    }
+    return { ok: false, reason: 'unauthenticated', message };
+  }
+
+  if (requireAuth && isAuthLocked()) {
+    const message = 'Session expired. Re-login required.';
+    if (input.warnKey) {
+      logOnce(
+        'warn',
+        `guard:${input.warnKey}:auth_locked`,
+        `[request-guard] ${input.context || 'request'} blocked: auth locked`,
       );
     }
     return { ok: false, reason: 'unauthenticated', message };

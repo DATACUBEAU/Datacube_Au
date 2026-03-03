@@ -14,6 +14,7 @@ import { logOnce, shouldDedupe } from '@/lib/log/dedupe';
 import { logEvent } from '@/lib/analytics';
 import { guardRequest } from '@/lib/api/request-guard';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 
 const CHAT_EVENT_STARTED = 'au-chat:started';
 const CHAT_EVENT_COMPLETED = 'au-chat:completed';
@@ -53,6 +54,7 @@ export function useAuChat(selectedDocId: string | null) {
   const setAuThinkingSteps = useStore(state => state.setAuThinkingSteps);
   const updateAuThinkingStep = useStore(state => state.updateAuThinkingStep);
   const { isOnline } = useNetworkStatus();
+  const { isAuthLocked } = useSmartAuth();
   
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [isResponding, setIsResponding] = useState(false);
@@ -152,13 +154,14 @@ export function useAuChat(selectedDocId: string | null) {
   // ... (Load Models & Persistence Effects) ...
   useEffect(() => {
     if (!user) return;
+    if (isAuthLocked) return;
     if (!isOnline) return;
     if (!session?.access_token) return;
 
     getAvailableModels()
       .then(models => setAvailableModels(models))
       .catch(err => console.error("Failed to load models:", err));
-  }, [isOnline, session?.access_token, user]);
+  }, [isAuthLocked, isOnline, session?.access_token, user]);
 
   // --- PERSISTENCE: Load history on mount or doc change ---
   useEffect(() => {
@@ -217,6 +220,7 @@ export function useAuChat(selectedDocId: string | null) {
     }
   ) => {
     if (!selectedDocId || !user) return;
+    if (isAuthLocked) return;
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
@@ -541,10 +545,11 @@ export function useAuChat(selectedDocId: string | null) {
         setAuThinkingSteps([]); // Clear steps after done
       }, 1200);
     }
-  }, [selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, toast]);
+  }, [isAuthLocked, selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, toast]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
+    if (isAuthLocked) return;
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
@@ -637,7 +642,7 @@ export function useAuChat(selectedDocId: string | null) {
           setAuAnimationState('idle');
         }, 1200);
     }
-  }, [selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline]);
+  }, [isAuthLocked, selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline]);
 
   const setHistoryPersisted = useCallback((next: ChatMessage[]) => {
     setHistory(next);

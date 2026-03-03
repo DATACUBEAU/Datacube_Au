@@ -15,6 +15,7 @@ import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useSupabaseSession } from '@/hooks/use-supabase-auth';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 
 export type FeatureFlagScope = 'global' | 'org' | 'user';
 
@@ -134,9 +135,14 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const { isOnline } = useNetworkStatus();
   const { loading: isLoadingAuth } = useSupabaseSession();
+  const { isAuthLocked } = useSmartAuth();
   const isFetchingRef = useRef(false);
 
   const fetchFlags = useCallback(async (opts?: { silent?: boolean }) => {
+    if (isAuthLocked) {
+      setLoading(false);
+      return;
+    }
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
     if (!opts?.silent) setLoading(true);
@@ -176,15 +182,19 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, []);
+  }, [isAuthLocked]);
 
   useEffect(() => {
     if (isLoadingAuth) return;
+    if (isAuthLocked) {
+      setLoading(false);
+      return;
+    }
     void fetchFlags();
-  }, [fetchFlags, isLoadingAuth]);
+  }, [fetchFlags, isAuthLocked, isLoadingAuth]);
 
   useEffect(() => {
-    if (isLoadingAuth || !isOnline) return;
+    if (isLoadingAuth || !isOnline || isAuthLocked) return;
 
     const channel = supabase
       .channel('feature-flags-v2')
@@ -215,18 +225,21 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
     return () => {
       void supabase.removeChannel(channel);
     };
-  }, [fetchFlags, isLoadingAuth, isOnline]);
+  }, [fetchFlags, isAuthLocked, isLoadingAuth, isOnline]);
 
   useEffect(() => {
-    if (isLoadingAuth || !isOnline) return;
+    if (isLoadingAuth || !isOnline || isAuthLocked) return;
     const timer = window.setInterval(() => {
       void fetchFlags({ silent: true });
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [fetchFlags, isLoadingAuth, isOnline]);
+  }, [fetchFlags, isAuthLocked, isLoadingAuth, isOnline]);
 
   const setFlag = useCallback(
     async (key: string, enabled: boolean, options?: SetFlagOptions) => {
+      if (isAuthLocked) {
+        throw new Error('Session expired. Please sign in again.');
+      }
       const normalizedKey = String(key || '').trim();
       if (!normalizedKey) throw new Error('Flag key is required.');
 
@@ -392,7 +405,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         void fetchFlags({ silent: true });
       }
     },
-    [fetchFlags, rows],
+    [fetchFlags, isAuthLocked, rows],
   );
 
   const refreshFlags = useCallback(async () => {

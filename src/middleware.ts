@@ -4,10 +4,15 @@ import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { hasConexAccess } from '@/lib/conex-rbac';
 
 const CONEX_USERS_PATH_PREFIX = '/conex/users';
+const DASHBOARD_PATH_PREFIX = '/dashboard';
 const FRAME_ANCESTORS_POLICY = "frame-ancestors 'none'";
 
 function isConexUsersApi(pathname: string): boolean {
   return pathname === CONEX_USERS_PATH_PREFIX || pathname.startsWith(`${CONEX_USERS_PATH_PREFIX}/`);
+}
+
+function isDashboardRoute(pathname: string): boolean {
+  return pathname === DASHBOARD_PATH_PREFIX || pathname.startsWith(`${DASHBOARD_PATH_PREFIX}/`);
 }
 
 function mergeFrameAncestorsDirective(cspHeader: string | null): string {
@@ -38,7 +43,8 @@ function applyClickjackingHeaders(response: NextResponse): NextResponse {
 
 function loginRedirect(req: NextRequest): NextResponse {
   const loginUrl = new URL('/login', req.url);
-  loginUrl.searchParams.set('redirectTo', req.nextUrl.pathname);
+  const redirectTarget = `${req.nextUrl.pathname}${req.nextUrl.search}`;
+  loginUrl.searchParams.set('redirectTo', redirectTarget);
   return applyClickjackingHeaders(NextResponse.redirect(loginUrl));
 }
 
@@ -75,7 +81,15 @@ function getServiceClient() {
 }
 
 export async function middleware(req: NextRequest) {
-  if (!isConexUsersApi(req.nextUrl.pathname)) {
+  const pathname = req.nextUrl.pathname;
+
+  if (isDashboardRoute(pathname)) {
+    const auth = await requireUserFromRequest(req);
+    if (!auth.ok) return unauthorizedResponse(req);
+    return applyClickjackingHeaders(NextResponse.next());
+  }
+
+  if (!isConexUsersApi(pathname)) {
     return applyClickjackingHeaders(NextResponse.next());
   }
 

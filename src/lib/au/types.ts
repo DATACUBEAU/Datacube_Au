@@ -20,6 +20,7 @@ export type AuDocumentRow = {
   file_path: string;
   status: AuDocumentStatus | string;
   parent_id: string | null;
+  parent_document_id?: string | null;
   created_at: string;
   expires_at: string | null;
   error: string | null;
