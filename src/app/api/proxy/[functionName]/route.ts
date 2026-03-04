@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import {
   buildRoutingCandidates,
+  getAllowedPaidModelsForProvider,
+  getDefaultPaidModel,
   logRoutingDecision,
   noteRoutingFailure,
   noteRoutingSuccess,
@@ -521,11 +523,9 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     if (bodyCorrelationId) correlationId = bodyCorrelationId;
     headers.set('x-correlation-id', correlationId);
 
-    if (routeWithModelSelector) {
-      if (String(parsedBody?.action || '').toLowerCase() === 'get_models') {
-        routeWithModelSelector = false;
-      }
-    }
+    const isGetModelsAction =
+      routeWithModelSelector &&
+      String(parsedBody?.action || '').toLowerCase() === 'get_models';
 
     const needsTierGuards = isTierGuardedFunction(functionName);
     const supabase = needsTierGuards ? createSupabaseAdminClient() : null;
@@ -561,6 +561,39 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       plan: tierContext?.planForRouting || 'free',
       guards: appliedGuards,
     }));
+
+    if (isGetModelsAction) {
+      const modelSupabase = supabase || createSupabaseAdminClient();
+      try {
+        const [models, defaultModel] = await Promise.all([
+          getAllowedPaidModelsForProvider(modelSupabase, 'openrouter'),
+          getDefaultPaidModel(modelSupabase, 'openrouter'),
+        ]);
+        return NextResponse.json(
+          {
+            models,
+            default_model: defaultModel,
+            provider: 'openrouter',
+            source: 'au_api_keys',
+          },
+          { status: 200, headers: corsHeaders(requestId) }
+        );
+      } catch (error: any) {
+        if (error instanceof ModelRoutingError) {
+          return NextResponse.json(
+            {
+              message: error.message,
+              error: error.code,
+              status: error.status,
+              requestId,
+              details: error.details || {},
+            },
+            { status: error.status, headers: corsHeaders(requestId) },
+          );
+        }
+        throw error;
+      }
+    }
 
     const forwardOnce = async (attemptHeaders: Headers, attemptBody?: BodyInit) => {
       return forwardWithTimeout(targetUrl.toString(), {
@@ -638,11 +671,16 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
       let routed;
       try {
+        const requestedModel =
+          guardedBody && typeof guardedBody === 'object' && !Array.isArray(guardedBody)
+            ? String((guardedBody as any).model || '').trim() || null
+            : null;
         routed = await buildRoutingCandidates({
           supabase,
           userId: auth.userId,
           plan,
           requestType: requestType!,
+          requestedModel,
         });
       } catch (error: any) {
         if (error instanceof ModelRoutingError) {
@@ -666,7 +704,6 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           enforceModelAccess({
             tierContext,
             model: candidate.model,
-            strictFreeMode: candidate.flags.tierSplitEnabled,
           });
         } catch (error: any) {
           if (error instanceof TierAccessError) {

@@ -1,9 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 
@@ -11,16 +9,13 @@ export function AuthLockOverlay() {
   const router = useRouter();
   const pathname = usePathname();
   const { user, session, isAuthLocked, runtimeAuthState, startReauth } = useSmartAuth();
-  const [isRedirecting, setIsRedirecting] = useState(false);
-  const actionButtonRef = useRef<HTMLButtonElement | null>(null);
-  const lastVisibleRef = useRef<boolean>(false);
+  const hasHandledRef = useRef(false);
 
   const shouldShow = isAuthLocked && !pathname?.startsWith('/login');
 
   useEffect(() => {
     const appShell = document.getElementById('app-shell');
     if (shouldShow) {
-      actionButtonRef.current?.focus();
       if (appShell) {
         appShell.setAttribute('aria-hidden', 'true');
         (appShell as any).inert = true;
@@ -38,69 +33,34 @@ export function AuthLockOverlay() {
   }, [shouldShow]);
 
   useEffect(() => {
-    if (lastVisibleRef.current === shouldShow) return;
-    lastVisibleRef.current = shouldShow;
-    if (!shouldShow) {
-      setIsRedirecting(false);
-    }
-    console.info(shouldShow ? '[auth-overlay] shown' : '[auth-overlay] hidden', {
+    console.info(shouldShow ? '[auth-overlay] active' : '[auth-overlay] inactive', {
       runtimeAuthState,
       pathname,
     });
   }, [runtimeAuthState, pathname, shouldShow]);
 
-  const handleSignIn = useCallback(async () => {
-    if (isRedirecting) return;
-    setIsRedirecting(true);
-    startReauth('auth-lock-overlay');
-
-    const redirectTarget = pathname || '/dashboard';
-    try {
-      await explicitSignOut(session?.user?.id ?? user?.id ?? null, { preserveAuthLock: true });
-    } catch {
-      // Continue to login redirect regardless of local sign-out cleanup outcome.
-    } finally {
-      console.info('[auth-overlay] redirecting to login', {
-        redirectTo: redirectTarget,
-      });
-      router.replace(`/login?redirectTo=${encodeURIComponent(redirectTarget)}`);
+  useEffect(() => {
+    if (!shouldShow) {
+      hasHandledRef.current = false;
+      return;
     }
-  }, [isRedirecting, pathname, router, session?.user?.id, startReauth, user?.id]);
+    if (hasHandledRef.current) return;
+    hasHandledRef.current = true;
+    startReauth('auth-lock-overlay:auto-logout');
+    const redirectTarget = pathname || '/dashboard';
+    void (async () => {
+      try {
+        await explicitSignOut(session?.user?.id ?? user?.id ?? null, { preserveAuthLock: true });
+      } catch {
+        // Continue to redirect even if client cleanup partially fails.
+      } finally {
+        console.info('[auth-overlay] forced logout redirect', {
+          redirectTo: redirectTarget,
+        });
+        router.replace(`/login?redirectTo=${encodeURIComponent(redirectTarget)}&reason=session_expired`);
+      }
+    })();
+  }, [pathname, router, session?.user?.id, shouldShow, startReauth, user?.id]);
 
-  if (!shouldShow) return null;
-
-  return (
-    <div
-      className="fixed inset-0 z-[9999] flex items-center justify-center bg-background/95 px-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="auth-lock-title"
-      aria-describedby="auth-lock-description"
-      onKeyDown={(event) => {
-        if (event.key === 'Escape' || event.key === 'Tab') {
-          event.preventDefault();
-          actionButtonRef.current?.focus();
-        }
-      }}
-    >
-      <div className="w-full max-w-md rounded-xl border bg-card p-6 shadow-2xl">
-        <h2 id="auth-lock-title" className="text-xl font-semibold">
-          Session expired. Please sign in again.
-        </h2>
-        <p id="auth-lock-description" className="mt-2 text-sm text-muted-foreground">
-          Access is locked until authentication is restored.
-        </p>
-        <Button
-          ref={actionButtonRef}
-          onClick={() => void handleSignIn()}
-          className="mt-6 w-full"
-          disabled={isRedirecting}
-          aria-label="Sign in again"
-        >
-          {isRedirecting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-          Sign in
-        </Button>
-      </div>
-    </div>
-  );
+  return null;
 }

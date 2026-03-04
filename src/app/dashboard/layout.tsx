@@ -147,6 +147,7 @@ const SidebarFooterMenu = ({
   userDisplayName,
   userEmail,
   planStatusLabel,
+  planStatusBadge,
   planStatusMeta,
   isPlanStatusLoading,
   onOpenGuide,
@@ -157,6 +158,7 @@ const SidebarFooterMenu = ({
   userDisplayName: string;
   userEmail: string;
   planStatusLabel: string;
+  planStatusBadge: string;
   planStatusMeta: string;
   isPlanStatusLoading: boolean;
   onOpenGuide: () => void;
@@ -197,7 +199,7 @@ const SidebarFooterMenu = ({
               {isPlanStatusLoading ? 'Updating...' : planStatusLabel}
             </span>
             <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-              Active
+              {isPlanStatusLoading ? 'Syncing' : planStatusBadge}
             </Badge>
           </div>
           <div className="mt-1 text-[10px] text-sidebar-foreground/65">
@@ -322,26 +324,46 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
   const planStatusLabel = useMemo(() => {
     if (entitlements.plan === 'admin') return 'Admin';
-    if (entitlements.promoActive) return 'Promo Pro';
-    if (entitlements.hasPro || entitlements.plan === 'pro') return 'Pro';
+    if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo Pro';
+    if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) return 'Pro';
     return 'Free';
-  }, [entitlements.hasPro, entitlements.plan, entitlements.promoActive]);
+  }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive]);
+
+  const planStatusBadge = useMemo(() => {
+    if (entitlements.plan === 'admin') return 'Admin';
+    if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo';
+    if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) return 'Active';
+    return 'Free';
+  }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive]);
 
   const isProUnlocked = useMemo(() => {
     return (
       entitlements.plan === 'admin' ||
-      entitlements.plan === 'pro' ||
-      entitlements.plan === 'promo_pro' ||
-      entitlements.hasPro
+      entitlements.entitlementSource === 'paid' ||
+      entitlements.entitlementSource === 'promo' ||
+      entitlements.promoActive
     );
-  }, [entitlements.hasPro, entitlements.plan]);
+  }, [entitlements.entitlementSource, entitlements.plan, entitlements.promoActive]);
 
   const planStatusMeta = useMemo(() => {
-    if (entitlements.promoActive) {
+    if (entitlements.promoActive || entitlements.entitlementSource === 'promo') {
+      if (entitlements.promoEndsAtLagos) {
+        const promoEnd = new Date(entitlements.promoEndsAtLagos);
+        if (!Number.isNaN(promoEnd.getTime())) {
+          return `Promo ends: ${promoEnd.toLocaleString('en-US', {
+            timeZone: 'Africa/Lagos',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })} (Africa/Lagos)`;
+        }
+      }
       return 'Promo mode active: premium unlocked for your account';
     }
 
-    if (entitlements.entitlementEndsAt) {
+    if (entitlements.entitlementSource === 'paid' && entitlements.entitlementEndsAt) {
       const expires = new Date(entitlements.entitlementEndsAt);
       if (!Number.isNaN(expires.getTime())) {
         return `Renews/Expires: ${expires.toLocaleDateString(undefined, {
@@ -352,14 +374,27 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       }
     }
 
+    if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) {
+      return 'Paid Pro entitlement active';
+    }
+
     if (isUsingCachedEntitlements && !isOnline) {
       return entitlementsCachedAt
         ? `Offline safe mode (cached ${new Date(entitlementsCachedAt).toLocaleTimeString()})`
         : 'Offline safe mode';
     }
 
-    return 'No expiry set';
-  }, [entitlements.entitlementEndsAt, entitlements.promoActive, entitlementsCachedAt, isOnline, isUsingCachedEntitlements]);
+    return 'No active paid entitlement';
+  }, [
+    entitlements.entitlementEndsAt,
+    entitlements.entitlementSource,
+    entitlements.hasPro,
+    entitlements.promoActive,
+    entitlements.promoEndsAtLagos,
+    entitlementsCachedAt,
+    isOnline,
+    isUsingCachedEntitlements,
+  ]);
 
   const handleWhatsAppRedirect = () => {
     const phoneNumber = '2349036553377';
@@ -731,6 +766,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               userDisplayName={userDisplayName}
               userEmail={userEmail}
               planStatusLabel={planStatusLabel}
+              planStatusBadge={planStatusBadge}
               planStatusMeta={planStatusMeta}
               isPlanStatusLoading={isPlanStatusLoading}
               onOpenGuide={() => setIsSiteGuideOpen(true)}

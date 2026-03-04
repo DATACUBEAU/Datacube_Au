@@ -80,7 +80,7 @@ import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
 
-import { type ChatMessage } from '@/lib/api/chat';
+import { sendChatMessage, type ChatMessage } from '@/lib/api/chat';
 
 // Add TypingAnimation component
 type TypingAnimationProps = { content: string; shouldAnimate?: boolean };
@@ -665,49 +665,11 @@ export default function ChatPage() {
     try {
       const documentContent = await getDocumentContent(selectedDocId);
       if (!documentContent) return;
-
-      const doRequest = async (token: string | null) =>
-        safeFetch(`/api/proxy/au-chat`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          credentials: 'include',
-          body: JSON.stringify({ 
-            messages: [{ 
-              role: 'user', 
-              content: `Based on the document "${selectedDocName}", generate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
-            }],
-            useRAG: true,
-            selectedDocId
-          }),
-        });
-
-      let accessToken = await getSupabaseAccessToken();
-      let result = await doRequest(accessToken);
-
-      if (result.status === 401) {
-        try {
-          const { data, error } = await supabase.auth.refreshSession();
-          if (!error) {
-            accessToken = data.session?.access_token ?? null;
-          }
-        } catch {
-          // Keep original unauthorized response.
-        }
-
-        if (accessToken) {
-          result = await doRequest(accessToken);
-        }
-      }
-
-      if (!result.ok) {
-        const raw = await result.text().catch(() => '');
-        throw new Error(`Prompt starter request failed: ${result.status} ${raw}`.trim());
-      }
-
-      const data = await result.json();
+      const data = await sendChatMessage({
+        selectedDocId,
+        doc_id: selectedDocId,
+        user_input: `Based on the document "${selectedDocName}", generate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.`,
+      });
       let prompts: string[] = [];
       try {
         const parsed = JSON.parse(data.answer);

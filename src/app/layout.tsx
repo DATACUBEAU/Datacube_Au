@@ -10,6 +10,7 @@ import { FeatureFlagProvider } from '@/components/feature-flag-provider';
 import { LimitsProvider } from '@/components/providers/limits-provider';
 import { AuthLockOverlay } from '@/components/auth-lock-overlay';
 import { SessionDebugPanel } from '@/components/session-debug-panel';
+import { ServiceWorkerUpdater } from '@/components/service-worker-updater';
 import './globals.css';
 
 const APP_NAME = 'DataCube AU';
@@ -67,6 +68,7 @@ export default function RootLayout({
                       <GlobalListeners />
                       <AuthLockOverlay />
                       <SessionDebugPanel />
+                      <ServiceWorkerUpdater />
                       <Toaster />
                     </div>
                   </div>

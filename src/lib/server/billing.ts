@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
+import { firstEnv } from '@/lib/server/supabase-admin';
 import {
   PROMO_PRO_END_LAGOS_ISO,
   getProEntitlementStatus,
@@ -32,21 +33,36 @@ const PLAN_CATALOG: Array<{
   planKey: string;
   interval: BillingInterval;
   amountKobo: number;
-  envCode: string;
+  envCodes: string[];
+  fallbackPaystackPlanCode: string;
 }> = [
   {
     planKey: 'pro_monthly',
     interval: 'monthly',
     amountKobo: 450000,
-    envCode: 'PAYSTACK_PLAN_MONTHLY_CODE',
+    envCodes: [
+      'PAYSTACK_PLAN_MONTHLY_CODE',
+      'PAYSTACK_PRO_MONTHLY_PLAN_CODE',
+      'DATACUBE_PRO_MONTHLY_PLAN_CODE',
+    ],
+    fallbackPaystackPlanCode: 'PLN_axsdw7s4zniurzr',
   },
   {
     planKey: 'pro_weekly',
     interval: 'weekly',
     amountKobo: 150000,
-    envCode: 'PAYSTACK_PLAN_WEEKLY_CODE',
+    envCodes: [
+      'PAYSTACK_PLAN_WEEKLY_CODE',
+      'PAYSTACK_PRO_WEEKLY_PLAN_CODE',
+      'DATACUBE_PRO_WEEKLY_PLAN_CODE',
+    ],
+    fallbackPaystackPlanCode: 'PLN_bc7vhwfff2mqc57',
   },
 ];
+
+function resolvePlanCodeFromEnv(plan: (typeof PLAN_CATALOG)[number]): string | null {
+  return firstEnv(...plan.envCodes);
+}
 
 function entitlementDays(interval: BillingInterval): number {
   return interval === 'weekly' ? 7 : 30;
@@ -114,11 +130,30 @@ async function loadBillingPlan(
 }
 
 async function ensurePlanCatalog(supabase: SupabaseClient): Promise<void> {
+  const planKeys = PLAN_CATALOG.map((plan) => plan.planKey);
+  const { data: existingRows, error: existingError } = await supabase
+    .from('billing_plans')
+    .select('plan_key,paystack_plan_code')
+    .in('plan_key', planKeys);
+  if (existingError) throw existingError;
+
+  const existingCodes = new Map<string, string>();
+  for (const row of existingRows || []) {
+    const planKey = String((row as any).plan_key || '').trim();
+    const code = String((row as any).paystack_plan_code || '').trim();
+    if (planKey && code) {
+      existingCodes.set(planKey, code);
+    }
+  }
+
   const rows = PLAN_CATALOG.map((plan) => ({
     plan_key: plan.planKey,
     interval: plan.interval,
     amount_kobo: plan.amountKobo,
-    paystack_plan_code: process.env[plan.envCode] || null,
+    paystack_plan_code:
+      resolvePlanCodeFromEnv(plan) ||
+      existingCodes.get(plan.planKey) ||
+      plan.fallbackPaystackPlanCode,
     is_active: true,
   }));
   const { error } = await supabase

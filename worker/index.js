@@ -1,5 +1,16 @@
 const PAGE_CACHE_NAME = "pages";
 
+// Compatibility shim for older generated sw.js builds that referenced this helper.
+function isProtectedAppPath(pathname) {
+  const safePath = typeof pathname === "string" ? pathname : "";
+  return (
+    safePath === "/dashboard" ||
+    safePath.startsWith("/dashboard/") ||
+    safePath === "/conex" ||
+    safePath.startsWith("/conex/")
+  );
+}
+
 // Warm core routes so cold offline launches can open app sections immediately.
 const OFFLINE_WARMUP_ROUTES = [
   "/",
@@ -62,6 +73,10 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("message", (event) => {
+  if (event?.data?.type === "SKIP_WAITING") {
+    self.skipWaiting();
+    return;
+  }
   if (!event?.data || event.data.type !== "PWA_WARM_ROUTES") return;
   event.waitUntil(warmOfflinePages());
 });

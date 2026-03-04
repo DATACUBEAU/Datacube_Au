@@ -63,14 +63,15 @@ async function buildFallbackPayload(userId: string, requestId: string) {
   const promoFlag = flags.get('promo_enabled');
   const promoContent = flags.get('promo_content')?.config || {};
   const source = String((billing as any)?.entitlementSource || '').toLowerCase();
-  const tier = String((billing as any)?.tier || '').toLowerCase();
   const promoActive = Boolean((billing as any)?.promo?.active);
+  const hasPaidEntitlement = source === 'paid';
+  const hasPromoEntitlement = source === 'promo' || promoActive;
 
   return {
     requestId,
     userId,
-    plan: source === 'promo' ? 'promo_pro' : tier === 'pro' ? 'pro' : 'free',
-    hasPro: tier === 'pro' || source === 'promo',
+    plan: hasPromoEntitlement ? 'promo_pro' : hasPaidEntitlement ? 'pro' : 'free',
+    hasPro: hasPaidEntitlement || hasPromoEntitlement,
     entitlementSource: source === 'paid' ? 'paid' : source === 'promo' ? 'promo' : 'none',
     entitlementEndsAt:
       typeof (billing as any)?.tier_expires_at === 'string' ? (billing as any).tier_expires_at : null,

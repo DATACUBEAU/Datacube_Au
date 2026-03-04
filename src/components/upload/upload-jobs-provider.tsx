@@ -47,6 +47,33 @@ function isActiveStatus(status: UploadJobStatus) {
   return status === 'queued' || status === 'uploading' || status === 'uploaded' || status === 'processing';
 }
 
+function isTerminalStatus(status: UploadJobStatus) {
+  return status === 'failed' || status === 'cancelled' || status === 'done' || status === 'completed';
+}
+
+function statusRank(status: UploadJobStatus): number {
+  switch (status) {
+    case 'uploading':
+      return 1;
+    case 'uploaded':
+      return 2;
+    case 'queued':
+      return 3;
+    case 'processing':
+      return 4;
+    case 'done':
+    case 'completed':
+      return 5;
+    case 'failed':
+    case 'cancelled':
+      return 6;
+    case 'deleting':
+      return 7;
+    default:
+      return 0;
+  }
+}
+
 function isMissingUploadJobsErrorColumn(err: unknown): boolean {
   const message = typeof (err as any)?.message === 'string' ? (err as any).message : '';
   const code = typeof (err as any)?.code === 'string' ? (err as any).code : '';
@@ -103,6 +130,54 @@ function isMissingOwnerIdColumnError(error: any): boolean {
   );
 }
 
+function pickFirstNonEmptyString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
+function getUploadErrorContext(error: any): {
+  status: number;
+  code: string;
+  message: string;
+  details: any;
+} {
+  const details = error?.details || null;
+  const status = Number(
+    error?.status ??
+      details?.status ??
+      details?.details?.status ??
+      details?.error?.status ??
+      0,
+  );
+  const code = pickFirstNonEmptyString(
+    error?.code,
+    details?.code,
+    details?.details?.code,
+    details?.error?.code,
+    details?.details?.error?.code,
+  ).toLowerCase();
+  const message = pickFirstNonEmptyString(
+    error?.message,
+    details?.message,
+    details?.error,
+    details?.details?.message,
+    details?.details?.error,
+    details?.error?.message,
+    details?.details?.error?.message,
+  );
+
+  return {
+    status: Number.isFinite(status) ? status : 0,
+    code,
+    message,
+    details,
+  };
+}
+
 export function UploadJobsProvider({ children }: { children: React.ReactNode }) {
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
@@ -117,6 +192,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const [useSafeSelection, setUseSafeSelection] = useState<boolean>(false);
   const controllersRef = useRef<Map<string, AbortController>>(new Map());
   const runningRef = useRef<Set<string>>(new Set());
+  const blockedAutoRestartRef = useRef<Set<string>>(new Set());
   const lastProgressWriteRef = useRef<Map<string, number>>(new Map());
   const lastProgressTimeRef = useRef<Map<string, number>>(new Map());
   const stuckNotifiedRef = useRef<Set<string>>(new Set());
@@ -175,11 +251,20 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         } else {
           const isUploadingLocal = localJob.status === 'uploading';
           const isPostUploadRemote = ['queued', 'uploaded', 'processing', 'done'].includes(remoteJob.status);
+          const remoteRegressed =
+            statusRank(remoteJob.status) < statusRank(localJob.status) &&
+            !isTerminalStatus(remoteJob.status);
+          const preserveLocalTerminal =
+            isTerminalStatus(localJob.status) &&
+            !isTerminalStatus(remoteJob.status);
           
           let finalStatus = remoteJob.status;
           let finalProgress = remoteJob.progress ?? 0;
 
-          if (isUploadingLocal && isPostUploadRemote) {
+          if (preserveLocalTerminal || remoteRegressed) {
+            finalStatus = localJob.status;
+            finalProgress = Math.max(localJob.progress, finalProgress);
+          } else if (isUploadingLocal && isPostUploadRemote) {
             finalProgress = 100;
           } else if (remoteJob.status === localJob.status) {
             finalProgress = Math.max(localJob.progress, finalProgress);
@@ -538,6 +623,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       const controller = new AbortController();
       controllersRef.current.set(job.id, controller);
       const unregisterAuthAbort = registerAuthBoundAbortController(controller);
+      let handedOffToRetry = false;
 
       try {
         if (isAuthLocked) {
@@ -688,6 +774,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
 
         console.log(`[upload-jobs] [${correlationId}] Registration success for ${job.id}.`);
+        blockedAutoRestartRef.current.delete(job.id);
 
         updateJobLocal(job.id, {
           status: 'queued',
@@ -708,9 +795,10 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           reportServerLimitError(limitPayload);
         }
 
-        const errorMsg = e?.message || '';
-        const errorStatus = typeof e?.status === 'number' ? e.status : Number((e as any)?.details?.status || 0);
-        const errorCode = String((e as any)?.code || (e as any)?.details?.code || '').trim().toLowerCase();
+        const errorContext = getUploadErrorContext(e);
+        const errorMsg = errorContext.message;
+        const errorStatus = errorContext.status;
+        const errorCode = errorContext.code;
 
         if (e.isThrottled) {
           setIsThrottled(true);
@@ -720,7 +808,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
           status: errorStatus,
           code: errorCode,
           message: errorMsg,
-          details: (e as any)?.details || null,
+          details: errorContext.details,
         });
 
         if (isRetryable && retryAttempt < 3) {
@@ -731,28 +819,55 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
               message: errorMsg,
               status: errorStatus || null,
               code: errorCode || null,
-              details: (e as any)?.details || null,
+              details: errorContext.details,
             },
           );
           
           await new Promise(resolve => setTimeout(resolve, delay));
+          handedOffToRetry = true;
+          controllersRef.current.delete(job.id);
           runningRef.current.delete(job.id);
-          return runUpload(job, retryAttempt + 1);
+          unregisterAuthAbort();
+          return await runUpload(job, retryAttempt + 1);
         } else if (e?.name === 'AbortError') {
-          updateJobLocal(job.id, { status: 'cancelled' });
+          const cancelledAt = new Date().toISOString();
+          updateJobLocal(job.id, { status: 'cancelled', updated_at: cancelledAt });
+          try {
+            await updateJobRow(job.id, {
+              status: 'cancelled',
+              updated_at: cancelledAt,
+            } as any);
+          } catch (updateError) {
+            console.warn('[upload-jobs] Failed to persist cancelled status:', updateError);
+          }
         } else {
           const friendlyLimitError = limitPayload
             ? `Limit exceeded (${String(limitPayload.limit || 'unknown')}).`
             : '';
+          const finalError = friendlyLimitError || errorMsg || 'Upload failed.';
+          const failedAt = new Date().toISOString();
+          blockedAutoRestartRef.current.add(job.id);
           updateJobLocal(job.id, {
             status: 'failed',
-            error: friendlyLimitError || errorMsg || 'Upload failed.',
+            error: finalError,
+            updated_at: failedAt,
           });
+          try {
+            await updateJobRow(job.id, {
+              status: 'failed',
+              error: finalError,
+              updated_at: failedAt,
+            } as any);
+          } catch (updateError) {
+            console.warn('[upload-jobs] Failed to persist failed status:', updateError);
+          }
         }
       } finally {
-        controllersRef.current.delete(job.id);
-        runningRef.current.delete(job.id);
-        unregisterAuthAbort();
+        if (!handedOffToRetry) {
+          controllersRef.current.delete(job.id);
+          runningRef.current.delete(job.id);
+          unregisterAuthAbort();
+        }
       }
     },
     [isAuthLocked, isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
@@ -767,6 +882,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
     const active = jobs.filter((j) => isActiveStatus(j.status));
     active.forEach((j) => {
+      if (blockedAutoRestartRef.current.has(j.id)) return;
       if (j.status === 'processing' || j.status === 'done' || j.status === 'cancelled') return;
       if (j.status === 'queued' || j.status === 'uploading' || j.status === 'uploaded') {
         if (j.status === 'queued' || j.status === 'uploaded') return;
@@ -955,6 +1071,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         await chunkDeleteQuery;
       } catch {}
 
+      blockedAutoRestartRef.current.delete(jobId);
       updateJobLocal(jobId, { status: 'uploading', progress: 0, error: null, tus_url: null });
       await updateJobRow(jobId, { status: 'uploading', progress: 0, error: null, tus_url: null, updated_at: new Date().toISOString() } as any);
       
@@ -976,6 +1093,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       if (!job) return;
 
       await putJobFile(jobId, file);
+      blockedAutoRestartRef.current.delete(jobId);
 
       updateJobLocal(jobId, {
         status: 'uploading',

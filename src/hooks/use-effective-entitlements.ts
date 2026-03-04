@@ -72,15 +72,30 @@ function normalizeSource(raw: unknown): EffectiveEntitlements['entitlementSource
 
 function normalizeEntitlements(payload: unknown, fallbackUserId: string | null): EffectiveEntitlements {
   const row = asRecord(payload);
+  const normalizedSource = normalizeSource(row.entitlementSource);
+  const normalizedPlan = normalizePlan(row.plan);
+  const promoActive = row.promoActive === true;
+  const isAdminPlan = normalizedPlan === 'admin';
+  const hasPaidEntitlement = normalizedSource === 'paid';
+  const hasPromoEntitlement = normalizedSource === 'promo' || promoActive;
+  const effectiveHasPro = isAdminPlan || hasPaidEntitlement || hasPromoEntitlement;
+  const effectivePlan: EffectiveEntitlements['plan'] = isAdminPlan
+    ? 'admin'
+    : hasPromoEntitlement
+      ? 'promo_pro'
+      : hasPaidEntitlement
+        ? 'pro'
+        : 'free';
+
   return {
     userId: typeof row.userId === 'string' ? row.userId : fallbackUserId,
-    plan: normalizePlan(row.plan),
-    hasPro: row.hasPro === true,
-    entitlementSource: normalizeSource(row.entitlementSource),
+    plan: effectivePlan,
+    hasPro: effectiveHasPro,
+    entitlementSource: normalizedSource,
     entitlementEndsAt: typeof row.entitlementEndsAt === 'string' ? row.entitlementEndsAt : null,
     billingEnabled: row.billingEnabled === true,
     promoEnabled: row.promoEnabled === true,
-    promoActive: row.promoActive === true,
+    promoActive,
     canAccessBilling: row.canAccessBilling === true,
     promoBannerEnabled: row.promoBannerEnabled === true,
     promoContentConfig: asRecord(row.promoContentConfig),

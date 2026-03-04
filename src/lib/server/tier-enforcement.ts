@@ -459,20 +459,14 @@ export async function enforceQuota(input: {
 export function enforceModelAccess(input: {
   tierContext: TierContext;
   model: string;
-  strictFreeMode: boolean;
 }) {
   const model = String(input.model || '').trim().toLowerCase();
-  if (!model) return;
-  const isFreeModel = model.endsWith(':free');
-  if (isProLikeTier(input.tierContext.tier) && isFreeModel) {
-    throw new TierAccessError(503, {
-      error: 'MODEL_POLICY_VIOLATION',
+  if (!model) {
+    throw new TierAccessError(400, {
+      error: 'model_not_allowed',
       key: 'premium_models',
-      message: 'Pro routing selected a free model, which is blocked by policy.',
+      message: 'model_not_allowed',
     });
-  }
-  if (input.strictFreeMode && !isProLikeTier(input.tierContext.tier) && !isFreeModel) {
-    throw new TierAccessError(402, buildProRequiredPayload('premium_models'));
   }
 }
 

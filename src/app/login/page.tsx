@@ -51,6 +51,8 @@ export default function LoginPage() {
   const searchParams = useSearchParams();
 
   const redirectToParam = searchParams.get('redirectTo');
+  const sessionReasonParam = searchParams.get('reason');
+  const wasSessionExpired = sessionReasonParam === 'session_expired';
   const safeRedirectPath =
     typeof redirectToParam === 'string' &&
     redirectToParam.startsWith('/') &&
@@ -298,7 +300,9 @@ export default function LoginPage() {
             Welcome to DataCube AU
           </CardTitle>
           <CardDescription>
-            Sign in to upload documents, chat with your data, and unlock A U insights.
+            {wasSessionExpired
+              ? 'Your session expired. Please sign in again to continue.'
+              : 'Sign in to upload documents, chat with your data, and unlock A U insights.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">

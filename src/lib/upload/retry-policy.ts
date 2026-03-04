@@ -14,21 +14,81 @@ const RETRYABLE_ERROR_CODES = new Set([
   'network_error',
 ]);
 
+function getNestedValue(obj: any, path: string[]): unknown {
+  let current = obj;
+  for (const key of path) {
+    if (!current || typeof current !== 'object') return null;
+    current = current[key];
+  }
+  return current;
+}
+
+function firstNonEmptyString(values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return '';
+}
+
 function normalizeCode(error: UploadErrorLike | null | undefined): string {
-  const nestedCode = typeof error?.details?.code === 'string' ? error?.details?.code : null;
-  const directCode = typeof error?.code === 'string' ? error?.code : null;
-  const code = nestedCode || directCode || '';
+  const code = firstNonEmptyString([
+    getNestedValue(error, ['code']),
+    getNestedValue(error, ['details', 'code']),
+    getNestedValue(error, ['details', 'details', 'code']),
+    getNestedValue(error, ['details', 'error', 'code']),
+    getNestedValue(error, ['details', 'details', 'error', 'code']),
+  ]);
   return String(code).trim().toLowerCase();
 }
 
 function normalizeMessage(error: UploadErrorLike | null | undefined): string {
-  return String(error?.message || '').trim().toLowerCase();
+  const message = firstNonEmptyString([
+    getNestedValue(error, ['message']),
+    getNestedValue(error, ['details', 'message']),
+    getNestedValue(error, ['details', 'error']),
+    getNestedValue(error, ['details', 'details', 'message']),
+    getNestedValue(error, ['details', 'details', 'error']),
+    getNestedValue(error, ['details', 'error', 'message']),
+    getNestedValue(error, ['details', 'details', 'error', 'message']),
+  ]);
+  return message.toLowerCase();
+}
+
+function normalizeDetailsText(error: UploadErrorLike | null | undefined): string {
+  const details = error?.details;
+  if (!details) return '';
+
+  if (typeof details === 'string') return details.trim().toLowerCase();
+
+  try {
+    return JSON.stringify(details).toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function isSchemaCompatibilityError(code: string, message: string, detailsText: string): boolean {
+  if (code === 'schema_mismatch' || code === 'db_migration_required') return true;
+  if (message.includes('database schema mismatch')) return true;
+  if (message.includes('apply latest migrations')) return true;
+  if (message.includes('required upload finalize rpc is missing')) return true;
+  if (detailsText.includes('database schema mismatch')) return true;
+  if (detailsText.includes('apply latest migrations')) return true;
+  if (detailsText.includes('required upload finalize rpc is missing')) return true;
+  if (detailsText.includes('"code":"schema_mismatch"')) return true;
+  if (detailsText.includes('"code":"db_migration_required"')) return true;
+  return false;
 }
 
 export function isRetryableUploadError(error: UploadErrorLike | null | undefined): boolean {
   const status = Number(error?.status ?? 0);
   const code = normalizeCode(error);
   const message = normalizeMessage(error);
+  const detailsText = normalizeDetailsText(error);
+
+  if (isSchemaCompatibilityError(code, message, detailsText)) return false;
 
   if (Number.isFinite(status) && status >= 500) return true;
   if (NON_RETRYABLE_HTTP_STATUSES.has(status)) return false;

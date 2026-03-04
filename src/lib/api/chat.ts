@@ -99,6 +99,85 @@ export type ChatRequest = {
 
 const DEFAULT_MODEL_IDS: string[] = []; 
 
+type EdgeErrorLike = {
+  status?: number | null;
+  message?: string | null;
+  details?: any;
+};
+
+const AU_CHAT_SCHEMA_OUTAGE_TTL_MS = 5 * 60 * 1000;
+let auChatSchemaOutageUntil = 0;
+
+function extractLatestUserInput(request: ChatRequest): string {
+  if (typeof request.user_input === 'string' && request.user_input.trim()) {
+    return request.user_input.trim();
+  }
+  if (Array.isArray(request.messages) && request.messages.length > 0) {
+    const latest = request.messages[request.messages.length - 1];
+    const content = typeof latest?.content === 'string' ? latest.content.trim() : '';
+    if (content) return content;
+  }
+  return '';
+}
+
+function isProviderSchemaOutage(error: EdgeErrorLike | null | undefined): boolean {
+  const message = String(error?.message || '').toLowerCase();
+  const details =
+    typeof error?.details === 'string'
+      ? error.details.toLowerCase()
+      : JSON.stringify(error?.details || {}).toLowerCase();
+
+  return (
+    message.includes('ai_provider_keys') ||
+    details.includes('ai_provider_keys') ||
+    (message.includes('schema cache') && message.includes('provider')) ||
+    (details.includes('schema cache') && details.includes('provider'))
+  );
+}
+
+function markAuChatSchemaOutage(): void {
+  auChatSchemaOutageUntil = Date.now() + AU_CHAT_SCHEMA_OUTAGE_TTL_MS;
+}
+
+function clearAuChatSchemaOutage(): void {
+  auChatSchemaOutageUntil = 0;
+}
+
+function shouldBypassAuChatForSchemaOutage(): boolean {
+  return Date.now() < auChatSchemaOutageUntil;
+}
+
+async function invokeLegacyAuChatFallback(
+  request: ChatRequest,
+): Promise<RagBasedQuestionAnsweringOutput & { thought?: string }> {
+  const question = extractLatestUserInput(request);
+  if (!question) {
+    throw {
+      message: 'Missing user input for fallback chat request.',
+      status: 400,
+    };
+  }
+
+  const { data, error } = await invokeEdgeFunction<any>('chat', {
+    method: 'POST',
+    requireAuth: true,
+    timeoutMs: 120_000,
+    silent: true,
+    body: {
+      question,
+    },
+  });
+
+  if (error) throw error;
+  if (!data) throw { message: 'Fallback chat request failed', status: 500 };
+
+  return {
+    answer: String(data.answer || ''),
+    thought: typeof data.thought === 'string' ? data.thought : undefined,
+    citations: Array.isArray(data.citations) ? data.citations : [],
+  } as RagBasedQuestionAnsweringOutput & { thought?: string };
+}
+
 /**
  * Sends a chat request to the au-chat Edge Function.
  */
@@ -115,6 +194,10 @@ export async function sendChatMessage(
   
   if (isGlobal) {
       endpoint = 'global-chat';
+  }
+
+  if (!isGlobal && shouldBypassAuChatForSchemaOutage()) {
+    return invokeLegacyAuChatFallback(request);
   }
 
   // Construct Payload based on Endpoint
@@ -161,7 +244,17 @@ export async function sendChatMessage(
     headers: opts?.signal ? {} : {},
   });
 
-  if (error) throw error;
+  if (error) {
+    if (!isGlobal && isProviderSchemaOutage(error)) {
+      markAuChatSchemaOutage();
+      console.warn('[chat] AU chat routing schema mismatch detected; falling back to legacy chat endpoint.');
+      return invokeLegacyAuChatFallback(request);
+    }
+    throw error;
+  }
+  if (!isGlobal && endpoint === 'au-chat') {
+    clearAuChatSchemaOutage();
+  }
   if (!data) throw { message: 'Chat request failed', status: 500 };
   return data;
 }
@@ -180,6 +273,18 @@ export async function sendChatMessageStream(
 ): Promise<ChatStreamDoneEvent> {
   const isGlobal = request.selectedDocId === 'global' || request.chat_type === 'global';
   const endpoint = isGlobal ? 'global-chat' : 'au-chat';
+
+  if (!isGlobal && shouldBypassAuChatForSchemaOutage()) {
+    const fallback = await invokeLegacyAuChatFallback(request);
+    const doneEvent: ChatStreamDoneEvent = {
+      type: 'done',
+      answer: String((fallback as any)?.answer || ''),
+      thought: typeof (fallback as any)?.thought === 'string' ? (fallback as any).thought : undefined,
+      citations: Array.isArray((fallback as any)?.citations) ? (fallback as any).citations : [],
+    };
+    handlers.onEvent(doneEvent);
+    return doneEvent;
+  }
 
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
@@ -270,6 +375,20 @@ export async function sendChatMessageStream(
       res.statusText ||
       'Chat stream failed';
 
+    if (!isGlobal && endpoint === 'au-chat' && isProviderSchemaOutage({ status: res.status, message, details })) {
+      markAuChatSchemaOutage();
+      console.warn('[chat-stream] AU chat routing schema mismatch detected; falling back to non-stream legacy chat endpoint.');
+      const fallback = await invokeLegacyAuChatFallback(request);
+      const doneEvent: ChatStreamDoneEvent = {
+        type: 'done',
+        answer: String((fallback as any)?.answer || ''),
+        thought: typeof (fallback as any)?.thought === 'string' ? (fallback as any).thought : undefined,
+        citations: Array.isArray((fallback as any)?.citations) ? (fallback as any).citations : [],
+      };
+      handlers.onEvent(doneEvent);
+      return doneEvent;
+    }
+
     throw {
       message,
       status: res.status,
@@ -279,6 +398,9 @@ export async function sendChatMessageStream(
   }
 
   if (!res.body) throw new Error('Missing response body');
+  if (!isGlobal && endpoint === 'au-chat') {
+    clearAuChatSchemaOutage();
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();

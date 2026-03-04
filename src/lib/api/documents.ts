@@ -30,6 +30,33 @@ function isAbortLikeError(error: unknown): boolean {
   );
 }
 
+function extractApiErrorCode(error: any): string | null {
+  const direct = typeof error?.code === 'string' ? error.code : null;
+  const details = error?.details;
+  let parsedDetails: any = null;
+  if (typeof details === 'string') {
+    try {
+      parsedDetails = JSON.parse(details);
+    } catch {
+      parsedDetails = null;
+    }
+  }
+  const nested =
+    typeof details?.code === 'string'
+      ? details.code
+      : typeof details?.details?.code === 'string'
+        ? details.details.code
+        : typeof details?.error?.code === 'string'
+          ? details.error.code
+          : typeof parsedDetails?.code === 'string'
+            ? parsedDetails.code
+            : typeof parsedDetails?.details?.code === 'string'
+              ? parsedDetails.details.code
+          : null;
+  const code = (nested || direct || '').trim();
+  return code || null;
+}
+
 function isMissingColumnError(error: unknown, column: string): boolean {
   const message = String((error as any)?.message || '').toLowerCase();
   const details = String((error as any)?.details || '').toLowerCase();
@@ -87,7 +114,7 @@ export async function initiateUpload(
     const message = String(error?.message || 'Upload initiation failed');
     const wrapped = new Error(message);
     (wrapped as any).status = error?.status;
-    (wrapped as any).code = error?.details?.code || error?.code || null;
+    (wrapped as any).code = extractApiErrorCode(error);
     (wrapped as any).details = error?.details || null;
     console.error('[API] initiateUpload error:', {
       status: (wrapped as any).status,
@@ -134,7 +161,7 @@ export async function completeUpload(
     const message = String(error?.message || 'Upload completion failed');
     const wrapped = new Error(message);
     (wrapped as any).status = error?.status;
-    (wrapped as any).code = error?.details?.code || error?.code || null;
+    (wrapped as any).code = extractApiErrorCode(error);
     (wrapped as any).details = error?.details || null;
     console.error('[API] completeUpload error:', {
       status: (wrapped as any).status,

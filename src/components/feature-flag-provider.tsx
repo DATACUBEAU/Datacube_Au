@@ -435,15 +435,13 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
 
       let data: any = null;
       const attemptErrors: string[] = [];
-      const attempts: Array<{ name: string; run: () => Promise<any> }> = inConexContext
-        ? [
-            { name: 'admin-handler', run: runAdminHandlerWithRefreshRetry },
-            { name: 'api/admin/feature-flags', run: runLocalApiUpdate },
-          ]
-        : [
-            { name: 'api/admin/feature-flags', run: runLocalApiUpdate },
-            ...(adminToken ? [{ name: 'admin-handler', run: runAdminHandlerWithRefreshRetry }] : []),
-          ];
+      const attempts: Array<{ name: string; run: () => Promise<any> }> = [
+        // Prefer stable local API first to avoid surfacing transient admin-handler 500s in UI.
+        { name: 'api/admin/feature-flags', run: runLocalApiUpdate },
+        ...((inConexContext || adminToken)
+          ? [{ name: 'admin-handler', run: runAdminHandlerWithRefreshRetry }]
+          : []),
+      ];
 
       attempts.push({
         name: 'rpc:set_feature_flag',

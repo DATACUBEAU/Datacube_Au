@@ -25,10 +25,11 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PwaInstallButton from '@/components/pwa-install-button';
-import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
+import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 
 import {
   Dialog,
@@ -54,16 +55,10 @@ import { SettingsPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/
 
 export default function SettingsPage() {
   const [user, , isUserLoading] = useSupabaseUser();
-  const { session } = useSupabaseSession();
   const { toast } = useToast();
   const router = useRouter();
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isUserLoading);
-  const [planStatus, setPlanStatus] = useState<{
-    tier: 'free' | 'pro' | 'promo_pro';
-    source: 'paid' | 'promo' | 'none';
-    expiresAt: string | null;
-    loading: boolean;
-  }>({ tier: 'free', source: 'none', expiresAt: null, loading: true });
+  const { entitlements, loading: isPlanStatusLoading } = useEffectiveEntitlements();
 
   const currentDisplayName = useMemo(() => {
     if (!user) return '';
@@ -97,52 +92,61 @@ export default function SettingsPage() {
     }
   }, [user]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const loadStatus = async () => {
-      if (!user?.id || !session?.access_token) {
-        if (!cancelled) {
-          setPlanStatus({ tier: 'free', source: 'none', expiresAt: null, loading: false });
-        }
-        return;
-      }
-      if (!cancelled) {
-        setPlanStatus((prev) => ({ ...prev, loading: true }));
-      }
-      try {
-        const res = await fetch('/api/billing/status', {
-          method: 'GET',
-          headers: {
-            Authorization: `Bearer ${session.access_token}`,
-          },
-          credentials: 'include',
-        });
-        const payload = await res.json().catch(() => ({}));
-        if (cancelled) return;
-        if (!res.ok) {
-          setPlanStatus({ tier: 'free', source: 'none', expiresAt: null, loading: false });
-          return;
-        }
-        const tier = String(payload?.tier || 'free').toLowerCase();
-        const source = String(payload?.entitlementSource || 'none').toLowerCase();
-        setPlanStatus({
-          tier: tier === 'pro' ? 'pro' : 'free',
-          source: source === 'promo' ? 'promo' : (source === 'paid' ? 'paid' : 'none'),
-          expiresAt: typeof payload?.tier_expires_at === 'string' ? payload.tier_expires_at : null,
-          loading: false,
-        });
-      } catch {
-        if (!cancelled) {
-          setPlanStatus((prev) => ({ ...prev, loading: false }));
+  const hasPaidPro = useMemo(
+    () => entitlements.entitlementSource === 'paid' && entitlements.hasPro,
+    [entitlements.entitlementSource, entitlements.hasPro],
+  );
+  const planStatusLabel = useMemo(() => {
+    if (isPlanStatusLoading) return 'Updating...';
+    if (entitlements.plan === 'admin') return 'Admin';
+    if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo Pro';
+    if (hasPaidPro) return 'Pro';
+    return 'Free';
+  }, [
+    entitlements.entitlementSource,
+    entitlements.plan,
+    entitlements.promoActive,
+    hasPaidPro,
+    isPlanStatusLoading,
+  ]);
+  const planStatusMeta = useMemo(() => {
+    if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) {
+      if (entitlements.promoEndsAtLagos) {
+        const promoEnd = new Date(entitlements.promoEndsAtLagos);
+        if (!Number.isNaN(promoEnd.getTime())) {
+          return `Promo ends: ${promoEnd.toLocaleString('en-US', {
+            timeZone: 'Africa/Lagos',
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })} (Africa/Lagos)`;
         }
       }
-    };
+      return 'Promo mode active';
+    }
 
-    void loadStatus();
-    return () => {
-      cancelled = true;
-    };
-  }, [session?.access_token, user?.id]);
+    if (hasPaidPro && entitlements.entitlementEndsAt) {
+      const expires = new Date(entitlements.entitlementEndsAt);
+      if (!Number.isNaN(expires.getTime())) {
+        return `Expires: ${expires.toLocaleDateString(undefined, {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric',
+        })}`;
+      }
+    }
+
+    if (hasPaidPro) return 'Paid Pro entitlement active';
+    return 'No active paid entitlement';
+  }, [
+    entitlements.entitlementEndsAt,
+    entitlements.entitlementSource,
+    entitlements.promoActive,
+    entitlements.promoEndsAtLagos,
+    hasPaidPro,
+  ]);
 
   const handleToggleAssistant = (enabled: boolean) => {
     setIsAssistantEnabled(enabled);
@@ -335,29 +339,17 @@ export default function SettingsPage() {
                   <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">Plan Status</p>
                     <p className="text-base font-semibold">
-                      {planStatus.loading
-                        ? 'Updating...'
-                        : (planStatus.source === 'promo'
-                          ? 'Promo Pro'
-                          : planStatus.tier === 'pro'
-                            ? 'Pro'
-                            : 'Free')}
+                      {planStatusLabel}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {planStatus.expiresAt
-                        ? `Expires: ${new Date(planStatus.expiresAt).toLocaleString(undefined, {
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric',
-                          })}`
-                        : 'No expiry set'}
+                      {planStatusMeta}
                     </p>
                   </div>
                   <div className="flex gap-2">
                     <Button asChild variant="outline" size="sm">
                       <Link href="/dashboard/settings/subscription">Manage</Link>
                     </Button>
-                    {planStatus.tier !== 'pro' ? (
+                    {!hasPaidPro && !entitlements.promoActive ? (
                       <Button asChild size="sm">
                         <Link href="/pricing">Upgrade</Link>
                       </Button>

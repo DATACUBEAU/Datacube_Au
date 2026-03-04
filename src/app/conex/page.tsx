@@ -610,28 +610,28 @@ const AdminBilling = ({ token }: { token: string }) => {
                         <Card>
                             <CardHeader>
                                 <CardTitle>Model Routing</CardTitle>
-                                <CardDescription>Tier-aware OpenRouter routing controls.</CardDescription>
+                                <CardDescription>Paid-only OpenRouter routing controls.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
                                 <div className="flex items-center justify-between rounded-lg border p-4">
                                     <div>
-                                      <Label>Tier Split Enabled</Label>
+                                      <Label>Tier Split Enabled (Legacy)</Label>
                                       <p className="text-xs text-muted-foreground">
-                                        OFF: everyone uses paid models. ON: free users use free models, Pro users use paid models.
+                                        Paid-only routing is enforced in production. This legacy flag is kept for compatibility.
                                       </p>
                                     </div>
                                     <Switch
-                                      checked={featureFlagRecords['model_routing.tier_split_enabled']?.enabled ?? false}
-                                      onCheckedChange={(c) => void setFeatureFlag('model_routing.tier_split_enabled', c)}
+                                      checked={false}
+                                      disabled
                                     />
                                 </div>
                                 <div className="flex items-center justify-between rounded-lg border p-4 bg-muted/30">
                                     <div>
                                       <Label>Paid Default Enabled</Label>
-                                      <p className="text-xs text-muted-foreground">Safety default: paid routing when tier split is OFF.</p>
+                                      <p className="text-xs text-muted-foreground">Always on for paid-only routing.</p>
                                     </div>
                                     <Switch
-                                      checked={featureFlagRecords['model_routing.paid_default_enabled']?.enabled ?? true}
+                                      checked
                                       disabled
                                     />
                                 </div>
