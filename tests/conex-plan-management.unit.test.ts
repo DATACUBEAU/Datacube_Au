@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import {
   parsePlanLimitsPayload,
+  toPlanLimitDraftByPlan,
   validatePlanLimitDraft,
   type PlanLimitDraftByPlan,
 } from '../src/lib/conex/plan-management.js';
 import {
+  DEFAULT_PROMO_CONTENT_CONFIG,
   buildPromoCopy,
   formatPromoEndsAtLabel,
   normalizePromoContentConfig,
@@ -88,6 +90,33 @@ run('parsePlanLimitsPayload supports array payload shape and direct plan fields'
   assert.equal(parsed.limitsByPlan.monthly.max_uploads_total, 20);
 });
 
+run('plan switch keeps each plan limit value instead of collapsing to zero', () => {
+  const payload = {
+    limitsByPlan: {
+      free: {
+        limits: {
+          max_uploads_total: 4,
+          max_file_mb: 50,
+        },
+      },
+      pro: {
+        limits: {
+          max_uploads_total: 10,
+          max_file_mb: 100,
+        },
+      },
+    },
+  };
+
+  const parsed = parsePlanLimitsPayload(payload, limitKeys);
+  const drafts = toPlanLimitDraftByPlan(parsed.limitsByPlan, limitKeys);
+
+  assert.equal(drafts.free.max_uploads_total, '4');
+  assert.equal(drafts.pro.max_uploads_total, '10');
+  assert.equal(drafts.free.max_file_mb, '50');
+  assert.equal(drafts.pro.max_file_mb, '100');
+});
+
 run('validatePlanLimitDraft normalizes empty values to unlimited (0)', () => {
   const draft: PlanLimitDraftByPlan = {
     free: {
@@ -147,6 +176,17 @@ run('promo content config normalizes and renders expected copy', () => {
   assert.ok(copy.pricing.includes('NGN 4,500/month'));
   assert.ok(copy.pricing.includes('NGN 1,500/week'));
   assert.ok(copy.ending.includes('Africa/Lagos'));
+});
+
+run('default promo copy matches required launch message tokens', () => {
+  const config = normalizePromoContentConfig(DEFAULT_PROMO_CONTENT_CONFIG);
+  const endsLabel = formatPromoEndsAtLabel(config.promoEndsAtLagosIso);
+  const copy = buildPromoCopy(config, endsLabel);
+
+  assert.equal(copy.intro, 'You are currently on Promo Pro.');
+  assert.ok(copy.pricing.includes('April 2nd, 2026'));
+  assert.ok(copy.pricing.includes('NGN 4,500/month'));
+  assert.ok(copy.pricing.includes('NGN 1,500/week'));
 });
 
 run('validatePromoContentDraft reports invalid pricing and date format', () => {

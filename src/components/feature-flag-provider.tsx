@@ -10,12 +10,14 @@ import React, {
   useCallback,
   useRef,
 } from 'react';
-import { supabase } from '@/lib/supabase-client/client';
+import { usePathname } from 'next/navigation';
+import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
-import { useSupabaseSession } from '@/hooks/use-supabase-auth';
+import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 
 export type FeatureFlagScope = 'global' | 'org' | 'user';
 
@@ -53,9 +55,27 @@ interface FeatureFlagContextType {
 
 const DEFAULT_FLAGS: FeatureFlagsMap = {
   global_chat_enabled: true,
+  billing_enabled: false,
+  promo_enabled: false,
+  premium_models_enabled: false,
+  premium_models_paid_only: false,
+  paid_mode_enabled: false,
+  stripe_live_mode: false,
 };
 
 const POLL_INTERVAL_MS = 45000;
+const FLAG_CACHE_ROUTE = '/feature-flags';
+const FLAG_CACHE_SOURCE = 'feature-flags-provider';
+const FLAG_CACHE_SCHEMA = 1;
+const FLAG_CACHE_TTL_MS = 1000 * 60 * 20;
+const FAIL_CLOSED_FLAG_KEYS = new Set<string>([
+  'billing_enabled',
+  'promo_enabled',
+  'premium_models_enabled',
+  'premium_models_paid_only',
+  'paid_mode_enabled',
+  'stripe_live_mode',
+]);
 
 const FeatureFlagContext = createContext<FeatureFlagContextType>({
   flags: DEFAULT_FLAGS,
@@ -133,10 +153,42 @@ function removeRow(prevRows: FeatureFlagRecord[], key: string): FeatureFlagRecor
 export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const [rows, setRows] = useState<FeatureFlagRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const pathname = usePathname();
+  const [user] = useSupabaseUser();
   const { isOnline } = useNetworkStatus();
   const { loading: isLoadingAuth } = useSupabaseSession();
   const { isAuthLocked } = useSmartAuth();
   const isFetchingRef = useRef(false);
+
+  const readCachedRows = useCallback(async (): Promise<FeatureFlagRecord[] | null> => {
+    if (!user?.id) return null;
+    const cached = await readUserCache<{ rows: FeatureFlagRecord[] }>({
+      userId: user.id,
+      route: FLAG_CACHE_ROUTE,
+      source: FLAG_CACHE_SOURCE,
+      endpoint: 'list',
+      schemaVersion: FLAG_CACHE_SCHEMA,
+      maxAgeMs: FLAG_CACHE_TTL_MS,
+    });
+    const cachedRows = cached.data?.rows;
+    if (!Array.isArray(cachedRows)) return null;
+    return cachedRows
+      .map((row) => normalizeFlagRow(row))
+      .filter((row): row is FeatureFlagRecord => row !== null);
+  }, [user?.id]);
+
+  const writeCachedRows = useCallback(async (nextRows: FeatureFlagRecord[]) => {
+    if (!user?.id) return;
+    await writeUserCache({
+      userId: user.id,
+      route: FLAG_CACHE_ROUTE,
+      source: FLAG_CACHE_SOURCE,
+      endpoint: 'list',
+      schemaVersion: FLAG_CACHE_SCHEMA,
+      ttlMs: FLAG_CACHE_TTL_MS,
+      data: { rows: nextRows },
+    });
+  }, [user?.id]);
 
   const fetchFlags = useCallback(async (opts?: { silent?: boolean }) => {
     if (isAuthLocked) {
@@ -148,6 +200,15 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
     if (!opts?.silent) setLoading(true);
 
     try {
+      if (!isOnline) {
+        const cachedRows = await readCachedRows();
+        if (cachedRows) {
+          setRows(cachedRows);
+        }
+        setLoading(false);
+        return;
+      }
+
       const { data, error } = await supabase
         .from('feature_flags')
         .select('id,key,enabled,category,description,scope,org_id,user_id,config,updated_at')
@@ -175,14 +236,20 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         .filter((row): row is FeatureFlagRecord => row !== null);
 
       setRows(normalized);
+      void writeCachedRows(normalized);
     } catch (error) {
       console.warn('[FeatureFlagProvider] Failed to fetch feature flags.', error);
-      setRows((prev) => prev);
+      const cachedRows = await readCachedRows();
+      if (cachedRows) {
+        setRows(cachedRows);
+      } else {
+        setRows((prev) => prev);
+      }
     } finally {
       setLoading(false);
       isFetchingRef.current = false;
     }
-  }, [isAuthLocked]);
+  }, [isAuthLocked, isOnline, readCachedRows, writeCachedRows]);
 
   useEffect(() => {
     if (isLoadingAuth) return;
@@ -192,6 +259,11 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
     }
     void fetchFlags();
   }, [fetchFlags, isAuthLocked, isLoadingAuth]);
+
+  useEffect(() => {
+    if (!user?.id || !isAuthLocked || isLoadingAuth) return;
+    setRows([]);
+  }, [isAuthLocked, isLoadingAuth, user?.id]);
 
   useEffect(() => {
     if (isLoadingAuth || !isOnline || isAuthLocked) return;
@@ -273,16 +345,43 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       const adminToken = typeof window !== 'undefined'
         ? window.localStorage.getItem('conex_admin_token')
         : null;
+      const inConexContext = Boolean(adminToken) || pathname?.startsWith('/conex');
 
-      const parseAdminPayload = async (res: any) => {
+      const parseAdminPayload = async (res: any): Promise<any> => {
         if (res?.data && typeof res.data === 'object') return res.data;
         return await res.clone().json().catch(() => null);
       };
 
+      const buildErrorMessage = (
+        fallbackLabel: string,
+        payloadObj: any,
+        status: number,
+      ): string => {
+        const message =
+          payloadObj?.error ||
+          payloadObj?.message ||
+          payloadObj?.code ||
+          `${fallbackLabel} (${status})`;
+        const requestId =
+          payloadObj?.requestId ||
+          payloadObj?.request_id ||
+          payloadObj?.correlation_id ||
+          payloadObj?.details?.requestId ||
+          null;
+        return requestId ? `${String(message)} [requestId=${String(requestId)}]` : String(message);
+      };
+
       const runLocalApiUpdate = async (): Promise<any> => {
+        const accessToken = await getSupabaseAccessToken();
+        const headers = new Headers({ 'Content-Type': 'application/json' });
+        if (accessToken) {
+          headers.set('Authorization', `Bearer ${accessToken}`);
+        }
+
         const res = await fetch('/api/admin/feature-flags', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
+          credentials: 'include',
           body: JSON.stringify({
             key: normalizedKey,
             enabled,
@@ -295,11 +394,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
 
         const payload = await res.clone().json().catch(() => null);
         if (!res.ok) {
-          const message =
-            payload?.error ||
-            payload?.message ||
-            `feature-flag API update failed (${res.status})`;
-          throw new Error(String(message));
+          throw new Error(buildErrorMessage('feature-flag API update failed', payload, res.status));
         }
 
         return payload?.flag ?? payload?.data?.flag ?? payload;
@@ -316,11 +411,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         });
         const payload = await parseAdminPayload(res as any);
         if (!res.ok) {
-          const message =
-            payload?.error ||
-            payload?.message ||
-            `admin-handler update_feature_flag failed (${res.status})`;
-          throw new Error(String(message));
+          throw new Error(buildErrorMessage('admin-handler update_feature_flag failed', payload, res.status));
         }
         return payload?.flag ?? payload?.data?.flag ?? payload;
       };
@@ -343,59 +434,54 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       };
 
       let data: any = null;
-      let lastError: any = null;
+      const attemptErrors: string[] = [];
+      const attempts: Array<{ name: string; run: () => Promise<any> }> = inConexContext
+        ? [
+            { name: 'admin-handler', run: runAdminHandlerWithRefreshRetry },
+            { name: 'api/admin/feature-flags', run: runLocalApiUpdate },
+          ]
+        : [
+            { name: 'api/admin/feature-flags', run: runLocalApiUpdate },
+            ...(adminToken ? [{ name: 'admin-handler', run: runAdminHandlerWithRefreshRetry }] : []),
+          ];
 
-      try {
-        data = await runLocalApiUpdate();
-      } catch (localErr) {
-        lastError = localErr;
-      }
+      attempts.push({
+        name: 'rpc:set_feature_flag',
+        run: async () => {
+          const rpcResult = await supabase.rpc('set_feature_flag', payload as any);
+          if (rpcResult.error) {
+            throw new Error(String(rpcResult.error.message || 'set_feature_flag RPC failed'));
+          }
+          return rpcResult.data;
+        },
+      });
 
-      // In Conex (admin token present), prefer admin-handler first to avoid
-      // brittle RPC drift issues.
-      if (!data && adminToken) {
+      for (const attempt of attempts) {
         try {
-          data = await runAdminHandlerWithRefreshRetry();
-        } catch (adminErr) {
-          lastError = adminErr;
-        }
-      }
-
-      if (!data && adminToken && lastError) {
-        const adminMessage = String((lastError as any)?.message || '').toLowerCase();
-        if (adminMessage.includes('unauthorized') || adminMessage.includes('forbidden')) {
-          dispatchSessionExpired({
-            status: 401,
-            source: 'FeatureFlagProvider.setFlag',
-            reason: 'admin_handler_auth_error',
-          });
-          setRows(snapshot);
-          throw new Error('Session expired. Please sign in again and retry.');
+          data = await attempt.run();
+          if (data) break;
+        } catch (err: any) {
+          attemptErrors.push(`[${attempt.name}] ${String(err?.message || err)}`);
         }
       }
 
       if (!data) {
-        const rpcResult = await supabase.rpc('set_feature_flag', payload as any);
-        data = rpcResult.data;
-        const rpcError = rpcResult.error;
-
-        if (rpcError && !data) {
-          try {
-            data = await runAdminHandlerWithRefreshRetry();
-          } catch (fallbackErr) {
-            setRows(snapshot);
-            throw fallbackErr instanceof Error
-              ? fallbackErr
-              : new Error(
-                String(
-                  (fallbackErr as any)?.message ||
-                  rpcError?.message ||
-                  lastError?.message ||
-                  'Failed to update feature flag.',
-                ),
-              );
-          }
+        const joined = attemptErrors.join(' | ') || 'Failed to update feature flag.';
+        const authError = attemptErrors.some((entry) => {
+          const lower = entry.toLowerCase();
+          return lower.includes('unauthorized') || lower.includes('forbidden') || lower.includes('invalid token');
+        });
+        if (authError) {
+          dispatchSessionExpired({
+            status: 401,
+            source: 'FeatureFlagProvider.setFlag',
+            reason: 'admin_flag_update_auth_error',
+          });
+          setRows(snapshot);
+          throw new Error('Session expired. Please sign in again and retry.');
         }
+        setRows(snapshot);
+        throw new Error(joined);
       }
 
       const record = normalizeFlagRow(data);
@@ -405,7 +491,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         void fetchFlags({ silent: true });
       }
     },
-    [fetchFlags, isAuthLocked, rows],
+    [fetchFlags, isAuthLocked, pathname, rows],
   );
 
   const refreshFlags = useCallback(async () => {
@@ -418,7 +504,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       flags,
       records,
       isEnabled: (feature: string) => {
-        if (flags[feature] === undefined) return true;
+        if (flags[feature] === undefined) return !FAIL_CLOSED_FLAG_KEYS.has(feature);
         return !!flags[feature];
       },
       loading,

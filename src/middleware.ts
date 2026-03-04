@@ -4,6 +4,7 @@ import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { hasConexAccess } from '@/lib/conex-rbac';
 
 const CONEX_USERS_PATH_PREFIX = '/conex/users';
+const CONEX_PATH_PREFIX = '/conex';
 const DASHBOARD_PATH_PREFIX = '/dashboard';
 const FRAME_ANCESTORS_POLICY = "frame-ancestors 'none'";
 
@@ -13,6 +14,10 @@ function isConexUsersApi(pathname: string): boolean {
 
 function isDashboardRoute(pathname: string): boolean {
   return pathname === DASHBOARD_PATH_PREFIX || pathname.startsWith(`${DASHBOARD_PATH_PREFIX}/`);
+}
+
+function isConexRoute(pathname: string): boolean {
+  return pathname === CONEX_PATH_PREFIX || pathname.startsWith(`${CONEX_PATH_PREFIX}/`);
 }
 
 function mergeFrameAncestorsDirective(cspHeader: string | null): string {
@@ -89,7 +94,7 @@ export async function middleware(req: NextRequest) {
     return applyClickjackingHeaders(NextResponse.next());
   }
 
-  if (!isConexUsersApi(pathname)) {
+  if (!isConexRoute(pathname)) {
     return applyClickjackingHeaders(NextResponse.next());
   }
 

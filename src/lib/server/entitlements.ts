@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
 
 export const PROMO_PRO_END_LAGOS_ISO = '2026-04-02T00:00:00+01:00';
 export const PROMO_PRO_END_UTC_ISO = '2026-04-01T23:00:00.000Z';
@@ -29,12 +30,20 @@ export function isPromoProActive(now = Date.now()): boolean {
   return now < PROMO_PRO_END_MS;
 }
 
+export async function isPromoModeActive(
+  supabase: SupabaseClient,
+  now = Date.now(),
+): Promise<boolean> {
+  const promoEnabled = await getFeatureFlagBoolean(supabase, 'promo_enabled', false);
+  return promoEnabled && isPromoProActive(now);
+}
+
 export async function getProEntitlementStatus(
   supabase: SupabaseClient,
   userId: string
 ): Promise<ProEntitlementStatus> {
   const nowIso = new Date().toISOString();
-  const promoActive = isPromoProActive();
+  const promoActive = await isPromoModeActive(supabase);
 
   const { data: grants, error } = await supabase
     .from('entitlement_grants')

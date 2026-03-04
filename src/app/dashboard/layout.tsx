@@ -74,8 +74,8 @@ import { Badge } from '@/components/ui/badge';
 import { UpgradeModal } from "@/components/ui/upgrade-modal";
 import { ToastAction } from '@/components/ui/toast';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { useFlag } from '@/components/feature-flag-provider';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 
 type NavItem = {
   href: string;
@@ -271,11 +271,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const upgradeBlockedUntil = useStore((s) => s.upgradeBlockedUntil);
   const clearUpgradeBlock = useStore((s) => s.clearUpgradeBlock);
   const unreadCount = useUnreadCount();
-  const [planTier, setPlanTier] = useState<string>('free');
-  const [planExpiresAt, setPlanExpiresAt] = useState<string | null>(null);
-  const [isBillingDisabled, setIsBillingDisabled] = useState(false);
-  const [isPlanStatusLoading, setIsPlanStatusLoading] = useState(false);
-  const { enabled: billingEnabledFlag } = useFlag('billing_enabled');
+  const {
+    entitlements,
+    loading: isPlanStatusLoading,
+    isUsingCachedData: isUsingCachedEntitlements,
+    cachedAt: entitlementsCachedAt,
+  } = useEffectiveEntitlements();
 
   const isAuthenticated = !!user;
 
@@ -319,61 +320,46 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const userInitial =
     userDisplayName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || 'G';
 
-  const refreshPlanStatus = useCallback(async () => {
-    if (!user?.id || !isOnline) return;
-
-    setIsPlanStatusLoading(true);
-    try {
-      const profileResult = await supabase
-        .from('au_user_profiles')
-        .select('tier, tier_expires_at')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (profileResult.data?.tier) {
-        setPlanTier(String(profileResult.data.tier));
-      } else {
-        setPlanTier('free');
-      }
-
-      setPlanExpiresAt(
-        typeof profileResult.data?.tier_expires_at === 'string'
-          ? profileResult.data.tier_expires_at
-          : null,
-      );
-      setIsBillingDisabled(!billingEnabledFlag);
-    } catch {
-      setPlanTier('free');
-      setPlanExpiresAt(null);
-      setIsBillingDisabled(!billingEnabledFlag);
-    } finally {
-      setIsPlanStatusLoading(false);
-    }
-  }, [billingEnabledFlag, isOnline, user?.id]);
-
-  const normalizedPlanTier = useMemo(() => {
-    if (isBillingDisabled) return 'premium';
-    return (planTier || 'free').toLowerCase();
-  }, [isBillingDisabled, planTier]);
-
   const planStatusLabel = useMemo(() => {
-    if (isBillingDisabled) return 'Premium Free';
-    if (normalizedPlanTier === 'pro') return 'Pro';
-    if (normalizedPlanTier === 'admin') return 'Admin';
+    if (entitlements.plan === 'admin') return 'Admin';
+    if (entitlements.promoActive) return 'Promo Pro';
+    if (entitlements.hasPro || entitlements.plan === 'pro') return 'Pro';
     return 'Free';
-  }, [isBillingDisabled, normalizedPlanTier]);
+  }, [entitlements.hasPro, entitlements.plan, entitlements.promoActive]);
 
   const isProUnlocked = useMemo(() => {
-    return normalizedPlanTier === 'pro' || normalizedPlanTier === 'admin' || normalizedPlanTier === 'premium';
-  }, [normalizedPlanTier]);
+    return (
+      entitlements.plan === 'admin' ||
+      entitlements.plan === 'pro' ||
+      entitlements.plan === 'promo_pro' ||
+      entitlements.hasPro
+    );
+  }, [entitlements.hasPro, entitlements.plan]);
 
   const planStatusMeta = useMemo(() => {
-    if (isBillingDisabled) return 'Promo mode: premium unlocked for all users';
-    if (!planExpiresAt) return 'No expiry set';
-    const expires = new Date(planExpiresAt);
-    if (Number.isNaN(expires.getTime())) return 'No expiry set';
-    return `Renews/Expires: ${expires.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}`;
-  }, [isBillingDisabled, planExpiresAt]);
+    if (entitlements.promoActive) {
+      return 'Promo mode active: premium unlocked for your account';
+    }
+
+    if (entitlements.entitlementEndsAt) {
+      const expires = new Date(entitlements.entitlementEndsAt);
+      if (!Number.isNaN(expires.getTime())) {
+        return `Renews/Expires: ${expires.toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        })}`;
+      }
+    }
+
+    if (isUsingCachedEntitlements && !isOnline) {
+      return entitlementsCachedAt
+        ? `Offline safe mode (cached ${new Date(entitlementsCachedAt).toLocaleTimeString()})`
+        : 'Offline safe mode';
+    }
+
+    return 'No expiry set';
+  }, [entitlements.entitlementEndsAt, entitlements.promoActive, entitlementsCachedAt, isOnline, isUsingCachedEntitlements]);
 
   const handleWhatsAppRedirect = () => {
     const phoneNumber = '2349036553377';
@@ -485,32 +471,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       return () => clearInterval(activityInterval);
     }
   }, [isAuthLocked, user, isUserLoading, toast, isOnline]);
-
-  useEffect(() => {
-    if (!user?.id || !isOnline || isAuthLocked) return;
-
-    void refreshPlanStatus();
-
-    const profileChannel = supabase
-      .channel(`dashboard-plan-status:${user.id}`)
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'au_user_profiles',
-          filter: `user_id=eq.${user.id}`,
-        },
-        () => {
-          void refreshPlanStatus();
-        },
-      )
-      .subscribe();
-
-    return () => {
-      void supabase.removeChannel(profileChannel);
-    };
-  }, [isAuthLocked, isOnline, refreshPlanStatus, user?.id]);
 
   useEffect(() => {
     if (!isAuthenticated || !isOnline || isAuthLocked || hasWarmedRoutesRef.current) return;

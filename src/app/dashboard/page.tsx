@@ -40,6 +40,12 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
+import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
+import {
+  buildPromoCopy,
+  formatPromoEndsAtLabel,
+  normalizePromoContentConfig,
+} from '@/lib/conex/promo-content';
 
 const quickAccessItems = [
   {
@@ -76,6 +82,7 @@ const quickAccessItems = [
 export default function DashboardPage() {
   const [user] = useSupabaseUser();
   const { isOnline } = useNetworkStatus();
+  const { entitlements } = useEffectiveEntitlements();
   const {
     documents,
     loading: documentsLoading,
@@ -94,6 +101,18 @@ export default function DashboardPage() {
   } = useLimitationsAgent({
     route: 'dashboard',
   });
+  const promoContent = useMemo(
+    () => normalizePromoContentConfig(entitlements.promoContentConfig || {}),
+    [entitlements.promoContentConfig],
+  );
+  const promoEndsLabel = useMemo(
+    () => formatPromoEndsAtLabel(entitlements.promoEndsAtLagos || promoContent.promoEndsAtLagosIso),
+    [entitlements.promoEndsAtLagos, promoContent.promoEndsAtLagosIso],
+  );
+  const promoCopy = useMemo(
+    () => buildPromoCopy(promoContent, promoEndsLabel),
+    [promoContent, promoEndsLabel],
+  );
 
   const recentDocuments = useMemo(() => {
     if (!user) return [];
@@ -185,6 +204,13 @@ export default function DashboardPage() {
             }
           }}
         />
+      ) : null}
+      {entitlements.promoBannerEnabled && entitlements.promoActive ? (
+        <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
+          <p className="font-semibold">{promoCopy.intro}</p>
+          <p className="text-muted-foreground">{promoCopy.pricing}</p>
+          <p className="text-xs text-muted-foreground">{promoCopy.ending}</p>
+        </div>
       ) : null}
 
       <div className="flex items-center">

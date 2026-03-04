@@ -16,7 +16,7 @@ import { Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
-import { hasServerAuthSessionCookie } from '@/lib/auth/session-cookie';
+import { hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   Dialog,
   DialogContent,
@@ -65,31 +65,67 @@ export default function LoginPage() {
     let cancelled = false;
 
     const resolveRedirect = async () => {
+      const signOutAndStop = async () => {
+        await explicitSignOut(user?.id ?? null);
+        if (!cancelled) {
+          setIsResolvingRedirect(false);
+        }
+      };
+
+      const validateServerSessionCookie = async (): Promise<boolean> => {
+        const res = await fetch('/api/auth/session', {
+          method: 'GET',
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        return res.ok;
+      };
+
+      const ensureServerSession = async (): Promise<string | null> => {
+        const { data: initialSessionData } = await supabase.auth.getSession();
+        let activeSession = initialSessionData.session;
+        if (!activeSession?.access_token) {
+          const fallbackToken = await getSupabaseAccessToken();
+          if (!fallbackToken) return null;
+          const { data: fallbackSessionData } = await supabase.auth.getSession();
+          activeSession = fallbackSessionData.session;
+        }
+
+        if (!activeSession?.access_token) return null;
+        syncServerAuthSessionCookie(activeSession);
+        if (!hasServerAuthSessionCookie()) return null;
+
+        if (await validateServerSessionCookie()) {
+          return activeSession.access_token;
+        }
+
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError || !refreshed.session?.access_token) return null;
+
+        activeSession = refreshed.session;
+        syncServerAuthSessionCookie(activeSession);
+        if (!hasServerAuthSessionCookie()) return null;
+
+        const validated = await validateServerSessionCookie();
+        return validated ? activeSession.access_token : null;
+      };
+
       try {
         setIsResolvingRedirect(true);
-        const token = await getSupabaseAccessToken();
+        const token = await ensureServerSession();
         if (!token) {
-          await explicitSignOut(user?.id ?? null);
-          if (!cancelled) {
-            setIsResolvingRedirect(false);
-          }
+          await signOutAndStop();
           return;
         }
 
         const { data: validated, error: validateError } = await supabase.auth.getUser(token);
         if (validateError || !validated?.user?.id) {
-          await explicitSignOut(user?.id ?? null);
-          if (!cancelled) {
-            setIsResolvingRedirect(false);
-          }
+          await signOutAndStop();
           return;
         }
 
         if (!hasServerAuthSessionCookie()) {
-          await explicitSignOut(user?.id ?? null);
-          if (!cancelled) {
-            setIsResolvingRedirect(false);
-          }
+          await signOutAndStop();
           return;
         }
 
@@ -116,10 +152,7 @@ export default function LoginPage() {
           }
 
           if (res.status === 401) {
-            await explicitSignOut(user?.id ?? null);
-            if (!cancelled) {
-              setIsResolvingRedirect(false);
-            }
+            await signOutAndStop();
             return;
           }
 
@@ -129,10 +162,7 @@ export default function LoginPage() {
 
         router.replace(safeRedirectPath);
       } catch {
-        await explicitSignOut(user?.id ?? null);
-        if (!cancelled) {
-          setIsResolvingRedirect(false);
-        }
+        await signOutAndStop();
       }
     };
 

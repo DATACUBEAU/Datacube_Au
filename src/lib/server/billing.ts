@@ -4,7 +4,7 @@ import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
 import {
   PROMO_PRO_END_LAGOS_ISO,
   getProEntitlementStatus,
-  isPromoProActive,
+  isPromoModeActive,
 } from '@/lib/server/entitlements';
 import {
   disablePaystackSubscription,
@@ -357,7 +357,7 @@ export async function getBillingStatus(
 ): Promise<Record<string, unknown>> {
   await ensurePlanCatalog(supabase);
 
-  const billingEnabled = await getFeatureFlagBoolean(supabase, 'billing_enabled', true);
+  const billingEnabled = await getFeatureFlagBoolean(supabase, 'billing_enabled', false);
   const { data: profileRow } = await supabase
     .from('au_user_profiles')
     .select('tier')
@@ -368,7 +368,7 @@ export async function getBillingStatus(
 
   if (currentTier !== 'admin' && entitlement.hasPro) {
     await setProfileTier(supabase, userId, 'pro', entitlement.endsAt);
-  } else if (currentTier !== 'admin' && !isPromoProActive()) {
+  } else if (currentTier !== 'admin' && !entitlement.hasPro) {
     await setProfileTier(supabase, userId, 'free', null);
   }
 
@@ -411,6 +411,7 @@ export async function getBillingStatus(
 
   return {
     billingEnabled,
+    canAccessBilling: billingEnabled && !entitlement.promoActive,
     tier,
     entitlementSource: entitlement.source,
     tier_expires_at: entitlement.endsAt,
@@ -783,7 +784,8 @@ export async function reconcileBilling(
     .lt('ends_at', nowIso);
 
   let downgradedUsers = 0;
-  if (!isPromoProActive()) {
+  const promoModeActive = await isPromoModeActive(supabase);
+  if (!promoModeActive) {
     const { data: proProfiles, error: profileErr } = await supabase
       .from('au_user_profiles')
       .select('user_id')

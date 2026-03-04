@@ -33,10 +33,19 @@ function isSchemaDriftError(error: any): boolean {
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID();
   try {
     const auth = await requireUserFromRequest(req);
     if (!auth.ok) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+      return NextResponse.json(
+        {
+          code: 'unauthorized',
+          message: 'Unauthorized request.',
+          requestId,
+          details: { reason: auth.reason },
+        },
+        { status: 401, headers: { 'Cache-Control': 'no-store' } },
+      );
     }
 
     const supabase = createSupabaseAdminClient();
@@ -48,11 +57,19 @@ export async function POST(req: NextRequest) {
 
     if (profileError) {
       console.error('[api/admin/feature-flags] profile lookup failed', {
+        requestId,
         userId: auth.userId,
         code: profileError.code,
         message: profileError.message,
       });
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+      return NextResponse.json(
+        {
+          code: 'forbidden',
+          message: 'Conex admin access required.',
+          requestId,
+        },
+        { status: 403, headers: { 'Cache-Control': 'no-store' } },
+      );
     }
 
     const allowed = hasConexAccess({
@@ -61,13 +78,27 @@ export async function POST(req: NextRequest) {
       tier: (profile as any)?.tier ?? null,
     });
     if (!allowed) {
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+      return NextResponse.json(
+        {
+          code: 'forbidden',
+          message: 'Conex admin access required.',
+          requestId,
+        },
+        { status: 403, headers: { 'Cache-Control': 'no-store' } },
+      );
     }
 
     const body = await req.json().catch(() => ({}));
     const key = String((body as any)?.key || '').trim();
     if (!key) {
-      return NextResponse.json({ error: 'flag_key_required' }, { status: 400 });
+      return NextResponse.json(
+        {
+          code: 'flag_key_required',
+          message: 'Feature flag key is required.',
+          requestId,
+        },
+        { status: 400, headers: { 'Cache-Control': 'no-store' } },
+      );
     }
 
     const enabled = Boolean((body as any)?.enabled);
@@ -138,7 +169,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { ok: true, flag: row },
+      { ok: true, flag: row, requestId },
       {
         status: 200,
         headers: { 'Cache-Control': 'no-store' },
@@ -146,11 +177,17 @@ export async function POST(req: NextRequest) {
     );
   } catch (error: any) {
     console.error('[api/admin/feature-flags] unexpected error', {
+      requestId,
+      stack: String(error?.stack || ''),
       message: String(error?.message || error),
     });
     return NextResponse.json(
-      { error: 'internal_server_error', message: String(error?.message || 'Unknown error') },
-      { status: 500 }
+      {
+        code: 'internal_server_error',
+        message: String(error?.message || 'Unknown error'),
+        requestId,
+      },
+      { status: 500, headers: { 'Cache-Control': 'no-store' } }
     );
   }
 }

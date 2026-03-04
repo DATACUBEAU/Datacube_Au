@@ -6,8 +6,9 @@ import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { Sparkles, CheckCircle2 } from "lucide-react";
-import { getUpgradeBenefits, isPromoWindowActive } from "@/lib/tier/policy";
+import { getUpgradeBenefits } from "@/lib/tier/policy";
 import { useFeatureFlags } from "@/components/feature-flag-provider";
+import { useEffectiveEntitlements } from "@/hooks/use-effective-entitlements";
 import {
   buildPromoCopy,
   formatPromoEndsAtLabel,
@@ -19,6 +20,7 @@ export function UpgradeModal() {
   const context = useStore((state) => state.upgradeContext);
   const setOpen = useStore((state) => state.setUpgradeModalOpen);
   const { records: featureFlagRecords } = useFeatureFlags();
+  const { entitlements } = useEffectiveEntitlements();
   const router = useRouter();
 
   if (!context) return null;
@@ -35,7 +37,7 @@ export function UpgradeModal() {
   } = context as any;
   const limitKey = String(key || limit || "general").trim();
   const benefits = getUpgradeBenefits({ limitKey });
-  const promoActive = isPromoWindowActive();
+  const promoActive = entitlements.promoActive;
   const promoContent = useMemo(
     () => normalizePromoContentConfig(featureFlagRecords.promo_content?.config || {}),
     [featureFlagRecords],

@@ -2,6 +2,21 @@ import type {NextConfig} from 'next';
 import withPWAInit from '@ducanh2912/next-pwa';
 import path from 'node:path';
 
+function isProtectedAppPath(pathname: string): boolean {
+  return (
+    pathname === '/dashboard' ||
+    pathname.startsWith('/dashboard/') ||
+    pathname === '/conex' ||
+    pathname.startsWith('/conex/')
+  );
+}
+
+function isProtectedNextDataPath(pathname: string): boolean {
+  const match = pathname.match(/^\/_next\/data\/[^/]+(\/.+)\.json$/i);
+  if (!match?.[1]) return false;
+  return isProtectedAppPath(match[1]);
+}
+
 const withPWA = withPWAInit({
   dest: 'public',
   disable: process.env.NODE_ENV === 'development',
@@ -106,7 +121,10 @@ const withPWA = withPWAInit({
       },
       {
         // Keep Next.js data payloads around longer so already-visited pages reopen offline.
-        urlPattern: ({ request, url }) => request.method === 'GET' && /\/_next\/data\/.+\/.+\.json$/i.test(url.pathname),
+        urlPattern: ({ request, url }) =>
+          request.method === 'GET' &&
+          /\/_next\/data\/.+\/.+\.json$/i.test(url.pathname) &&
+          !isProtectedNextDataPath(url.pathname),
         handler: 'StaleWhileRevalidate',
         options: {
           cacheName: 'next-data',
@@ -123,7 +141,8 @@ const withPWA = withPWAInit({
           request.headers.get('RSC') === '1' &&
           request.headers.get('Next-Router-Prefetch') === '1' &&
           sameOrigin &&
-          !pathname.startsWith('/api/'),
+          !pathname.startsWith('/api/') &&
+          !isProtectedAppPath(pathname),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages-rsc-prefetch',
@@ -140,7 +159,8 @@ const withPWA = withPWAInit({
           request.method === 'GET' &&
           request.headers.get('RSC') === '1' &&
           sameOrigin &&
-          !pathname.startsWith('/api/'),
+          !pathname.startsWith('/api/') &&
+          !isProtectedAppPath(pathname),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages-rsc',
@@ -155,7 +175,10 @@ const withPWA = withPWAInit({
         // Main HTML navigation fallback for instant offline/poor-network transitions.
         urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
           request.method === 'GET' &&
-          request.mode === 'navigate' && sameOrigin && !pathname.startsWith('/api/'),
+          request.mode === 'navigate' &&
+          sameOrigin &&
+          !pathname.startsWith('/api/') &&
+          !isProtectedAppPath(pathname),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages',

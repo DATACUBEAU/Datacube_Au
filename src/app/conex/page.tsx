@@ -62,6 +62,7 @@ const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> =
   { key: 'max_jobs_concurrent', label: 'Max concurrent jobs', description: 'Maximum simultaneous ingestion jobs.' },
 ];
 const LIMIT_FIELD_KEYS = LIMIT_FIELDS.map((field) => field.key);
+const REDUNDANT_FLAG_KEYS = new Set<string>(['paid_mode_enabled']);
 
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
@@ -415,6 +416,7 @@ const AdminBilling = ({ token }: { token: string }) => {
     .sort((a, b) => a.localeCompare(b));
 
   const filteredFlags = allFlags.filter((flag) => {
+    if (REDUNDANT_FLAG_KEYS.has(flag.key)) return false;
     const category = (flag.category || 'general').trim().toLowerCase();
     if (flagCategory !== 'all' && category !== flagCategory) return false;
     const haystack = `${flag.key} ${flag.description} ${category} ${flag.scope}`.toLowerCase();
@@ -483,12 +485,9 @@ const AdminBilling = ({ token }: { token: string }) => {
                                       onCheckedChange={(c) => void setFeatureFlag('premium_models_paid_only', c)}
                                     />
                                 </div>
-                                <div className="flex items-center justify-between p-4 border rounded-lg bg-blue-50 dark:bg-blue-900/10">
-                                    <div>
-                                        <Label className="text-blue-900 dark:text-blue-200 font-bold">Paid Mode Enabled</Label>
-                                        <p className="text-xs text-blue-700 dark:text-blue-300">Force paid model path and key routing.</p>
-                                    </div>
-                                    <Switch checked={featureFlagRecords.paid_mode_enabled?.enabled ?? false} onCheckedChange={(c) => void setFeatureFlag('paid_mode_enabled', c)} />
+                                <div className="rounded-md border border-muted bg-muted/30 p-3 text-xs text-muted-foreground">
+                                  <span className="font-medium text-foreground">Routing note:</span>{' '}
+                                  <code>paid_mode_enabled</code> is auto-mirrored from <code>billing_enabled</code> and hidden to avoid conflicting controls.
                                 </div>
                             </CardContent>
                         </Card>

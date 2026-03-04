@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
+import { hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   AUTH_STATE_CHANGED_EVENT,
   clearAuthActionsDisabled,
@@ -81,7 +81,8 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     (nextSession: Session | null, options?: { offlineBootstrap?: boolean; force?: boolean }) => {
       const normalizedSession = normalizeSession(nextSession);
       const signature = signatureFromSession(normalizedSession);
-      if (!options?.force && signature && signature === sessionSignatureRef.current) {
+      const hasServerCookie = normalizedSession?.access_token ? hasServerAuthSessionCookie() : true;
+      if (!options?.force && signature && signature === sessionSignatureRef.current && hasServerCookie) {
         return;
       }
 

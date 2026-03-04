@@ -59,7 +59,8 @@ export default function SubscriptionPage() {
   const [isCancelling, setIsCancelling] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
-  const [billingEnabled, setBillingEnabled] = useState(true);
+  const [billingEnabled, setBillingEnabled] = useState(false);
+  const [canAccessBilling, setCanAccessBilling] = useState(false);
   const [showBankTransfer, setShowBankTransfer] = useState(false);
   const [manualPlan, setManualPlan] = useState<'weekly' | 'monthly'>('monthly');
   const [promoActive, setPromoActive] = useState(false);
@@ -150,7 +151,8 @@ export default function SubscriptionPage() {
       setExpiry(data.tier_expires_at ?? null);
       setSubscription(data.subscription ?? null);
       setPayments(Array.isArray(data.payments) ? data.payments : []);
-      setBillingEnabled(data.billingEnabled ?? true);
+      setBillingEnabled(data.billingEnabled ?? false);
+      setCanAccessBilling(Boolean(data?.canAccessBilling));
       setEntitlementSource((data.entitlementSource || 'none') as 'paid' | 'promo' | 'none');
       setPromoActive(Boolean(data?.promo?.active));
       if (typeof data?.promo?.ends_at_lagos === 'string' && data.promo.ends_at_lagos.trim()) {
@@ -167,7 +169,7 @@ export default function SubscriptionPage() {
       if (data.pricing) {
           setPricing(data.pricing);
       }
-      if ((data.billingEnabled ?? true) && data.subscription?.status === 'active') {
+      if (Boolean(data?.canAccessBilling) && data.subscription?.status === 'active') {
           setIsAutoRenew(true);
       }
       if (options?.fromCache) {
@@ -239,9 +241,16 @@ export default function SubscriptionPage() {
           });
           return;
       }
+      if (!canAccessBilling) {
+          toast({
+              title: 'Billing unavailable',
+              description: 'Billing is disabled or entitlement validation is still pending.',
+          });
+          return;
+      }
       setManualPlan(planType);
       setShowBankTransfer(true);
-  }, [isPromoUnlocked, toast]);
+  }, [canAccessBilling, isPromoUnlocked, toast]);
 
   const stopPolling = useCallback(() => {
       if (pollTimerRef.current) {
@@ -265,7 +274,7 @@ export default function SubscriptionPage() {
           });
 
           const data = await fetchBillingStatus();
-          if (data && (data.billingEnabled ?? true) && data.tier === 'pro') {
+          if (data && data.canAccessBilling === true && data.tier === 'pro') {
               setPaymentState('success');
               stopPolling();
           }
@@ -328,9 +337,10 @@ export default function SubscriptionPage() {
   }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
 
   useEffect(() => {
-      if (!isPromoUnlocked) return;
-      setShowBankTransfer(false);
-  }, [isPromoUnlocked]);
+      if (isPromoUnlocked || !canAccessBilling) {
+          setShowBankTransfer(false);
+      }
+  }, [canAccessBilling, isPromoUnlocked]);
 
   const handlePaystack = async (
       planType: 'weekly' | 'monthly',
@@ -342,6 +352,14 @@ export default function SubscriptionPage() {
       }
       if (isPromoUnlocked) {
           toast({ title: 'Free Premium Access is active', description: 'Payments are paused while premium is unlocked.' });
+          return;
+      }
+      if (!canAccessBilling) {
+          toast({
+              variant: 'destructive',
+              title: 'Billing unavailable',
+              description: 'Billing is disabled or entitlement validation is pending.',
+          });
           return;
       }
       if (!session?.access_token) {
@@ -679,7 +697,7 @@ export default function SubscriptionPage() {
                 </p>
 
                 {/* Toggle Switch */}
-                {tier !== 'pro' && (
+                {tier !== 'pro' && canAccessBilling && (
                     <div className="flex flex-wrap items-center justify-center gap-4 pt-6">
                         <span className={cn("text-sm font-medium transition-colors", !isAutoRenew ? "text-foreground" : "text-muted-foreground") }>
                             One-time Transfer (manual renew)
@@ -859,6 +877,13 @@ export default function SubscriptionPage() {
                                     <Badge variant="outline" className="border-primary/20 bg-primary/5">Limited Time Offer</Badge>
                                 </div>
                             </div>
+                        </div>
+                    ) : !canAccessBilling ? (
+                        <div className="rounded-3xl border border-amber-300 bg-amber-50/70 p-6 text-sm dark:border-amber-800 dark:bg-amber-950/20">
+                            <p className="font-semibold text-amber-900 dark:text-amber-200">Billing is unavailable right now.</p>
+                            <p className="mt-2 text-amber-800/90 dark:text-amber-300">
+                                Payment actions stay hidden until your entitlement state is verified. Reconnect and refresh to continue.
+                            </p>
                         </div>
                     ) : (
                         <>
