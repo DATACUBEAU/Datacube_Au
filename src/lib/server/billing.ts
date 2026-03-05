@@ -471,9 +471,12 @@ export async function verifyCheckoutPayment(input: {
     .eq('reference', reference)
     .maybeSingle();
   if (txLookupError) throw txLookupError;
+  if (!existingTx) {
+    throw new Error('Payment reference not found.');
+  }
 
   const existingUserId = String((existingTx as any)?.user_id || '').trim();
-  if (existingUserId && existingUserId !== input.userId) {
+  if (!existingUserId || existingUserId !== input.userId) {
     throw new Error('Payment reference does not belong to this user.');
   }
 
