@@ -87,20 +87,9 @@ const FREE_MODEL_SUFFIX = `${String.fromCharCode(58)}free`;
 const PROVIDER_KEY_TABLES = ['au_api_keys', 'ai_provider_keys'] as const;
 type ProviderKeyTableName = (typeof PROVIDER_KEY_TABLES)[number];
 let providerKeyTableCache: ProviderKeyTableName | null = null;
-
-const PAID_MODEL_PREFERENCE_ORDER = [
-  'google/gemini-2.5-flash-lite-preview-09-2025',
-  'openai/gpt-5-nano',
-  'openai/gpt-4o',
-  'anthropic/claude-3.5-sonnet',
-  'deepseek/deepseek-r1',
-  'meta-llama/llama-3.1-405b-instruct',
-  'google/gemini-pro-1.5',
-] as const;
-
-const PAID_MODEL_RANK = new Map<string, number>(
-  PAID_MODEL_PREFERENCE_ORDER.map((model, idx) => [model.toLowerCase(), idx])
-);
+const MODEL_REGISTRY_TABLES = ['au_pro_models_registry', 'au_models_registry'] as const;
+type ModelRegistryTableName = (typeof MODEL_REGISTRY_TABLES)[number];
+let modelRegistryTableCache: ModelRegistryTableName | null = null;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw ?? '');
@@ -180,15 +169,7 @@ function sortKeysByHealthAndRotation(a: ProviderKeyRecord, b: ProviderKeyRecord)
 }
 
 function sortModelsByPreference(models: string[]): string[] {
-  return [...models].sort((a, b) => {
-    const rankA = PAID_MODEL_RANK.get(a.toLowerCase());
-    const rankB = PAID_MODEL_RANK.get(b.toLowerCase());
-    const normalizedRankA = typeof rankA === 'number' ? rankA : Number.MAX_SAFE_INTEGER;
-    const normalizedRankB = typeof rankB === 'number' ? rankB : Number.MAX_SAFE_INTEGER;
-
-    if (normalizedRankA !== normalizedRankB) return normalizedRankA - normalizedRankB;
-    return a.localeCompare(b);
-  });
+  return [...new Set(models)].sort((a, b) => a.localeCompare(b));
 }
 
 function paidOnly(models: string[]): string[] {
@@ -210,7 +191,7 @@ function isAllowedModel(model: string, allowedModels: string[]): boolean {
   return allowedModels.some((allowed) => allowed.toLowerCase() === normalized);
 }
 
-function isMissingProviderKeyTableError(error: any, table: ProviderKeyTableName): boolean {
+function isMissingProviderKeyTableError(error: any, table: string): boolean {
   const code = String(error?.code || '').trim();
   const message = String(error?.message || '').toLowerCase();
   const details = String(error?.details || '').toLowerCase();
@@ -239,6 +220,165 @@ function isMissingColumnError(error: any): boolean {
 function providerKeyTablesInOrder(): ProviderKeyTableName[] {
   if (!providerKeyTableCache) return [...PROVIDER_KEY_TABLES];
   return [providerKeyTableCache, ...PROVIDER_KEY_TABLES.filter((table) => table !== providerKeyTableCache)];
+}
+
+function modelRegistryTablesInOrder(): ModelRegistryTableName[] {
+  if (!modelRegistryTableCache) return [...MODEL_REGISTRY_TABLES];
+  return [modelRegistryTableCache, ...MODEL_REGISTRY_TABLES.filter((table) => table !== modelRegistryTableCache)];
+}
+
+function modelLookup(models: string[]): Map<string, string> {
+  const lookup = new Map<string, string>();
+  for (const model of models) {
+    const normalized = model.toLowerCase();
+    if (!lookup.has(normalized)) lookup.set(normalized, model);
+  }
+  return lookup;
+}
+
+function resolveEffectivePaidModelsForKey(
+  key: ProviderKeyRecord,
+  paidRegistryLookup: Map<string, string>
+): string[] {
+  const keyPaid = paidOnly(key.allowedModels);
+  if (keyPaid.length === 0) {
+    return sortModelsByPreference(Array.from(paidRegistryLookup.values()));
+  }
+
+  const resolved: string[] = [];
+  const seen = new Set<string>();
+  for (const model of keyPaid) {
+    const match = paidRegistryLookup.get(model.toLowerCase());
+    if (!match) continue;
+    const normalized = match.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    resolved.push(match);
+  }
+  return sortModelsByPreference(resolved);
+}
+
+async function fetchActivePaidRegistryModels(supabase: SupabaseClient): Promise<string[]> {
+  const union = new Map<string, string>();
+  let lastError: any = null;
+  let sawReadableTable = false;
+
+  for (const table of modelRegistryTablesInOrder()) {
+    if (table === 'au_pro_models_registry') {
+      const fullQuery = await supabase
+        .from(table)
+        .select('model_id,is_active,provider')
+        .eq('is_active', true)
+        .eq('provider', DEFAULT_PROVIDER_TYPE)
+        .order('model_id', { ascending: true });
+
+      if (!fullQuery.error) {
+        sawReadableTable = true;
+        modelRegistryTableCache = table;
+        for (const row of fullQuery.data || []) {
+          const model = normalizeModelId((row as any)?.model_id);
+          if (!model || isFreeModelId(model)) continue;
+          const normalized = model.toLowerCase();
+          if (!union.has(normalized)) union.set(normalized, model);
+        }
+        continue;
+      }
+
+      if (!isMissingColumnError(fullQuery.error) && !isMissingProviderKeyTableError(fullQuery.error, table)) {
+        lastError = fullQuery.error;
+        continue;
+      }
+
+      const legacyQuery = await supabase
+        .from(table)
+        .select('model_id,is_active')
+        .eq('is_active', true)
+        .order('model_id', { ascending: true });
+
+      if (!legacyQuery.error) {
+        sawReadableTable = true;
+        modelRegistryTableCache = table;
+        for (const row of legacyQuery.data || []) {
+          const model = normalizeModelId((row as any)?.model_id);
+          if (!model || isFreeModelId(model)) continue;
+          const normalized = model.toLowerCase();
+          if (!union.has(normalized)) union.set(normalized, model);
+        }
+        continue;
+      }
+
+      if (!isMissingProviderKeyTableError(legacyQuery.error, table)) {
+        lastError = legacyQuery.error;
+      }
+      continue;
+    }
+
+    const fullQuery = await supabase
+      .from(table)
+      .select('model_id,is_active,is_free,provider')
+      .eq('is_active', true)
+      .eq('is_free', false)
+      .eq('provider', DEFAULT_PROVIDER_TYPE)
+      .order('model_id', { ascending: true });
+
+    if (!fullQuery.error) {
+      sawReadableTable = true;
+      modelRegistryTableCache = table;
+      for (const row of fullQuery.data || []) {
+        const model = normalizeModelId((row as any)?.model_id);
+        if (!model || isFreeModelId(model)) continue;
+        const normalized = model.toLowerCase();
+        if (!union.has(normalized)) union.set(normalized, model);
+      }
+      continue;
+    }
+
+    if (!isMissingColumnError(fullQuery.error) && !isMissingProviderKeyTableError(fullQuery.error, table)) {
+      lastError = fullQuery.error;
+      continue;
+    }
+
+    const legacyQuery = await supabase
+      .from(table)
+      .select('model_id,is_active')
+      .eq('is_active', true)
+      .order('model_id', { ascending: true });
+
+    if (!legacyQuery.error) {
+      sawReadableTable = true;
+      modelRegistryTableCache = table;
+      for (const row of legacyQuery.data || []) {
+        const model = normalizeModelId((row as any)?.model_id);
+        if (!model || isFreeModelId(model)) continue;
+        const normalized = model.toLowerCase();
+        if (!union.has(normalized)) union.set(normalized, model);
+      }
+      continue;
+    }
+
+    if (!isMissingProviderKeyTableError(legacyQuery.error, table)) {
+      lastError = legacyQuery.error;
+    }
+  }
+
+  const models = sortModelsByPreference(Array.from(union.values()));
+  if (models.length > 0) return models;
+
+  if (lastError) {
+    throw new ModelRoutingError(503, 'model_registry_fetch_failed', String(lastError.message || lastError), {
+      table: modelRegistryTableCache,
+    });
+  }
+
+  if (!sawReadableTable) {
+    throw new ModelRoutingError(503, 'model_registry_fetch_failed', 'No model registry table available.', {
+      tablesTried: modelRegistryTablesInOrder(),
+    });
+  }
+
+  throw new ModelRoutingError(503, 'no_paid_models_registered', 'No paid models are active in registry.', {
+    tablesTried: modelRegistryTablesInOrder(),
+  });
 }
 
 async function resolveProviderKeyTableForUpdates(supabase: SupabaseClient): Promise<ProviderKeyTableName> {
@@ -294,7 +434,7 @@ async function fetchActiveProviderKeys(
         data = (legacyQuery.data || []).map((row: any) => ({
           ...row,
           provider_type: normalizedProviderType,
-          allowed_models: [...PAID_MODEL_PREFERENCE_ORDER],
+          allowed_models: null,
           metadata: {},
         }));
         providerKeyTableCache = table;
@@ -345,14 +485,18 @@ export async function getActiveProviderKey(
   supabase: SupabaseClient,
   providerType: string = DEFAULT_PROVIDER_TYPE
 ): Promise<ProviderKeyRecord> {
-  const keys = await fetchActiveProviderKeys(supabase, providerType);
+  const [keys, paidRegistryModels] = await Promise.all([
+    fetchActiveProviderKeys(supabase, providerType),
+    fetchActivePaidRegistryModels(supabase),
+  ]);
   if (keys.length === 0) {
     throw noActiveProviderKeysError({
       providerType: String(providerType || DEFAULT_PROVIDER_TYPE).trim().toLowerCase(),
     });
   }
 
-  const key = keys.find((row) => preferredDefaultModelFromAllowed(row.allowedModels) !== null);
+  const paidLookup = modelLookup(paidRegistryModels);
+  const key = keys.find((row) => preferredDefaultModelFromAllowed(resolveEffectivePaidModelsForKey(row, paidLookup)) !== null);
   if (!key) {
     throw noActiveProviderKeysError({
       providerType: String(providerType || DEFAULT_PROVIDER_TYPE).trim().toLowerCase(),
@@ -366,8 +510,9 @@ export async function getDefaultPaidModel(
   supabase: SupabaseClient,
   providerType: string = DEFAULT_PROVIDER_TYPE
 ): Promise<string> {
+  const paidLookup = modelLookup(await fetchActivePaidRegistryModels(supabase));
   const key = await getActiveProviderKey(supabase, providerType);
-  const model = preferredDefaultModelFromAllowed(key.allowedModels);
+  const model = preferredDefaultModelFromAllowed(resolveEffectivePaidModelsForKey(key, paidLookup));
   if (!model) {
     throw noActiveProviderKeysError({
       providerType: key.providerType,
@@ -522,16 +667,20 @@ export async function getAllowedPaidModelsForProvider(
   supabase: SupabaseClient,
   providerType: string = DEFAULT_PROVIDER_TYPE
 ): Promise<string[]> {
-  const keys = await fetchActiveProviderKeys(supabase, providerType);
+  const [keys, paidRegistryModels] = await Promise.all([
+    fetchActiveProviderKeys(supabase, providerType),
+    fetchActivePaidRegistryModels(supabase),
+  ]);
   if (keys.length === 0) {
     throw noActiveProviderKeysError({
       providerType: String(providerType || DEFAULT_PROVIDER_TYPE).trim().toLowerCase(),
     });
   }
 
+  const paidLookup = modelLookup(paidRegistryModels);
   const union = new Map<string, string>();
   for (const key of keys) {
-    for (const model of paidOnly(key.allowedModels)) {
+    for (const model of resolveEffectivePaidModelsForKey(key, paidLookup)) {
       const normalized = model.toLowerCase();
       if (!union.has(normalized)) {
         union.set(normalized, model);
@@ -556,15 +705,19 @@ export async function buildRoutingCandidates(
   const { supabase, requestType } = input;
   const providerType = DEFAULT_PROVIDER_TYPE;
   const flags = await getModelRoutingFlags(supabase);
-  const keys = await fetchActiveProviderKeys(supabase, providerType);
+  const [keys, paidRegistryModels] = await Promise.all([
+    fetchActiveProviderKeys(supabase, providerType),
+    fetchActivePaidRegistryModels(supabase),
+  ]);
 
   if (keys.length === 0) {
     throw noActiveProviderKeysError({ providerType });
   }
 
+  const paidLookup = modelLookup(paidRegistryModels);
   const allowedUnionMap = new Map<string, string>();
   for (const key of keys) {
-    for (const model of paidOnly(key.allowedModels)) {
+    for (const model of resolveEffectivePaidModelsForKey(key, paidLookup)) {
       const normalized = model.toLowerCase();
       if (!allowedUnionMap.has(normalized)) {
         allowedUnionMap.set(normalized, model);
@@ -580,7 +733,7 @@ export async function buildRoutingCandidates(
 
   const candidates: RoutingCandidate[] = [];
   for (const key of keys) {
-    const keyAllowedModels = sortModelsByPreference(paidOnly(key.allowedModels));
+    const keyAllowedModels = resolveEffectivePaidModelsForKey(key, paidLookup);
     if (keyAllowedModels.length === 0) continue;
 
     let model = requestedModel;

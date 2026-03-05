@@ -33,7 +33,9 @@ export function AuthLockOverlay() {
   }, [shouldShow]);
 
   useEffect(() => {
-    console.info(shouldShow ? '[auth-overlay] active' : '[auth-overlay] inactive', {
+    if (process.env.NODE_ENV !== 'development') return;
+    if (!shouldShow) return;
+    console.info('[auth-overlay] active', {
       runtimeAuthState,
       pathname,
     });
@@ -54,9 +56,11 @@ export function AuthLockOverlay() {
       } catch {
         // Continue to redirect even if client cleanup partially fails.
       } finally {
-        console.info('[auth-overlay] forced logout redirect', {
-          redirectTo: redirectTarget,
-        });
+        if (process.env.NODE_ENV === 'development') {
+          console.info('[auth-overlay] forced logout redirect', {
+            redirectTo: redirectTarget,
+          });
+        }
         router.replace(`/login?redirectTo=${encodeURIComponent(redirectTarget)}&reason=session_expired`);
       }
     })();

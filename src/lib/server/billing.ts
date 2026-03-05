@@ -2,16 +2,17 @@ import { createHash, randomUUID } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
 import { firstEnv } from '@/lib/server/supabase-admin';
+import type { PaymentGatewayId, PaymentVerifyResult } from '@/lib/payments/payment-gateway';
+import {
+  getPaymentGatewayById,
+  resolvePaymentGateway,
+} from '@/lib/payments/gateway-resolver';
 import {
   PROMO_PRO_END_LAGOS_ISO,
   getProEntitlementStatus,
   isPromoModeActive,
 } from '@/lib/server/entitlements';
-import {
-  disablePaystackSubscription,
-  initializePaystackTransaction,
-  verifyPaystackTransaction,
-} from '@/lib/server/paystack';
+import { disablePaystackSubscription } from '@/lib/server/paystack';
 
 export type BillingInterval = 'weekly' | 'monthly';
 export type PaymentMethod = 'subscription' | 'transfer';
@@ -106,6 +107,61 @@ function webhookIdempotencyKey(payload: any): string {
     .update(`${event}|${ref}|${JSON.stringify(payload?.data || {})}`)
     .digest('hex');
   return `hash:${fingerprint}`;
+}
+
+function resolveGatewayFromMetadata(metadata: Record<string, unknown> | null | undefined): PaymentGatewayId {
+  if (metadata && typeof metadata === 'object') {
+    const rawGateway = (metadata as Record<string, unknown>).gateway;
+    if (rawGateway != null) {
+      return normalizeGatewayId(rawGateway);
+    }
+  }
+  return 'paystack';
+}
+
+function normalizeGatewayId(raw: unknown): PaymentGatewayId {
+  return String(raw || '').trim().toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
+}
+
+function paymentCallbackUrl(origin: string): string {
+  return paystackCallbackUrl(origin);
+}
+
+async function upsertSubscriptionMirror(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  status: string;
+  plan: string;
+  gateway: PaymentGatewayId;
+  transactionId: string;
+  createdAt: string;
+}) {
+  const { supabase } = input;
+  const row = {
+    user_id: input.userId,
+    status: input.status,
+    plan: input.plan,
+    gateway: input.gateway,
+    transaction_id: input.transactionId,
+    created_at: input.createdAt,
+  };
+  const { error } = await supabase.from('subscriptions').upsert(row, {
+    onConflict: 'transaction_id',
+  });
+  if (!error) return;
+  const code = String((error as any)?.code || '');
+  if (code === '42P01') {
+    // Keep billing flow resilient before the migration is applied.
+    return;
+  }
+  if (code === '42P10') {
+    const { error: insertError } = await supabase.from('subscriptions').insert(row);
+    if (!insertError) return;
+    const insertCode = String((insertError as any)?.code || '');
+    if (insertCode === '23505' || insertCode === '42P01') return;
+    throw insertError;
+  }
+  throw error;
 }
 
 async function loadBillingPlan(
@@ -331,7 +387,8 @@ export async function createCheckout(input: {
   if (!plan) {
     throw new Error('Selected plan is not available.');
   }
-  if (paymentMethod === 'subscription' && !plan.paystack_plan_code) {
+  const gateway = resolvePaymentGateway();
+  if (gateway.gateway === 'paystack' && paymentMethod === 'subscription' && !plan.paystack_plan_code) {
     throw new Error('Recurring plan is not configured. Missing Paystack plan code.');
   }
 
@@ -342,20 +399,26 @@ export async function createCheckout(input: {
     interval: plan.interval,
     payment_method: paymentMethod,
     source: 'datacube_au',
+    gateway: gateway.gateway,
   };
 
   const channels: Array<'card' | 'bank_transfer'> =
     paymentMethod === 'transfer' ? ['bank_transfer'] : ['card'];
 
-  const response = await initializePaystackTransaction({
+  const response = await gateway.initializePayment({
     email,
     amountKobo: plan.amount_kobo,
     reference,
-    callbackUrl: paystackCallbackUrl(origin),
+    callbackUrl: paymentCallbackUrl(origin),
     channels,
-    planCode: paymentMethod === 'subscription' ? plan.paystack_plan_code : null,
+    paymentMethod,
+    planCode:
+      gateway.gateway === 'paystack' && paymentMethod === 'subscription'
+        ? plan.paystack_plan_code
+        : null,
     metadata,
   });
+  const checkoutReference = String(response.reference || reference);
 
   await supabase.from('billing_customers').upsert(
     {
@@ -369,20 +432,91 @@ export async function createCheckout(input: {
   await markTransaction({
     supabase,
     userId,
-    reference,
+    reference: checkoutReference,
     amountKobo: plan.amount_kobo,
     channel: inferChannel(paymentMethod),
     status: 'pending',
     rawEventJson: {
-      checkout_response: response.data,
+      checkout_response: response.raw || null,
     },
-    idempotencyKey: `checkout:${reference}`,
+    idempotencyKey: `checkout:${checkoutReference}`,
     metadata,
   });
 
   return {
-    authorizationUrl: response.data.authorization_url,
-    reference,
+    authorizationUrl: response.authorizationUrl,
+    reference: checkoutReference,
+  };
+}
+
+export async function verifyCheckoutPayment(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  reference: string;
+}): Promise<{
+  gateway: PaymentGatewayId;
+  reference: string;
+  status: string;
+  success: boolean;
+  amountKobo: number;
+}> {
+  const reference = String(input.reference || '').trim();
+  if (!reference) {
+    throw new Error('Missing payment reference.');
+  }
+
+  const { data: existingTx, error: txLookupError } = await input.supabase
+    .from('billing_transactions')
+    .select('user_id,metadata')
+    .eq('reference', reference)
+    .maybeSingle();
+  if (txLookupError) throw txLookupError;
+
+  const existingUserId = String((existingTx as any)?.user_id || '').trim();
+  if (existingUserId && existingUserId !== input.userId) {
+    throw new Error('Payment reference does not belong to this user.');
+  }
+
+  const existingMetadata = (((existingTx as any)?.metadata || {}) as Record<string, unknown>) || {};
+  const gateway = resolveGatewayFromMetadata(existingMetadata);
+  const verified = await getPaymentGatewayById(gateway).verifyPayment(reference);
+  const mergedMetadata: Record<string, unknown> = {
+    ...existingMetadata,
+    ...(verified.metadata || {}),
+    user_id: input.userId,
+    gateway,
+  };
+
+  await handleSuccessfulPayment({
+    supabase: input.supabase,
+    gateway,
+    verified: {
+      ...verified,
+      reference: verified.reference || reference,
+      metadata: mergedMetadata,
+    },
+    payload: {
+      event: 'api.verify',
+      data: {
+        reference: verified.reference || reference,
+        metadata: mergedMetadata,
+        amount: verified.amountKobo,
+        channel: verified.channel,
+        customer: {
+          email: verified.customerEmail,
+        },
+      },
+    },
+    idempotencyKey: `verify:${verified.reference || reference}`,
+    traceId: `verify-${reference}`,
+  });
+
+  return {
+    gateway,
+    reference: verified.reference || reference,
+    status: verified.success ? 'success' : verified.status,
+    success: verified.success,
+    amountKobo: verified.amountKobo,
   };
 }
 
@@ -467,7 +601,7 @@ export async function cancelUserSubscription(
 ): Promise<void> {
   const { data: subscription, error } = await supabase
     .from('billing_subscriptions')
-    .select('paystack_subscription_code,paystack_email_token,status')
+    .select('paystack_subscription_code,paystack_email_token,status,metadata')
     .eq('user_id', userId)
     .in('status', ['active', 'non_renewing'])
     .order('updated_at', { ascending: false })
@@ -478,6 +612,11 @@ export async function cancelUserSubscription(
 
   const code = String((subscription as any).paystack_subscription_code || '');
   const token = String((subscription as any).paystack_email_token || '');
+  const metadata = ((subscription as any)?.metadata || {}) as Record<string, unknown>;
+  const gateway = resolveGatewayFromMetadata(metadata);
+  if (gateway !== 'paystack' && (!code || !token)) {
+    throw new Error('Automatic cancellation is currently available only for Paystack subscriptions.');
+  }
   if (!code || !token) {
     throw new Error('Subscription cannot be canceled automatically (missing Paystack token).');
   }
@@ -504,8 +643,8 @@ async function insertWebhookEvent(
 ): Promise<{ isDuplicate: boolean; key: string }> {
   const key = webhookIdempotencyKey(payload);
   const event = String(payload?.event || 'unknown');
-  const ref = String(payload?.data?.reference || '');
-  const id = String(payload?.id || '');
+  const ref = String(payload?.data?.reference || payload?.data?.tx_ref || '');
+  const id = String(payload?.id || payload?.data?.id || '');
 
   const { error } = await supabase.from('billing_webhook_events').insert({
     event_id: id || null,
@@ -524,46 +663,50 @@ async function insertWebhookEvent(
   throw error;
 }
 
-async function processSuccessfulCharge(input: {
+async function handleSuccessfulPayment(input: {
   supabase: SupabaseClient;
+  gateway: PaymentGatewayId;
+  verified: PaymentVerifyResult;
   payload: any;
   idempotencyKey: string;
   traceId: string;
 }) {
-  const { supabase, payload, idempotencyKey, traceId } = input;
-  const reference = String(payload?.data?.reference || '').trim();
+  const { supabase, gateway, verified, payload, idempotencyKey, traceId } = input;
+  const reference = String(verified.reference || payload?.data?.reference || '').trim();
   if (!reference) return;
 
-  const verified = await verifyPaystackTransaction(reference);
-  const verifiedData = verified.data;
-  const metadata = (verifiedData.metadata || payload?.data?.metadata || {}) as Record<string, unknown>;
+  const metadata = (verified.metadata || payload?.data?.metadata || {}) as Record<string, unknown>;
   const planKey = normalizePlanKey(metadata.plan_key);
   const userIdFromMetadata = String(metadata.user_id || '').trim();
-  const customerEmail = String(verifiedData.customer?.email || '').trim().toLowerCase();
+  const customerEmail = String(verified.customerEmail || '').trim().toLowerCase();
   const userIdFromCustomer = await resolveUserIdFromEmail(supabase, customerEmail);
   const userId = userIdFromMetadata || userIdFromCustomer || null;
+  const transactionId = String(verified.gatewayTransactionId || reference);
 
   const transactionMetadata: Record<string, unknown> = {
     ...metadata,
-    paystack_authorization_code: verifiedData.authorization?.authorization_code || null,
-    paystack_customer_code: verifiedData.customer?.customer_code || null,
-    paystack_subscription: verifiedData.subscription || null,
+    gateway,
+    gateway_transaction_id: transactionId,
+    authorization_code: verified.authorizationCode || null,
+    customer_code: verified.customerCode || null,
+    subscription_code: verified.subscriptionCode || null,
+    subscription_email_token: verified.subscriptionEmailToken || null,
   };
 
   await markTransaction({
     supabase,
     userId,
     reference,
-    amountKobo: Number(verifiedData.amount || 0),
-    channel: String(verifiedData.channel || payload?.data?.channel || 'unknown'),
-    status: String(verifiedData.status || 'success'),
-    paidAt: verifiedData.paid_at || null,
+    amountKobo: Number(verified.amountKobo || 0),
+    channel: String(verified.channel || payload?.data?.channel || 'unknown'),
+    status: verified.success ? 'success' : String(verified.status || 'pending'),
+    paidAt: verified.paidAt || null,
     rawEventJson: payload,
     idempotencyKey,
     metadata: transactionMetadata,
   });
 
-  if (!userId || !planKey) {
+  if (!verified.success || !userId || !planKey) {
     return;
   }
 
@@ -571,10 +714,16 @@ async function processSuccessfulCharge(input: {
     {
       user_id: userId,
       email: customerEmail || null,
-      paystack_customer_code: verifiedData.customer?.customer_code || null,
-      metadata: {
-        latest_authorization_code: verifiedData.authorization?.authorization_code || null,
-      },
+      paystack_customer_code: gateway === 'paystack' ? (verified.customerCode || null) : null,
+      metadata:
+        gateway === 'paystack'
+          ? {
+              latest_authorization_code: verified.authorizationCode || null,
+            }
+          : {
+              gateway,
+              latest_transaction_id: transactionId,
+            },
     },
     { onConflict: 'user_id' }
   );
@@ -587,34 +736,42 @@ async function processSuccessfulCharge(input: {
     supabase,
     userId,
     interval: plan.interval,
-    source: `paystack:${chargeMethod}`,
+    source: `${gateway}:${chargeMethod}`,
     reason: `charge.success:${reference}`,
     traceId,
     metadata: {
       reference,
       plan_key: planKey,
+      gateway,
+      transaction_id: transactionId,
     },
   });
 
+  await upsertSubscriptionMirror({
+    supabase,
+    userId,
+    status: 'active',
+    plan: plan.plan_key,
+    gateway,
+    transactionId,
+    createdAt: verified.paidAt || new Date().toISOString(),
+  });
+
   if (chargeMethod === 'subscription') {
-    const subscriptionRaw = payload?.data?.subscription;
-    const paystackSubscriptionCode =
-      typeof subscriptionRaw === 'string'
-        ? subscriptionRaw
-        : String(subscriptionRaw?.subscription_code || metadata.subscription_code || '');
-    const paystackEmailToken = String(subscriptionRaw?.email_token || metadata.paystack_email_token || '');
     await supabase.from('billing_subscriptions').upsert(
       {
         user_id: userId,
         plan_key: plan.plan_key,
         status: 'active',
-        paystack_subscription_code: paystackSubscriptionCode || null,
-        paystack_email_token: paystackEmailToken || null,
+        paystack_subscription_code: gateway === 'paystack' ? (verified.subscriptionCode || null) : null,
+        paystack_email_token: gateway === 'paystack' ? (verified.subscriptionEmailToken || null) : null,
         starts_at: grant.startsAt,
         ends_at: grant.endsAt,
         cancel_at_period_end: false,
         metadata: {
           latest_reference: reference,
+          gateway,
+          transaction_id: transactionId,
         },
       },
       { onConflict: 'user_id' }
@@ -622,15 +779,40 @@ async function processSuccessfulCharge(input: {
   }
 }
 
+async function processSuccessfulCharge(input: {
+  supabase: SupabaseClient;
+  payload: any;
+  idempotencyKey: string;
+  traceId: string;
+  gateway: PaymentGatewayId;
+  verifyTarget?: string | null;
+}) {
+  const { supabase, payload, idempotencyKey, traceId, gateway, verifyTarget } = input;
+  const reference = String(verifyTarget || payload?.data?.reference || '').trim();
+  if (!reference) return;
+
+  const verified = await getPaymentGatewayById(gateway).verifyPayment(reference);
+  await handleSuccessfulPayment({
+    supabase,
+    gateway,
+    verified,
+    payload,
+    idempotencyKey,
+    traceId,
+  });
+}
+
 async function processFailedCharge(input: {
   supabase: SupabaseClient;
   payload: any;
   idempotencyKey: string;
+  gateway: PaymentGatewayId;
 }) {
-  const { supabase, payload, idempotencyKey } = input;
-  const reference = String(payload?.data?.reference || '').trim();
-  const amount = Number(payload?.data?.amount || 0);
-  const channel = String(payload?.data?.channel || 'unknown');
+  const { supabase, payload, idempotencyKey, gateway } = input;
+  const reference = String(payload?.data?.reference || payload?.data?.tx_ref || '').trim();
+  const amountRaw = Number(payload?.data?.amount || 0);
+  const amount = gateway === 'flutterwave' ? Math.round(amountRaw * 100) : amountRaw;
+  const channel = String(payload?.data?.channel || payload?.data?.payment_type || 'unknown');
   const email = String(payload?.data?.customer?.email || '').trim().toLowerCase();
   const userId = await resolveUserIdFromEmail(supabase, email);
 
@@ -648,6 +830,7 @@ async function processFailedCharge(input: {
     idempotencyKey,
     metadata: {
       event: payload?.event,
+      gateway,
     },
   });
 }
@@ -686,7 +869,10 @@ async function processSubscriptionEvent(input: {
       paystack_subscription_code: subscriptionCode || null,
       paystack_email_token: emailToken || null,
       cancel_at_period_end: cancelAtPeriodEnd,
-      metadata: data,
+      metadata: {
+        ...data,
+        gateway: 'paystack',
+      },
     },
     { onConflict: 'user_id' }
   );
@@ -723,6 +909,7 @@ export async function processPaystackWebhook(input: {
       payload,
       idempotencyKey: inserted.key,
       traceId,
+      gateway: 'paystack',
     });
   } else if (
     event === 'charge.failed' ||
@@ -733,6 +920,7 @@ export async function processPaystackWebhook(input: {
       supabase,
       payload,
       idempotencyKey: inserted.key,
+      gateway: 'paystack',
     });
   } else if (
     event === 'subscription.create' ||
@@ -751,6 +939,80 @@ export async function processPaystackWebhook(input: {
   return { duplicate: false, event };
 }
 
+function normalizeFlutterwaveWebhookPayload(payload: any): any {
+  const data = payload?.data || {};
+  const reference = String(data?.tx_ref || data?.reference || '').trim();
+  return {
+    ...payload,
+    event: String(payload?.event || payload?.type || 'unknown'),
+    id: payload?.id || data?.id || reference || null,
+    data: {
+      ...data,
+      reference,
+    },
+  };
+}
+
+function isFailedPaymentStatus(status: string): boolean {
+  const normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'failed' || normalized === 'abandoned' || normalized === 'cancelled' || normalized === 'canceled';
+}
+
+export async function processFlutterwaveWebhook(input: {
+  supabase: SupabaseClient;
+  payload: any;
+  traceId: string;
+}): Promise<{ duplicate: boolean; event: string }> {
+  const { supabase, payload, traceId } = input;
+  const normalizedPayload = normalizeFlutterwaveWebhookPayload(payload);
+  const event = String(normalizedPayload?.event || 'unknown');
+  const inserted = await insertWebhookEvent(supabase, normalizedPayload);
+  if (inserted.isDuplicate) {
+    return { duplicate: true, event };
+  }
+
+  const transactionId = String(normalizedPayload?.data?.id || '').trim();
+  const reference = String(normalizedPayload?.data?.reference || '').trim();
+  const verifyTarget = transactionId || reference;
+  if (!verifyTarget) {
+    return { duplicate: false, event };
+  }
+
+  const verified = await getPaymentGatewayById('flutterwave').verifyPayment(verifyTarget);
+  if (verified.success) {
+    await handleSuccessfulPayment({
+      supabase,
+      gateway: 'flutterwave',
+      verified,
+      payload: normalizedPayload,
+      idempotencyKey: inserted.key,
+      traceId,
+    });
+    return { duplicate: false, event };
+  }
+
+  if (isFailedPaymentStatus(verified.status)) {
+    await processFailedCharge({
+      supabase,
+      payload: {
+        ...normalizedPayload,
+        data: {
+          ...normalizedPayload.data,
+          amount: Number(verified.amountKobo || 0) / 100,
+          channel: verified.channel,
+          customer: {
+            email: verified.customerEmail,
+          },
+        },
+      },
+      idempotencyKey: inserted.key,
+      gateway: 'flutterwave',
+    });
+  }
+
+  return { duplicate: false, event };
+}
+
 export async function reconcileBilling(
   supabase: SupabaseClient
 ): Promise<{ verifiedPending: number; expiredGrants: number; downgradedUsers: number }> {
@@ -761,7 +1023,7 @@ export async function reconcileBilling(
   const pendingCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const { data: pendingTx, error: pendingErr } = await supabase
     .from('billing_transactions')
-    .select('reference')
+    .select('reference,metadata')
     .in('status', ['pending', 'initiated'])
     .lt('created_at', pendingCutoff)
     .order('created_at', { ascending: true })
@@ -772,26 +1034,36 @@ export async function reconcileBilling(
     const reference = String((row as any).reference || '').trim();
     if (!reference) continue;
     try {
-      const verified = await verifyPaystackTransaction(reference);
-      if (String(verified.data.status).toLowerCase() === 'success') {
-        await processSuccessfulCharge({
+      const metadata = ((row as any).metadata || {}) as Record<string, unknown>;
+      const gateway = resolveGatewayFromMetadata(metadata);
+      const verified = await getPaymentGatewayById(gateway).verifyPayment(reference);
+      if (verified.success) {
+        await handleSuccessfulPayment({
           supabase,
+          gateway,
+          verified,
           payload: {
             event: 'reconcile.charge.success',
             data: {
-              reference,
-              metadata: verified.data.metadata || {},
-              customer: verified.data.customer || {},
-              channel: verified.data.channel,
-              amount: verified.data.amount,
-              paid_at: verified.data.paid_at,
+              reference: verified.reference || reference,
+              metadata: {
+                ...metadata,
+                ...(verified.metadata || {}),
+                gateway,
+              },
+              customer: {
+                email: verified.customerEmail,
+              },
+              channel: verified.channel,
+              amount: verified.amountKobo,
+              paid_at: verified.paidAt,
             },
           },
           idempotencyKey: `reconcile:${reference}`,
           traceId: `reconcile-${reference}`,
         });
         verifiedPending += 1;
-      } else if (String(verified.data.status).toLowerCase() === 'failed') {
+      } else if (isFailedPaymentStatus(verified.status)) {
         await supabase
           .from('billing_transactions')
           .update({ status: 'failed' })

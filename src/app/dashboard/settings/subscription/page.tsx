@@ -145,6 +145,48 @@ export default function SubscriptionPage() {
       return { data: parsed as T, retryAfter };
   }, [session?.access_token]);
 
+  const initializePaymentRequest = useCallback(async (payload: {
+      plan_key: string;
+      payment_method: 'subscription' | 'transfer';
+  }): Promise<{ authorization_url: string; reference: string }> => {
+      const headers = new Headers();
+      if (session?.access_token) {
+          headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      headers.set('Content-Type', 'application/json');
+
+      const res = await safeFetch('/api/payments/initialize', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          headers,
+          credentials: 'include',
+          timeout: 15000,
+          silent: true,
+      });
+
+      const raw = await res.text();
+      let parsed: any = null;
+      try {
+          parsed = raw ? JSON.parse(raw) : {};
+      } catch {
+          parsed = { message: raw };
+      }
+
+      if (!res.ok) {
+          const err = new Error(parsed?.message || parsed?.error || `Request failed (${res.status})`) as Error & {
+              status?: number;
+              payload?: any;
+              retryAfter?: string | null;
+          };
+          err.status = res.status;
+          err.payload = parsed;
+          err.retryAfter = res.headers.get('retry-after');
+          throw err;
+      }
+
+      return parsed as { authorization_url: string; reference: string };
+  }, [session?.access_token]);
+
   const applyBillingStatus = useCallback((data: any, options?: { fromCache?: boolean }) => {
       if (!data) return;
       setTier(data.tier || 'free');
@@ -281,10 +323,33 @@ export default function SubscriptionPage() {
       }, 3000);
   }, [fetchBillingStatus, stopPolling]);
 
-  const verifyPayment = useCallback(async () => {
+  const verifyPayment = useCallback(async (reference?: string | null) => {
       if (!isOnline) return;
       if (!session?.access_token) return;
       try {
+          if (reference) {
+              const headers = new Headers({
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${session.access_token}`,
+              });
+              const verifyRes = await safeFetch('/api/payments/verify', {
+                  method: 'POST',
+                  body: JSON.stringify({ reference }),
+                  headers,
+                  credentials: 'include',
+                  timeout: 15000,
+                  silent: true,
+              });
+              if (verifyRes.ok) {
+                  const verifyBody = await verifyRes.json().catch(() => ({} as any));
+                  if (verifyBody?.success === true) {
+                      await fetchBillingStatus();
+                      setPaymentState('success');
+                      return;
+                  }
+              }
+          }
+
           const data = await fetchBillingStatus();
           if (data?.tier === 'pro') {
               setPaymentState('success');
@@ -311,13 +376,13 @@ export default function SubscriptionPage() {
         if (canceled) return;
         setIsInitialLoading(false);
 
-        // Check for Paystack return
+        // Check for payment provider return
         const reference = searchParams.get('reference');
         const success = searchParams.get('success');
         
         if (reference) {
             setPaymentState('confirming');
-            void verifyPayment();
+            void verifyPayment(reference);
         } else if (success === 'true') {
             setPaymentState('confirming');
             startPolling();
@@ -342,7 +407,7 @@ export default function SubscriptionPage() {
       }
   }, [canAccessBilling, isPromoUnlocked]);
 
-  const handlePaystack = async (
+  const handlePaymentCheckout = async (
       planType: 'weekly' | 'monthly',
       methodOverride?: 'subscription' | 'transfer'
   ) => {
@@ -371,15 +436,12 @@ export default function SubscriptionPage() {
       try {
           const planKey = planType === 'weekly' ? 'pro_weekly' : 'pro_monthly';
           const paymentMethod = methodOverride || (isAutoRenew ? 'subscription' : 'transfer');
-          const response = await billingRequest<{ authorization_url: string; reference: string }>('checkout', {
-              method: 'POST',
-              body: JSON.stringify({
-                  plan_key: planKey,
-                  payment_method: paymentMethod,
-              }),
+          const response = await initializePaymentRequest({
+              plan_key: planKey,
+              payment_method: paymentMethod,
           });
 
-          const url = response.data?.authorization_url;
+          const url = response?.authorization_url;
           if (url) {
               setPaymentState('redirecting');
               setShowBankTransfer(false);
@@ -621,9 +683,9 @@ export default function SubscriptionPage() {
           <div className="container max-w-2xl py-20 text-center space-y-6">
               <div className="flex justify-center"><Loader2 className="h-16 w-16 animate-spin text-primary" /></div>
               <h2 className="text-2xl font-bold">Redirecting to secure checkout...</h2>
-              <p className="text-muted-foreground">Please wait while we connect you to Paystack.</p>
+              <p className="text-muted-foreground">Please wait while we connect you to secure checkout.</p>
               <div className="flex justify-center gap-2 text-sm text-muted-foreground">
-                  <ShieldCheck className="h-4 w-4" /> Secured by Paystack
+                  <ShieldCheck className="h-4 w-4" /> Secured checkout
               </div>
           </div>
       );
@@ -913,7 +975,7 @@ export default function SubscriptionPage() {
                                         highlighted={true}
                                         savedLabel={pricing.monthly.label}
                                         loading={loadingPlan === 'monthly'}
-                                        onSelect={() => handlePaystack('monthly')}
+                                        onSelect={() => handlePaymentCheckout('monthly')}
                                         disabled={isPromoUnlocked}
                                         features={[
                                             'Unlimited documents',
@@ -935,7 +997,7 @@ export default function SubscriptionPage() {
                                         period="week"
                                         savedLabel={pricing.weekly.label}
                                         loading={loadingPlan === 'weekly'}
-                                        onSelect={() => handlePaystack('weekly')}
+                                        onSelect={() => handlePaymentCheckout('weekly')}
                                         disabled={isPromoUnlocked}
                                         features={[
                                             'All Pro features',
@@ -970,7 +1032,7 @@ export default function SubscriptionPage() {
             <div className="mt-12 text-center">
                  <div className="inline-flex items-center gap-2 text-xs text-muted-foreground bg-card/50 px-4 py-2 rounded-full border border-border shadow-sm">
                     <Lock className="h-3 w-3" />
-                    <span>Secure payment processing by Paystack. Encrypted and safe.</span>
+                    <span>Secure payment processing. Encrypted and safe.</span>
                  </div>
             </div>
         </div>
@@ -980,7 +1042,7 @@ export default function SubscriptionPage() {
                 <DialogHeader>
                     <DialogTitle>Pay With Transfer</DialogTitle>
                     <DialogDescription>
-                        This uses Paystack's automated transfer channel. It is one-time and does not auto-renew.
+                        This uses an automated transfer channel. It is one-time and does not auto-renew.
                     </DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-2">
@@ -993,7 +1055,7 @@ export default function SubscriptionPage() {
                     </div>
                     <Button
                         className="w-full"
-                        onClick={() => void handlePaystack(manualPlan, 'transfer')}
+                        onClick={() => void handlePaymentCheckout(manualPlan, 'transfer')}
                         disabled={loadingPlan === manualPlan}
                     >
                         {loadingPlan === manualPlan ? (
@@ -1001,7 +1063,7 @@ export default function SubscriptionPage() {
                         ) : (
                             <Banknote className="mr-2 h-4 w-4" />
                         )}
-                        Continue to Paystack Transfer
+                        Continue to Transfer Checkout
                     </Button>
                 </div>
             </DialogContent>
