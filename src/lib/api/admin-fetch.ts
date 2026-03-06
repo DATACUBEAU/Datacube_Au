@@ -29,7 +29,11 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     });
   }
 
-  const url = endpoint.startsWith('http') ? endpoint : `/api/proxy/${endpoint}`;
+  const url = endpoint.startsWith('http')
+    ? endpoint
+    : endpoint.startsWith('/api/')
+      ? endpoint
+      : `/api/proxy/${endpoint}`;
 
   const headers = new Headers(options.headers || {});
   const hadExplicitAuthorization = headers.has('Authorization');

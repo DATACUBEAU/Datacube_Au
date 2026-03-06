@@ -61,6 +61,7 @@ export function useAuChat(selectedDocId: string | null) {
   const [promptStarters, setPromptStarters] = useState<string[]>([]);
   const abortControllerRef = useRef<AbortController | null>(null);
   const rateLimitCooldownUntilRef = useRef<number>(0);
+  const lastSubmitRef = useRef<{ hash: string; at: number }>({ hash: '', at: 0 });
   const activeRequestRef = useRef<{
     requestId: string;
     route: '/dashboard/chat' | '/dashboard/global-chat';
@@ -221,6 +222,13 @@ export function useAuChat(selectedDocId: string | null) {
   ) => {
     if (!selectedDocId || !user) return;
     if (isAuthLocked) return;
+    const normalizedPrompt = String(content || '').trim().toLowerCase();
+    const promptHash = `${selectedDocId}:${normalizedPrompt}`;
+    const now = Date.now();
+    if (lastSubmitRef.current.hash === promptHash && now - lastSubmitRef.current.at < 700) {
+      return;
+    }
+    lastSubmitRef.current = { hash: promptHash, at: now };
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
@@ -255,6 +263,7 @@ export function useAuChat(selectedDocId: string | null) {
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
     const requestId = nanoid();
+    const idempotencyKey = `chat_${nanoid()}`;
     const route: '/dashboard/chat' | '/dashboard/global-chat' =
       selectedDocId === 'global' ? '/dashboard/global-chat' : '/dashboard/chat';
     activeRequestRef.current = { requestId, route, selectedDocId };
@@ -379,6 +388,8 @@ export function useAuChat(selectedDocId: string | null) {
               selectedDocId,
               doc_id: scope === 'doc' ? selectedDocId : undefined,
               user_input: content,
+              clientMessageId: requestId,
+              idempotencyKey,
               recent_snippet: recentSnippet as any,
               secondary_snippet: secondarySnippet,
               memory_pack: scope === 'global' ? { global_digest: existing?.summary || '' } : undefined,
@@ -545,7 +556,7 @@ export function useAuChat(selectedDocId: string | null) {
         setAuThinkingSteps([]); // Clear steps after done
       }, 1200);
     }
-  }, [isAuthLocked, selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, toast]);
+  }, [isAuthLocked, selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, session?.access_token, toast]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
@@ -642,7 +653,7 @@ export function useAuChat(selectedDocId: string | null) {
           setAuAnimationState('idle');
         }, 1200);
     }
-  }, [isAuthLocked, selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline]);
+  }, [isAuthLocked, selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, session?.access_token]);
 
   const setHistoryPersisted = useCallback((next: ChatMessage[]) => {
     setHistory(next);

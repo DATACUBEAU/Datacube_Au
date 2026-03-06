@@ -505,17 +505,16 @@ export default function SubscriptionPage() {
 
   // --- Usage Meter ---
   const LimitBar = ({ label, used, limit }: any) => {
-    const isUnlimited = !Number.isFinite(limit) || Number(limit) <= 0;
-    const safeLimit = isUnlimited ? 1 : Number(limit);
+    const safeLimit = Number.isFinite(limit) ? Math.max(0, Number(limit)) : 0;
     const safeUsed = Number.isFinite(used) ? used : 0;
-    const percent = isUnlimited ? 0 : Math.min(100, (safeUsed / safeLimit) * 100);
-    const isLimit = !isUnlimited && safeUsed >= safeLimit;
+    const percent = safeLimit > 0 ? Math.min(100, (safeUsed / safeLimit) * 100) : 0;
+    const isLimit = safeLimit > 0 ? safeUsed >= safeLimit : safeUsed > 0;
     return (
         <div>
             <div className="flex justify-between text-sm mb-1.5">
                 <span className="font-medium text-foreground">{label}</span>
                 <span className={cn("font-mono text-xs", isLimit ? "text-destructive font-bold" : "text-muted-foreground")}>
-                    {isUnlimited ? `${safeUsed} / Unlimited` : `${safeUsed} / ${safeLimit}`}
+                    {`${safeUsed} / ${safeLimit}`}
                 </span>
             </div>
             <div className="h-2.5 bg-muted rounded-full overflow-hidden">
@@ -807,7 +806,7 @@ export default function SubscriptionPage() {
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3">
                                     <CheckCircle2 className="h-5 w-5 text-primary" />
-                                    <span className="font-medium">Unlimited Premium Models</span>
+                                    <span className="font-medium">Premium model access</span>
                                 </div>
                                 <div className="flex items-center gap-3">
                                     <CheckCircle2 className="h-5 w-5 text-primary" />
@@ -978,7 +977,7 @@ export default function SubscriptionPage() {
                                         onSelect={() => handlePaymentCheckout('monthly')}
                                         disabled={isPromoUnlocked}
                                         features={[
-                                            'Unlimited documents',
+                                            'Higher document cap',
                                             proRetentionLabel,
                                             'Premium AU models',
                                             'Priority processing',

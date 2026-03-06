@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Select,
   SelectContent,
@@ -33,6 +33,11 @@ import { Badge } from '@/components/ui/badge';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useAuExams } from '@/hooks/api/use-au-exams';
 import { useStore } from '@/hooks/use-store';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
+import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
+import { FeatureGatePanel } from '@/components/feature-gate-panel';
+import { getDashboardFeatureAccess } from '@/lib/feature-access';
+import { safeFetch } from '@/lib/api/safe-fetch';
 
 
 type AnswerState = 'unanswered' | 'correct' | 'incorrect';
@@ -49,7 +54,54 @@ interface StoredExamHistory {
 
 const getCacheKey = (userId: string, docId: string) => `practice_exam_history_${userId}_${docId}`;
 
+function shuffleArray<T>(items: T[]): T[] {
+  const next = [...items];
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1));
+    [next[index], next[swapIndex]] = [next[swapIndex], next[index]];
+  }
+  return next;
+}
+
+function buildQuestionStatePack(questionPack: PracticeQuestion[]): QuestionState[] {
+  return shuffleArray(questionPack).map((question) => ({
+    ...question,
+    options: shuffleArray(question.options),
+    userAnswer: undefined,
+    answerState: 'unanswered' as const,
+  }));
+}
+
 export default function PracticePage() {
+  const { records: featureFlagRecords } = useFeatureFlags();
+  const { entitlements, loading: entitlementsLoading } = useEffectiveEntitlements();
+  const access = useMemo(
+    () => getDashboardFeatureAccess('practice_exam_generation', entitlements, featureFlagRecords),
+    [entitlements, featureFlagRecords],
+  );
+
+  if (entitlementsLoading) {
+    return (
+      <main className="flex flex-1 items-center justify-center p-4 md:p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </main>
+    );
+  }
+
+  if (!access.enabled) {
+    return (
+      <FeatureGatePanel
+        title="Practice Exam Center unavailable"
+        description={access.message}
+        mode="disabled"
+      />
+    );
+  }
+
+  return <PracticePageContent />;
+}
+
+function PracticePageContent() {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
   const { toast } = useToast();
@@ -75,9 +127,12 @@ export default function PracticePage() {
   const selectedDocReady = selectedDoc?.status === 'completed';
 
   const [questions, setQuestions] = useState<QuestionState[]>([]);
+  const [questionPack, setQuestionPack] = useState<PracticeQuestion[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [examFinished, setExamFinished] = useState(false);
   const [score, setScore] = useState(0);
+  const [attemptCycle, setAttemptCycle] = useState(0);
+  const submittedAttemptRef = useRef<string | null>(null);
 
   const getDocumentExpiryMs = useCallback((docId: string): number | null => {
     const doc = allDocuments.find((item) => item.id === docId);
@@ -109,10 +164,10 @@ export default function PracticePage() {
         return false;
       }
 
-      const cachedQuestions = stored.data.questions.map(q => ({ ...q, answerState: 'unanswered' as AnswerState }));
-      setQuestions(cachedQuestions);
-      toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
-      return true;
+        setQuestionPack(stored.data.questions);
+        setQuestions(buildQuestionStatePack(stored.data.questions));
+        toast({ title: 'Loaded from history', description: 'Restored your practice exam from the last session.' });
+        return true;
     } catch (e) {
       console.error("Failed to parse exam history from localStorage", e);
       localStorage.removeItem(cacheKey);
@@ -123,11 +178,8 @@ export default function PracticePage() {
   // Sync examData from hook to local questions state
   useEffect(() => {
     if (examData) {
-      const initialQuestions = examData.questions.map(q => ({
-        ...q,
-        answerState: 'unanswered' as AnswerState,
-      }));
-      setQuestions(initialQuestions);
+      setQuestionPack(examData.questions);
+      setQuestions(buildQuestionStatePack(examData.questions));
       
       // Cache the result
       if (user && selectedDocId) {
@@ -139,10 +191,13 @@ export default function PracticePage() {
 
   const handleDocSelectionChange = useCallback((docId: string) => {
     setSelectedDocId(docId);
+    setQuestionPack([]);
     setQuestions([]);
     setCurrentQuestionIndex(0);
     setExamFinished(false);
     setScore(0);
+    submittedAttemptRef.current = null;
+    setAttemptCycle((value) => value + 1);
 
     restoreCachedExam(docId);
   }, [restoreCachedExam]);
@@ -159,7 +214,7 @@ export default function PracticePage() {
     }
   }, [documents, docsLoading, selectedDocId, handleDocSelectionChange]);
 
-  const triggerGeneration = async (forceNew = false) => {
+  const triggerGeneration = async () => {
     if (!selectedDocId || !user) {
         toast({ variant: 'destructive', title: 'Error', description: 'Please select a document first.' });
         return;
@@ -182,20 +237,23 @@ export default function PracticePage() {
         return;
     }
     
-    if (!forceNew) {
-        if (restoreCachedExam(selectedDocId)) {
-            setExamFinished(false);
-            setCurrentQuestionIndex(0);
-            setScore(0);
-            return;
-        }
+    if (restoreCachedExam(selectedDocId)) {
+        setExamFinished(false);
+        setCurrentQuestionIndex(0);
+        setScore(0);
+        submittedAttemptRef.current = null;
+        setAttemptCycle((value) => value + 1);
+        return;
     }
-    
+     
+    setQuestionPack([]);
     setQuestions([]);
     setCurrentQuestionIndex(0);
     setExamFinished(false);
     setScore(0);
-    
+    submittedAttemptRef.current = null;
+    setAttemptCycle((value) => value + 1);
+     
     try {
         const attachedPQs = allDocuments
           .filter(d => d.parent_id === selectedDocId && (d.document_type === 'past_questions' || d.document_type === 'exam_questions') && d.status === 'completed')
@@ -234,9 +292,56 @@ export default function PracticePage() {
   };
   
   const handleRestart = () => {
-      // We trigger generation and force a new one
-      triggerGeneration(true);
-  }
+      if (questionPack.length === 0) return;
+      setQuestions(buildQuestionStatePack(questionPack));
+      setCurrentQuestionIndex(0);
+      setExamFinished(false);
+      setScore(0);
+      submittedAttemptRef.current = null;
+      setAttemptCycle((value) => value + 1);
+  };
+
+  useEffect(() => {
+    if (!examFinished || !selectedDocId || !session?.access_token || questions.length === 0) {
+      return;
+    }
+
+    const submissionKey = `${selectedDocId}:${attemptCycle}`;
+    if (submittedAttemptRef.current === submissionKey) {
+      return;
+    }
+    submittedAttemptRef.current = submissionKey;
+
+    const answers = questions.map((question, index) => ({
+      index,
+      questionText: question.questionText,
+      userAnswer: question.userAnswer || null,
+      correctAnswer: question.correctAnswer,
+      isCorrect: question.userAnswer === question.correctAnswer,
+    }));
+
+    void safeFetch('/api/au/practice-attempts', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      credentials: 'include',
+      timeout: 10_000,
+      silent: true,
+      body: JSON.stringify({
+        documentId: selectedDocId,
+        answers,
+        score,
+        metadata: {
+          totalQuestions: questions.length,
+        },
+      }),
+    }).catch((error) => {
+      console.warn('[practice] Failed to persist attempt', error);
+      submittedAttemptRef.current = null;
+    });
+  }, [attemptCycle, examFinished, questions, score, selectedDocId, session?.access_token]);
   
   const currentQuestion = questions[currentQuestionIndex];
   const progress = questions.length > 0 ? ((currentQuestionIndex + 1) / questions.length) * 100 : 0;
@@ -298,7 +403,7 @@ export default function PracticePage() {
             </Card>
              <Button onClick={handleRestart} className="mt-8">
                 <RefreshCw className="mr-2 h-4 w-4" />
-                Generate a New Exam
+                Retry This Exam
              </Button>
         </motion.div>
       );

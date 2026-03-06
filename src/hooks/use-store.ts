@@ -30,7 +30,11 @@ interface AppState {
   setKnowledgeData: (data: GenerateKnowledgeOutput) => void;
   setPredictionData: (data: GeneratePredictionsOutput) => void;
   generateKnowledge: (docId: string, docContent: string, pastQuestionsContent?: string) => Promise<void>;
-  generatePredictions: (pastQuestionsContent: string, mainTextbookContent?: string) => Promise<void>;
+  generatePredictions: (
+    pastQuestionsContent: string,
+    mainTextbookContent?: string,
+    documentId?: string | null,
+  ) => Promise<void>;
 
   // Utility to clear data on doc selection change
   clearKnowledgeAndPredictions: () => void;
@@ -130,7 +134,11 @@ export const useStore = create<AppState>()(
             requireAuth: true,
             timeoutMs: 120_000,
             silent: false,
-            body: { documentContent: docContent, pastQuestionsContent: pastQuestionsContent || '' },
+            body: {
+              documentContent: docContent,
+              pastQuestionsContent: pastQuestionsContent || '',
+              documentId: docId,
+            },
           });
           if (error) throw error;
           if (!data) throw new Error('Failed to generate knowledge');
@@ -158,7 +166,11 @@ export const useStore = create<AppState>()(
       },
 
       // Action to generate exam predictions
-      generatePredictions: async (pastQuestionsContent: string, mainTextbookContent?: string) => {
+      generatePredictions: async (
+        pastQuestionsContent: string,
+        mainTextbookContent?: string,
+        documentId?: string | null,
+      ) => {
         if (get().isGeneratingPredictions) return;
 
         set({ isGeneratingPredictions: true, predictionData: null });
@@ -169,7 +181,12 @@ export const useStore = create<AppState>()(
             requireAuth: true,
             timeoutMs: 120_000,
             silent: false,
-            body: { pastQuestionsContent, mainTextbookContent },
+            body: {
+              pastQuestionsContent,
+              mainTextbookContent,
+              documentId: documentId || undefined,
+              mainTextbookId: documentId || undefined,
+            },
           });
           if (error) throw error;
           if (!data) throw new Error('Failed to generate predictions');

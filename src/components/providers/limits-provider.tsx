@@ -1,13 +1,14 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { invokeEdgeFunction, supabase } from '@/lib/supabase-client/client';
+import { supabase } from '@/lib/supabase-client/client';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
 import type { LimitExceededPayload } from '@/lib/limits/limit-errors';
 import type { LimitsFlagsConfig } from '@/lib/limits/limitations-agent';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { safeFetch } from '@/lib/api/safe-fetch';
 
 type UsageSnapshot = {
   plan: string;
@@ -130,13 +131,20 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const { data, error } = await invokeEdgeFunction<any>('usage-status', {
+      const headers = new Headers();
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      const response = await safeFetch('/api/limits/effective', {
         method: 'GET',
-        requireAuth: true,
+        headers,
+        credentials: 'include',
+        timeout: 10_000,
         silent: true,
       });
-      if (error || !data) {
-        throw error || new Error('usage-status returned empty payload');
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data) {
+        throw new Error(String(data?.message || data?.error || `limits/effective failed (${response.status})`));
       }
 
       const usagePayload = asRecord(data.usage);
@@ -212,6 +220,11 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_user_entitlements', filter: `user_id=eq.${user.id}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'au_worker_jobs', filter: `user_id=eq.${user.id}` },
         scheduleRefresh,
       )
@@ -223,6 +236,11 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'au_documents', filter: `user_id=eq.${user.id}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_model_usage', filter: `user_id=eq.${user.id}` },
         scheduleRefresh,
       )
       .subscribe((status) => {

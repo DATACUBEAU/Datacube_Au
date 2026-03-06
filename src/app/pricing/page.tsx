@@ -30,7 +30,7 @@ export default function PricingPage() {
         <Badge variant="outline">Free vs Pro</Badge>
         <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Upgrade to Pro</h1>
         <p className="mx-auto max-w-2xl text-muted-foreground">
-          Pro unlocks premium model quality, advanced memory depth, and higher daily quotas.
+          Pro unlocks premium model quality, advanced memory depth, and higher plan caps.
         </p>
         <p className="text-sm text-muted-foreground">NGN 4,500/month or NGN 1,500/week</p>
         <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -101,8 +101,8 @@ export default function PricingPage() {
                 <tr key={row.key} className="border-b align-top">
                   <td className="px-3 py-3 font-mono text-xs">{row.key}</td>
                   <td className="px-3 py-3">{row.period}</td>
-                  <td className="px-3 py-3">{row.freeLimit <= 0 ? 'Locked/Unlimited' : row.freeLimit}</td>
-                  <td className="px-3 py-3">{row.proLimit <= 0 ? 'Unlimited' : row.proLimit}</td>
+                  <td className="px-3 py-3">{row.freeLimit <= 0 ? 'Locked' : row.freeLimit}</td>
+                  <td className="px-3 py-3">{row.proLimit <= 0 ? 'Locked' : row.proLimit}</td>
                   <td className="px-3 py-3 text-muted-foreground">{row.description}</td>
                 </tr>
               ))}
@@ -119,10 +119,10 @@ export default function PricingPage() {
         <CardContent className="space-y-2 text-sm">
           <p>
             Upload size: <span className="font-semibold">{DEFAULT_MAX_UPLOAD_MB}MB</span> for everyone by default.
-            When feature flag <span className="font-mono">upload_100mb</span> is ON, this becomes <span className="font-semibold">{FLAGGED_MAX_UPLOAD_MB}MB</span> for everyone.
+            When feature flag <span className="font-mono">pro_upload_100mb</span> is ON, Pro rises to <span className="font-semibold">{FLAGGED_MAX_UPLOAD_MB}MB</span> while Free remains at 50MB.
           </p>
           <p>
-            Lifetime total uploaded documents: <span className="font-semibold">Free 4</span>, <span className="font-semibold">Pro 10</span>.
+            Default document caps: <span className="font-semibold">Free 50</span>, <span className="font-semibold">Pro 500</span>.
           </p>
           <p>
             Memory turn window: Free {TIER_TUNING_POLICY.memoryTurnWindow.free}, Pro {TIER_TUNING_POLICY.memoryTurnWindow.pro}.

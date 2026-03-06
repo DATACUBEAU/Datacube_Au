@@ -121,9 +121,8 @@ const AdminBilling = ({ token }: { token: string }) => {
         setConfig(normalizeConexConfig((res as any).config || {}));
       }
 
-      const planLimitsRes = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'get_plan_limits' })
+      const planLimitsRes = await fetchAdmin('/api/admin/plan-limits', {
+        method: 'GET',
       });
       if (planLimitsRes.ok) {
         const payload = (planLimitsRes as any).data || (planLimitsRes as any);
@@ -204,6 +203,11 @@ const AdminBilling = ({ token }: { token: string }) => {
           scheduleRefresh();
           void refreshFlags();
         },
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_plan_limits' },
+        scheduleRefresh,
       )
       .on(
         'postgres_changes',
@@ -328,17 +332,16 @@ const AdminBilling = ({ token }: { token: string }) => {
     const saveVersion = ++limitsSaveVersionRef.current;
     setSavingPlanLimits(true);
     try {
-      const res = await fetchAdmin('admin-handler', {
+      const res = await fetchAdmin('/api/admin/plan-limits', {
         method: 'POST',
         body: JSON.stringify({
-          action: 'update_plan_limits',
           plan: selectedPlan,
           limits: nextLimits,
         }),
       });
       if (!res.ok) {
         const payload = (res as any).data || {};
-        throw new Error(payload?.error || payload?.message || `Failed to save ${selectedPlan} limits`);
+        throw new Error(payload?.code || payload?.error || payload?.message || `Failed to save ${selectedPlan} limits`);
       }
       if (saveVersion === limitsSaveVersionRef.current) {
         limitDirtyRef.current = false;
@@ -656,22 +659,21 @@ const AdminBilling = ({ token }: { token: string }) => {
                         <Card>
                             <CardHeader>
                                 <CardTitle>Limits & Usage Caps</CardTitle>
-                                <CardDescription>Edit fixed plan caps. Set a value to <span className="font-semibold">0</span> for unlimited.</CardDescription>
+                                <CardDescription>Edit fixed numeric plan caps. Changes apply immediately after save.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
                               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                <div className="w-full md:w-56">
-                                  <Label className="mb-2 block">Plan</Label>
-                                  <Select value={selectedPlan} onValueChange={(value) => setSelectedPlan(value)}>
-                                    <SelectTrigger>
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
+                                <div className="space-y-2">
+                                  <Label className="block">Plan</Label>
+                                  <Tabs value={selectedPlan} onValueChange={setSelectedPlan} className="w-full">
+                                    <TabsList className="grid w-full grid-cols-2 md:w-[280px]">
                                       {planOptions.map((plan) => (
-                                        <SelectItem key={plan} value={plan}>{formatPlanLabel(plan)}</SelectItem>
+                                        <TabsTrigger key={plan} value={plan}>
+                                          {formatPlanLabel(plan)}
+                                        </TabsTrigger>
                                       ))}
-                                    </SelectContent>
-                                  </Select>
+                                    </TabsList>
+                                  </Tabs>
                                 </div>
                                 <Button onClick={() => void saveSelectedPlanLimits()} disabled={savingPlanLimits}>
                                   {savingPlanLimits ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
@@ -682,8 +684,6 @@ const AdminBilling = ({ token }: { token: string }) => {
                               <div className="grid gap-4 md:grid-cols-2">
                                 {LIMIT_FIELDS.map((field) => {
                                   const value = String(planLimitDraftByPlan[selectedPlan]?.[field.key] ?? '');
-                                  const numericValue = Number(value);
-                                  const isUnlimited = !value || (Number.isFinite(numericValue) && numericValue <= 0);
                                   return (
                                     <div key={field.key} className="rounded-md border p-3 space-y-2">
                                       <div className="flex items-center justify-between gap-2">
@@ -691,18 +691,21 @@ const AdminBilling = ({ token }: { token: string }) => {
                                           <Label>{field.label}</Label>
                                           <p className="text-xs text-muted-foreground">{field.description}</p>
                                         </div>
-                                        <Badge variant={isUnlimited ? 'secondary' : 'outline'}>
-                                          {isUnlimited ? 'Unlimited' : 'Capped'}
-                                        </Badge>
+                                        <span className="text-xs font-mono text-muted-foreground">
+                                          {value || '0'}
+                                        </span>
                                       </div>
                                       <div className="flex items-center gap-2">
                                         <Input
                                           inputMode="numeric"
                                           value={value}
                                           onChange={(e) => updateSelectedPlanLimit(field.key, e.target.value)}
-                                          placeholder="0"
+                                          placeholder="Enter cap"
                                         />
                                       </div>
+                                      <p className="text-[11px] text-muted-foreground">
+                                        Whole numbers only. Use `0` to fully block this action.
+                                      </p>
                                     </div>
                                   );
                                 })}
@@ -1024,6 +1027,25 @@ const AdminManualPayments = (_props: { token: string }) => {
 const AdminUsage = ({ token }: { token: string }) => {
   const [usage, setUsage] = useState<any[]>([]);
   const [stats, setStats] = useState({ totalCalls: 0, failedCalls: 0, successfulCalls: 0 });
+  const [cacheMetrics, setCacheMetrics] = useState<{
+    overallHitRate: number;
+    totalCacheHits: number;
+    totalCacheCalls: number;
+    totalSavedTokensEstimate: number;
+    byFeature: Array<{
+      feature: string;
+      calls: number;
+      cacheHits: number;
+      cacheHitRate: number;
+      savedTokensEstimate: number;
+    }>;
+  }>({
+    overallHitRate: 0,
+    totalCacheHits: 0,
+    totalCacheCalls: 0,
+    totalSavedTokensEstimate: 0,
+    byFeature: [],
+  });
   const [usageSource, setUsageSource] = useState<'au_model_usage' | 'au_events_fallback' | 'au_messages_fallback'>('au_model_usage');
   const [loading, setLoading] = useState(true);
   const [totalUsers, setTotalUsers] = useState(0);
@@ -1067,12 +1089,21 @@ const AdminUsage = ({ token }: { token: string }) => {
         successfulCalls: 0,
       },
     );
+    setCacheMetrics(
+      payload?.cacheMetrics || {
+        overallHitRate: 0,
+        totalCacheHits: 0,
+        totalCacheCalls: 0,
+        totalSavedTokensEstimate: 0,
+        byFeature: [],
+      },
+    );
     setUsageSource(
       (payload?.usageSource === 'au_events_fallback' || payload?.usageSource === 'au_messages_fallback'
         ? payload.usageSource
         : 'au_model_usage') as any
     );
-    setTotalUsers(Number(payload?.totalUsers || 0));
+    setTotalUsers(Number(payload?.stats?.totalUsers || payload?.totalUsers || 0));
     if (options?.fromCache) {
       setIsUsingCachedData(true);
       setCachedAt(options.cachedAt ?? null);
@@ -1094,10 +1125,9 @@ const AdminUsage = ({ token }: { token: string }) => {
       }
 
       // Fetch Usage using the centralized fetchAdmin utility
-      const usageRes = await fetchAdmin('admin-handler', {
-        method: 'POST',
+      const usageRes = await fetchAdmin('/api/admin/model-usage?limit=50', {
+        method: 'GET',
         headers: { 'X-Admin-Token': token },
-        body: JSON.stringify({ action: 'get_usage' })
       });
       if (!usageRes.ok) {
         throw new Error((usageRes as any).error || 'Failed to load usage');
@@ -1110,7 +1140,13 @@ const AdminUsage = ({ token }: { token: string }) => {
           failedCalls: 0,
           successfulCalls: 0,
         },
-        totalUsers: Number((usageRes as any).totalUsers || 0),
+        cacheMetrics: (usageRes as any).cacheMetrics || {
+          overallHitRate: 0,
+          totalCacheHits: 0,
+          totalCacheCalls: 0,
+          totalSavedTokensEstimate: 0,
+          byFeature: [],
+        },
       };
       applyPayload(payload);
       void writeUsageCache(payload);
@@ -1152,7 +1188,7 @@ const AdminUsage = ({ token }: { token: string }) => {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-5">
         <Card className="bg-primary/5 border-primary/20">
           <CardContent className="p-4 flex items-center gap-4">
             <div className="p-3 bg-primary/10 rounded-full text-primary">
@@ -1190,7 +1226,61 @@ const AdminUsage = ({ token }: { token: string }) => {
             </div>
           </CardContent>
         </Card>
+        <Card className="bg-blue-500/5 border-blue-500/20">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="p-3 bg-blue-500/10 rounded-full text-blue-600">
+              <Zap className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Cache Hit Rate</p>
+              <p className="text-2xl font-bold">{(cacheMetrics.overallHitRate * 100).toFixed(1)}%</p>
+              <p className="text-[10px] text-muted-foreground">{cacheMetrics.totalCacheHits} / {cacheMetrics.totalCacheCalls} cached</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="bg-amber-500/5 border-amber-500/20">
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="p-3 bg-amber-500/10 rounded-full text-amber-600">
+              <Database className="h-6 w-6" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Saved Tokens</p>
+              <p className="text-2xl font-bold">{cacheMetrics.totalSavedTokensEstimate.toLocaleString()}</p>
+              <p className="text-[10px] text-muted-foreground">Estimated tokens avoided</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Cache Efficiency</CardTitle>
+          <CardDescription>Feature-level hit rates and saved-token estimates from the last 30 days.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {cacheMetrics.byFeature.length === 0 ? (
+            <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+              No cache metrics recorded yet.
+            </div>
+          ) : (
+            cacheMetrics.byFeature.map((row) => (
+              <div key={row.feature} className="flex flex-col gap-2 rounded-lg border p-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="font-medium">{row.feature}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {row.cacheHits} cache hits from {row.calls} requests
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  <Badge variant="outline">{(row.cacheHitRate * 100).toFixed(1)}% hit rate</Badge>
+                  <Badge variant="secondary">{row.savedTokensEstimate.toLocaleString()} tokens saved</Badge>
+                </div>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-medium">Recent Activity</h3>
@@ -1208,19 +1298,25 @@ const AdminUsage = ({ token }: { token: string }) => {
               <th className="p-3 text-left">Time</th>
               <th className="p-3 text-left">Model</th>
               <th className="p-3 text-left">Tokens</th>
+              <th className="p-3 text-left">Cache</th>
               <th className="p-3 text-left">User ID</th>
               <th className="p-3 text-left">Feature</th>
             </tr>
           </thead>
           <tbody>
             {usage.length === 0 ? (
-              <tr><td colSpan={5} className="p-8 text-center text-muted-foreground italic">No usage records found.</td></tr>
+              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground italic">No usage records found.</td></tr>
             ) : (
               usage.map((u) => (
                 <tr key={u.id} className="border-t hover:bg-muted/30 transition-colors">
                   <td className="p-3 text-xs whitespace-nowrap">{new Date(u.created_at).toLocaleString()}</td>
                   <td className="p-3 font-mono text-xs">{u.model_id}</td>
                   <td className="p-3">{u.total_tokens || 0}</td>
+                  <td className="p-3">
+                    <Badge variant={u.cache_hit ? 'secondary' : 'outline'} className="text-[10px] uppercase">
+                      {u.cache_hit ? 'Hit' : 'Miss'}
+                    </Badge>
+                  </td>
                   <td className="p-3 text-xs">
                     <TooltipProvider>
                       <Tooltip>

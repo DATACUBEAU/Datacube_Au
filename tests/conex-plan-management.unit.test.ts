@@ -117,7 +117,7 @@ run('plan switch keeps each plan limit value instead of collapsing to zero', () 
   assert.equal(drafts.pro.max_file_mb, '100');
 });
 
-run('validatePlanLimitDraft normalizes empty values to unlimited (0)', () => {
+run('validatePlanLimitDraft normalizes empty values to 0 caps', () => {
   const draft: PlanLimitDraftByPlan = {
     free: {
       max_file_mb: '50',

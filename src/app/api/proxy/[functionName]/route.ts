@@ -18,6 +18,39 @@ import {
   isTierGuardedFunction,
   TierAccessError,
 } from '@/lib/server/tier-enforcement';
+import {
+  redactChatPayloadForLog,
+  toLegacyEdgePayload,
+  validateAndNormalizeChatPayload,
+  type CanonicalChatPayload,
+} from '@shared/chat-payload';
+import {
+  buildAnswerCacheKey,
+  buildDocScope,
+  buildIdempotencyStorageKey,
+  buildSettingsHash,
+  classifyTemplateResponse,
+  getFeatureGateDecision,
+  normalizeQuestion,
+  readAnswerCache,
+  readFeatureOutput,
+  readIdempotencyRecord,
+  recordSyntheticUsage,
+  resolveDocumentVersion,
+  sha256Hex,
+  touchAnswerCacheHit,
+  writeAnswerCache,
+  writeFeatureOutput,
+  writeIdempotencyRecord,
+} from '@/lib/server/ai-governance';
+import {
+  EffectiveLimitError,
+  getEffectiveLimits,
+  throwChatLimitIfNeeded,
+  throwExamLimitIfNeeded,
+  throwIngestLimitIfNeeded,
+  throwUploadLimitIfNeeded,
+} from '@/lib/server/au-limits';
 
 export const runtime = 'nodejs';
 
@@ -239,6 +272,86 @@ function getRequestTypeForFunction(functionName: string): RoutingRequestType | n
   return null;
 }
 
+function cacheFeatureForFunction(functionName: string): string | null {
+  const normalized = String(functionName || '').trim().toLowerCase();
+  if (normalized === 'au-chat' || normalized === 'chat' || normalized === 'global-chat') return 'chat';
+  if (normalized === 'generate-knowledge') return 'knowledge_hub';
+  if (normalized === 'prediction-engine' || normalized === 'generate-exam-predictions') return 'exam_prediction';
+  if (normalized === 'exam-generator' || normalized === 'generate-practice-exam') return 'practice_exam_generation';
+  return null;
+}
+
+function buildPlanGatePayload(params: {
+  status?: number;
+  code: string;
+  key: string;
+  message: string;
+  correlationId: string;
+}): Record<string, unknown> {
+  return {
+    status: params.status || 403,
+    code: params.code,
+    key: params.key,
+    limit: params.key,
+    message: params.message,
+    action: params.key,
+    current: 0,
+    correlation_id: params.correlationId,
+    upgrade: {
+      cta: 'Upgrade to Pro',
+      href: `/pricing?source=feature_${encodeURIComponent(params.key)}`,
+    },
+  };
+}
+
+function latestUserMessage(payload: CanonicalChatPayload | null): string {
+  if (!payload) return '';
+  for (let index = payload.messages.length - 1; index >= 0; index -= 1) {
+    if (payload.messages[index]?.role === 'user') {
+      return String(payload.messages[index]?.content || '').trim();
+    }
+  }
+  return '';
+}
+
+function extractDocumentIdForFeature(functionName: string, body: any): string | null {
+  const normalized = String(functionName || '').trim().toLowerCase();
+  if (normalized === 'generate-knowledge' || normalized === 'exam-generator' || normalized === 'generate-practice-exam') {
+    return String(body?.documentId || body?.document_id || '').trim() || null;
+  }
+  if (normalized === 'prediction-engine' || normalized === 'generate-exam-predictions') {
+    return String(
+      body?.documentId ||
+      body?.document_id ||
+      body?.mainTextbookId ||
+      body?.main_textbook_id ||
+      body?.textbookId ||
+      '',
+    ).trim() || null;
+  }
+  return null;
+}
+
+function buildFeatureSourceTexts(functionName: string, body: any): Array<string | null | undefined> {
+  const normalized = String(functionName || '').trim().toLowerCase();
+  if (normalized === 'generate-knowledge') {
+    return [body?.documentContent, body?.pastQuestionsContent];
+  }
+  if (normalized === 'prediction-engine' || normalized === 'generate-exam-predictions') {
+    return [body?.mainTextbookContent, body?.pastQuestionsContent];
+  }
+  if (normalized === 'exam-generator' || normalized === 'generate-practice-exam') {
+    return [body?.documentContent, body?.pastQuestionsContent];
+  }
+  return [];
+}
+
+async function parseJsonClone(response: Response): Promise<any | null> {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (!contentType.includes('application/json')) return null;
+  return response.clone().json().catch(() => null);
+}
+
 function withDebugHeaders(
   headers: Headers,
   candidate: RoutingCandidate | null,
@@ -455,6 +568,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       );
     }
 
+    const adminSupabase = createSupabaseAdminClient();
+
     const incomingUrl = new URL(req.url);
     const targetUrl = new URL(`${baseUrl}/${functionName}`);
     incomingUrl.searchParams.forEach((value, key) => {
@@ -510,7 +625,23 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
     }
 
+    const normalizedFunction = String(functionName || '').trim().toLowerCase();
     let parsedBody: any = {};
+    let canonicalChatPayload: CanonicalChatPayload | null = null;
+    let chatIdempotencyStorageKey: string | null = null;
+    let chatAnswerCacheKey: string | null = null;
+    let chatRequestHash: string | null = null;
+    let chatNormalizedQuestion = '';
+    let chatActiveDocScope = '';
+    let chatSettingsHash = '';
+    let chatRuntimeFeature = normalizedFunction === 'global-chat' ? 'global_chat' : 'doc_chat';
+    let featureOutputContext:
+      | {
+          feature: 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation';
+          documentId: string;
+          docVersionId: string | null;
+        }
+      | null = null;
     if (rawBodyText.trim()) {
       try {
         parsedBody = JSON.parse(rawBodyText);
@@ -519,16 +650,359 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
     }
 
+    const shouldNormalizeChatPayload =
+      req.method === 'POST' &&
+      isJsonContentType(contentType) &&
+      (normalizedFunction === 'global-chat' || normalizedFunction === 'au-chat' || normalizedFunction === 'chat');
+    const isModelsAction = String(parsedBody?.action || '').trim().toLowerCase() === 'get_models';
+
+    if (shouldNormalizeChatPayload && !isModelsAction) {
+      const validation = validateAndNormalizeChatPayload(parsedBody);
+      const normalizedCorrelation =
+        validation.success
+          ? validation.data.correlationId
+          : validation.normalized.correlationId;
+      if (normalizedCorrelation) {
+        correlationId = normalizedCorrelation;
+      }
+
+      if (!validation.success) {
+        console.warn('[proxy] chat payload validation failed', {
+          requestId,
+          correlationId,
+          functionName,
+          issues: validation.issues,
+        });
+        return NextResponse.json(
+          {
+            message: 'Invalid Payload',
+            error: 'Invalid Payload',
+            status: 400,
+            requestId,
+            correlation_id: correlationId,
+            details: {
+              issues: validation.issues,
+            },
+          },
+          { status: 400, headers: corsHeaders(requestId) },
+        );
+      }
+
+      const mode = normalizedFunction === 'global-chat' ? 'global' : 'doc';
+      canonicalChatPayload = validation.data;
+      chatRuntimeFeature = validation.data.feature || (mode === 'global' ? 'global_chat' : 'doc_chat');
+      const extras: Record<string, unknown> = {
+        action: parsedBody?.action,
+        summaryMode: parsedBody?.summaryMode,
+        browsingMode: parsedBody?.browsingMode,
+        app_context: parsedBody?.app_context,
+        memory_pack: parsedBody?.memory_pack,
+        recent_snippet: parsedBody?.recent_snippet,
+        secondary_snippet: parsedBody?.secondary_snippet,
+        retrieval: parsedBody?.retrieval,
+        au_handoff_hint: parsedBody?.au_handoff_hint,
+        model: parsedBody?.model,
+        clientMessageId: parsedBody?.clientMessageId,
+        policyVersion: parsedBody?.policyVersion,
+        memory: parsedBody?.memory,
+      };
+
+      parsedBody = toLegacyEdgePayload(validation.data, mode, extras);
+
+      console.info('[proxy] normalized chat payload', {
+        requestId,
+        correlationId,
+        functionName,
+        payload: redactChatPayloadForLog(validation.data),
+      });
+    }
+
     const bodyCorrelationId = correlationIdFromBody(parsedBody);
     if (bodyCorrelationId) correlationId = bodyCorrelationId;
     headers.set('x-correlation-id', correlationId);
+
+    const normalizedCacheFeature = cacheFeatureForFunction(functionName);
+    const needsEffectiveLimits =
+      req.method === 'POST' &&
+      [
+        'document-upload',
+        'chat',
+        'au-chat',
+        'global-chat',
+        'generate-knowledge',
+        'prediction-engine',
+        'generate-exam-predictions',
+        'exam-generator',
+        'generate-practice-exam',
+      ].includes(normalizedFunction);
+    const effectiveLimits = needsEffectiveLimits
+      ? await getEffectiveLimits(adminSupabase, auth.userId)
+      : null;
+
+    if (effectiveLimits && normalizedFunction === 'document-upload' && req.method === 'POST') {
+      const action = String(parsedBody?.action || '').trim().toLowerCase();
+      if (action === 'initiate') {
+        const fileSizeBytes = Number(parsedBody?.fileSize ?? parsedBody?.file_size ?? 0);
+        if (Number.isFinite(fileSizeBytes) && fileSizeBytes > 0) {
+          throwUploadLimitIfNeeded({
+            limits: effectiveLimits,
+            fileSizeBytes,
+            correlationId,
+          });
+        }
+      }
+      if (action === 'complete') {
+        const fileSizeBytes = Number(parsedBody?.fileSize ?? parsedBody?.file_size ?? 0);
+        if (Number.isFinite(fileSizeBytes) && fileSizeBytes > 0) {
+          throwUploadLimitIfNeeded({
+            limits: effectiveLimits,
+            fileSizeBytes,
+            correlationId,
+          });
+        }
+        throwIngestLimitIfNeeded({
+          limits: effectiveLimits,
+          correlationId,
+        });
+      }
+    }
+
+    if (effectiveLimits && canonicalChatPayload) {
+      if (!canonicalChatPayload.idempotencyKey) {
+        return NextResponse.json(
+          {
+            status: 400,
+            code: 'IDEMPOTENCY_KEY_REQUIRED',
+            message: 'idempotencyKey is required for chat requests.',
+            limit: 'idempotencyKey',
+            current: 0,
+            action: 'chat',
+            correlation_id: correlationId,
+          },
+          { status: 400, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      throwChatLimitIfNeeded({
+        limits: effectiveLimits,
+        correlationId,
+      });
+
+      chatNormalizedQuestion = normalizeQuestion(latestUserMessage(canonicalChatPayload));
+      chatActiveDocScope = buildDocScope(canonicalChatPayload.activeDocIds);
+      chatSettingsHash = buildSettingsHash(canonicalChatPayload.auGuide || {});
+      chatRequestHash = sha256Hex(JSON.stringify({
+        feature: chatRuntimeFeature,
+        messages: canonicalChatPayload.messages,
+        activeDocIds: canonicalChatPayload.activeDocIds || [],
+        sessionId: canonicalChatPayload.sessionId || null,
+        auGuide: canonicalChatPayload.auGuide || {},
+      }));
+      chatIdempotencyStorageKey = buildIdempotencyStorageKey(
+        auth.userId,
+        chatRuntimeFeature,
+        canonicalChatPayload.idempotencyKey,
+      );
+
+      const idempotent = await readIdempotencyRecord({
+        supabase: adminSupabase,
+        key: chatIdempotencyStorageKey,
+      });
+      if (idempotent?.response) {
+        await recordSyntheticUsage({
+          supabase: adminSupabase,
+          userId: auth.userId,
+          feature: chatRuntimeFeature,
+          model: 'idempotency_cache',
+          requestId,
+          correlationId,
+          cacheHit: true,
+          metadata: { source: 'idempotency' },
+        });
+        return NextResponse.json(idempotent.response, {
+          status: idempotent.statusCode || 200,
+          headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
+        });
+      }
+
+      const templateResponse = classifyTemplateResponse(
+        latestUserMessage(canonicalChatPayload),
+        normalizedFunction === 'global-chat' ? 'global' : 'doc',
+      );
+      if (templateResponse) {
+        const payload = {
+          answer: templateResponse,
+          thought: null,
+          citations: [],
+          correlation_id: correlationId,
+          cache_hit: true,
+          source: 'template',
+        };
+        await writeIdempotencyRecord({
+          supabase: adminSupabase,
+          key: chatIdempotencyStorageKey,
+          userId: auth.userId,
+          feature: chatRuntimeFeature,
+          requestHash: chatRequestHash,
+          response: payload,
+          statusCode: 200,
+          correlationId,
+        });
+        await recordSyntheticUsage({
+          supabase: adminSupabase,
+          userId: auth.userId,
+          feature: chatRuntimeFeature,
+          model: 'template_router',
+          requestId,
+          correlationId,
+          cacheHit: true,
+          metadata: { source: 'template_router' },
+        });
+        return NextResponse.json(payload, {
+          status: 200,
+          headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
+        });
+      }
+
+      if (chatNormalizedQuestion) {
+        chatAnswerCacheKey = buildAnswerCacheKey({
+          userId: auth.userId,
+          feature: chatRuntimeFeature,
+          question: chatNormalizedQuestion,
+          activeDocScope: chatActiveDocScope,
+          settingsHash: chatSettingsHash,
+        });
+        const cachedAnswer = await readAnswerCache({
+          supabase: adminSupabase,
+          cacheKey: chatAnswerCacheKey,
+        });
+        if (cachedAnswer?.response) {
+          await touchAnswerCacheHit({ supabase: adminSupabase, cacheKey: chatAnswerCacheKey });
+          await writeIdempotencyRecord({
+            supabase: adminSupabase,
+            key: chatIdempotencyStorageKey,
+            userId: auth.userId,
+            feature: chatRuntimeFeature,
+            requestHash: chatRequestHash,
+            response: cachedAnswer.response,
+            statusCode: 200,
+            correlationId,
+          });
+          await recordSyntheticUsage({
+            supabase: adminSupabase,
+            userId: auth.userId,
+            feature: chatRuntimeFeature,
+            model: cachedAnswer.model || 'answer_cache',
+            requestId,
+            correlationId,
+            cacheHit: true,
+            savedTokens: cachedAnswer.tokens,
+            metadata: { source: 'answer_cache' },
+          });
+          return NextResponse.json(cachedAnswer.response, {
+            status: 200,
+            headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
+          });
+        }
+      }
+    }
+
+    if (effectiveLimits && normalizedCacheFeature && normalizedCacheFeature !== 'chat') {
+      let gateFeature: 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation' | null = null;
+      if (normalizedFunction === 'generate-knowledge') gateFeature = 'knowledge_hub';
+      if (normalizedFunction === 'prediction-engine' || normalizedFunction === 'generate-exam-predictions') {
+        gateFeature = 'exam_prediction';
+      }
+      if (normalizedFunction === 'exam-generator' || normalizedFunction === 'generate-practice-exam') {
+        gateFeature = 'practice_exam_generation';
+      }
+
+      if (gateFeature) {
+        const gate = await getFeatureGateDecision(adminSupabase, gateFeature);
+        if (!gate.enabled) {
+          return NextResponse.json(
+            buildPlanGatePayload({
+              status: 403,
+              code: 'FEATURE_DISABLED',
+              key: gateFeature,
+              message: 'This feature is currently disabled.',
+              correlationId,
+            }),
+            { status: 403, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+          );
+        }
+
+        const isPaidPlan = effectiveLimits.effectivePlan.plan === 'pro' || effectiveLimits.effectivePlan.isAdmin;
+        if (gate.proRequired && !isPaidPlan) {
+          return NextResponse.json(
+            buildPlanGatePayload({
+              status: 403,
+              code: 'PRO_REQUIRED',
+              key: gateFeature,
+              message: 'This feature requires Pro.',
+              correlationId,
+            }),
+            { status: 403, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+          );
+        }
+
+        if (gateFeature === 'practice_exam_generation') {
+          throwExamLimitIfNeeded({
+            limits: effectiveLimits,
+            correlationId,
+            action: gateFeature,
+          });
+        }
+
+        const documentId = extractDocumentIdForFeature(normalizedFunction, parsedBody);
+        if (documentId) {
+          const resolvedVersion = await resolveDocumentVersion({
+            supabase: adminSupabase,
+            userId: auth.userId,
+            documentId,
+            sourceText: String(buildFeatureSourceTexts(normalizedFunction, parsedBody)[0] || ''),
+            fallbackTexts: buildFeatureSourceTexts(normalizedFunction, parsedBody),
+          });
+          featureOutputContext = {
+            feature: gateFeature,
+            documentId,
+            docVersionId: resolvedVersion.versionId,
+          };
+          if (resolvedVersion.versionId) {
+            const cachedOutput = await readFeatureOutput({
+              supabase: adminSupabase,
+              userId: auth.userId,
+              docVersionId: resolvedVersion.versionId,
+              feature: gateFeature,
+            });
+            if (cachedOutput?.output) {
+              await recordSyntheticUsage({
+                supabase: adminSupabase,
+                userId: auth.userId,
+                feature: gateFeature,
+                model: cachedOutput.model || 'feature_output_cache',
+                requestId,
+                correlationId,
+                cacheHit: true,
+                savedTokens: cachedOutput.tokens,
+                metadata: { source: 'feature_output_cache' },
+              });
+              return NextResponse.json(cachedOutput.output, {
+                status: 200,
+                headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
+              });
+            }
+          }
+        }
+      }
+    }
 
     const isGetModelsAction =
       routeWithModelSelector &&
       String(parsedBody?.action || '').toLowerCase() === 'get_models';
 
     const needsTierGuards = isTierGuardedFunction(functionName);
-    const supabase = needsTierGuards ? createSupabaseAdminClient() : null;
+    const supabase = needsTierGuards ? adminSupabase : null;
     let tierContext: any = null;
     let guardedBody = parsedBody;
     let appliedGuards: string[] = [];
@@ -699,7 +1173,13 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
 
       let lastFailure: { response: Response; candidate: RoutingCandidate } | null = null;
-      for (const candidate of routed.candidates) {
+      const routedCandidates =
+        requestType === 'chat' || requestType === 'global_chat'
+          ? routed.candidates.slice(0, 1)
+          : routed.candidates;
+      const maxLocalAttempts = requestType === 'chat' || requestType === 'global_chat' ? 1 : 2;
+
+      for (const candidate of routedCandidates) {
         try {
           enforceModelAccess({
             tierContext,
@@ -732,7 +1212,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         });
         await writeRoutingAudit(auth.userId, plan, requestType!, candidate);
 
-        for (let localAttempt = 0; localAttempt < 2; localAttempt += 1) {
+        for (let localAttempt = 0; localAttempt < maxLocalAttempts; localAttempt += 1) {
           const response = await forwardOnce(attemptHeaders, attemptBody);
           const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
           const isEventStream = contentTypeResponse.includes('text/event-stream');
@@ -740,6 +1220,46 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             try {
               await noteRoutingSuccess(supabase, candidate);
             } catch {
+            }
+            const parsedSuccessPayload = !isEventStream ? await parseJsonClone(response) : null;
+            if (parsedSuccessPayload && response.ok) {
+              if (canonicalChatPayload && chatIdempotencyStorageKey) {
+                await writeIdempotencyRecord({
+                  supabase: adminSupabase,
+                  key: chatIdempotencyStorageKey,
+                  userId: auth.userId,
+                  feature: chatRuntimeFeature,
+                  requestHash: chatRequestHash,
+                  response: parsedSuccessPayload,
+                  statusCode: response.status,
+                  correlationId,
+                });
+                if (chatAnswerCacheKey && chatNormalizedQuestion) {
+                  await writeAnswerCache({
+                    supabase: adminSupabase,
+                    cacheKey: chatAnswerCacheKey,
+                    userId: auth.userId,
+                    feature: chatRuntimeFeature,
+                    normalizedQuestion: chatNormalizedQuestion,
+                    activeDocScope: chatActiveDocScope,
+                    settingsHash: chatSettingsHash,
+                    response: parsedSuccessPayload,
+                    model: candidate.model,
+                    ttlDays: 7,
+                  });
+                }
+              }
+
+              if (featureOutputContext?.docVersionId) {
+                await writeFeatureOutput({
+                  supabase: adminSupabase,
+                  userId: auth.userId,
+                  docVersionId: featureOutputContext.docVersionId,
+                  feature: featureOutputContext.feature,
+                  output: parsedSuccessPayload,
+                  model: candidate.model,
+                });
+              }
             }
             const relay = await relaySuccessfulResponse(response, req, requestId, candidate);
             if (proxyDebugEnabled) {
@@ -778,7 +1298,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           } catch {
           }
 
-          const retryable = status === 429 || status >= 500 || status === 408;
+          const retryable = maxLocalAttempts > 1 && (status === 429 || status >= 500 || status === 408);
           if (retryable && localAttempt === 0) {
             const waitMs = status === 429 ? 600 : 350;
             await wait(waitMs);
@@ -856,6 +1376,17 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }
     return relay.response;
   } catch (error: any) {
+    if (error instanceof EffectiveLimitError) {
+      return NextResponse.json(error.payload, {
+        status: error.status,
+        headers: {
+          ...corsHeaders(requestId),
+          'Cache-Control': 'no-store',
+          ...(error.headers || {}),
+        },
+      });
+    }
+
     if (error instanceof ProxyTimeoutError) {
       console.error('[proxy] upstream timeout', {
         requestId,

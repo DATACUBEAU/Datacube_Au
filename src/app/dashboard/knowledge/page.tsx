@@ -35,6 +35,10 @@ import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { TruncatedText } from '@/components/TruncatedText';
 import { Badge } from '@/components/ui/badge';
 import { formatDistanceToNowStrict } from 'date-fns';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
+import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
+import { FeatureGatePanel } from '@/components/feature-gate-panel';
+import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
 
 // Lazy-load the animation components to keep the initial bundle small
 const AnimatedText = dynamic(() => import('@/components/animated-text'), {
@@ -57,6 +61,52 @@ function coerceMultiline(value: unknown): string {
 }
 
 export default function KnowledgePage() {
+  const { records: featureFlagRecords } = useFeatureFlags();
+  const { entitlements, loading: entitlementsLoading } = useEffectiveEntitlements();
+  const setUpgradeModalOpen = useStore((state) => state.setUpgradeModalOpen);
+  const access = useMemo(
+    () => getDashboardFeatureAccess('knowledge_hub', entitlements, featureFlagRecords),
+    [entitlements, featureFlagRecords],
+  );
+
+  useEffect(() => {
+    if (entitlementsLoading || access.allowed || access.code !== 'PRO_REQUIRED') return;
+    setUpgradeModalOpen(true, buildUpgradeContext(access));
+  }, [access, entitlementsLoading, setUpgradeModalOpen]);
+
+  if (entitlementsLoading) {
+    return (
+      <main className="flex flex-1 items-center justify-center p-4 md:p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </main>
+    );
+  }
+
+  if (!access.enabled) {
+    return (
+      <FeatureGatePanel
+        title="Knowledge Hub unavailable"
+        description={access.message}
+        mode="disabled"
+      />
+    );
+  }
+
+  if (!access.allowed) {
+    return (
+      <FeatureGatePanel
+        title="Knowledge Hub is Pro only"
+        description={access.message}
+        mode="upgrade"
+        onPrimaryAction={() => setUpgradeModalOpen(true, buildUpgradeContext(access))}
+      />
+    );
+  }
+
+  return <KnowledgePageContent />;
+}
+
+function KnowledgePageContent() {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
   const { toast } = useToast();

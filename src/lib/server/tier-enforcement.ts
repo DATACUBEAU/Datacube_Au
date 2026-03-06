@@ -536,6 +536,26 @@ function shouldSkipQuotaForBody(functionName: string, body: any): boolean {
   return false;
 }
 
+function shouldBypassLegacyFeatureGate(featureKey: TierFeatureKey): boolean {
+  return (
+    featureKey === 'knowledge_generation' ||
+    featureKey === 'practice_exam_generation' ||
+    featureKey === 'exam_predictions' ||
+    featureKey === 'document_upload'
+  );
+}
+
+function shouldBypassLegacyQuota(featureKey: TierFeatureKey): boolean {
+  return (
+    featureKey === 'au_chat' ||
+    featureKey === 'global_chat' ||
+    featureKey === 'knowledge_generation' ||
+    featureKey === 'practice_exam_generation' ||
+    featureKey === 'exam_predictions' ||
+    featureKey === 'document_upload'
+  );
+}
+
 export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promise<ProxyTierGuardResult> {
   const { supabase, userId, functionName, requestPath } = input;
   const method = normalizeMethod(input.method);
@@ -555,7 +575,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
 
   const tierContext = await resolveUserTierContext(supabase, userId);
 
-  if (!isFeatureAllowedForTier(featureKey, tierContext.tier)) {
+  if (!shouldBypassLegacyFeatureGate(featureKey) && !isFeatureAllowedForTier(featureKey, tierContext.tier)) {
     await logLimitEvent({
       supabase,
       userId,
@@ -570,7 +590,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
 
   if (isWrite) {
     if (featureKey === 'au_chat' || featureKey === 'global_chat') {
-      if (!shouldSkipQuotaForBody(functionName, body)) {
+      if (!shouldBypassLegacyQuota(featureKey) && !shouldSkipQuotaForBody(functionName, body)) {
         await consumeQuotaOrThrow({
           supabase,
           userId,
@@ -594,7 +614,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
       appliedGuards.push('clamp:chat_payload');
     }
 
-    if (featureKey === 'knowledge_generation') {
+    if (featureKey === 'knowledge_generation' && !shouldBypassLegacyQuota(featureKey)) {
       await consumeQuotaOrThrow({
         supabase,
         userId,
@@ -606,7 +626,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
       appliedGuards.push('quota:knowledge_generations_per_day');
     }
 
-    if (featureKey === 'prompt_starters') {
+    if (featureKey === 'prompt_starters' && !shouldBypassLegacyQuota(featureKey)) {
       await consumeQuotaOrThrow({
         supabase,
         userId,
@@ -618,7 +638,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
       appliedGuards.push('quota:prompt_starters_per_day');
     }
 
-    if (featureKey === 'practice_exam_generation') {
+    if (featureKey === 'practice_exam_generation' && !shouldBypassLegacyQuota(featureKey)) {
       await consumeQuotaOrThrow({
         supabase,
         userId,
@@ -630,7 +650,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
       appliedGuards.push('quota:practice_exams_per_day');
     }
 
-    if (featureKey === 'exam_predictions') {
+    if (featureKey === 'exam_predictions' && !shouldBypassLegacyQuota(featureKey)) {
       await consumeQuotaOrThrow({
         supabase,
         userId,
@@ -642,7 +662,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
       appliedGuards.push('quota:predictions_per_day');
     }
 
-    if (featureKey === 'document_upload') {
+    if (featureKey === 'document_upload' && !shouldBypassLegacyQuota(featureKey)) {
       const action = String(body?.action || '').toLowerCase();
       if (action === 'initiate' || action === 'complete') {
         await enforceUploadSizeOrThrow({ supabase, body });

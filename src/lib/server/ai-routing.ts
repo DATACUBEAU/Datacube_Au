@@ -168,8 +168,39 @@ function sortKeysByHealthAndRotation(a: ProviderKeyRecord, b: ProviderKeyRecord)
   return a.service.localeCompare(b.service);
 }
 
+function modelCostScore(model: string): number {
+  const normalized = String(model || '').trim().toLowerCase();
+  if (!normalized) return 10_000;
+
+  let score = 500;
+  if (normalized.includes('nano')) score -= 200;
+  if (normalized.includes('mini')) score -= 150;
+  if (normalized.includes('small')) score -= 120;
+  if (normalized.includes('flash-lite')) score -= 180;
+  if (normalized.includes('flash')) score -= 120;
+  if (normalized.includes('haiku')) score -= 110;
+  if (normalized.includes('8b') || normalized.includes('7b') || normalized.includes('4b') || normalized.includes('3b')) {
+    score -= 80;
+  }
+  if (normalized.includes('instruct')) score -= 20;
+  if (normalized.includes('sonnet')) score += 180;
+  if (normalized.includes('opus')) score += 260;
+  if (normalized.includes('large')) score += 200;
+  if (normalized.includes('gpt-5')) score += 240;
+  if (normalized.includes('gpt-4')) score += 220;
+  if (normalized.includes('o1') || normalized.includes('o3')) score += 220;
+  if (normalized.includes('reason')) score += 180;
+  if (normalized.includes('72b') || normalized.includes('70b') || normalized.includes('32b')) score += 160;
+  if (normalized.includes('vision')) score += 120;
+  return score;
+}
+
 function sortModelsByPreference(models: string[]): string[] {
-  return [...new Set(models)].sort((a, b) => a.localeCompare(b));
+  return [...new Set(models)].sort((a, b) => {
+    const scoreDiff = modelCostScore(a) - modelCostScore(b);
+    if (scoreDiff !== 0) return scoreDiff;
+    return a.localeCompare(b);
+  });
 }
 
 function paidOnly(models: string[]): string[] {

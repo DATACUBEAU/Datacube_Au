@@ -128,8 +128,6 @@ const getChatHistoryKey = (userId: string, docId: string) => `chat_history_${use
 const getSummaryModeKey = (userId: string, docId: string) => `chat_summary_mode_${userId}_${docId}`;
 const getInputKey = (userId: string, docId: string) => `chat_input_${userId}_${docId}`;
 const getGuideKey = (userId: string) => `au_chat_guide_${userId}`;
-const getGreetedKey = (docId: string) => `au_greeted_${docId}`;
-
 const defaultGuideText =
   "Use this AU Guide to tell the assistant how you like to study. For example, ask for short step-by-step explanations, exam-focused answers, or extra context. You can edit this text any time and AU will follow it when answering your questions.";
 
@@ -192,7 +190,6 @@ export default function ChatPage() {
     isResponding,
     sendMessage,
     stopGeneration,
-    scanAndGreet,
     fetchPrompts,
     isInitialized,
     clearChat // Destructure clearChat here
@@ -292,39 +289,6 @@ export default function ChatPage() {
       }
   };
 
-
-  // --- First-Time Engagement Logic ---
-  const greetingAttemptedRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    if (selectedDocId && user && canChat && !isResponding && !isFetchingPrompts && !isSwitchingDocs && isInitialized) {
-        const activeDoc = documentList.find((doc) => doc.id === selectedDocId);
-        if (activeDoc && activeDoc.status !== 'completed') {
-          return;
-        }
-        // Check if we already greeted for this doc
-        const greetedKey = getGreetedKey(selectedDocId);
-        const hasGreeted = localStorage.getItem(greetedKey);
-        
-        // Prevent loop: Check if we already attempted this session
-        if (greetingAttemptedRef.current.has(selectedDocId)) return;
-
-        // If not greeted AND chat history is empty (real first time), trigger greeting
-        if (!hasGreeted && currentChatHistory.length === 0) {
-             console.log(`[AU Chat] First time seeing ${selectedDocId}, initiating scan...`);
-             
-             // Mark as attempted immediately to prevent loop
-             greetingAttemptedRef.current.add(selectedDocId);
-             localStorage.setItem(greetedKey, 'true'); // Persist immediately
-
-             scanAndGreet().catch(err => {
-                 console.error("[AU Chat] Greeting failed", err);
-                 // We do NOT revert the flag, to avoid infinite loops. 
-                 // User can manually trigger help if needed.
-             });
-        }
-    }
-  }, [selectedDocId, user, canChat, isResponding, isFetchingPrompts, isSwitchingDocs, isInitialized, documentList, currentChatHistory.length, scanAndGreet]);
 
   const handleCopy = (messageId: string, content: string) => {
     navigator.clipboard.writeText(content);

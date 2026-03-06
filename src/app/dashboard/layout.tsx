@@ -76,6 +76,12 @@ import { ToastAction } from '@/components/ui/toast';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
+import {
+  buildUpgradeContext,
+  getDashboardFeatureAccess,
+  type DashboardFeatureAccess,
+} from '@/lib/feature-access';
 
 type NavItem = {
   href: string;
@@ -86,6 +92,7 @@ type NavItem = {
   onClick?: () => void;
   badge?: number | string;
   proOnly?: boolean;
+  prefetch?: boolean;
 };
 
 // --- Memoized Sidebar Nav Menu ---
@@ -117,7 +124,7 @@ const SidebarNavMenu = ({ navItems, pathname, isProUnlocked }: { navItems: NavIt
                 ) : null}
               </button>
             ) : (
-              <Link href={item.href} prefetch className="flex items-center gap-2 w-full h-full">
+              <Link href={item.href} prefetch={item.prefetch !== false} className="flex items-center gap-2 w-full h-full">
                 {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
                 <span className="flex-1">{item.label}</span>
                 {item.proOnly && !isProUnlocked ? (
@@ -279,6 +286,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     isUsingCachedData: isUsingCachedEntitlements,
     cachedAt: entitlementsCachedAt,
   } = useEffectiveEntitlements();
+  const { records: featureFlagRecords } = useFeatureFlags();
 
   const isAuthenticated = !!user;
 
@@ -344,6 +352,23 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       entitlements.promoActive
     );
   }, [entitlements.entitlementSource, entitlements.plan, entitlements.promoActive]);
+
+  const globalChatAccess = useMemo(
+    () => getDashboardFeatureAccess('global_chat', entitlements, featureFlagRecords),
+    [entitlements, featureFlagRecords],
+  );
+  const knowledgeAccess = useMemo(
+    () => getDashboardFeatureAccess('knowledge_hub', entitlements, featureFlagRecords),
+    [entitlements, featureFlagRecords],
+  );
+  const predictionsAccess = useMemo(
+    () => getDashboardFeatureAccess('exam_prediction', entitlements, featureFlagRecords),
+    [entitlements, featureFlagRecords],
+  );
+  const practiceAccess = useMemo(
+    () => getDashboardFeatureAccess('practice_exam_generation', entitlements, featureFlagRecords),
+    [entitlements, featureFlagRecords],
+  );
 
   const planStatusMeta = useMemo(() => {
     if (entitlements.promoActive || entitlements.entitlementSource === 'promo') {
@@ -430,33 +455,81 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     }
   }, [isSigningOut, router, user?.id]);
 
+  const handleBlockedFeatureClick = useCallback((access: DashboardFeatureAccess) => {
+    if (!access.enabled) {
+      toast({
+        title: 'Feature unavailable',
+        description: access.message,
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setUpgradeModalOpen(true, buildUpgradeContext(access));
+  }, [setUpgradeModalOpen, toast]);
+
   const navItems = useMemo(() => {
     const items: NavItem[] = [
       { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { href: '/dashboard/documents', icon: FileTextIcon, label: 'Documents', tourId: 'upload-section' },
       { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
-      {
+      globalChatAccess.enabled ? {
         href: '/dashboard/global-chat',
         icon: Globe,
         label: 'Global Chat',
-        proOnly: true,
-      },
-      { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge },
+        proOnly: globalChatAccess.proRequired,
+        onClick: globalChatAccess.allowed ? undefined : () => handleBlockedFeatureClick(globalChatAccess),
+        prefetch: globalChatAccess.allowed,
+      } : null,
+      knowledgeAccess.enabled ? {
+        href: '/dashboard/knowledge',
+        icon: BrainCircuit,
+        label: 'Knowledge',
+        isLoading: isGeneratingKnowledge,
+        proOnly: knowledgeAccess.proRequired,
+        onClick: knowledgeAccess.allowed ? undefined : () => handleBlockedFeatureClick(knowledgeAccess),
+        prefetch: knowledgeAccess.allowed,
+      } : null,
       { href: '/dashboard/messages', icon: Inbox, label: 'Messages', badge: unreadCount > 0 ? unreadCount : undefined },
-      { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section', proOnly: true },
-      { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section', proOnly: true },
+      predictionsAccess.enabled ? {
+        href: '/dashboard/predictions',
+        icon: ClipboardCheck,
+        label: 'Predictions',
+        isLoading: isGeneratingPredictions,
+        tourId: 'predictions-section',
+        proOnly: predictionsAccess.proRequired,
+        onClick: predictionsAccess.allowed ? undefined : () => handleBlockedFeatureClick(predictionsAccess),
+        prefetch: predictionsAccess.allowed,
+      } : null,
+      practiceAccess.enabled ? {
+        href: '/dashboard/practice',
+        icon: SquarePen,
+        label: 'Practice',
+        tourId: 'practice-section',
+        onClick: practiceAccess.allowed ? undefined : () => handleBlockedFeatureClick(practiceAccess),
+        prefetch: practiceAccess.allowed,
+      } : null,
       { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
       { href: '/dashboard/settings/subscription', icon: CreditCard, label: 'Subscription' },
-    ];
+    ].filter(Boolean) as NavItem[];
 
     return items;
-  }, [isGeneratingKnowledge, isGeneratingPredictions, unreadCount]);
+  }, [
+    globalChatAccess,
+    handleBlockedFeatureClick,
+    isGeneratingKnowledge,
+    isGeneratingPredictions,
+    knowledgeAccess,
+    practiceAccess,
+    predictionsAccess,
+    unreadCount,
+  ]);
 
   const prefetchRoutes = useMemo(
     () =>
       Array.from(
         new Set([
-          ...navItems.map((item) => item.href),
+          ...navItems.filter((item) => item.prefetch !== false && !item.onClick).map((item) => item.href),
           '/dashboard/settings',
           '/dashboard/settings/subscription',
           '/conex',

@@ -2,6 +2,12 @@
 import { safeFetch } from '@/lib/api/safe-fetch';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
 import { getSupabaseAccessToken, invokeEdgeFunction, supabase } from '@/lib/supabase-client/client';
+import {
+  validateAndNormalizeChatPayload,
+  toLegacyEdgePayload,
+  type AuGuideInput,
+  type CanonicalChatPayload,
+} from '@shared/chat-payload';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -70,6 +76,13 @@ export type ChatRequest = {
   // Common
   user_input?: string; // New field preferred
   messages?: ChatMessage[]; // Legacy support
+  userId?: string;
+  sessionId?: string;
+  feature?: string;
+  activeDocIds?: string[];
+  auGuide?: AuGuideInput;
+  idempotencyKey?: string;
+  correlationId?: string;
   
   // Global Chat Specific
   chat_type?: 'global';
@@ -147,6 +160,97 @@ function shouldBypassAuChatForSchemaOutage(): boolean {
   return Date.now() < auChatSchemaOutageUntil;
 }
 
+function buildAuGuide(request: ChatRequest): AuGuideInput | undefined {
+  if (request.auGuide) return request.auGuide;
+  const guide = typeof request.guide === 'string' ? request.guide.trim() : '';
+  if (!guide) return undefined;
+  return { instructions: guide };
+}
+
+function buildCorrelationId(request: ChatRequest): string {
+  const existing = typeof request.correlationId === 'string' ? request.correlationId.trim() : '';
+  if (existing) return existing;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `corr_${Date.now()}`;
+}
+
+function buildIdempotencyKey(request: ChatRequest, opts?: { clientMessageId?: string }): string {
+  const existing = typeof request.idempotencyKey === 'string' ? request.idempotencyKey.trim() : '';
+  if (existing) return existing;
+  const fromClientMessageId = typeof opts?.clientMessageId === 'string' ? opts.clientMessageId.trim() : '';
+  if (fromClientMessageId) return fromClientMessageId;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `chat_${crypto.randomUUID()}`;
+  }
+  return `chat_${Date.now()}`;
+}
+
+function buildCanonicalPayload(
+  request: ChatRequest,
+  isGlobal: boolean,
+  opts?: { clientMessageId?: string },
+): { canonical: CanonicalChatPayload; legacyPayload: Record<string, unknown>; correlationId: string } {
+  const candidateDocIds = Array.isArray(request.activeDocIds)
+    ? request.activeDocIds
+    : [request.doc_id || request.selectedDocId].filter(Boolean) as string[];
+  const activeDocIds = candidateDocIds.filter((value) => String(value || '').trim().toLowerCase() !== 'global');
+  const correlationId = buildCorrelationId(request);
+  const rawPayload: Record<string, unknown> = {
+    messages: request.messages,
+    message: request.user_input,
+    userId: request.userId,
+    sessionId: request.sessionId || request.thread_id,
+    feature: request.feature || (isGlobal ? 'global_chat' : 'doc_chat'),
+    activeDocIds,
+    auGuide: buildAuGuide(request),
+    idempotencyKey: buildIdempotencyKey(request, opts),
+    correlationId,
+  };
+
+  const validated = validateAndNormalizeChatPayload(rawPayload);
+  if (!validated.success) {
+    throw {
+      status: 400,
+      message: 'Invalid Payload',
+      details: {
+        issues: validated.issues,
+        correlation_id: correlationId,
+      },
+    };
+  }
+
+  const extras: Record<string, unknown> = {
+    action: request.action,
+    summaryMode: request.summaryMode,
+    browsingMode: request.browsingMode,
+    app_context: request.app_context,
+    memory_pack: request.memory_pack,
+    recent_snippet: request.recent_snippet,
+    secondary_snippet: request.secondary_snippet,
+    retrieval: request.retrieval,
+    au_handoff_hint: request.au_handoff_hint,
+    model: request.model,
+    clientMessageId: opts?.clientMessageId || request.clientMessageId,
+    policyVersion: request.policyVersion,
+    memory: request.memory,
+    correlation_id: correlationId,
+  };
+
+  const legacyPayload = toLegacyEdgePayload(
+    validated.data,
+    isGlobal ? 'global' : 'doc',
+    extras,
+  );
+
+  return {
+    canonical: validated.data,
+    legacyPayload,
+    correlationId,
+  };
+}
+
 async function invokeLegacyAuChatFallback(
   request: ChatRequest,
 ): Promise<RagBasedQuestionAnsweringOutput & { thought?: string }> {
@@ -200,48 +304,19 @@ export async function sendChatMessage(
     return invokeLegacyAuChatFallback(request);
   }
 
-  // Construct Payload based on Endpoint
-  let payload: any = {};
-
-  if (isGlobal) {
-      // Global Chat Payload
-      payload = {
-          chat_type: 'global',
-          thread_id: request.thread_id || 'global',
-          user_input: request.user_input || (request.messages ? request.messages[request.messages.length - 1].content : ""),
-          app_context: request.app_context,
-          memory_pack: request.memory_pack,
-          recent_snippet: request.recent_snippet,
-          secondary_snippet: request.secondary_snippet,
-          // Legacy Fallback
-          messages: request.messages 
-      };
-  } else {
-      // AU Chat Payload
-      payload = {
-          chat_type: 'au_rag',
-          thread_id: request.thread_id,
-          doc_id: request.doc_id || request.selectedDocId,
-          user_input: request.user_input || (request.messages ? request.messages[request.messages.length - 1].content : ""),
-          retrieval: request.retrieval,
-          recent_snippet: request.recent_snippet,
-          au_handoff_hint: request.au_handoff_hint,
-          // Legacy fields for backward compat
-          messages: request.messages,
-          selectedDocId: request.selectedDocId,
-          action: request.action,
-          summaryMode: request.summaryMode,
-          guide: request.guide
-      };
-  }
+  const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
+    clientMessageId: opts?.clientMessageId,
+  });
 
   const { data, error } = await invokeEdgeFunction<RagBasedQuestionAnsweringOutput & { thought?: string }>(endpoint, {
     method: 'POST',
     requireAuth: true,
     timeoutMs: 120_000,
     silent: true,
-    body: payload,
-    headers: opts?.signal ? {} : {},
+    body: legacyPayload,
+    headers: {
+      'x-correlation-id': correlationId,
+    },
   });
 
   if (error) {
@@ -288,41 +363,19 @@ export async function sendChatMessageStream(
 
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  let payload: any = {};
-
-  if (isGlobal) {
-    payload = {
-      chat_type: 'global',
-      thread_id: request.thread_id || 'global',
-      user_input: request.user_input || '',
-      app_context: request.app_context,
-      memory_pack: request.memory_pack,
-      recent_snippet: request.recent_snippet,
-      secondary_snippet: request.secondary_snippet,
-      model: request.model,
-      stream: true,
-    };
-  } else {
-    payload = {
-      chat_type: 'au_rag',
-      thread_id: request.thread_id,
-      doc_id: request.doc_id || request.selectedDocId,
-      user_input: request.user_input || '',
-      retrieval: request.retrieval,
-      recent_snippet: request.recent_snippet,
-      au_handoff_hint: request.au_handoff_hint,
-      guide: request.guide,
-      summaryMode: request.summaryMode,
-      action: request.action,
-      model: request.model,
-      stream: true,
-    };
-  }
+  const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
+    clientMessageId: request.clientMessageId,
+  });
+  const payload: Record<string, unknown> = {
+    ...legacyPayload,
+    stream: true,
+  };
 
   const doRequest = async (token: string | null) => {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
+      'x-correlation-id': correlationId,
     };
     if (token) {
       headers.Authorization = `Bearer ${token}`;

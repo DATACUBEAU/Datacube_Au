@@ -51,6 +51,10 @@ import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/docume
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { supabase } from '@/lib/supabase-client/client';
 import { TruncatedText } from '@/components/TruncatedText';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
+import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
+import { FeatureGatePanel } from '@/components/feature-gate-panel';
+import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
 
 import { FeedbackSection } from "@/components/au-feedback";
 import {
@@ -95,6 +99,52 @@ const chartConfig: ChartConfig = {
 };
 
 export default function PredictionsPage() {
+  const { records: featureFlagRecords } = useFeatureFlags();
+  const { entitlements, loading: entitlementsLoading } = useEffectiveEntitlements();
+  const setUpgradeModalOpen = useStore((state) => state.setUpgradeModalOpen);
+  const access = useMemo(
+    () => getDashboardFeatureAccess('exam_prediction', entitlements, featureFlagRecords),
+    [entitlements, featureFlagRecords],
+  );
+
+  useEffect(() => {
+    if (entitlementsLoading || access.allowed || access.code !== 'PRO_REQUIRED') return;
+    setUpgradeModalOpen(true, buildUpgradeContext(access));
+  }, [access, entitlementsLoading, setUpgradeModalOpen]);
+
+  if (entitlementsLoading) {
+    return (
+      <main className="flex flex-1 items-center justify-center p-4 md:p-8">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </main>
+    );
+  }
+
+  if (!access.enabled) {
+    return (
+      <FeatureGatePanel
+        title="Exam Prediction Engine unavailable"
+        description={access.message}
+        mode="disabled"
+      />
+    );
+  }
+
+  if (!access.allowed) {
+    return (
+      <FeatureGatePanel
+        title="Exam Prediction Engine is Pro only"
+        description={access.message}
+        mode="upgrade"
+        onPrimaryAction={() => setUpgradeModalOpen(true, buildUpgradeContext(access))}
+      />
+    );
+  }
+
+  return <PredictionsPageContent />;
+}
+
+function PredictionsPageContent() {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
   const isOnline = useOnlineStatus();
@@ -291,7 +341,11 @@ export default function PredictionsPage() {
         return;
       }
 
-      await generatePredictions(pastQuestionsContent, mainTextbookContent);
+      await generatePredictions(
+        pastQuestionsContent,
+        mainTextbookContent,
+        selectedTextbookId || selectedPastQuestionsId,
+      );
 
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'Prediction Failed', description: `Could not retrieve document content. ${err.message}` });

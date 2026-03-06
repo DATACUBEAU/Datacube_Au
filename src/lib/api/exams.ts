@@ -10,13 +10,21 @@ if (!SUPABASE_URL) {
 /**
  * Generates a practice exam based on document content.
  */
-export async function generatePracticeExam(documentContent: string, pastQuestionsContent?: string): Promise<GeneratePracticeExamOutput> {
+export async function generatePracticeExam(
+  documentContent: string,
+  pastQuestionsContent?: string,
+  opts?: { documentId?: string | null },
+): Promise<GeneratePracticeExamOutput> {
   const { data, error } = await invokeEdgeFunction<GeneratePracticeExamOutput>('exam-generator', {
     method: 'POST',
     requireAuth: true,
     timeoutMs: 120_000,
     silent: true,
-    body: { documentContent, pastQuestionsContent },
+    body: {
+      documentContent,
+      pastQuestionsContent,
+      documentId: opts?.documentId || undefined,
+    },
   });
   if (error) throw error;
   if (!data) throw { message: 'Exam generation failed', status: 500 };
@@ -28,14 +36,20 @@ export async function generatePracticeExam(documentContent: string, pastQuestion
  */
 export async function generatePredictions(
   documentContent: string,
-  pastQuestionsContent: string
+  pastQuestionsContent: string,
+  opts?: { documentId?: string | null; mainTextbookId?: string | null },
 ): Promise<GenerateExamPredictionsOutput> {
   const { data, error } = await invokeEdgeFunction<GenerateExamPredictionsOutput>('prediction-engine', {
     method: 'POST',
     requireAuth: true,
     timeoutMs: 120_000,
     silent: true,
-    body: { pastQuestionsContent, mainTextbookContent: documentContent },
+    body: {
+      pastQuestionsContent,
+      mainTextbookContent: documentContent,
+      documentId: opts?.documentId || opts?.mainTextbookId || undefined,
+      mainTextbookId: opts?.mainTextbookId || undefined,
+    },
   });
   if (error) throw error;
   if (!data) throw { message: 'Prediction generation failed', status: 500 };

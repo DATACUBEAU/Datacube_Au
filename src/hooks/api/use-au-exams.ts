@@ -54,7 +54,8 @@ export function useAuExams(selectedDocId: string | null) {
 
       const result = await generatePracticeExam(
         documentContent,
-        pastQuestionsContent
+        pastQuestionsContent,
+        { documentId: selectedDocId }
       );
       setExamData(result);
       toast({ title: 'Practice exam generated!' });
@@ -98,7 +99,8 @@ export function useAuExams(selectedDocId: string | null) {
 
       const result = await generatePredictions(
         documentContent,
-        pastQuestionsContent
+        pastQuestionsContent,
+        { documentId: selectedDocId, mainTextbookId: selectedDocId }
       );
       setPredictions(result);
       toast({ title: 'Predictions generated!' });

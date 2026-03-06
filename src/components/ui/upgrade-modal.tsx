@@ -22,9 +22,7 @@ export function UpgradeModal() {
   const { records: featureFlagRecords } = useFeatureFlags();
   const { entitlements } = useEffectiveEntitlements();
   const router = useRouter();
-
-  if (!context) return null;
-
+  const rawContext = (context || {}) as any;
   const {
     reason,
     message,
@@ -34,7 +32,7 @@ export function UpgradeModal() {
     resetsAt,
     cta,
     upgradeUrl,
-  } = context as any;
+  } = rawContext;
   const limitKey = String(key || limit || "general").trim();
   const benefits = getUpgradeBenefits({ limitKey });
   const promoActive = entitlements.promoActive;
@@ -55,6 +53,8 @@ export function UpgradeModal() {
         : '/pricing';
     router.push(normalizedUpgradeUrl);
   };
+
+  if (!context) return null;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
