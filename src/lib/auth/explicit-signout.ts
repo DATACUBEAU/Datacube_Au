@@ -1,4 +1,4 @@
-import { supabase } from '@/lib/supabase-client/client';
+import { recordUserActivityRpc, supabase } from '@/lib/supabase-client/client';
 import { clearClientAuthStorageArtifacts, clearUserScopedClientCaches } from '@/lib/auth/session-storage';
 import { clearAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
 import { clearServerAuthSessionCookie } from '@/lib/auth/session-cookie';
@@ -8,17 +8,11 @@ export async function explicitSignOut(
   options?: { preserveAuthLock?: boolean },
 ): Promise<void> {
   if (userId) {
-    void (async () => {
-      try {
-        await supabase.rpc('record_user_activity', {
-          p_user_id: userId,
-          p_event: 'sign_out',
-          p_metadata: {},
-        } as any);
-      } catch {
-        // Best-effort audit update.
-      }
-    })();
+    void recordUserActivityRpc({
+      userId,
+      event: 'sign_out',
+      metadata: {},
+    });
   }
 
   await clearUserScopedClientCaches(userId ?? null);

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, createContext, useContext, useMemo, useCallback, useRef } from 'react';
-import { supabase } from '@/lib/supabase-client/client';
+import { recordUserActivityRpc, supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
@@ -109,17 +109,11 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
     let mounted = true;
     const recordSignIn = (userId: string) => {
-      void (async () => {
-        try {
-          await supabase.rpc('record_user_activity', {
-            p_user_id: userId,
-            p_event: 'sign_in',
-            p_metadata: {},
-          });
-        } catch {
-          // best-effort audit update
-        }
-      })();
+      void recordUserActivityRpc({
+        userId,
+        event: 'sign_in',
+        metadata: {},
+      });
     };
 
     const syncInitialSession = async () => {
@@ -145,9 +139,11 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
           force: true,
           offlineBootstrap: Boolean(!data.session && nextSession?.user),
         });
-        if (nextSession?.user?.id) {
+        if (data.session?.user?.id) {
           clearAuthActionsDisabled();
-          recordSignIn(nextSession.user.id);
+          recordSignIn(data.session.user.id);
+        } else if (nextSession?.user?.id) {
+          clearAuthActionsDisabled();
         }
       } catch {
         if (!mounted) return;
@@ -173,15 +169,6 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       if (event === 'SIGNED_IN' && session?.user?.id) {
         clearAuthActionsDisabled();
         recordSignIn(session.user.id);
-      }
-
-      // Ensure user consistency on sign-in
-      if (event === 'SIGNED_IN' && session?.user) {
-        void supabase.rpc('ensure_user_consistency').then(({ error }) => {
-          if (error) {
-            console.error('Consistency check failed:', error);
-          }
-        });
       }
     });
 

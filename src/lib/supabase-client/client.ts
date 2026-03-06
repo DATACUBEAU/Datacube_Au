@@ -212,6 +212,70 @@ export async function getSupabaseAccessToken(): Promise<string | null> {
   }
 }
 
+type RecordUserActivityRpcOptions = {
+  userId: string;
+  event?: string;
+  metadata?: Record<string, unknown>;
+  accessToken?: string | null;
+  timeoutMs?: number;
+};
+
+export async function recordUserActivityRpc({
+  userId,
+  event = 'activity',
+  metadata = {},
+  accessToken,
+  timeoutMs = 8000,
+}: RecordUserActivityRpcOptions): Promise<boolean> {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return false;
+  if (areAuthActionsDisabled()) return false;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return false;
+
+  const token =
+    typeof accessToken === 'string' && accessToken.trim().length > 0
+      ? accessToken.trim()
+      : await getSupabaseAccessToken();
+  if (!token) return false;
+
+  try {
+    const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
+    const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+    const response = await safeFetch(`${supabaseUrl}/rest/v1/rpc/record_user_activity`, {
+      method: 'POST',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        p_user_id: normalizedUserId,
+        p_event: String(event || 'activity'),
+        p_metadata: metadata,
+      }),
+      timeout: timeoutMs,
+      silent: true,
+    });
+
+    if (response.ok) {
+      return true;
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return false;
+    }
+
+    const raw = await response.text().catch(() => '');
+    console.warn('[client] record_user_activity failed:', { status: response.status, body: raw });
+  } catch (error) {
+    if (!(error instanceof OfflineError)) {
+      console.warn('[client] record_user_activity failed:', error);
+    }
+  }
+
+  return false;
+}
+
 export async function invokeEdgeFunction<T = any>(
   functionName: string,
   options?: {
@@ -469,15 +533,12 @@ export async function updateUserActivity(
         console.warn('[client] Activity update error:', { status: response.status, body: raw });
       }
 
-      try {
-        await supabase.rpc('record_user_activity', {
-          p_user_id: user.id,
-          p_event: 'activity',
-          p_metadata: {},
-        } as any);
-      } catch {
-        // Activity heartbeat best-effort: skip RPC failures.
-      }
+      await recordUserActivityRpc({
+        userId: user.id,
+        event: 'activity',
+        metadata: {},
+        accessToken,
+      });
     }
   } catch (e) {
     console.warn('[client] Failed to update activity:', e);
