@@ -2,14 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
 import {
   DEFAULT_PLAN_LIMITS,
+  DEFAULT_PLAN_ORDER,
   LIMIT_COLUMN_KEYS,
   loadPlanLimits,
+  type CanonicalPlanLimits,
   type EffectivePlanCode,
 } from '@/lib/server/au-limits';
 
 export const runtime = 'nodejs';
 
-const UI_TO_DB_KEYS: Record<string, (typeof LIMIT_COLUMN_KEYS)[number]> = {
+const UI_TO_DB_KEYS: Record<string, keyof CanonicalPlanLimits> = {
   max_file_mb: 'max_file_size_mb',
   max_file_size_mb: 'max_file_size_mb',
   max_uploads_total: 'max_uploads_total',
@@ -21,13 +23,19 @@ const UI_TO_DB_KEYS: Record<string, (typeof LIMIT_COLUMN_KEYS)[number]> = {
   max_storage_mb: 'max_storage_mb',
   max_jobs_concurrent: 'max_concurrent_jobs',
   max_concurrent_jobs: 'max_concurrent_jobs',
+  tokens_reset_every_days: 'tokens_reset_every_days',
+  chats_reset_every_days: 'chats_reset_every_days',
+  uploads_reset_every_days: 'uploads_reset_every_days',
+  documents_reset_every_days: 'documents_reset_every_days',
+  exams_reset_every_days: 'exams_reset_every_days',
+  storage_reset_every_days: 'storage_reset_every_days',
 };
 
 function isPlan(value: string): value is EffectivePlanCode {
-  return value === 'free' || value === 'pro';
+  return DEFAULT_PLAN_ORDER.includes(value as EffectivePlanCode);
 }
 
-function toUiLimits(row: Record<string, number>): Record<string, number> {
+function toUiLimits(row: CanonicalPlanLimits): Record<string, number> {
   return {
     max_file_mb: Number(row.max_file_size_mb || 0),
     max_uploads_total: Number(row.max_uploads_total || 0),
@@ -37,20 +45,25 @@ function toUiLimits(row: Record<string, number>): Record<string, number> {
     max_tokens_total: Number(row.max_tokens_total || 0),
     max_storage_mb: Number(row.max_storage_mb || 0),
     max_jobs_concurrent: Number(row.max_concurrent_jobs || 0),
+    tokens_reset_every_days: Number(row.tokens_reset_every_days || 0),
+    chats_reset_every_days: Number(row.chats_reset_every_days || 0),
+    uploads_reset_every_days: Number(row.uploads_reset_every_days || 0),
+    documents_reset_every_days: Number(row.documents_reset_every_days || 0),
+    exams_reset_every_days: Number(row.exams_reset_every_days || 0),
+    storage_reset_every_days: Number(row.storage_reset_every_days || 0),
   };
 }
 
-function normalizePayload(plan: EffectivePlanCode, raw: unknown) {
+function normalizePayload(base: CanonicalPlanLimits, raw: unknown): CanonicalPlanLimits {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
-  const defaults = DEFAULT_PLAN_LIMITS[plan];
-  const next = { ...defaults };
+  const next = { ...base };
 
   for (const [incomingKey, value] of Object.entries(source)) {
     const dbKey = UI_TO_DB_KEYS[incomingKey];
     if (!dbKey) continue;
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric < 0) continue;
-    next[dbKey] = Math.floor(numeric) as never;
+    next[dbKey] = Math.floor(numeric);
   }
 
   return next;
@@ -76,11 +89,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const planKeys = (plansData || [])
+    const dbPlanKeys = (plansData || [])
       .map((row: any) => String(row?.plan || '').trim().toLowerCase())
       .filter((value): value is EffectivePlanCode => isPlan(value));
     const ordered: EffectivePlanCode[] = Array.from(
-      new Set<EffectivePlanCode>(planKeys.length > 0 ? planKeys : ['free', 'pro']),
+      new Set<EffectivePlanCode>(dbPlanKeys.length > 0 ? [...DEFAULT_PLAN_ORDER, ...dbPlanKeys] : [...DEFAULT_PLAN_ORDER]),
     );
 
     const rows = await Promise.all(
@@ -123,27 +136,29 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
   const plan = String((body as any)?.plan || '').trim().toLowerCase();
+  const action = String((body as any)?.action || 'save').trim().toLowerCase();
   if (!isPlan(plan)) {
     return NextResponse.json(
-      { ok: false, code: 'invalid_plan', message: 'Plan must be free or pro.', requestId },
+      { ok: false, code: 'invalid_plan', message: 'Plan must be free, pro, or premium.', requestId },
       { status: 400, headers: { 'Cache-Control': 'no-store' } },
     );
   }
 
   try {
     const supabase = adminResult.supabase;
-    const normalized = normalizePayload(plan, (body as any)?.limits);
+    const base = action === 'reset_to_defaults'
+      ? { ...DEFAULT_PLAN_LIMITS[plan] }
+      : normalizePayload(await loadPlanLimits(supabase, plan), (body as any)?.limits);
+
+    const payload = {
+      plan,
+      ...Object.fromEntries(LIMIT_COLUMN_KEYS.map((key) => [key, base[key]])),
+      updated_at: new Date().toISOString(),
+    };
 
     const { error } = await supabase
       .from('au_plan_limits')
-      .upsert(
-        {
-          plan,
-          ...normalized,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'plan' },
-      );
+      .upsert(payload, { onConflict: 'plan' });
 
     if (error) {
       return NextResponse.json(
@@ -157,7 +172,8 @@ export async function POST(req: NextRequest) {
         ok: true,
         requestId,
         plan,
-        limits: toUiLimits(normalized),
+        action,
+        limits: toUiLimits(base),
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );

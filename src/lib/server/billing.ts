@@ -13,6 +13,7 @@ import {
   isPromoModeActive,
 } from '@/lib/server/entitlements';
 import { disablePaystackSubscription } from '@/lib/server/paystack';
+import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
 
 export type BillingInterval = 'weekly' | 'monthly';
 export type PaymentMethod = 'subscription' | 'transfer';
@@ -89,7 +90,27 @@ function normalizePlanKey(raw: unknown): string {
 }
 
 function paystackCallbackUrl(origin: string): string {
-  return `${origin.replace(/\/$/, '')}/dashboard/settings/subscription`;
+  return `${resolvePublicOrigin(origin).replace(/\/$/, '')}/dashboard/settings/subscription`;
+}
+
+function resolvePublicOrigin(origin: string): string {
+  const preferred = firstEnv(
+    'NEXT_PUBLIC_SITE_URL',
+    'SITE_URL',
+    'APP_URL',
+    'NEXT_PUBLIC_APP_URL',
+    'VERCEL_PROJECT_PRODUCTION_URL',
+  );
+
+  if (!preferred) {
+    return origin;
+  }
+
+  if (/^https?:\/\//i.test(preferred)) {
+    return preferred;
+  }
+
+  return `https://${preferred}`;
 }
 
 function makeReference(planKey: string, userId: string): string {
@@ -376,6 +397,14 @@ export async function createCheckout(input: {
 }): Promise<CheckoutResult> {
   const { supabase, userId, email, planKeyRaw, paymentMethodRaw, origin } = input;
   await ensurePlanCatalog(supabase);
+  const billingEnabled = await getFeatureFlagBoolean(supabase, 'billing_enabled', false);
+  if (!billingEnabled) {
+    throw new Error('Billing is currently disabled.');
+  }
+  const entitlement = await getProEntitlementStatus(supabase, userId);
+  if (entitlement.promoActive) {
+    throw new Error('Checkout is unavailable while promo Pro access is active.');
+  }
 
   const planKey = normalizePlanKey(planKeyRaw);
   if (!planKey) {
@@ -467,7 +496,7 @@ export async function verifyCheckoutPayment(input: {
 
   const { data: existingTx, error: txLookupError } = await input.supabase
     .from('billing_transactions')
-    .select('user_id,metadata')
+    .select('user_id,amount_kobo,metadata,status')
     .eq('reference', reference)
     .maybeSingle();
   if (txLookupError) throw txLookupError;
@@ -483,9 +512,23 @@ export async function verifyCheckoutPayment(input: {
   const existingMetadata = (((existingTx as any)?.metadata || {}) as Record<string, unknown>) || {};
   const gateway = resolveGatewayFromMetadata(existingMetadata);
   const verified = await getPaymentGatewayById(gateway).verifyPayment(reference);
+  const expectedAmountKobo = Math.max(0, Math.round(Number((existingTx as any)?.amount_kobo || 0)));
+  const verifiedAmountKobo = Math.max(0, Math.round(Number(verified.amountKobo || 0)));
+  if (expectedAmountKobo > 0 && verifiedAmountKobo > 0 && expectedAmountKobo !== verifiedAmountKobo) {
+    throw new Error('Verified payment amount does not match the pending checkout amount.');
+  }
+  const verifiedReference = String(verified.reference || reference).trim();
+  if (verifiedReference && verifiedReference !== reference) {
+    throw new Error('Verified payment reference does not match the requested checkout reference.');
+  }
+  const verifiedMetadata = (verified.metadata || {}) as Record<string, unknown>;
+  const metadataUserId = String(verifiedMetadata.user_id || existingMetadata.user_id || '').trim();
+  if (metadataUserId && metadataUserId !== input.userId) {
+    throw new Error('Verified payment user does not match the authenticated account.');
+  }
   const mergedMetadata: Record<string, unknown> = {
     ...existingMetadata,
-    ...(verified.metadata || {}),
+    ...verifiedMetadata,
     user_id: input.userId,
     gateway,
   };
@@ -560,13 +603,23 @@ export async function getBillingStatus(
     .limit(30);
   if (txError) throw txError;
 
+  const planCatalog = await loadPublicPlanCatalog(supabase).catch(() => []);
+  const proCatalog = planCatalog.find((entry) => entry.plan === 'pro');
   const pricing: Record<string, unknown> = {};
-  for (const def of PLAN_CATALOG) {
-    pricing[def.interval] = {
-      amount: Math.round(def.amountKobo / 100),
-      compare_at: def.interval === 'monthly' ? 6000 : 2500,
-      label: def.interval === 'monthly' ? 'Save 25%' : 'Save 40%',
-      plan_key: def.planKey,
+  if (proCatalog?.pricing.monthly) {
+    pricing.monthly = {
+      amount: proCatalog.pricing.monthly.amount,
+      compare_at: proCatalog.pricing.monthly.compare_at,
+      label: proCatalog.pricing.monthly.label,
+      plan_key: proCatalog.pricing.monthly.plan_key,
+    };
+  }
+  if (proCatalog?.pricing.weekly) {
+    pricing.weekly = {
+      amount: proCatalog.pricing.weekly.amount,
+      compare_at: proCatalog.pricing.weekly.compare_at,
+      label: proCatalog.pricing.weekly.label,
+      plan_key: proCatalog.pricing.weekly.plan_key,
     };
   }
 
@@ -593,6 +646,7 @@ export async function getBillingStatus(
       ends_at_utc: '2026-04-01T23:00:00.000Z',
     },
     pricing,
+    planCatalog,
     subscription: subscriptions?.[0] || null,
     payments,
   };

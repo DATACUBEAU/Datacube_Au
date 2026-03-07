@@ -60,20 +60,131 @@ const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> =
   { key: 'max_tokens_total', label: 'Max tokens total', description: 'Total token budget for AI usage.' },
   { key: 'max_storage_mb', label: 'Max storage (MB)', description: 'Storage cap across all uploaded files.' },
   { key: 'max_jobs_concurrent', label: 'Max concurrent jobs', description: 'Maximum simultaneous ingestion jobs.' },
+  { key: 'tokens_reset_every_days', label: 'Tokens reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
+  { key: 'chats_reset_every_days', label: 'Chats reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
+  { key: 'uploads_reset_every_days', label: 'Uploads reset every N days', description: 'Use `0` to keep uploads lifetime based.' },
+  { key: 'documents_reset_every_days', label: 'Documents reset every N days', description: 'Use `0` to keep documents lifetime based.' },
+  { key: 'exams_reset_every_days', label: 'Exams reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
+  { key: 'storage_reset_every_days', label: 'Storage reset every N days', description: 'Storage usually stays `0` because it is a current cap.' },
 ];
 const LIMIT_FIELD_KEYS = LIMIT_FIELDS.map((field) => field.key);
 const REDUNDANT_FLAG_KEYS = new Set<string>(['paid_mode_enabled']);
+const PLAN_EDITOR_FLAG_KEYS = [
+  'enable_exam_prediction',
+  'enable_knowledge_hub',
+  'enable_practice_exam_generation',
+  'pro_required_exam_prediction',
+  'pro_required_knowledge_hub',
+  'pro_upload_100mb',
+] as const;
+
+type PlanMetadataDraft = {
+  label: string;
+  description: string;
+  price_display: string;
+  monthly_amount_ngn: string;
+  monthly_compare_at_ngn: string;
+  monthly_badge: string;
+  weekly_amount_ngn: string;
+  weekly_compare_at_ngn: string;
+  weekly_badge: string;
+  feature_bullets: string;
+  cta_label: string;
+  cta_href: string;
+  sort_order: string;
+};
+
+type PlanMetadataDraftByPlan = Record<string, PlanMetadataDraft>;
+
+function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
+  const defaults = {
+    free: {
+      label: 'Free',
+      description: 'Core study tools with sensible daily AI quotas and lifetime document caps.',
+      price_display: 'NGN 0',
+      monthly_amount_ngn: '0',
+      monthly_compare_at_ngn: '',
+      monthly_badge: '',
+      weekly_amount_ngn: '0',
+      weekly_compare_at_ngn: '',
+      weekly_badge: '',
+      feature_bullets: 'Core chat\nUpload up to 50 documents\nPractice from saved outputs\nBasic support',
+      cta_label: 'Current plan',
+      cta_href: '/dashboard',
+      sort_order: '0',
+    },
+    pro: {
+      label: 'Pro',
+      description: 'Higher daily AI budgets, more storage, and access to advanced study workflows.',
+      price_display: 'NGN 4,500/month or NGN 1,500/week',
+      monthly_amount_ngn: '4500',
+      monthly_compare_at_ngn: '6000',
+      monthly_badge: 'Save 25%',
+      weekly_amount_ngn: '1500',
+      weekly_compare_at_ngn: '2500',
+      weekly_badge: 'Save 40%',
+      feature_bullets: 'Knowledge Hub\nExam Prediction Engine\nPriority processing\nExpanded quotas',
+      cta_label: 'Upgrade now',
+      cta_href: '/dashboard/settings/subscription',
+      sort_order: '1',
+    },
+    premium: {
+      label: 'Premium',
+      description: 'Custom higher-volume workspace for extended storage, concurrency, and tailored support.',
+      price_display: 'Custom pricing',
+      monthly_amount_ngn: '',
+      monthly_compare_at_ngn: '',
+      monthly_badge: '',
+      weekly_amount_ngn: '',
+      weekly_compare_at_ngn: '',
+      weekly_badge: '',
+      feature_bullets: 'Everything in Pro\nHigher concurrency\nCustom support\nExpanded storage',
+      cta_label: 'Contact admin',
+      cta_href: '/dashboard/settings/subscription',
+      sort_order: '2',
+    },
+  } as const;
+
+  const fallback = defaults[(plan in defaults ? plan : 'free') as keyof typeof defaults];
+  const featureBullets = Array.isArray(raw?.feature_bullets)
+    ? raw.feature_bullets.map((entry: unknown) => String(entry ?? '').trim()).filter(Boolean).join('\n')
+    : fallback.feature_bullets;
+
+  const toStringValue = (value: unknown, defaultValue: string) => {
+    if (value === null || value === undefined) return defaultValue;
+    const text = String(value).trim();
+    return text === '' ? defaultValue : text;
+  };
+
+  return {
+    label: toStringValue(raw?.label, fallback.label),
+    description: toStringValue(raw?.description, fallback.description),
+    price_display: toStringValue(raw?.price_display, fallback.price_display),
+    monthly_amount_ngn: raw?.monthly_amount_ngn === null ? '' : toStringValue(raw?.monthly_amount_ngn, fallback.monthly_amount_ngn),
+    monthly_compare_at_ngn: raw?.monthly_compare_at_ngn === null ? '' : toStringValue(raw?.monthly_compare_at_ngn, fallback.monthly_compare_at_ngn),
+    monthly_badge: toStringValue(raw?.monthly_badge, fallback.monthly_badge),
+    weekly_amount_ngn: raw?.weekly_amount_ngn === null ? '' : toStringValue(raw?.weekly_amount_ngn, fallback.weekly_amount_ngn),
+    weekly_compare_at_ngn: raw?.weekly_compare_at_ngn === null ? '' : toStringValue(raw?.weekly_compare_at_ngn, fallback.weekly_compare_at_ngn),
+    weekly_badge: toStringValue(raw?.weekly_badge, fallback.weekly_badge),
+    feature_bullets: featureBullets || fallback.feature_bullets,
+    cta_label: toStringValue(raw?.cta_label, fallback.cta_label),
+    cta_href: toStringValue(raw?.cta_href, fallback.cta_href),
+    sort_order: toStringValue(raw?.sort_order, fallback.sort_order),
+  };
+}
 
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
   const [planLimitsByPlan, setPlanLimitsByPlan] = useState<PlanLimitsByPlan>({});
   const [planLimitDraftByPlan, setPlanLimitDraftByPlan] = useState<PlanLimitDraftByPlan>({});
+  const [planMetadataDraftByPlan, setPlanMetadataDraftByPlan] = useState<PlanMetadataDraftByPlan>({});
   const [planOptions, setPlanOptions] = useState<string[]>([...FALLBACK_PLAN_KEYS]);
   const [selectedPlan, setSelectedPlan] = useState<string>('free');
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savingPlanLimits, setSavingPlanLimits] = useState(false);
+  const [savingPlanMetadata, setSavingPlanMetadata] = useState(false);
   const [savingPromoContent, setSavingPromoContent] = useState(false);
   const [flagQuery, setFlagQuery] = useState('');
   const [flagCategory, setFlagCategory] = useState('all');
@@ -83,8 +194,10 @@ const AdminBilling = ({ token }: { token: string }) => {
   const { records: featureFlagRecords, setFlag, refreshFlags } = useFeatureFlags();
   const isFetchingRef = useRef(false);
   const limitDirtyRef = useRef(false);
+  const planMetadataDirtyRef = useRef(false);
   const promoDirtyRef = useRef(false);
   const limitsSaveVersionRef = useRef(0);
+  const metadataSaveVersionRef = useRef(0);
 
   const normalizeConexConfig = useCallback((raw: any) => ({
     ...raw,
@@ -133,10 +246,10 @@ const AdminBilling = ({ token }: { token: string }) => {
             LIMIT_FIELD_KEYS.map((key) => [key, null]),
           );
         }
-        const mergedLimitsByPlan =
-          Object.keys(parsed.limitsByPlan).length > 0
-            ? parsed.limitsByPlan
-            : fallbackLimitsByPlan;
+        const mergedLimitsByPlan = {
+          ...fallbackLimitsByPlan,
+          ...parsed.limitsByPlan,
+        };
         const planKeys = orderPlanKeys(
           Object.keys(mergedLimitsByPlan).length > 0
             ? Object.keys(mergedLimitsByPlan)
@@ -149,6 +262,27 @@ const AdminBilling = ({ token }: { token: string }) => {
           setPlanOptions(planKeys);
           setSelectedPlan((current) => (planKeys.includes(current) ? current : (planKeys[0] || 'free')));
         }
+      }
+
+      const planMetadataRes = await fetchAdmin('/api/admin/plan-metadata', {
+        method: 'GET',
+      });
+      if (planMetadataRes.ok) {
+        const payload = ((planMetadataRes as any).data || (planMetadataRes as any)) as any;
+        const metadataByPlan = payload?.metadataByPlan || {};
+        const draftByPlan = Object.fromEntries(
+          orderPlanKeys([...FALLBACK_PLAN_KEYS, ...Object.keys(metadataByPlan || {})]).map((plan) => [
+            plan,
+            normalizePlanMetadataDraft(plan, metadataByPlan?.[plan]),
+          ]),
+        ) as PlanMetadataDraftByPlan;
+        if (!opts?.silent || !planMetadataDirtyRef.current) {
+          setPlanMetadataDraftByPlan(draftByPlan);
+        }
+      } else if (!opts?.silent || !planMetadataDirtyRef.current) {
+        setPlanMetadataDraftByPlan(
+          Object.fromEntries(FALLBACK_PLAN_KEYS.map((plan) => [plan, normalizePlanMetadataDraft(plan, null)])) as PlanMetadataDraftByPlan,
+        );
       }
 
       const accessToken = await getSupabaseAccessToken();
@@ -207,6 +341,11 @@ const AdminBilling = ({ token }: { token: string }) => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'au_plan_limits' },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_plan_metadata' },
         scheduleRefresh,
       )
       .on(
@@ -363,6 +502,140 @@ const AdminBilling = ({ token }: { token: string }) => {
       }
     }
   }, [fetchConfig, planLimitDraftByPlan, planLimitsByPlan, selectedPlan, toast]);
+
+  const resetSelectedPlanLimits = useCallback(async () => {
+    const saveVersion = ++limitsSaveVersionRef.current;
+    setSavingPlanLimits(true);
+    try {
+      const res = await fetchAdmin('/api/admin/plan-limits', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'reset_to_defaults',
+          plan: selectedPlan,
+        }),
+      });
+      if (!res.ok) {
+        const payload = (res as any).data || {};
+        throw new Error(payload?.code || payload?.error || payload?.message || `Failed to reset ${selectedPlan} limits`);
+      }
+      if (saveVersion === limitsSaveVersionRef.current) {
+        limitDirtyRef.current = false;
+        toast({
+          title: 'Reset',
+          description: `${formatPlanLabel(selectedPlan)} limits restored to defaults.`,
+        });
+        void fetchConfig({ silent: true });
+      }
+    } catch (e: any) {
+      toast({
+        title: 'Reset failed',
+        description: e?.message || String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      if (saveVersion === limitsSaveVersionRef.current) {
+        setSavingPlanLimits(false);
+      }
+    }
+  }, [fetchConfig, selectedPlan, toast]);
+
+  const updateSelectedPlanMetadata = useCallback((field: keyof PlanMetadataDraft, rawValue: string) => {
+    planMetadataDirtyRef.current = true;
+    setPlanMetadataDraftByPlan((prev) => ({
+      ...prev,
+      [selectedPlan]: {
+        ...normalizePlanMetadataDraft(selectedPlan, prev[selectedPlan]),
+        ...prev[selectedPlan],
+        [field]: rawValue,
+      },
+    }));
+  }, [selectedPlan]);
+
+  const saveSelectedPlanMetadata = useCallback(async () => {
+    const currentDraft = normalizePlanMetadataDraft(selectedPlan, planMetadataDraftByPlan[selectedPlan]);
+    const nextMetadata = {
+      ...currentDraft,
+      monthly_amount_ngn: currentDraft.monthly_amount_ngn.trim(),
+      monthly_compare_at_ngn: currentDraft.monthly_compare_at_ngn.trim(),
+      weekly_amount_ngn: currentDraft.weekly_amount_ngn.trim(),
+      weekly_compare_at_ngn: currentDraft.weekly_compare_at_ngn.trim(),
+      sort_order: currentDraft.sort_order.trim(),
+      feature_bullets: currentDraft.feature_bullets
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .filter(Boolean),
+    };
+
+    const saveVersion = ++metadataSaveVersionRef.current;
+    setSavingPlanMetadata(true);
+    try {
+      const res = await fetchAdmin('/api/admin/plan-metadata', {
+        method: 'POST',
+        body: JSON.stringify({
+          plan: selectedPlan,
+          metadata: nextMetadata,
+        }),
+      });
+      if (!res.ok) {
+        const payload = (res as any).data || {};
+        throw new Error(payload?.code || payload?.error || payload?.message || `Failed to save ${selectedPlan} plan info`);
+      }
+      if (saveVersion === metadataSaveVersionRef.current) {
+        planMetadataDirtyRef.current = false;
+        toast({
+          title: 'Saved',
+          description: `${formatPlanLabel(selectedPlan)} plan info updated.`,
+        });
+        void fetchConfig({ silent: true });
+      }
+    } catch (e: any) {
+      toast({
+        title: 'Save failed',
+        description: e?.message || String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      if (saveVersion === metadataSaveVersionRef.current) {
+        setSavingPlanMetadata(false);
+      }
+    }
+  }, [fetchConfig, planMetadataDraftByPlan, selectedPlan, toast]);
+
+  const resetSelectedPlanMetadata = useCallback(async () => {
+    const saveVersion = ++metadataSaveVersionRef.current;
+    setSavingPlanMetadata(true);
+    try {
+      const res = await fetchAdmin('/api/admin/plan-metadata', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'reset_to_defaults',
+          plan: selectedPlan,
+        }),
+      });
+      if (!res.ok) {
+        const payload = (res as any).data || {};
+        throw new Error(payload?.code || payload?.error || payload?.message || `Failed to reset ${selectedPlan} plan info`);
+      }
+      if (saveVersion === metadataSaveVersionRef.current) {
+        planMetadataDirtyRef.current = false;
+        toast({
+          title: 'Reset',
+          description: `${formatPlanLabel(selectedPlan)} plan info restored to defaults.`,
+        });
+        void fetchConfig({ silent: true });
+      }
+    } catch (e: any) {
+      toast({
+        title: 'Reset failed',
+        description: e?.message || String(e),
+        variant: 'destructive',
+      });
+    } finally {
+      if (saveVersion === metadataSaveVersionRef.current) {
+        setSavingPlanMetadata(false);
+      }
+    }
+  }, [fetchConfig, selectedPlan, toast]);
 
   const savePromoContent = useCallback(async () => {
     const validated = validatePromoContentDraft(promoDraft);
@@ -659,14 +932,14 @@ const AdminBilling = ({ token }: { token: string }) => {
                         <Card>
                             <CardHeader>
                                 <CardTitle>Limits & Usage Caps</CardTitle>
-                                <CardDescription>Edit fixed numeric plan caps. Changes apply immediately after save.</CardDescription>
+                                <CardDescription>Edit numeric caps and reset windows. Values load from the live plan tables and apply immediately after save.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
                               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                 <div className="space-y-2">
                                   <Label className="block">Plan</Label>
                                   <Tabs value={selectedPlan} onValueChange={setSelectedPlan} className="w-full">
-                                    <TabsList className="grid w-full grid-cols-2 md:w-[280px]">
+                                    <TabsList className="grid w-full md:w-auto" style={{ gridTemplateColumns: `repeat(${Math.max(planOptions.length, 1)}, minmax(0, 1fr))` }}>
                                       {planOptions.map((plan) => (
                                         <TabsTrigger key={plan} value={plan}>
                                           {formatPlanLabel(plan)}
@@ -675,41 +948,155 @@ const AdminBilling = ({ token }: { token: string }) => {
                                     </TabsList>
                                   </Tabs>
                                 </div>
-                                <Button onClick={() => void saveSelectedPlanLimits()} disabled={savingPlanLimits}>
-                                  {savingPlanLimits ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                                  Save {formatPlanLabel(selectedPlan)} Limits
+                                <div className="flex flex-wrap gap-2">
+                                  <Button variant="outline" onClick={() => void resetSelectedPlanLimits()} disabled={savingPlanLimits}>
+                                    Reset To Defaults
+                                  </Button>
+                                  <Button onClick={() => void saveSelectedPlanLimits()} disabled={savingPlanLimits}>
+                                    {savingPlanLimits ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                                    Save {formatPlanLabel(selectedPlan)} Limits
+                                  </Button>
+                                </div>
+                              </div>
+
+                              {planLimitDraftByPlan[selectedPlan] ? (
+                                <div className="grid gap-4 md:grid-cols-2">
+                                  {LIMIT_FIELDS.map((field) => {
+                                    const value = String(planLimitDraftByPlan[selectedPlan]?.[field.key] ?? '');
+                                    return (
+                                      <div key={field.key} className="rounded-md border p-3 space-y-2">
+                                        <div className="flex items-center justify-between gap-2">
+                                          <div>
+                                            <Label>{field.label}</Label>
+                                            <p className="text-xs text-muted-foreground">{field.description}</p>
+                                          </div>
+                                          <span className="text-xs font-mono text-muted-foreground">
+                                            {value === '' ? 'Loaded' : value}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                          <Input
+                                            inputMode="numeric"
+                                            value={value}
+                                            onChange={(e) => updateSelectedPlanLimit(field.key, e.target.value)}
+                                            placeholder="Enter cap"
+                                          />
+                                        </div>
+                                        <p className="text-[11px] text-muted-foreground">
+                                          Whole numbers only. Use `0` only when you intentionally want to block the action or disable resets.
+                                        </p>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                                  Loading saved limits for {formatPlanLabel(selectedPlan)}.
+                                </div>
+                              )}
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Plan Info Editor</CardTitle>
+                                <CardDescription>Edit the public plan copy and the focused feature switches used by pricing and upgrade UI.</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                              <div className="flex flex-wrap gap-2 justify-end">
+                                <Button variant="outline" onClick={() => void resetSelectedPlanMetadata()} disabled={savingPlanMetadata}>
+                                  Reset To Defaults
+                                </Button>
+                                <Button onClick={() => void saveSelectedPlanMetadata()} disabled={savingPlanMetadata}>
+                                  {savingPlanMetadata ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                                  Save {formatPlanLabel(selectedPlan)} Plan Info
                                 </Button>
                               </div>
 
-                              <div className="grid gap-4 md:grid-cols-2">
-                                {LIMIT_FIELDS.map((field) => {
-                                  const value = String(planLimitDraftByPlan[selectedPlan]?.[field.key] ?? '');
-                                  return (
-                                    <div key={field.key} className="rounded-md border p-3 space-y-2">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <div>
-                                          <Label>{field.label}</Label>
-                                          <p className="text-xs text-muted-foreground">{field.description}</p>
-                                        </div>
-                                        <span className="text-xs font-mono text-muted-foreground">
-                                          {value || '0'}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                        <Input
-                                          inputMode="numeric"
-                                          value={value}
-                                          onChange={(e) => updateSelectedPlanLimit(field.key, e.target.value)}
-                                          placeholder="Enter cap"
-                                        />
-                                      </div>
-                                      <p className="text-[11px] text-muted-foreground">
-                                        Whole numbers only. Use `0` to fully block this action.
-                                      </p>
+                              {planMetadataDraftByPlan[selectedPlan] ? (
+                                <>
+                                  <div className="grid gap-4 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                      <Label>Plan Label</Label>
+                                      <Input value={planMetadataDraftByPlan[selectedPlan].label} onChange={(e) => updateSelectedPlanMetadata('label', e.target.value)} />
                                     </div>
-                                  );
-                                })}
-                              </div>
+                                    <div className="space-y-2">
+                                      <Label>Price Display</Label>
+                                      <Input value={planMetadataDraftByPlan[selectedPlan].price_display} onChange={(e) => updateSelectedPlanMetadata('price_display', e.target.value)} />
+                                    </div>
+                                    <div className="space-y-2 md:col-span-2">
+                                      <Label>Description</Label>
+                                      <Textarea value={planMetadataDraftByPlan[selectedPlan].description} onChange={(e) => updateSelectedPlanMetadata('description', e.target.value)} rows={3} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Monthly Amount (NGN)</Label>
+                                      <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].monthly_amount_ngn} onChange={(e) => updateSelectedPlanMetadata('monthly_amount_ngn', sanitizeLimitInput(e.target.value))} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Monthly Compare At (NGN)</Label>
+                                      <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].monthly_compare_at_ngn} onChange={(e) => updateSelectedPlanMetadata('monthly_compare_at_ngn', sanitizeLimitInput(e.target.value))} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Monthly Badge</Label>
+                                      <Input value={planMetadataDraftByPlan[selectedPlan].monthly_badge} onChange={(e) => updateSelectedPlanMetadata('monthly_badge', e.target.value)} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Weekly Amount (NGN)</Label>
+                                      <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].weekly_amount_ngn} onChange={(e) => updateSelectedPlanMetadata('weekly_amount_ngn', sanitizeLimitInput(e.target.value))} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Weekly Compare At (NGN)</Label>
+                                      <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].weekly_compare_at_ngn} onChange={(e) => updateSelectedPlanMetadata('weekly_compare_at_ngn', sanitizeLimitInput(e.target.value))} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Weekly Badge</Label>
+                                      <Input value={planMetadataDraftByPlan[selectedPlan].weekly_badge} onChange={(e) => updateSelectedPlanMetadata('weekly_badge', e.target.value)} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>CTA Label</Label>
+                                      <Input value={planMetadataDraftByPlan[selectedPlan].cta_label} onChange={(e) => updateSelectedPlanMetadata('cta_label', e.target.value)} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>CTA Href</Label>
+                                      <Input value={planMetadataDraftByPlan[selectedPlan].cta_href} onChange={(e) => updateSelectedPlanMetadata('cta_href', e.target.value)} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Sort Order</Label>
+                                      <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].sort_order} onChange={(e) => updateSelectedPlanMetadata('sort_order', sanitizeLimitInput(e.target.value))} />
+                                    </div>
+                                    <div className="space-y-2 md:col-span-2">
+                                      <Label>Feature Bullets</Label>
+                                      <Textarea value={planMetadataDraftByPlan[selectedPlan].feature_bullets} onChange={(e) => updateSelectedPlanMetadata('feature_bullets', e.target.value)} rows={5} />
+                                      <p className="text-[11px] text-muted-foreground">One feature per line. Pricing and upgrade surfaces use this live list.</p>
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-md border p-4 space-y-3">
+                                    <div>
+                                      <p className="font-medium">Focused Feature Switches</p>
+                                      <p className="text-xs text-muted-foreground">These switches are enforced globally and mirrored in pricing/navigation immediately.</p>
+                                    </div>
+                                    <div className="grid gap-3 md:grid-cols-2">
+                                      {PLAN_EDITOR_FLAG_KEYS.map((flagKey) => {
+                                        const row = featureFlagRecords[flagKey];
+                                        return (
+                                          <div key={flagKey} className="flex items-center justify-between rounded-md border p-3">
+                                            <div className="pr-3">
+                                              <div className="text-sm font-medium">{flagKey}</div>
+                                              <p className="text-xs text-muted-foreground">{row?.description || 'No description.'}</p>
+                                            </div>
+                                            <Switch checked={row?.enabled ?? false} onCheckedChange={(next) => void setFeatureFlag(flagKey, next)} />
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
+                                  Loading saved plan info for {formatPlanLabel(selectedPlan)}.
+                                </div>
+                              )}
                             </CardContent>
                         </Card>
 

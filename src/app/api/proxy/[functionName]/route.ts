@@ -31,16 +31,17 @@ import {
   buildSettingsHash,
   classifyTemplateResponse,
   getFeatureGateDecision,
+  markFeatureOutputFailed,
+  markFeatureOutputReady,
   normalizeQuestion,
+  prepareFeatureOutputGeneration,
   readAnswerCache,
-  readFeatureOutput,
   readIdempotencyRecord,
   recordSyntheticUsage,
   resolveDocumentVersion,
   sha256Hex,
   touchAnswerCacheHit,
   writeAnswerCache,
-  writeFeatureOutput,
   writeIdempotencyRecord,
 } from '@/lib/server/ai-governance';
 import {
@@ -527,6 +528,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   const requestMethod = req.method;
   const startedAt = Date.now();
   const upstreamTimeoutMs = parsePositiveInt(process.env.PROXY_UPSTREAM_TIMEOUT_MS, 30000);
+  let reservationUserId = '';
+  let reservationSupabase: ReturnType<typeof createSupabaseAdminClient> | null = null;
+  let featureOutputReservation:
+    | {
+        feature: 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation';
+        docVersionId: string;
+      }
+    | null = null;
 
   try {
     const baseUrl = functionsBaseUrl();
@@ -567,8 +576,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         { status: 401, headers: corsHeaders(requestId) },
       );
     }
+    reservationUserId = auth.userId;
 
     const adminSupabase = createSupabaseAdminClient();
+    reservationSupabase = adminSupabase;
 
     const incomingUrl = new URL(req.url);
     const targetUrl = new URL(`${baseUrl}/${functionName}`);
@@ -969,13 +980,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             docVersionId: resolvedVersion.versionId,
           };
           if (resolvedVersion.versionId) {
-            const cachedOutput = await readFeatureOutput({
+            const featureOutputState = await prepareFeatureOutputGeneration({
               supabase: adminSupabase,
               userId: auth.userId,
               docVersionId: resolvedVersion.versionId,
               feature: gateFeature,
             });
-            if (cachedOutput?.output) {
+            if (featureOutputState.state === 'ready') {
+              const cachedOutput = featureOutputState.record;
               await recordSyntheticUsage({
                 supabase: adminSupabase,
                 userId: auth.userId,
@@ -987,11 +999,55 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
                 savedTokens: cachedOutput.tokens,
                 metadata: { source: 'feature_output_cache' },
               });
-              return NextResponse.json(cachedOutput.output, {
+              return NextResponse.json({
+                ...(cachedOutput.output || {}),
+                feature: gateFeature,
+                doc_version_id: resolvedVersion.versionId,
+                fromCache: true,
+                generatedAt: cachedOutput.updatedAt || cachedOutput.createdAt,
+                message: 'Already generated; cached result reused.',
+              }, {
                 status: 200,
                 headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
               });
             }
+            if (featureOutputState.state === 'running') {
+              return NextResponse.json(
+                {
+                  status: 409,
+                  code: 'ALREADY_GENERATING',
+                  message: 'This feature is already generating for the selected document.',
+                  limit: gateFeature,
+                  current: 1,
+                  action: gateFeature,
+                  correlation_id: correlationId,
+                  feature: gateFeature,
+                  doc_version_id: resolvedVersion.versionId,
+                },
+                { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+              );
+            }
+            if (featureOutputState.state === 'failed') {
+              return NextResponse.json(
+                {
+                  status: 409,
+                  code: 'FEATURE_OUTPUT_FAILED',
+                  message: 'Generation previously failed for this document. Ask an admin to clear the cached output before retrying.',
+                  limit: gateFeature,
+                  current: 1,
+                  action: gateFeature,
+                  correlation_id: correlationId,
+                  feature: gateFeature,
+                  doc_version_id: resolvedVersion.versionId,
+                  details: featureOutputState.record.output,
+                },
+                { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+              );
+            }
+            featureOutputReservation = {
+              feature: gateFeature,
+              docVersionId: resolvedVersion.versionId,
+            };
           }
         }
       }
@@ -1080,6 +1136,20 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     const failFromResponse = async (response: Response, candidate: RoutingCandidate | null) => {
       const { details, raw } = await parseErrorPayload(response);
       const message = messageFromFailure(response.status, details, response.statusText);
+      if (featureOutputReservation?.docVersionId) {
+        await markFeatureOutputFailed({
+          supabase: adminSupabase,
+          userId: auth.userId,
+          docVersionId: featureOutputReservation.docVersionId,
+          feature: featureOutputReservation.feature,
+          error: {
+            message,
+            code: response.status,
+            details,
+          },
+        }).catch(() => {});
+        featureOutputReservation = null;
+      }
       console.error('[proxy] edge function failed', {
         requestId,
         correlationId,
@@ -1251,7 +1321,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               }
 
               if (featureOutputContext?.docVersionId) {
-                await writeFeatureOutput({
+                await markFeatureOutputReady({
                   supabase: adminSupabase,
                   userId: auth.userId,
                   docVersionId: featureOutputContext.docVersionId,
@@ -1259,6 +1329,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
                   output: parsedSuccessPayload,
                   model: candidate.model,
                 });
+                featureOutputReservation = null;
               }
             }
             const relay = await relaySuccessfulResponse(response, req, requestId, candidate);
@@ -1376,6 +1447,16 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }
     return relay.response;
   } catch (error: any) {
+    if (reservationSupabase && reservationUserId && featureOutputReservation?.docVersionId) {
+      await markFeatureOutputFailed({
+        supabase: reservationSupabase,
+        userId: reservationUserId,
+        docVersionId: featureOutputReservation.docVersionId,
+        feature: featureOutputReservation.feature,
+        error,
+      }).catch(() => {});
+      featureOutputReservation = null;
+    }
     if (error instanceof EffectiveLimitError) {
       return NextResponse.json(error.payload, {
         status: error.status,

@@ -38,6 +38,13 @@ export type ChatPayloadIssue = {
   path: string;
 };
 
+function compatUuid(prefix: string): string {
+  if (typeof globalThis !== 'undefined' && globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return `${prefix}_${globalThis.crypto.randomUUID()}`;
+  }
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function coerceMessageRole(value: unknown): ChatRole {
   const role = String(value || '').trim().toLowerCase();
   if (role === 'system' || role === 'assistant') return role;
@@ -73,6 +80,10 @@ function normalizeMessages(raw: any): ChatMessageInput[] {
     raw?.user_input,
     raw?.prompt,
     raw?.query,
+    raw?.input,
+    raw?.text,
+    raw?.content,
+    raw?.question,
   ];
   for (const candidate of singleMessageCandidates) {
     const content = coerceMessageContent(candidate);
@@ -131,6 +142,20 @@ function normalizeAuGuide(raw: any): AuGuideInput | undefined {
 export function normalizeChatPayload(input: unknown): CanonicalChatPayload {
   const raw = input && typeof input === 'object' ? input : {};
   const activeDocIds = normalizeActiveDocIds(raw);
+  const fallbackIdempotencyKey =
+    typeof (raw as any)?.clientMessageId === 'string'
+      ? (raw as any).clientMessageId.trim()
+      : typeof (raw as any)?.client_message_id === 'string'
+        ? (raw as any).client_message_id.trim()
+        : typeof (raw as any)?.requestId === 'string'
+          ? (raw as any).requestId.trim()
+          : typeof (raw as any)?.request_id === 'string'
+            ? (raw as any).request_id.trim()
+            : typeof (raw as any)?.correlationId === 'string'
+              ? (raw as any).correlationId.trim()
+              : typeof (raw as any)?.correlation_id === 'string'
+                ? (raw as any).correlation_id.trim()
+                : compatUuid('chat');
   const payload: CanonicalChatPayload = {
     messages: normalizeMessages(raw),
     userId: typeof (raw as any)?.userId === 'string'
@@ -152,12 +177,12 @@ export function normalizeChatPayload(input: unknown): CanonicalChatPayload {
       ? (raw as any).idempotencyKey.trim() || undefined
       : typeof (raw as any)?.idempotency_key === 'string'
         ? (raw as any).idempotency_key.trim() || undefined
-        : undefined,
+        : fallbackIdempotencyKey || undefined,
     correlationId: typeof (raw as any)?.correlationId === 'string'
       ? (raw as any).correlationId.trim() || undefined
       : typeof (raw as any)?.correlation_id === 'string'
         ? (raw as any).correlation_id.trim() || undefined
-        : undefined,
+        : compatUuid('corr'),
   };
 
   return payload;

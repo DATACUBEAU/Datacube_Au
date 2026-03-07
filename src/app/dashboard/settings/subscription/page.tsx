@@ -27,15 +27,30 @@ import {
   normalizePromoContentConfig,
 } from '@/lib/conex/promo-content';
 
-const PRICING = {
-  weekly: { amount: 1500, compare_at: 2500, label: 'Save 40%' },
-  monthly: { amount: 4500, compare_at: 6000, label: 'Save 25%' },
+const EMPTY_PRICING = {
+  weekly: { amount: 0, compare_at: 0, label: '' },
+  monthly: { amount: 0, compare_at: 0, label: '' },
 } as const;
 
 const BILLING_ROUTE = '/dashboard/settings/subscription';
 const BILLING_STATUS_SOURCE = 'billing-status';
 const BILLING_CACHE_SCHEMA = 1;
 const BILLING_CACHE_TTL_MS = 1000 * 60 * 30;
+
+type PlanCatalogEntry = {
+  plan: string;
+  metadata: {
+    label: string;
+    description: string;
+    price_display: string;
+    feature_bullets: string[];
+  };
+  pricing: {
+    monthly: { amount: number; compare_at: number | null; label: string; plan_key: string | null } | null;
+    weekly: { amount: number; compare_at: number | null; label: string; plan_key: string | null } | null;
+  };
+  resetLabels: Record<string, string>;
+};
 
 export default function SubscriptionPage() {
   const [user, session, isUserLoading] = useSupabaseUser();
@@ -73,11 +88,12 @@ export default function SubscriptionPage() {
   const [isInitialLoading, setIsInitialLoading] = useState(true);
   const [isUsingCachedData, setIsUsingCachedData] = useState(false);
   const [cachedAt, setCachedAt] = useState<number | null>(null);
+  const [planCatalog, setPlanCatalog] = useState<PlanCatalogEntry[]>([]);
 
   const [pricing, setPricing] = useState<{
     weekly: { amount: number; compare_at: number; label: string };
     monthly: { amount: number; compare_at: number; label: string };
-  }>(PRICING);
+  }>(EMPTY_PRICING);
   const isPromoUnlocked = promoActive;
   const hasPaidProAccess = tier === 'pro' && entitlementSource === 'paid';
   const promoContent = useMemo(
@@ -99,6 +115,12 @@ export default function SubscriptionPage() {
     () => buildPromoCopy(promoContent, promoDisplayEndsAtLabel),
     [promoContent, promoDisplayEndsAtLabel],
   );
+  const catalogByPlan = useMemo(
+    () => Object.fromEntries(planCatalog.map((entry) => [entry.plan, entry])),
+    [planCatalog],
+  );
+  const freePlanCatalog = catalogByPlan.free || null;
+  const proPlanCatalog = catalogByPlan.pro || null;
   const retentionPolicyLabel = '7-day signed-out cleanup / 14-day inactivity cleanup';
   const freeRetentionLabel = retentionPolicyLabel;
   const proRetentionLabel = retentionPolicyLabel;
@@ -209,7 +231,21 @@ export default function SubscriptionPage() {
           setPromoEndsAtLabel(label);
       }
       if (data.pricing) {
-          setPricing(data.pricing);
+          setPricing({
+              weekly: {
+                  amount: Number(data.pricing?.weekly?.amount || 0),
+                  compare_at: Number(data.pricing?.weekly?.compare_at || 0),
+                  label: String(data.pricing?.weekly?.label || ''),
+              },
+              monthly: {
+                  amount: Number(data.pricing?.monthly?.amount || 0),
+                  compare_at: Number(data.pricing?.monthly?.compare_at || 0),
+                  label: String(data.pricing?.monthly?.label || ''),
+              },
+          });
+      }
+      if (Array.isArray(data.planCatalog)) {
+          setPlanCatalog(data.planCatalog);
       }
       if (Boolean(data?.canAccessBilling) && data.subscription?.status === 'active') {
           setIsAutoRenew(true);
@@ -534,6 +570,13 @@ export default function SubscriptionPage() {
     const isFreePlan = planCode === 'free';
     const usageTotal = limitsUsage.usageTotal || {};
     const limits = limitsUsage.limits || {};
+    const usageWindows = limitsUsage.usageWindows || {};
+    const resetSummary = [
+      usageWindows.tokens?.label,
+      usageWindows.chats?.label,
+      usageWindows.uploads?.label,
+      usageWindows.exams?.label,
+    ].filter(Boolean);
 
     return (
         <div className="bg-card rounded-3xl shadow-sm p-6 border border-border mb-8 max-w-4xl mx-auto">
@@ -543,29 +586,41 @@ export default function SubscriptionPage() {
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
               Plan: <span className="font-semibold text-foreground">{planCode.toUpperCase()}</span>
-              {' • Fixed plan caps (no daily reset)'}
+              {resetSummary.length > 0 ? ` • ${resetSummary.join(' • ')}` : ''}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <LimitBar
-                  label="Chat Messages"
-                  used={Number(usageTotal.used_chats ?? usageTotal.messages_count ?? 0)}
-                  limit={Number(limits.max_chats_total ?? 0)}
-                />
-                <LimitBar
-                  label="Uploads"
-                  used={Number(usageTotal.used_uploads ?? usageTotal.uploads_count ?? 0)}
-                  limit={Number(limits.max_uploads_total ?? 0)}
-                />
-                <LimitBar
-                  label="Tokens"
-                  used={Number(usageTotal.used_tokens ?? usageTotal.tokens_used ?? 0)}
-                  limit={Number(limits.max_tokens_total ?? 0)}
-                />
-                <LimitBar
-                  label="Storage (MB)"
-                  used={Math.round(Number(usageTotal.used_storage_mb ?? usageTotal.uploaded_mb ?? 0))}
-                  limit={Number(limits.max_storage_mb ?? 0)}
-                />
+                <div className="space-y-2">
+                  <LimitBar
+                    label="Chat Messages"
+                    used={Number(usageTotal.used_chats ?? usageTotal.messages_count ?? 0)}
+                    limit={Number(limits.max_chats_total ?? 0)}
+                  />
+                  <p className="text-[11px] text-muted-foreground">{usageWindows.chats?.label || 'No reset policy loaded'}</p>
+                </div>
+                <div className="space-y-2">
+                  <LimitBar
+                    label="Uploads"
+                    used={Number(usageTotal.used_uploads ?? usageTotal.uploads_count ?? 0)}
+                    limit={Number(limits.max_uploads_total ?? 0)}
+                  />
+                  <p className="text-[11px] text-muted-foreground">{usageWindows.uploads?.label || 'No reset policy loaded'}</p>
+                </div>
+                <div className="space-y-2">
+                  <LimitBar
+                    label="Tokens"
+                    used={Number(usageTotal.used_tokens ?? usageTotal.tokens_used ?? 0)}
+                    limit={Number(limits.max_tokens_total ?? 0)}
+                  />
+                  <p className="text-[11px] text-muted-foreground">{usageWindows.tokens?.label || 'No reset policy loaded'}</p>
+                </div>
+                <div className="space-y-2">
+                  <LimitBar
+                    label="Storage (MB)"
+                    used={Math.round(Number(usageTotal.used_storage_mb ?? usageTotal.uploaded_mb ?? 0))}
+                    limit={Number(limits.max_storage_mb ?? 0)}
+                  />
+                  <p className="text-[11px] text-muted-foreground">{usageWindows.storage?.label || 'No reset policy loaded'}</p>
+                </div>
             </div>
             {isFreePlan && billingEnabled ? (
               <p className="mt-4 text-xs text-muted-foreground">
@@ -783,7 +838,7 @@ export default function SubscriptionPage() {
             {isPromoUnlocked ? (
                 <div className="mb-8 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm">
                     <p className="font-semibold">{promoCopy.intro}</p>
-                    <p className="text-muted-foreground">{promoCopy.pricing}</p>
+                    <p className="text-muted-foreground">{proPlanCatalog?.metadata?.price_display ? `Pricing after promo: ${proPlanCatalog.metadata.price_display}` : promoCopy.pricing}</p>
                     <p className="mt-1 text-xs text-muted-foreground">{promoCopy.ending}</p>
                 </div>
             ) : null}
@@ -804,18 +859,16 @@ export default function SubscriptionPage() {
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
                             <div className="space-y-4">
-                                <div className="flex items-center gap-3">
-                                    <CheckCircle2 className="h-5 w-5 text-primary" />
-                                    <span className="font-medium">Premium model access</span>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <CheckCircle2 className="h-5 w-5 text-primary" />
-                                    <span className="font-medium">High-Priority Processing</span>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                    <CheckCircle2 className="h-5 w-5 text-primary" />
-                                    <span className="font-medium">7-day signed-out / 14-day inactivity cleanup</span>
-                                </div>
+                                {(proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
+                                    'Premium model access',
+                                    'High-priority processing',
+                                    'Expanded study tools',
+                                ]).slice(0, 4).map((feature) => (
+                                    <div key={feature} className="flex items-center gap-3">
+                                        <CheckCircle2 className="h-5 w-5 text-primary" />
+                                        <span className="font-medium">{feature}</span>
+                                    </div>
+                                ))}
                             </div>
                             <div className="bg-muted/40 rounded-2xl p-6">
                                 <div className="text-sm text-muted-foreground mb-1">
@@ -930,7 +983,7 @@ export default function SubscriptionPage() {
                                     </div>
                                     <h3 className="mb-2 text-xl font-bold font-headline">Free Premium Access</h3>
                                     <p className="mb-2 text-muted-foreground">{promoCopy.intro}</p>
-                                    <p className="mb-2 text-sm text-muted-foreground">{promoCopy.pricing}</p>
+                                    <p className="mb-2 text-sm text-muted-foreground">{proPlanCatalog?.metadata?.price_display ? `Pricing after promo: ${proPlanCatalog.metadata.price_display}` : promoCopy.pricing}</p>
                                     <p className="mb-4 text-xs text-muted-foreground">{promoCopy.ending}</p>
                                     <p className="mb-4 text-xs text-muted-foreground">
                                         After promo ends, only active paid entitlements retain Pro access.
@@ -951,14 +1004,13 @@ export default function SubscriptionPage() {
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
                                 {/* Free Plan */}
                                 <PricingCard
-                                    title="Basic"
-                                    price="NGN 0"
+                                    title={freePlanCatalog?.metadata?.label || 'Free'}
+                                    price={freePlanCatalog?.metadata?.price_display || 'Loading...'}
                                     period="forever"
-                                    features={[
-                                        'Max 4 documents',
+                                    features={freePlanCatalog?.metadata?.feature_bullets?.length ? freePlanCatalog.metadata.feature_bullets : [
                                         freeRetentionLabel,
-                                        'Standard AU models',
-                                        'Basic support'
+                                        'Core chat',
+                                        'Basic support',
                                     ]}
                                     onSelect={() => {}}
                                     disabled={true}
@@ -967,22 +1019,19 @@ export default function SubscriptionPage() {
                                 {/* Monthly (Highlighted) */}
                                 <OfflineGuard asChild>
                                     <PricingCard
-                                        title="Pro Monthly"
-                                        price={`NGN ${pricing.monthly.amount.toLocaleString()}`}
-                                        originalPrice={`NGN ${pricing.monthly.compare_at.toLocaleString()}`}
+                                        title={`${proPlanCatalog?.metadata?.label || 'Pro'} Monthly`}
+                                        price={pricing.monthly.amount > 0 ? `NGN ${pricing.monthly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
+                                        originalPrice={pricing.monthly.compare_at > 0 ? `NGN ${pricing.monthly.compare_at.toLocaleString()}` : undefined}
                                         period="month"
                                         highlighted={true}
-                                        savedLabel={pricing.monthly.label}
+                                        savedLabel={pricing.monthly.label || proPlanCatalog?.pricing?.monthly?.label || undefined}
                                         loading={loadingPlan === 'monthly'}
                                         onSelect={() => handlePaymentCheckout('monthly')}
                                         disabled={isPromoUnlocked}
-                                        features={[
-                                            'Higher document cap',
+                                        features={proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
                                             proRetentionLabel,
-                                            'Premium AU models',
                                             'Priority processing',
                                             'Advanced data analysis',
-                                            'Priority support'
                                         ]}
                                     />
                                 </OfflineGuard>
@@ -990,19 +1039,18 @@ export default function SubscriptionPage() {
                                 {/* Weekly */}
                                 <OfflineGuard asChild>
                                     <PricingCard
-                                        title="Pro Weekly"
-                                        price={`NGN ${pricing.weekly.amount.toLocaleString()}`}
-                                        originalPrice={`NGN ${pricing.weekly.compare_at.toLocaleString()}`}
+                                        title={`${proPlanCatalog?.metadata?.label || 'Pro'} Weekly`}
+                                        price={pricing.weekly.amount > 0 ? `NGN ${pricing.weekly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
+                                        originalPrice={pricing.weekly.compare_at > 0 ? `NGN ${pricing.weekly.compare_at.toLocaleString()}` : undefined}
                                         period="week"
-                                        savedLabel={pricing.weekly.label}
+                                        savedLabel={pricing.weekly.label || proPlanCatalog?.pricing?.weekly?.label || undefined}
                                         loading={loadingPlan === 'weekly'}
                                         onSelect={() => handlePaymentCheckout('weekly')}
                                         disabled={isPromoUnlocked}
-                                        features={[
+                                        features={proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
                                             'All Pro features',
-                                            '7-day access',
                                             'Cancel anytime',
-                                            'Standard support'
+                                            'Standard support',
                                         ]}
                                     />
                                 </OfflineGuard>

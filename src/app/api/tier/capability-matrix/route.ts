@@ -1,31 +1,27 @@
 import { NextResponse } from 'next/server';
-import {
-  TIER_FEATURE_POLICIES,
-  TIER_QUOTA_POLICIES,
-  TIER_TUNING_POLICY,
-  DEFAULT_MAX_UPLOAD_MB,
-  FLAGGED_MAX_UPLOAD_MB,
-} from '@/lib/tier/policy';
-import { DEFAULT_PLAN_LIMITS } from '@/lib/server/au-limits';
+import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
+import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
+import { getFeatureFlagsSnapshot } from '@/lib/server/feature-flags';
 
 export const runtime = 'nodejs';
 
 export async function GET() {
+  const supabase = createSupabaseAdminClient();
+  const [plans, flags] = await Promise.all([
+    loadPublicPlanCatalog(supabase).catch(() => []),
+    getFeatureFlagsSnapshot(supabase).catch(() => new Map()),
+  ]);
+
   return NextResponse.json({
     generatedAt: new Date().toISOString(),
-    tiers: ['FREE', 'PRO', 'PROMO_PRO'],
-    hardConstraints: {
-      uploadSizeMb: {
-        default: DEFAULT_MAX_UPLOAD_MB,
-        with_pro_upload_100mb_flag: FLAGGED_MAX_UPLOAD_MB,
-      },
-      maxDocumentsUploadedTotal: {
-        free: DEFAULT_PLAN_LIMITS.free.max_documents_total,
-        pro: DEFAULT_PLAN_LIMITS.pro.max_documents_total,
-      },
+    plans,
+    featureFlags: {
+      enable_exam_prediction: Boolean(flags.get('enable_exam_prediction')?.enabled ?? true),
+      enable_knowledge_hub: Boolean(flags.get('enable_knowledge_hub')?.enabled ?? true),
+      enable_practice_exam_generation: Boolean(flags.get('enable_practice_exam_generation')?.enabled ?? true),
+      pro_required_exam_prediction: Boolean(flags.get('pro_required_exam_prediction')?.enabled ?? true),
+      pro_required_knowledge_hub: Boolean(flags.get('pro_required_knowledge_hub')?.enabled ?? true),
+      pro_upload_100mb: Boolean(flags.get('pro_upload_100mb')?.enabled || flags.get('upload_100mb')?.enabled),
     },
-    tuning: TIER_TUNING_POLICY,
-    features: TIER_FEATURE_POLICIES,
-    quotas: TIER_QUOTA_POLICIES,
   });
 }

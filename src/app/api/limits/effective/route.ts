@@ -32,6 +32,8 @@ export async function GET(req: NextRequest) {
         limits: result.limits,
         usage: result.usage,
         reset_at: result.usage.reset_at,
+        reset_policies: result.usage.reset_policies,
+        usage_windows: result.usage.windows,
         source: result.effectivePlan.source,
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },

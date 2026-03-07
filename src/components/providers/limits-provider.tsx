@@ -16,6 +16,8 @@ type UsageSnapshot = {
   usageToday: Record<string, number>;
   usageTotal: Record<string, number>;
   resetAt: string | null;
+  usageWindows: Record<string, { label: string; reset_every_days: number; window_start: string; window_end: string | null }>;
+  resetPolicies: Record<string, number>;
   loading: boolean;
   fetchedAt: number | null;
 };
@@ -43,6 +45,8 @@ const defaultUsage: UsageSnapshot = {
   usageToday: {},
   usageTotal: {},
   resetAt: null,
+  usageWindows: {},
+  resetPolicies: {},
   loading: true,
   fetchedAt: null,
 };
@@ -74,6 +78,22 @@ function normalizeNumberMap(value: unknown): Record<string, number> {
     if (Number.isFinite(parsed)) acc[key] = parsed;
     return acc;
   }, {} as Record<string, number>);
+}
+
+function normalizeWindowMap(
+  value: unknown,
+): Record<string, { label: string; reset_every_days: number; window_start: string; window_end: string | null }> {
+  const map = asRecord(value);
+  return Object.entries(map).reduce((acc, [key, raw]) => {
+    const entry = asRecord(raw);
+    acc[key] = {
+      label: typeof entry.label === 'string' ? entry.label : '',
+      reset_every_days: asNumber(entry.reset_every_days),
+      window_start: typeof entry.window_start === 'string' ? entry.window_start : '',
+      window_end: typeof entry.window_end === 'string' ? entry.window_end : null,
+    };
+    return acc;
+  }, {} as Record<string, { label: string; reset_every_days: number; window_start: string; window_end: string | null }>);
 }
 
 function normalizeThresholdArray(value: unknown, fallback: number[]): number[] {
@@ -153,6 +173,8 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
         limits: normalizeNumberMap(data.limits),
         usageToday: normalizeNumberMap(usagePayload.today),
         usageTotal: normalizeNumberMap(usagePayload.total),
+        usageWindows: normalizeWindowMap(usagePayload.windows),
+        resetPolicies: normalizeNumberMap(usagePayload.reset_policies),
         resetAt: typeof data.reset_at === 'string'
           ? data.reset_at
           : (typeof usagePayload.reset_at === 'string' ? usagePayload.reset_at : null),

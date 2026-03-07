@@ -55,6 +55,7 @@ import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
+import { useFeatureOutput } from '@/hooks/api/use-feature-output';
 
 import { FeedbackSection } from "@/components/au-feedback";
 import {
@@ -180,6 +181,11 @@ function PredictionsPageContent() {
     () => textbookDocs.find((d) => d.id === selectedTextbookId) || null,
     [textbookDocs, selectedTextbookId]
   );
+  const predictionOutput = useFeatureOutput<GeneratePredictionsOutput>({
+    feature: 'exam_prediction',
+    documentId: selectedTextbookId || selectedPastQuestionsId,
+    enabled: Boolean((selectedTextbookId || selectedPastQuestionsId) && user && session?.access_token),
+  });
 
   const mainTextbookIds = useMemo(() => textbookDocs.map((doc) => doc.id), [textbookDocs]);
 
@@ -254,6 +260,11 @@ function PredictionsPageContent() {
       setFormattedTopicWeights([]);
     }
   }, [predictionData, parseTopicWeights]);
+
+  useEffect(() => {
+    if (predictionOutput.status !== 'ready' || !predictionOutput.output) return;
+    setPredictionData(predictionOutput.output);
+  }, [predictionOutput.output, predictionOutput.status, setPredictionData]);
 
   const restoreCachedPredictions = useCallback((docId: string, expirySourceDocId?: string | null): boolean => {
     if (!user || !isOnline) return false;
@@ -352,6 +363,37 @@ function PredictionsPageContent() {
     }
   };
 
+  const showPredictionExplanation = useCallback(() => {
+    toast({
+      title: 'Already generated',
+      description: 'This exam briefing is already saved for the current document version. Upload an updated document or ask an admin to clear the cache to regenerate.',
+    });
+  }, [toast]);
+
+  const handlePredictionClick = async () => {
+    if (predictionOutput.status === 'ready') {
+      showPredictionExplanation();
+      return;
+    }
+    if (predictionOutput.status === 'running' || predictionOutput.status === 'loading') {
+      toast({
+        title: 'Generating in progress',
+        description: 'Exam Prediction is already generating for this document.',
+      });
+      return;
+    }
+    if (predictionOutput.status === 'failed') {
+      toast({
+        variant: 'destructive',
+        title: 'Generation locked',
+        description: 'This document has a failed cached prediction. Upload a new version or ask an admin to clear the cache before retrying.',
+      });
+      return;
+    }
+    await triggerGetPredictions();
+    void predictionOutput.refresh();
+  };
+
   return (
     <TooltipProvider>
       <main id="predictions-section" className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
@@ -424,22 +466,32 @@ function PredictionsPageContent() {
 
             <div className="flex items-end">
               <Button
-                onClick={triggerGetPredictions}
+                onClick={() => void handlePredictionClick()}
                 disabled={
                   !selectedPastQuestionsId ||
                   isGeneratingPredictions ||
                   !isOnline ||
                   upgradeBlocked ||
+                  predictionOutput.status === 'loading' ||
+                  predictionOutput.status === 'running' ||
                   selectedPastQuestionDoc?.status !== 'completed' ||
                   (selectedTextbookId ? selectedTextbookDoc?.status !== 'completed' : false)
                 }
+                aria-disabled={predictionOutput.status === 'ready' || predictionOutput.status === 'running' || predictionOutput.status === 'loading'}
                 className="w-full lg:w-auto"
               >
-                {isGeneratingPredictions ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> : <BrainCircuit className="mr-2 h-4 w-4" aria-hidden="true" />}
-                Generate Briefing
+                {isGeneratingPredictions || predictionOutput.status === 'loading' || predictionOutput.status === 'running'
+                  ? <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
+                  : <BrainCircuit className="mr-2 h-4 w-4" aria-hidden="true" />}
+                {predictionOutput.status === 'ready' ? 'Already Generated' : 'Generate Briefing'}
               </Button>
             </div>
           </div>
+          {predictionOutput.status === 'ready' && (
+            <p className="text-xs text-muted-foreground">
+              Saved briefing loaded. Regeneration is locked until the source document version changes or an admin clears the cache.
+            </p>
+          )}
         </div>
 
         {/* Dynamic Content */}

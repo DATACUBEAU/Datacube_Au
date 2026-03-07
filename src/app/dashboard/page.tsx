@@ -41,6 +41,7 @@ import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
+import { usePlanCatalog } from '@/hooks/api/use-plan-catalog';
 import {
   buildPromoCopy,
   formatPromoEndsAtLabel,
@@ -83,6 +84,7 @@ export default function DashboardPage() {
   const [user] = useSupabaseUser();
   const { isOnline } = useNetworkStatus();
   const { entitlements } = useEffectiveEntitlements();
+  const { plans: planCatalog } = usePlanCatalog();
   const {
     documents,
     loading: documentsLoading,
@@ -112,6 +114,10 @@ export default function DashboardPage() {
   const promoCopy = useMemo(
     () => buildPromoCopy(promoContent, promoEndsLabel),
     [promoContent, promoEndsLabel],
+  );
+  const proPlanCatalog = useMemo(
+    () => planCatalog.find((entry) => entry.plan === 'pro') || null,
+    [planCatalog],
   );
 
   const recentDocuments = useMemo(() => {
@@ -208,7 +214,7 @@ export default function DashboardPage() {
       {entitlements.promoBannerEnabled && entitlements.promoActive ? (
         <div className="rounded-xl border border-primary/30 bg-primary/5 px-4 py-3 text-sm">
           <p className="font-semibold">{promoCopy.intro}</p>
-          <p className="text-muted-foreground">{promoCopy.pricing}</p>
+          <p className="text-muted-foreground">{proPlanCatalog?.metadata?.price_display ? `Pricing after promo: ${proPlanCatalog.metadata.price_display}` : promoCopy.pricing}</p>
           <p className="text-xs text-muted-foreground">{promoCopy.ending}</p>
         </div>
       ) : null}

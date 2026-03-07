@@ -27,6 +27,12 @@ export type FeatureOutputRecord = {
   updatedAt: string | null;
 };
 
+export type FeatureOutputReservation =
+  | { state: 'ready'; record: FeatureOutputRecord }
+  | { state: 'running'; record: FeatureOutputRecord | null }
+  | { state: 'failed'; record: FeatureOutputRecord }
+  | { state: 'reserved'; record: FeatureOutputRecord | null };
+
 export type FeatureGateDecision = {
   enabled: boolean;
   proRequired: boolean;
@@ -408,6 +414,211 @@ export async function writeFeatureOutput(input: {
   }
 }
 
+export async function prepareFeatureOutputGeneration(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  docVersionId?: string | null;
+  feature: string;
+}): Promise<FeatureOutputReservation> {
+  const docVersionId = safeString(input.docVersionId);
+  if (!docVersionId) {
+    return { state: 'reserved', record: null };
+  }
+
+  const existing = await readFeatureOutput({
+    supabase: input.supabase,
+    userId: input.userId,
+    docVersionId,
+    feature: input.feature,
+  });
+
+  if (existing?.status === 'ready') {
+    return { state: 'ready', record: existing };
+  }
+
+  if (existing?.status === 'running') {
+    return { state: 'running', record: existing };
+  }
+
+  if (existing?.status === 'failed') {
+    return { state: 'failed', record: existing };
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await input.supabase.from('au_feature_outputs').insert({
+    user_id: input.userId,
+    doc_version_id: docVersionId,
+    feature: input.feature,
+    status: 'running',
+    output: {},
+    updated_at: now,
+  });
+
+  if (!error) {
+    return { state: 'reserved', record: null };
+  }
+
+  if (isSchemaDriftError(error)) {
+    return { state: 'reserved', record: null };
+  }
+
+  if (String((error as any)?.code || '').trim() === '23505') {
+    const collided = await readFeatureOutput({
+      supabase: input.supabase,
+      userId: input.userId,
+      docVersionId,
+      feature: input.feature,
+    });
+
+    if (collided?.status === 'ready') {
+      return { state: 'ready', record: collided };
+    }
+    if (collided?.status === 'failed') {
+      return { state: 'failed', record: collided };
+    }
+    return { state: 'running', record: collided };
+  }
+
+  throw error;
+}
+
+export async function markFeatureOutputReady(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  docVersionId?: string | null;
+  feature: string;
+  output: any;
+  model?: string | null;
+  tokens?: number | null;
+  costUsd?: number | null;
+}): Promise<void> {
+  await writeFeatureOutput({
+    supabase: input.supabase,
+    userId: input.userId,
+    docVersionId: input.docVersionId,
+    feature: input.feature,
+    output: input.output,
+    model: input.model,
+    tokens: input.tokens,
+    costUsd: input.costUsd,
+    status: 'ready',
+  });
+}
+
+export async function markFeatureOutputFailed(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  docVersionId?: string | null;
+  feature: string;
+  error: unknown;
+}): Promise<void> {
+  const message =
+    typeof input.error === 'string'
+      ? input.error
+      : String((input.error as any)?.message || 'Generation failed');
+
+  await writeFeatureOutput({
+    supabase: input.supabase,
+    userId: input.userId,
+    docVersionId: input.docVersionId,
+    feature: input.feature,
+    output: {
+      error: {
+        message,
+        code: safeString((input.error as any)?.code) || null,
+        failed_at: new Date().toISOString(),
+      },
+    },
+    status: 'failed',
+  });
+}
+
+export async function clearFeatureOutput(input: {
+  supabase: SupabaseClient;
+  userId?: string | null;
+  docVersionId?: string | null;
+  feature?: string | null;
+}): Promise<number> {
+  const userId = safeString(input.userId);
+  const docVersionId = safeString(input.docVersionId);
+  const feature = safeString(input.feature);
+
+  let countQuery = input.supabase.from('au_feature_outputs').select('id', { count: 'exact', head: true });
+  let deleteQuery = input.supabase.from('au_feature_outputs').delete();
+
+  if (userId) {
+    countQuery = countQuery.eq('user_id', userId);
+    deleteQuery = deleteQuery.eq('user_id', userId);
+  }
+  if (docVersionId) {
+    countQuery = countQuery.eq('doc_version_id', docVersionId);
+    deleteQuery = deleteQuery.eq('doc_version_id', docVersionId);
+  }
+  if (feature) {
+    countQuery = countQuery.eq('feature', feature);
+    deleteQuery = deleteQuery.eq('feature', feature);
+  }
+
+  const { error: countError, count } = await countQuery;
+  if (countError) {
+    if (isSchemaDriftError(countError)) return 0;
+    throw countError;
+  }
+
+  if (!count) return 0;
+
+  const { error: deleteError } = await deleteQuery;
+  if (deleteError) {
+    if (isSchemaDriftError(deleteError)) return 0;
+    throw deleteError;
+  }
+
+  return Number(count || 0) || 0;
+}
+
+export async function getOrCreateFeatureOutput<T>(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  docVersionId?: string | null;
+  feature: string;
+  generateFn: () => Promise<{ output: T; model?: string | null; tokens?: number | null; costUsd?: number | null }>;
+}): Promise<{ output: T; fromCache: boolean; status: 'ready' | 'running' | 'failed' }> {
+  const prepared = await prepareFeatureOutputGeneration(input);
+  if (prepared.state === 'ready') {
+    return { output: prepared.record.output as T, fromCache: true, status: 'ready' };
+  }
+  if (prepared.state === 'running') {
+    return { output: (prepared.record?.output ?? null) as T, fromCache: true, status: 'running' };
+  }
+  if (prepared.state === 'failed') {
+    return { output: prepared.record.output as T, fromCache: true, status: 'failed' };
+  }
+
+  try {
+    const generated = await input.generateFn();
+    await markFeatureOutputReady({
+      supabase: input.supabase,
+      userId: input.userId,
+      docVersionId: input.docVersionId,
+      feature: input.feature,
+      output: generated.output,
+      model: generated.model,
+      tokens: generated.tokens,
+      costUsd: generated.costUsd,
+    });
+    return { output: generated.output, fromCache: false, status: 'ready' };
+  } catch (error) {
+    await markFeatureOutputFailed({
+      supabase: input.supabase,
+      userId: input.userId,
+      docVersionId: input.docVersionId,
+      feature: input.feature,
+      error,
+    });
+    throw error;
+  }
+}
+
 export async function recordSyntheticUsage(input: {
   supabase: SupabaseClient;
   userId: string;
@@ -467,8 +678,8 @@ export function classifyTemplateResponse(message: string, context: 'doc' | 'glob
 
   if (matchesLoosePattern(normalized, greetingPatterns)) {
     return context === 'doc'
-      ? 'Hello. Ask a question about the selected document and I will answer from it first.'
-      : 'Hello. Ask a question and I will help directly.';
+      ? 'Hello. Ask about the selected document and I will answer from it first.'
+      : 'Hello. Ask anything and I will keep the answer direct and useful.';
   }
 
   if (matchesLoosePattern(normalized, thanksPatterns)) {

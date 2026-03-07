@@ -36,38 +36,39 @@ async function loadFlagsFromDb(supabase: SupabaseClient): Promise<Map<string, Fl
     .from('feature_flags')
     .select('key,enabled,config');
 
-  if (error) {
-    if (!isSchemaDriftError(error)) {
-      throw error;
-    }
+  if (error && !isSchemaDriftError(error)) {
+    throw error;
+  }
 
-    const { data: legacyData, error: legacyError } = await supabase
-      .from('au_feature_flags')
-      .select('key,is_enabled');
-
-    if (legacyError) {
-      throw legacyError;
-    }
-
-    for (const row of legacyData || []) {
+  if (!error) {
+    for (const row of data || []) {
       const key = String((row as any)?.key || '').trim();
       if (!key) continue;
       out.set(key, {
-        enabled: Boolean((row as any)?.is_enabled),
-        config: {},
+        enabled: Boolean((row as any)?.enabled),
+        config: normalizeConfig((row as any)?.config),
       });
     }
-
-    return out;
   }
 
-  for (const row of data || []) {
-    const key = String((row as any)?.key || '').trim();
-    if (!key) continue;
-    out.set(key, {
-      enabled: Boolean((row as any)?.enabled),
-      config: normalizeConfig((row as any)?.config),
-    });
+  const { data: legacyData, error: legacyError } = await supabase
+    .from('au_feature_flags')
+    .select('key,is_enabled,enabled,value');
+
+  if (legacyError && !isSchemaDriftError(legacyError)) {
+    throw legacyError;
+  }
+
+  if (!legacyError) {
+    for (const row of legacyData || []) {
+      const key = String((row as any)?.key || '').trim();
+      if (!key) continue;
+      if (out.has(key)) continue;
+      out.set(key, {
+        enabled: Boolean((row as any)?.enabled ?? (row as any)?.is_enabled),
+        config: normalizeConfig((row as any)?.value),
+      });
+    }
   }
 
   return out;
@@ -100,4 +101,3 @@ export async function getFeatureFlagBoolean(
 export function clearFeatureFlagsCache() {
   cache = null;
 }
-

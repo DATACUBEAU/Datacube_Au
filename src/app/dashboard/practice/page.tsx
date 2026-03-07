@@ -38,6 +38,7 @@ import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { getDashboardFeatureAccess } from '@/lib/feature-access';
 import { safeFetch } from '@/lib/api/safe-fetch';
+import { useFeatureOutput } from '@/hooks/api/use-feature-output';
 
 
 type AnswerState = 'unanswered' | 'correct' | 'incorrect';
@@ -133,6 +134,11 @@ function PracticePageContent() {
   const [score, setScore] = useState(0);
   const [attemptCycle, setAttemptCycle] = useState(0);
   const submittedAttemptRef = useRef<string | null>(null);
+  const practiceOutput = useFeatureOutput<GeneratePracticeExamOutput>({
+    feature: 'practice_exam_generation',
+    documentId: selectedDocId,
+    enabled: Boolean(selectedDocId && user && session?.access_token),
+  });
 
   const getDocumentExpiryMs = useCallback((docId: string): number | null => {
     const doc = allDocuments.find((item) => item.id === docId);
@@ -188,6 +194,18 @@ function PracticePageContent() {
       }
     }
   }, [examData, user, selectedDocId]);
+
+  useEffect(() => {
+    if (practiceOutput.status !== 'ready' || !practiceOutput.output || questionPack.length > 0) {
+      return;
+    }
+    setQuestionPack(practiceOutput.output.questions);
+    setQuestions(buildQuestionStatePack(practiceOutput.output.questions));
+    setCurrentQuestionIndex(0);
+    setExamFinished(false);
+    setScore(0);
+    submittedAttemptRef.current = null;
+  }, [practiceOutput.output, practiceOutput.status, questionPack.length]);
 
   const handleDocSelectionChange = useCallback((docId: string) => {
     setSelectedDocId(docId);
@@ -263,6 +281,37 @@ function PracticePageContent() {
     } catch (error: any) {
         // Error handled by hook
     }
+  };
+
+  const showPracticeExplanation = useCallback(() => {
+    toast({
+      title: 'Already generated',
+      description: 'This practice exam pack is already saved for the current document. Use Retry This Exam without extra token cost, or upload a new version to generate again.',
+    });
+  }, [toast]);
+
+  const handleGenerateClick = async () => {
+    if (practiceOutput.status === 'ready' || questionPack.length > 0) {
+      showPracticeExplanation();
+      return;
+    }
+    if (practiceOutput.status === 'running' || practiceOutput.status === 'loading') {
+      toast({
+        title: 'Generating in progress',
+        description: 'Practice Exam is already generating for this document.',
+      });
+      return;
+    }
+    if (practiceOutput.status === 'failed') {
+      toast({
+        variant: 'destructive',
+        title: 'Generation locked',
+        description: 'This document has a failed cached exam pack. Upload a new version or ask an admin to clear the cache before retrying.',
+      });
+      return;
+    }
+    await triggerGeneration();
+    void practiceOutput.refresh();
   };
   
   const handleAnswerSelect = (questionIndex: number, answer: string) => {
@@ -519,9 +568,15 @@ function PracticePageContent() {
               )}
             </SelectContent>
           </Select>
-          <Button onClick={() => triggerGeneration()} disabled={isGenerating || !selectedDocId || !isOnline || upgradeBlocked || !selectedDocReady}>
-            {isGenerating ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <SquarePen className="mr-2 h-4 w-4" />}
-            <span>{questions.length > 0 && !isGenerating ? 'Restart Exam' : 'Generate Exam'}</span>
+          <Button
+            onClick={() => void handleGenerateClick()}
+            disabled={isGenerating || !selectedDocId || !isOnline || upgradeBlocked || !selectedDocReady || practiceOutput.status === 'loading' || practiceOutput.status === 'running'}
+            aria-disabled={practiceOutput.status === 'ready' || practiceOutput.status === 'running' || practiceOutput.status === 'loading'}
+          >
+            {isGenerating || practiceOutput.status === 'loading' || practiceOutput.status === 'running'
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <SquarePen className="mr-2 h-4 w-4" />}
+            <span>{practiceOutput.status === 'ready' || questionPack.length > 0 ? 'Already Generated' : 'Generate Exam'}</span>
           </Button>
         </div>
       </div>
@@ -557,6 +612,11 @@ function PracticePageContent() {
           Generated exams are cached until the source document expires.
         </span>
       </div>
+      {practiceOutput.status === 'ready' && (
+        <div className="text-center text-xs text-muted-foreground">
+          Saved exam pack loaded. Retrying questions does not regenerate or spend extra tokens.
+        </div>
+      )}
     </main>
   );
 }

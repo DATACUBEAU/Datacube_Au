@@ -39,6 +39,7 @@ import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
+import { useFeatureOutput } from '@/hooks/api/use-feature-output';
 
 // Lazy-load the animation components to keep the initial bundle small
 const AnimatedText = dynamic(() => import('@/components/animated-text'), {
@@ -124,6 +125,11 @@ function KnowledgePageContent() {
     return apiDocuments.find(d => d.id === selectedDocId) || null;
   }, [apiDocuments, selectedDocId]);
   const selectedDocReady = selectedDoc?.status === 'completed';
+  const knowledgeOutput = useFeatureOutput<GenerateKnowledgeOutput>({
+    feature: 'knowledge_hub',
+    documentId: selectedDocId,
+    enabled: Boolean(selectedDocId && user && session?.access_token),
+  });
 
   const attachedFileCount = useMemo(() => {
     if (!selectedDocId) return 0;
@@ -156,6 +162,11 @@ function KnowledgePageContent() {
     clearKnowledgeAndPredictions,
     setKnowledgeData,
   } = useStore();
+
+  useEffect(() => {
+    if (knowledgeOutput.status !== 'ready' || !knowledgeOutput.output) return;
+    setKnowledgeData(knowledgeOutput.output);
+  }, [knowledgeOutput.output, knowledgeOutput.status, setKnowledgeData]);
 
   const handleDocSelectionChange = (docId: string) => {
     setSelectedDocId(docId);
@@ -248,6 +259,37 @@ function KnowledgePageContent() {
         description: 'Could not fetch document content to start generation.',
       });
     }
+  };
+
+  const showGeneratedExplanation = useCallback(() => {
+    toast({
+      title: 'Already generated',
+      description: 'This Knowledge Hub output is already saved for this document. Upload a new version or ask an admin to clear the cache to regenerate.',
+    });
+  }, [toast]);
+
+  const handleGenerateClick = async () => {
+    if (knowledgeOutput.status === 'ready') {
+      showGeneratedExplanation();
+      return;
+    }
+    if (knowledgeOutput.status === 'running' || knowledgeOutput.status === 'loading') {
+      toast({
+        title: 'Generating in progress',
+        description: 'Knowledge Hub is already generating for this document.',
+      });
+      return;
+    }
+    if (knowledgeOutput.status === 'failed') {
+      toast({
+        variant: 'destructive',
+        title: 'Generation locked',
+        description: 'This document has a failed cached output. Upload a new version or ask an admin to clear the cache before retrying.',
+      });
+      return;
+    }
+    await triggerGeneration();
+    void knowledgeOutput.refresh();
   };
   
   // Animation variants
@@ -545,22 +587,28 @@ function KnowledgePageContent() {
           )}
 
           <Button 
-            onClick={triggerGeneration} 
-            disabled={!selectedDocId || isGeneratingKnowledge || !isOnline || !selectedDocReady}
+            onClick={() => void handleGenerateClick()}
+            disabled={!selectedDocId || isGeneratingKnowledge || !isOnline || !selectedDocReady || knowledgeOutput.status === 'loading' || knowledgeOutput.status === 'running'}
+            aria-disabled={knowledgeOutput.status === 'ready' || knowledgeOutput.status === 'running' || knowledgeOutput.status === 'loading'}
             className="shrink-0 gap-2 shadow-md hover:shadow-lg transition-all"
           >
-            {isGeneratingKnowledge ? (
+            {isGeneratingKnowledge || knowledgeOutput.status === 'loading' || knowledgeOutput.status === 'running' ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
               <Wand2 className="h-4 w-4" aria-hidden="true" />
             )}
-            Generate
+            {knowledgeOutput.status === 'ready' ? 'Already Generated' : 'Generate'}
           </Button>
         </div>
       </div>
         <div className="mt-4 flex-1">
           {renderContent()}
         </div>
+        {knowledgeOutput.status === 'ready' && (
+          <div className="mt-2 text-center text-xs text-muted-foreground">
+            Saved output loaded. Regeneration is locked until the document version changes or an admin clears the cache.
+          </div>
+        )}
         <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
           <Info className="h-3 w-3" />
           <span>

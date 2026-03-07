@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
 import { useMemo } from "react";
 import { Sparkles, CheckCircle2 } from "lucide-react";
-import { getUpgradeBenefits } from "@/lib/tier/policy";
 import { useFeatureFlags } from "@/components/feature-flag-provider";
 import { useEffectiveEntitlements } from "@/hooks/use-effective-entitlements";
+import { usePlanCatalog } from "@/hooks/api/use-plan-catalog";
 import {
   buildPromoCopy,
   formatPromoEndsAtLabel,
@@ -21,6 +21,7 @@ export function UpgradeModal() {
   const setOpen = useStore((state) => state.setUpgradeModalOpen);
   const { records: featureFlagRecords } = useFeatureFlags();
   const { entitlements } = useEffectiveEntitlements();
+  const { plans, loading: loadingPlanCatalog } = usePlanCatalog();
   const router = useRouter();
   const rawContext = (context || {}) as any;
   const {
@@ -34,7 +35,13 @@ export function UpgradeModal() {
     upgradeUrl,
   } = rawContext;
   const limitKey = String(key || limit || "general").trim();
-  const benefits = getUpgradeBenefits({ limitKey });
+  const proPlan = useMemo(() => plans.find((entry) => entry.plan === 'pro') || null, [plans]);
+  const benefits = useMemo(() => {
+    if (proPlan?.metadata?.feature_bullets?.length) {
+      return proPlan.metadata.feature_bullets;
+    }
+    return limitKey ? [`Higher ${limitKey.replace(/_/g, ' ')}`, 'More storage', 'Priority processing', 'Advanced study tools'] : [];
+  }, [limitKey, proPlan]);
   const promoActive = entitlements.promoActive;
   const promoContent = useMemo(
     () => normalizePromoContentConfig(featureFlagRecords.promo_content?.config || {}),
@@ -72,7 +79,7 @@ export function UpgradeModal() {
         {promoActive ? (
           <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-xs">
             <p className="font-semibold">{promoCopy.intro}</p>
-            <p>{promoCopy.pricing}</p>
+            <p>{proPlan?.metadata?.price_display ? `Pricing after promo: ${proPlan.metadata.price_display}` : promoCopy.pricing}</p>
             <p>{promoCopy.ending}</p>
           </div>
         ) : null}
@@ -99,7 +106,9 @@ export function UpgradeModal() {
 
         <div className="rounded-lg border p-3 text-sm">
           <div className="font-medium">Pro pricing</div>
-          <div className="text-muted-foreground">NGN 4,500/month or NGN 1,500/week</div>
+          <div className="text-muted-foreground">
+            {loadingPlanCatalog ? 'Loading live pricing...' : (proPlan?.metadata?.price_display || 'Pricing unavailable')}
+          </div>
         </div>
 
         <DialogFooter className="sm:justify-center flex-col sm:flex-row gap-2">

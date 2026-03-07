@@ -109,8 +109,9 @@ function sanitizeAnswer(text: any) {
   const withoutTags = raw.replace(/\[(?![\d, ]+\])[^\]]+\]/g, ''); 
   // Remove *** separators if they are standalone lines
   const withoutSeparators = withoutTags.replace(/^\s*\*\*\*\s*$/gm, '');
+  const withoutEmptyBold = withoutSeparators.replace(/\*{4,}/g, '');
   
-  const withoutSourceLines = withoutSeparators
+  const withoutSourceLines = withoutEmptyBold
     .split('\n')
     .filter((line) => !/^\s*source:\s*web\s*lookup\b/i.test(line))
     .join('\n');
@@ -455,8 +456,8 @@ export default function GlobalChatPage() {
                   <div className="bg-primary/5 p-4 rounded-full mb-4">
                       <Globe className="h-10 w-10 text-primary" />
                   </div>
-                  <h3 className="font-headline text-xl font-semibold text-foreground mb-2">Welcome to Global Chat</h3>
-                  <p className="max-w-md">Ask me anything about current events, general knowledge, or complex topics. I can search the web to find the latest information for you.</p>
+                  <h3 className="font-headline text-xl font-semibold text-foreground mb-2">Welcome to AU Global Assistant</h3>
+                  <p className="max-w-md">Use this as the lightweight brain box for Datacube AU: general questions, app navigation, study strategy, and compact answers across the whole system.</p>
                 </div>
               )}
 
@@ -579,7 +580,7 @@ export default function GlobalChatPage() {
                     ? "Offline mode"
                     : !session?.access_token
                       ? "Sign in required"
-                      : "Ask Global Assistant..."
+                      : "Ask AU Global Assistant..."
                 }
                 className="flex-1 resize-none rounded-full border bg-secondary p-3 px-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
                 value={input}

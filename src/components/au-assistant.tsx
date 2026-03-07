@@ -16,33 +16,49 @@ interface Step {
 const TOUR_STEPS: Record<string, Step> = {
   '/dashboard': {
     title: 'Welcome to Dashboard',
-    content: 'This is your central hub. You can access all your study tools from here. Start by uploading a document!',
+    content: 'This is your control center. Start with Documents, then move into AU Chat, Knowledge Hub, Predictions, Practice, Global Assistant, and Settings as you study.',
   },
   '/dashboard/documents': {
     title: 'Document Management',
-    content: 'Upload your textbooks, notes, and slides here. AU will analyze them to create your knowledge base.',
+    content: 'Upload textbooks, notes, slides, and question papers here. Document versions drive chat grounding, cached feature outputs, storage limits, and practice attempts.',
   },
   '/dashboard/chat': {
     title: 'AU Chat',
-    content: 'Ask questions about your documents. AU uses your uploaded content to give accurate, cited answers.',
+    content: 'This is document-grounded chat. Ask about the selected material and AU answers from your uploaded content first, with retrieval and usage limits enforced server-side.',
+  },
+  '/dashboard/global-chat': {
+    title: 'AU Global Assistant',
+    content: 'Use this for app-wide help, general reasoning, and broader questions that are not limited to one document. Keep document-specific questions in AU Chat for grounded answers.',
   },
   '/dashboard/knowledge': {
-    title: 'Knowledge Graph',
-    content: 'Visualize how concepts connect. Great for understanding complex relationships in your subject.',
+    title: 'Knowledge Hub',
+    content: 'Generate summaries, key points, concept maps, topic relationships, and study roadmaps. Each document version generates once and then reuses the saved output.',
   },
   '/dashboard/predictions': {
     title: 'Exam Predictions',
-    content: 'See what questions AU thinks are likely to appear on your exam based on your materials.',
+    content: 'This Pro feature combines your past questions and textbook to produce one saved exam briefing per document version. It will not regenerate unless the source version changes.',
   },
   '/dashboard/practice': {
     title: 'Practice Exams',
-    content: 'Test yourself with generated questions. Get instant feedback and scoring.',
+    content: 'Generate one compact question pack per document version, then retry it without extra token cost. Attempts are saved separately from generation.',
+  },
+  '/dashboard/messages': {
+    title: 'Messages',
+    content: 'Use Messages for notifications, alerts, and system updates tied to your account activity.',
+  },
+  '/dashboard/settings': {
+    title: 'Settings',
+    content: 'Manage your preferences, assistant behavior, onboarding toggle, and account-level controls here.',
+  },
+  '/dashboard/settings/subscription': {
+    title: 'Subscription',
+    content: 'Review your current plan, billing status, and feature access. Limits and Pro-only capabilities are enforced from here across the system.',
   },
 };
 
 const DEFAULT_STEP: Step = {
   title: 'AU Onboarding Assistant',
-  content: 'Follow along as you explore. I’ll show tips for each page as you navigate the dashboard.',
+  content: 'Follow along as you explore the dashboard. I will explain what each page does, what is cached, and which features are document-grounded or Pro-only.',
 };
 
 const LONG_PRESS_MS = 650;
@@ -67,10 +83,8 @@ export function AUAssistant() {
   useEffect(() => {
     if (!user) return;
 
-    // Load initial state
     const settingsKey = `au_assistant_settings_${user.id}`;
     const savedSetting = localStorage.getItem(settingsKey);
-    // Default to enabled if not set
     setIsVisible(savedSetting !== 'disabled');
 
     const positionKey = `au_assistant_position_${user.id}`;
@@ -80,7 +94,6 @@ export function AUAssistant() {
       if (Number.isFinite(parsed)) setOffsetY(parsed);
     }
 
-    // Listen for setting changes
     const handleSettingsUpdate = (e: CustomEvent) => {
       setIsVisible(e.detail.enabled);
     };
@@ -94,7 +107,6 @@ export function AUAssistant() {
   useEffect(() => {
     if (TOUR_STEPS[pathname]) {
       setCurrentStep(TOUR_STEPS[pathname]);
-      // Auto-expand on new page if visible
       if (isVisible) setIsExpanded(true);
     } else {
       setCurrentStep(null);
@@ -222,7 +234,6 @@ export function AUAssistant() {
         className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none"
         style={{ transform: `translateY(${offsetY}px)` }}
       >
-        {/* Chat Bubble */}
         {isExpanded && (
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.9 }}
@@ -252,7 +263,6 @@ export function AUAssistant() {
           </motion.div>
         )}
 
-        {/* Avatar Trigger */}
         <motion.button
           ref={buttonRef}
           initial={{ scale: 0 }}
