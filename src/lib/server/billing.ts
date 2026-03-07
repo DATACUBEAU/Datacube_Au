@@ -14,6 +14,7 @@ import {
 } from '@/lib/server/entitlements';
 import { disablePaystackSubscription } from '@/lib/server/paystack';
 import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
+import { applyPlanTransition } from '@/lib/server/plan-sync';
 
 export type BillingInterval = 'weekly' | 'monthly';
 export type PaymentMethod = 'subscription' | 'transfer';
@@ -260,24 +261,6 @@ async function writeEntitlementAudit(
   });
 }
 
-async function setProfileTier(
-  supabase: SupabaseClient,
-  userId: string,
-  tier: 'free' | 'pro',
-  expiresAt: string | null
-) {
-  await supabase
-    .from('au_user_profiles')
-    .upsert(
-      {
-        user_id: userId,
-        tier,
-        tier_expires_at: expiresAt,
-      },
-      { onConflict: 'user_id' }
-    );
-}
-
 async function grantProEntitlement(input: {
   supabase: SupabaseClient;
   userId: string;
@@ -286,7 +269,7 @@ async function grantProEntitlement(input: {
   reason: string;
   traceId: string;
   metadata?: Record<string, unknown>;
-}): Promise<{ startsAt: string; endsAt: string }> {
+}): Promise<{ grantId: string; startsAt: string; endsAt: string }> {
   const now = new Date();
   const nowIso = now.toISOString();
   const { supabase, userId, interval, source, reason, traceId } = input;
@@ -316,16 +299,20 @@ async function grantProEntitlement(input: {
     : null;
   const after = { active_starts_at: startsAt, active_ends_at: endsAt, interval };
 
-  const { error: insertErr } = await supabase.from('entitlement_grants').insert({
-    user_id: userId,
-    entitlement: 'pro',
-    source,
-    starts_at: startsAt,
-    ends_at: endsAt,
-    status: 'active',
-    reason,
-    metadata: input.metadata || {},
-  });
+  const { data: grantRow, error: insertErr } = await supabase
+    .from('entitlement_grants')
+    .insert({
+      user_id: userId,
+      entitlement: 'pro',
+      source,
+      starts_at: startsAt,
+      ends_at: endsAt,
+      status: 'active',
+      reason,
+      metadata: input.metadata || {},
+    })
+    .select('id')
+    .single();
   if (insertErr) throw insertErr;
 
   await writeEntitlementAudit(supabase, {
@@ -337,8 +324,7 @@ async function grantProEntitlement(input: {
     traceId,
   });
 
-  await setProfileTier(supabase, userId, 'pro', endsAt);
-  return { startsAt, endsAt };
+  return { grantId: String((grantRow as any)?.id || ''), startsAt, endsAt };
 }
 
 async function resolveUserIdFromEmail(
@@ -581,10 +567,19 @@ export async function getBillingStatus(
   const currentTier = String((profileRow as any)?.tier || '').toLowerCase();
   const entitlement = await getProEntitlementStatus(supabase, userId);
 
-  if (currentTier !== 'admin' && entitlement.hasPro) {
-    await setProfileTier(supabase, userId, 'pro', entitlement.endsAt);
-  } else if (currentTier !== 'admin' && !entitlement.hasPro) {
-    await setProfileTier(supabase, userId, 'free', null);
+  if (currentTier !== 'admin') {
+    await applyPlanTransition(supabase, {
+      userId,
+      targetPlan: currentTier === 'premium' ? 'premium' : (entitlement.hasPro ? 'pro' : 'free'),
+      entitlementSource: currentTier === 'premium' && !entitlement.hasPro ? 'paid' : entitlement.source,
+      entitlementEndsAt: currentTier === 'premium' && !entitlement.hasPro ? null : entitlement.endsAt,
+      transitionKind: 'sync',
+      source: 'billing_status',
+      reason: 'status_sync',
+      metadata: {
+        billing_enabled: billingEnabled,
+      },
+    });
   }
 
   const { data: subscriptions, error: subError } = await supabase
@@ -804,6 +799,45 @@ async function handleSuccessfulPayment(input: {
     },
   });
 
+  try {
+    await applyPlanTransition(supabase, {
+      userId,
+      targetPlan: 'pro',
+      entitlementSource: 'paid',
+      entitlementEndsAt: grant.endsAt,
+      source: `${gateway}:${chargeMethod}`,
+      reason: `charge.success:${reference}`,
+      traceId,
+      metadata: {
+        reference,
+        plan_key: planKey,
+        gateway,
+        transaction_id: transactionId,
+      },
+      subscription: chargeMethod === 'subscription'
+        ? {
+            planKey: plan.plan_key,
+            status: 'active',
+            paystackSubscriptionCode: gateway === 'paystack' ? (verified.subscriptionCode || null) : null,
+            paystackEmailToken: gateway === 'paystack' ? (verified.subscriptionEmailToken || null) : null,
+            startsAt: grant.startsAt,
+            endsAt: grant.endsAt,
+            cancelAtPeriodEnd: false,
+            metadata: {
+              latest_reference: reference,
+              gateway,
+              transaction_id: transactionId,
+            },
+          }
+        : null,
+    });
+  } catch (error) {
+    if (grant.grantId) {
+      await supabase.from('entitlement_grants').delete().eq('id', grant.grantId);
+    }
+    throw error;
+  }
+
   await upsertSubscriptionMirror({
     supabase,
     userId,
@@ -813,27 +847,6 @@ async function handleSuccessfulPayment(input: {
     transactionId,
     createdAt: verified.paidAt || new Date().toISOString(),
   });
-
-  if (chargeMethod === 'subscription') {
-    await supabase.from('billing_subscriptions').upsert(
-      {
-        user_id: userId,
-        plan_key: plan.plan_key,
-        status: 'active',
-        paystack_subscription_code: gateway === 'paystack' ? (verified.subscriptionCode || null) : null,
-        paystack_email_token: gateway === 'paystack' ? (verified.subscriptionEmailToken || null) : null,
-        starts_at: grant.startsAt,
-        ends_at: grant.endsAt,
-        cancel_at_period_end: false,
-        metadata: {
-          latest_reference: reference,
-          gateway,
-          transaction_id: transactionId,
-        },
-      },
-      { onConflict: 'user_id' }
-    );
-  }
 }
 
 async function processSuccessfulCharge(input: {
@@ -1161,7 +1174,19 @@ export async function reconcileBilling(
       if (!userId) continue;
       const entitlement = await getProEntitlementStatus(supabase, userId);
       if (!entitlement.hasPro) {
-        await setProfileTier(supabase, userId, 'free', null);
+        await applyPlanTransition(supabase, {
+          userId,
+          targetPlan: 'free',
+          entitlementSource: 'none',
+          entitlementEndsAt: null,
+          transitionKind: 'downgrade',
+          source: 'billing_reconcile',
+          reason: 'pro_expired',
+          traceId: `reconcile-downgrade-${userId}`,
+          metadata: {
+            reconciled_at: nowIso,
+          },
+        });
         downgradedUsers += 1;
       }
     }

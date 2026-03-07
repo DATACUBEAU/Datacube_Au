@@ -51,7 +51,7 @@ import {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PROMO_CONTENT_FLAG_KEY = 'promo_content';
 const FALLBACK_PLAN_KEYS = ['free', 'pro', 'premium'] as const;
-const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> = [
+const LIMIT_CAP_FIELDS: Array<{ key: string; label: string; description: string }> = [
   { key: 'max_file_mb', label: 'Max file size (MB)', description: 'Per-file upload size limit.' },
   { key: 'max_uploads_total', label: 'Max uploads total', description: 'Total uploads allowed for the account.' },
   { key: 'max_docs_total', label: 'Max documents total', description: 'Total documents stored for the account.' },
@@ -60,6 +60,8 @@ const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> =
   { key: 'max_tokens_total', label: 'Max tokens total', description: 'Total token budget for AI usage.' },
   { key: 'max_storage_mb', label: 'Max storage (MB)', description: 'Storage cap across all uploaded files.' },
   { key: 'max_jobs_concurrent', label: 'Max concurrent jobs', description: 'Maximum simultaneous ingestion jobs.' },
+];
+const LIMIT_RESET_FIELDS: Array<{ key: string; label: string; description: string }> = [
   { key: 'tokens_reset_every_days', label: 'Tokens reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
   { key: 'chats_reset_every_days', label: 'Chats reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
   { key: 'uploads_reset_every_days', label: 'Uploads reset every N days', description: 'Use `0` to keep uploads lifetime based.' },
@@ -67,6 +69,8 @@ const LIMIT_FIELDS: Array<{ key: string; label: string; description: string }> =
   { key: 'exams_reset_every_days', label: 'Exams reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
   { key: 'storage_reset_every_days', label: 'Storage reset every N days', description: 'Storage usually stays `0` because it is a current cap.' },
 ];
+const LIMIT_FIELDS = [...LIMIT_CAP_FIELDS, ...LIMIT_RESET_FIELDS];
+const LIMIT_CAP_FIELD_KEYS = LIMIT_CAP_FIELDS.map((field) => field.key);
 const LIMIT_FIELD_KEYS = LIMIT_FIELDS.map((field) => field.key);
 const REDUNDANT_FLAG_KEYS = new Set<string>(['paid_mode_enabled']);
 const PLAN_EDITOR_FLAG_KEYS = [
@@ -92,9 +96,26 @@ type PlanMetadataDraft = {
   cta_label: string;
   cta_href: string;
   sort_order: string;
+  retention_days: string;
+  expiration_days: string;
 };
 
 type PlanMetadataDraftByPlan = Record<string, PlanMetadataDraft>;
+
+function createEmptyPlanLimitRow(): Record<string, number | null> {
+  return Object.fromEntries(LIMIT_FIELD_KEYS.map((key) => [key, null])) as Record<string, number | null>;
+}
+
+function mergePlanLimitRows(
+  current?: Record<string, number | null>,
+  fallback?: Record<string, number | null>,
+): Record<string, number | null> {
+  const next = createEmptyPlanLimitRow();
+  for (const key of LIMIT_FIELD_KEYS) {
+    next[key] = current?.[key] ?? fallback?.[key] ?? null;
+  }
+  return next;
+}
 
 function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
   const defaults = {
@@ -112,6 +133,8 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
       cta_label: 'Current plan',
       cta_href: '/dashboard',
       sort_order: '0',
+      retention_days: '14',
+      expiration_days: '14',
     },
     pro: {
       label: 'Pro',
@@ -127,6 +150,8 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
       cta_label: 'Upgrade now',
       cta_href: '/dashboard/settings/subscription',
       sort_order: '1',
+      retention_days: '30',
+      expiration_days: '30',
     },
     premium: {
       label: 'Premium',
@@ -142,6 +167,8 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
       cta_label: 'Contact admin',
       cta_href: '/dashboard/settings/subscription',
       sort_order: '2',
+      retention_days: '30',
+      expiration_days: '30',
     },
   } as const;
 
@@ -170,6 +197,8 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
     cta_label: toStringValue(raw?.cta_label, fallback.cta_label),
     cta_href: toStringValue(raw?.cta_href, fallback.cta_href),
     sort_order: toStringValue(raw?.sort_order, fallback.sort_order),
+    retention_days: toStringValue(raw?.retention_days, fallback.retention_days),
+    expiration_days: toStringValue(raw?.expiration_days, fallback.expiration_days),
   };
 }
 
@@ -240,22 +269,22 @@ const AdminBilling = ({ token }: { token: string }) => {
       if (planLimitsRes.ok) {
         const payload = (planLimitsRes as any).data || (planLimitsRes as any);
         const parsed = parsePlanLimitsPayload(payload, LIMIT_FIELD_KEYS);
-        const fallbackLimitsByPlan: PlanLimitsByPlan = {};
-        for (const plan of FALLBACK_PLAN_KEYS) {
-          fallbackLimitsByPlan[plan] = parsed.limitsByPlan[plan] || Object.fromEntries(
-            LIMIT_FIELD_KEYS.map((key) => [key, null]),
-          );
-        }
-        const mergedLimitsByPlan = {
-          ...fallbackLimitsByPlan,
-          ...parsed.limitsByPlan,
-        };
-        const planKeys = orderPlanKeys(
-          Object.keys(mergedLimitsByPlan).length > 0
-            ? Object.keys(mergedLimitsByPlan)
-            : [...FALLBACK_PLAN_KEYS],
+        const parsedDefaults = parsePlanLimitsPayload(
+          { limitsByPlan: payload?.defaultLimitsByPlan || {} },
+          LIMIT_FIELD_KEYS,
         );
-
+        const planKeys = orderPlanKeys([
+          ...FALLBACK_PLAN_KEYS,
+          ...parsed.planKeys,
+          ...parsedDefaults.planKeys,
+        ]);
+        const mergedLimitsByPlan = planKeys.reduce((acc, plan) => {
+          acc[plan] = mergePlanLimitRows(
+            parsed.limitsByPlan[plan],
+            parsedDefaults.limitsByPlan[plan],
+          );
+          return acc;
+        }, {} as PlanLimitsByPlan);
         if (!opts?.silent || !limitDirtyRef.current) {
           setPlanLimitsByPlan(mergedLimitsByPlan);
           setPlanLimitDraftByPlan(toPlanLimitDraftByPlan(mergedLimitsByPlan, LIMIT_FIELD_KEYS));
@@ -441,7 +470,7 @@ const AdminBilling = ({ token }: { token: string }) => {
   }, [selectedPlan]);
 
   const saveSelectedPlanLimits = useCallback(async () => {
-    const validation = validatePlanLimitDraft(planLimitDraftByPlan, selectedPlan, LIMIT_FIELD_KEYS);
+    const validation = validatePlanLimitDraft(planLimitDraftByPlan, selectedPlan, LIMIT_CAP_FIELD_KEYS);
     if (!validation.ok) {
       toast({
         title: 'Validation failed',
@@ -560,6 +589,8 @@ const AdminBilling = ({ token }: { token: string }) => {
       weekly_amount_ngn: currentDraft.weekly_amount_ngn.trim(),
       weekly_compare_at_ngn: currentDraft.weekly_compare_at_ngn.trim(),
       sort_order: currentDraft.sort_order.trim(),
+      retention_days: currentDraft.retention_days.trim(),
+      expiration_days: currentDraft.expiration_days.trim(),
       feature_bullets: currentDraft.feature_bullets
         .split(/\r?\n/)
         .map((entry) => entry.trim())
@@ -932,7 +963,7 @@ const AdminBilling = ({ token }: { token: string }) => {
                         <Card>
                             <CardHeader>
                                 <CardTitle>Limits & Usage Caps</CardTitle>
-                                <CardDescription>Edit numeric caps and reset windows. Values load from the live plan tables and apply immediately after save.</CardDescription>
+                                <CardDescription>Edit fixed numeric plan caps. Values load from the live plan tables and apply immediately after save.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
                               <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -960,35 +991,38 @@ const AdminBilling = ({ token }: { token: string }) => {
                               </div>
 
                               {planLimitDraftByPlan[selectedPlan] ? (
-                                <div className="grid gap-4 md:grid-cols-2">
-                                  {LIMIT_FIELDS.map((field) => {
-                                    const value = String(planLimitDraftByPlan[selectedPlan]?.[field.key] ?? '');
-                                    return (
-                                      <div key={field.key} className="rounded-md border p-3 space-y-2">
-                                        <div className="flex items-center justify-between gap-2">
+                                <>
+                                  <div className="grid gap-4 md:grid-cols-2">
+                                    {LIMIT_CAP_FIELDS.map((field) => {
+                                      const value = String(planLimitDraftByPlan[selectedPlan]?.[field.key] ?? '');
+                                      return (
+                                        <div key={field.key} className="rounded-md border p-3 space-y-2">
                                           <div>
                                             <Label>{field.label}</Label>
                                             <p className="text-xs text-muted-foreground">{field.description}</p>
                                           </div>
-                                          <span className="text-xs font-mono text-muted-foreground">
-                                            {value === '' ? 'Loaded' : value}
-                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            <Input
+                                              type="number"
+                                              min={0}
+                                              step={1}
+                                              inputMode="numeric"
+                                              value={value}
+                                              onChange={(e) => updateSelectedPlanLimit(field.key, e.target.value)}
+                                              placeholder="Enter cap"
+                                            />
+                                          </div>
+                                          <p className="text-[11px] text-muted-foreground">
+                                            Whole numbers only. Use `0` to fully block this action.
+                                          </p>
                                         </div>
-                                        <div className="flex items-center gap-2">
-                                          <Input
-                                            inputMode="numeric"
-                                            value={value}
-                                            onChange={(e) => updateSelectedPlanLimit(field.key, e.target.value)}
-                                            placeholder="Enter cap"
-                                          />
-                                        </div>
-                                        <p className="text-[11px] text-muted-foreground">
-                                          Whole numbers only. Use `0` only when you intentionally want to block the action or disable resets.
-                                        </p>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                                    Reset windows stay on their saved values. Use <span className="font-medium text-foreground">Reset To Defaults</span> if you need to restore the full plan policy.
+                                  </div>
+                                </>
                               ) : (
                                 <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
                                   Loading saved limits for {formatPlanLabel(selectedPlan)}.
@@ -1063,6 +1097,14 @@ const AdminBilling = ({ token }: { token: string }) => {
                                     <div className="space-y-2">
                                       <Label>Sort Order</Label>
                                       <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].sort_order} onChange={(e) => updateSelectedPlanMetadata('sort_order', sanitizeLimitInput(e.target.value))} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Retention Days</Label>
+                                      <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].retention_days} onChange={(e) => updateSelectedPlanMetadata('retention_days', sanitizeLimitInput(e.target.value))} />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Expiration Days</Label>
+                                      <Input inputMode="numeric" value={planMetadataDraftByPlan[selectedPlan].expiration_days} onChange={(e) => updateSelectedPlanMetadata('expiration_days', sanitizeLimitInput(e.target.value))} />
                                     </div>
                                     <div className="space-y-2 md:col-span-2">
                                       <Label>Feature Bullets</Label>

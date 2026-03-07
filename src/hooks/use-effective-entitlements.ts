@@ -7,6 +7,7 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { supabase } from '@/lib/supabase-client/client';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { FREE_PLAN_EXPIRATION_DAYS } from '@/lib/plans/subscription-policy';
 
 export type EffectiveEntitlements = {
   userId: string | null;
@@ -22,6 +23,7 @@ export type EffectiveEntitlements = {
   promoContentConfig: Record<string, unknown>;
   promoEndsAtUtc: string | null;
   promoEndsAtLagos: string | null;
+  retentionDays: number;
   asOf: string | null;
   source: string;
 };
@@ -46,6 +48,7 @@ const FAIL_CLOSED_ENTITLEMENTS: EffectiveEntitlements = {
   promoContentConfig: {},
   promoEndsAtUtc: null,
   promoEndsAtLagos: null,
+  retentionDays: FREE_PLAN_EXPIRATION_DAYS,
   asOf: null,
   source: 'fail_closed',
 };
@@ -101,6 +104,7 @@ function normalizeEntitlements(payload: unknown, fallbackUserId: string | null):
     promoContentConfig: asRecord(row.promoContentConfig),
     promoEndsAtUtc: typeof row.promoEndsAtUtc === 'string' ? row.promoEndsAtUtc : null,
     promoEndsAtLagos: typeof row.promoEndsAtLagos === 'string' ? row.promoEndsAtLagos : null,
+    retentionDays: Number.isFinite(Number(row.retentionDays)) ? Math.max(1, Math.floor(Number(row.retentionDays))) : FREE_PLAN_EXPIRATION_DAYS,
     asOf: typeof row.asOf === 'string' ? row.asOf : null,
     source: typeof row.source === 'string' && row.source.trim() ? row.source : 'api',
   };
@@ -268,6 +272,11 @@ export function useEffectiveEntitlements() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'entitlement_grants', filter: `user_id=eq.${user.id}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_plan_transitions', filter: `user_id=eq.${user.id}` },
         scheduleRefresh,
       )
       .subscribe((status) => {

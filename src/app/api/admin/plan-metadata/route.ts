@@ -61,6 +61,8 @@ function normalizeMetadata(plan: EffectivePlanCode, raw: unknown): PlanMetadata 
     cta_label: asText(source.cta_label ?? source.ctaLabel, defaults.cta_label),
     cta_href: asText(source.cta_href ?? source.ctaHref, defaults.cta_href),
     sort_order: asInt(source.sort_order ?? source.sortOrder, defaults.sort_order) ?? defaults.sort_order,
+    retention_days: asInt(source.retention_days ?? source.retentionDays, defaults.retention_days) ?? defaults.retention_days,
+    expiration_days: asInt(source.expiration_days ?? source.expirationDays, defaults.expiration_days) ?? defaults.expiration_days,
   };
 }
 

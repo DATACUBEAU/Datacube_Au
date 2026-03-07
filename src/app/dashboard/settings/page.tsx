@@ -30,6 +30,7 @@ import { supabase } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
+import { getRetentionPolicyNotice } from '@/lib/plans/subscription-policy';
 
 import {
   Dialog,
@@ -54,6 +55,7 @@ import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { SettingsPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 
 export default function SettingsPage() {
+  const retentionPolicy = getRetentionPolicyNotice();
   const [user, , isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
@@ -276,7 +278,7 @@ export default function SettingsPage() {
             Policy Update: Data Security Notice
           </AlertTitle>
           <AlertDescription className="text-red-700 dark:text-red-300">
-            If you stay signed out for <strong>7 days</strong>, uploaded documents are deleted. If inactive for <strong>14 days</strong>, uploaded documents and derived chunks/embeddings are deleted.
+            If you stay signed out for <strong>{retentionPolicy.signedOutDays} days</strong>, uploaded documents are deleted. Free and Promo documents expire after <strong>{retentionPolicy.freeDays} days</strong>. Paid Pro documents expire after <strong>{retentionPolicy.paidProDays} days</strong>.
           </AlertDescription>
         </Alert>
       </div>

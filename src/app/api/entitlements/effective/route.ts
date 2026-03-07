@@ -3,6 +3,7 @@ import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 import { getBillingStatus } from '@/lib/server/billing';
 import { getFeatureFlagsSnapshot } from '@/lib/server/feature-flags';
+import { resolvePlanExpirationDays } from '@/lib/plans/subscription-policy';
 
 export const runtime = 'nodejs';
 
@@ -31,17 +32,19 @@ function normalizePlan(raw: unknown): 'free' | 'pro' | 'promo_pro' | 'admin' {
 
 function buildFromRpcPayload(payload: unknown, userId: string, requestId: string) {
   const row = asRecord(payload);
+  const plan = normalizePlan(row.plan);
+  const entitlementSource = (() => {
+    const source = String(row.entitlement_source || '').trim().toLowerCase();
+    if (source === 'paid') return 'paid';
+    if (source === 'promo') return 'promo';
+    return 'none';
+  })();
   return {
     requestId,
     userId: String(row.user_id || userId),
-    plan: normalizePlan(row.plan),
+    plan,
     hasPro: Boolean(row.has_pro),
-    entitlementSource: (() => {
-      const source = String(row.entitlement_source || '').trim().toLowerCase();
-      if (source === 'paid') return 'paid';
-      if (source === 'promo') return 'promo';
-      return 'none';
-    })(),
+    entitlementSource,
     entitlementEndsAt: typeof row.entitlement_ends_at === 'string' ? row.entitlement_ends_at : null,
     billingEnabled: Boolean(row.billing_enabled),
     promoEnabled: Boolean(row.promo_enabled),
@@ -51,6 +54,10 @@ function buildFromRpcPayload(payload: unknown, userId: string, requestId: string
     promoContentConfig: asRecord(row.promo_content_config),
     promoEndsAtUtc: typeof row.promo_ends_at_utc === 'string' ? row.promo_ends_at_utc : null,
     promoEndsAtLagos: typeof row.promo_ends_at_lagos === 'string' ? row.promo_ends_at_lagos : null,
+    retentionDays: resolvePlanExpirationDays({
+      plan,
+      entitlementSource,
+    }),
     asOf: typeof row.as_of === 'string' ? row.as_of : new Date().toISOString(),
     source: 'rpc',
   };
@@ -66,11 +73,12 @@ async function buildFallbackPayload(userId: string, requestId: string) {
   const promoActive = Boolean((billing as any)?.promo?.active);
   const hasPaidEntitlement = source === 'paid';
   const hasPromoEntitlement = source === 'promo' || promoActive;
+  const plan = hasPromoEntitlement ? 'promo_pro' : hasPaidEntitlement ? 'pro' : 'free';
 
   return {
     requestId,
     userId,
-    plan: hasPromoEntitlement ? 'promo_pro' : hasPaidEntitlement ? 'pro' : 'free',
+    plan,
     hasPro: hasPaidEntitlement || hasPromoEntitlement,
     entitlementSource: source === 'paid' ? 'paid' : source === 'promo' ? 'promo' : 'none',
     entitlementEndsAt:
@@ -85,6 +93,10 @@ async function buildFallbackPayload(userId: string, requestId: string) {
       typeof (billing as any)?.promo?.ends_at_utc === 'string' ? (billing as any).promo.ends_at_utc : null,
     promoEndsAtLagos:
       typeof (billing as any)?.promo?.ends_at_lagos === 'string' ? (billing as any).promo.ends_at_lagos : null,
+    retentionDays: resolvePlanExpirationDays({
+      plan,
+      entitlementSource: source,
+    }),
     asOf: new Date().toISOString(),
     source: 'billing_status_fallback',
   };

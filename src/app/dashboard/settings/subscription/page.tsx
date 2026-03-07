@@ -21,11 +21,18 @@ import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useLimits } from '@/components/providers/limits-provider';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
+import { supabase } from '@/lib/supabase-client/client';
 import {
   buildPromoCopy,
   formatPromoEndsAtLabel,
   normalizePromoContentConfig,
 } from '@/lib/conex/promo-content';
+import {
+  FREE_PLAN_EXPIRATION_DAYS,
+  PAID_PRO_PLAN_EXPIRATION_DAYS,
+  formatExpirationWindowLabel,
+  resolvePlanExpirationDays,
+} from '@/lib/plans/subscription-policy';
 
 const EMPTY_PRICING = {
   weekly: { amount: 0, compare_at: 0, label: '' },
@@ -37,6 +44,10 @@ const BILLING_STATUS_SOURCE = 'billing-status';
 const BILLING_CACHE_SCHEMA = 1;
 const BILLING_CACHE_TTL_MS = 1000 * 60 * 30;
 
+function withLeadingFeature(feature: string, features: string[]): string[] {
+  return Array.from(new Set([feature, ...features.filter(Boolean)]));
+}
+
 type PlanCatalogEntry = {
   plan: string;
   metadata: {
@@ -44,6 +55,8 @@ type PlanCatalogEntry = {
     description: string;
     price_display: string;
     feature_bullets: string[];
+    retention_days: number;
+    expiration_days: number;
   };
   pricing: {
     monthly: { amount: number; compare_at: number | null; label: string; plan_key: string | null } | null;
@@ -121,9 +134,14 @@ export default function SubscriptionPage() {
   );
   const freePlanCatalog = catalogByPlan.free || null;
   const proPlanCatalog = catalogByPlan.pro || null;
-  const retentionPolicyLabel = '7-day signed-out cleanup / 14-day inactivity cleanup';
-  const freeRetentionLabel = retentionPolicyLabel;
-  const proRetentionLabel = retentionPolicyLabel;
+  const freeExpirationDays = Number(freePlanCatalog?.metadata?.expiration_days || FREE_PLAN_EXPIRATION_DAYS);
+  const proExpirationDays = Number(proPlanCatalog?.metadata?.expiration_days || PAID_PRO_PLAN_EXPIRATION_DAYS);
+  const freeRetentionLabel = `Document expiration: ${formatExpirationWindowLabel(freeExpirationDays)}`;
+  const proRetentionLabel = `Document expiration: ${formatExpirationWindowLabel(proExpirationDays)}`;
+  const currentExpirationDays = resolvePlanExpirationDays({
+    plan: tier,
+    entitlementSource,
+  });
 
   const billingRequest = useCallback(async <T,>(path: string, init?: RequestInit): Promise<{ data: T; retryAfter: string | null }> => {
       const headers = new Headers(init?.headers || {});
@@ -443,6 +461,33 @@ export default function SubscriptionPage() {
       }
   }, [canAccessBilling, isPromoUnlocked]);
 
+  useEffect(() => {
+      if (!user?.id || !isOnline) return;
+
+      let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+      const scheduleRefresh = () => {
+          if (refreshTimeout) return;
+          refreshTimeout = setTimeout(() => {
+              refreshTimeout = null;
+              void fetchBillingStatus();
+          }, 150);
+      };
+
+      const channel = supabase
+          .channel(`billing-status:${user.id}`)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_subscriptions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'entitlement_grants', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_entitlements', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_profiles', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'au_plan_transitions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
+          .subscribe();
+
+      return () => {
+          if (refreshTimeout) clearTimeout(refreshTimeout);
+          void supabase.removeChannel(channel);
+      };
+  }, [fetchBillingStatus, isOnline, user?.id]);
+
   const handlePaymentCheckout = async (
       planType: 'weekly' | 'monthly',
       methodOverride?: 'subscription' | 'transfer'
@@ -574,8 +619,6 @@ export default function SubscriptionPage() {
     const resetSummary = [
       usageWindows.tokens?.label,
       usageWindows.chats?.label,
-      usageWindows.uploads?.label,
-      usageWindows.exams?.label,
     ].filter(Boolean);
 
     return (
@@ -839,6 +882,9 @@ export default function SubscriptionPage() {
                 <div className="mb-8 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm">
                     <p className="font-semibold">{promoCopy.intro}</p>
                     <p className="text-muted-foreground">{proPlanCatalog?.metadata?.price_display ? `Pricing after promo: ${proPlanCatalog.metadata.price_display}` : promoCopy.pricing}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                        Promo access keeps the {formatExpirationWindowLabel(FREE_PLAN_EXPIRATION_DAYS)} document expiration window.
+                    </p>
                     <p className="mt-1 text-xs text-muted-foreground">{promoCopy.ending}</p>
                 </div>
             ) : null}
@@ -877,6 +923,9 @@ export default function SubscriptionPage() {
                                 <div className="text-2xl font-bold text-foreground mb-4">
                                     {formatDate(expiry || '')}
                                 </div>
+                                <p className="mb-4 text-xs text-muted-foreground">
+                                    Document expiration window: {formatExpirationWindowLabel(currentExpirationDays)}
+                                </p>
                                 {subscription?.status === 'active' ? (
                                     <OfflineGuard>
                                         <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
@@ -1007,11 +1056,13 @@ export default function SubscriptionPage() {
                                     title={freePlanCatalog?.metadata?.label || 'Free'}
                                     price={freePlanCatalog?.metadata?.price_display || 'Loading...'}
                                     period="forever"
-                                    features={freePlanCatalog?.metadata?.feature_bullets?.length ? freePlanCatalog.metadata.feature_bullets : [
+                                    features={withLeadingFeature(
                                         freeRetentionLabel,
-                                        'Core chat',
-                                        'Basic support',
-                                    ]}
+                                        freePlanCatalog?.metadata?.feature_bullets?.length ? freePlanCatalog.metadata.feature_bullets : [
+                                            'Core chat',
+                                            'Basic support',
+                                        ],
+                                    )}
                                     onSelect={() => {}}
                                     disabled={true}
                                 />
@@ -1028,11 +1079,13 @@ export default function SubscriptionPage() {
                                         loading={loadingPlan === 'monthly'}
                                         onSelect={() => handlePaymentCheckout('monthly')}
                                         disabled={isPromoUnlocked}
-                                        features={proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
+                                        features={withLeadingFeature(
                                             proRetentionLabel,
-                                            'Priority processing',
-                                            'Advanced data analysis',
-                                        ]}
+                                            proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
+                                                'Priority processing',
+                                                'Advanced data analysis',
+                                            ],
+                                        )}
                                     />
                                 </OfflineGuard>
 
@@ -1047,11 +1100,14 @@ export default function SubscriptionPage() {
                                         loading={loadingPlan === 'weekly'}
                                         onSelect={() => handlePaymentCheckout('weekly')}
                                         disabled={isPromoUnlocked}
-                                        features={proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
-                                            'All Pro features',
-                                            'Cancel anytime',
-                                            'Standard support',
-                                        ]}
+                                        features={withLeadingFeature(
+                                            proRetentionLabel,
+                                            proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
+                                                'All Pro features',
+                                                'Cancel anytime',
+                                                'Standard support',
+                                            ],
+                                        )}
                                     />
                                 </OfflineGuard>
                             </div>

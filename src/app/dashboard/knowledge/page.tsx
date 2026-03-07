@@ -38,6 +38,7 @@ import { formatDistanceToNowStrict } from 'date-fns';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { FeatureGatePanel } from '@/components/feature-gate-panel';
+import { FREE_PLAN_EXPIRATION_DAYS, PAID_PRO_PLAN_EXPIRATION_DAYS } from '@/lib/plans/subscription-policy';
 import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
 import { useFeatureOutput } from '@/hooks/api/use-feature-output';
 
@@ -612,7 +613,7 @@ function KnowledgePageContent() {
         <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
           <Info className="h-3 w-3" />
           <span>
-            Documents retain for 14 days (30 days for paid Pro). Generated materials expire with the source document.
+            Documents retain for {FREE_PLAN_EXPIRATION_DAYS} days on Free and Promo, and {PAID_PRO_PLAN_EXPIRATION_DAYS} days on paid Pro. Generated materials expire with the source document.
           </span>
         </div>
       </main>

@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { Home, Menu } from 'lucide-react';
+import { getRetentionPolicyNotice } from '@/lib/plans/subscription-policy';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export default function PolicyPage() {
+  const retentionPolicy = getRetentionPolicyNotice();
   const navLinks = [
     { href: '/', label: 'Home', icon: Home },
     { href: '/features', label: 'Features' },
@@ -117,7 +119,7 @@ export default function PolicyPage() {
           </ul>
           <h2 className="font-headline text-xl font-semibold">Retention and Deletion</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
-            <li>Inactive authenticated accounts and associated data are deleted after 14 days of inactivity.</li>
+            <li>Signed-out uploads are deleted after {retentionPolicy.signedOutDays} days. Free and Promo documents expire after {retentionPolicy.freeDays} days, while paid Pro documents expire after {retentionPolicy.paidProDays} days.</li>
             <li>You may request deletion sooner via account settings.</li>
           </ul>
           <h2 className="font-headline text-xl font-semibold">Your Rights</h2>

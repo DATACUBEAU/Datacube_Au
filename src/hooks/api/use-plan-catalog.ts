@@ -12,6 +12,8 @@ type PlanCatalogEntry = {
     feature_bullets: string[];
     cta_label: string;
     cta_href: string;
+    retention_days: number;
+    expiration_days: number;
   };
   pricing: {
     monthly: { amount: number; compare_at: number | null; label: string; plan_key: string | null } | null;

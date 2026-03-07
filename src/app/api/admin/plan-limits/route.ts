@@ -106,6 +106,11 @@ export async function GET(req: NextRequest) {
       }),
     );
 
+    const defaultLimitsByPlan = ordered.reduce((acc, plan) => {
+      acc[plan] = toUiLimits(DEFAULT_PLAN_LIMITS[plan]);
+      return acc;
+    }, {} as Record<string, Record<string, number>>);
+
     const limitsByPlan = rows.reduce((acc, row) => {
       acc[row.plan] = row.limits;
       return acc;
@@ -117,6 +122,7 @@ export async function GET(req: NextRequest) {
         requestId,
         planLimits: rows,
         limitsByPlan,
+        defaultLimitsByPlan,
         planKeys: ordered,
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },

@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
+import { formatExpirationWindowLabel } from '@/lib/plans/subscription-policy';
 
 function formatCount(value: number) {
   return Number(value || 0).toLocaleString();
@@ -86,6 +87,7 @@ export default async function PricingPage({
                 </div>
 
                 <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+                  <p>Document expiration: {formatExpirationWindowLabel(Number(plan.metadata.expiration_days || 0))}</p>
                   <p>{describeLimit('Uploads', Number(plan.limits.max_uploads_total || 0), plan.resetLabels.uploads)}</p>
                   <p>{describeLimit('Documents', Number(plan.limits.max_docs_total ?? plan.limits.max_documents_total ?? 0), plan.resetLabels.documents)}</p>
                   <p>{describeLimit('Chats', Number(plan.limits.max_chats_total || 0), plan.resetLabels.chats)}</p>

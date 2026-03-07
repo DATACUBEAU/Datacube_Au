@@ -247,6 +247,11 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_plan_transitions', filter: `user_id=eq.${user.id}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'au_worker_jobs', filter: `user_id=eq.${user.id}` },
         scheduleRefresh,
       )

@@ -1,7 +1,12 @@
 import type { AuDocumentRow, AuDocumentStatus, AuDocumentType } from '@/lib/au/types';
+import {
+  FREE_PLAN_EXPIRATION_DAYS,
+  PAID_PRO_PLAN_EXPIRATION_DAYS,
+  resolvePlanExpirationDays,
+} from '@/lib/plans/subscription-policy';
 
-export const FREE_RETENTION_DAYS = 14;
-export const PRO_RETENTION_DAYS = 14;
+export const FREE_RETENTION_DAYS = FREE_PLAN_EXPIRATION_DAYS;
+export const PRO_RETENTION_DAYS = PAID_PRO_PLAN_EXPIRATION_DAYS;
 
 const RETENTION_CACHE_TTL_MS = 5 * 60 * 1000;
 const retentionCache = new Map<string, { value: number; ts: number }>();
@@ -59,10 +64,32 @@ export async function resolveDocumentRetentionDays(userId: string | null | undef
     return cached.value;
   }
 
-  // Retention is governed by backend policy:
-  // - 7 days signed-out cleanup for uploaded documents
-  // - 14 days inactivity cleanup for documents + derived data.
-  const retentionDays = FREE_RETENTION_DAYS;
+  let retentionDays = FREE_RETENTION_DAYS;
+
+  if (userId && typeof window !== 'undefined' && typeof fetch === 'function') {
+    try {
+      const response = await fetch('/api/entitlements/effective', {
+        method: 'GET',
+        credentials: 'include',
+        cache: 'no-store',
+      });
+      const payload = await response.json().catch(() => null);
+      if (response.ok && payload) {
+        const explicitRetention = Number((payload as any)?.retentionDays);
+        retentionDays =
+          Number.isFinite(explicitRetention) && explicitRetention > 0
+            ? Math.floor(explicitRetention)
+            : resolvePlanExpirationDays({
+                plan: typeof (payload as any)?.plan === 'string' ? (payload as any).plan : 'free',
+                entitlementSource:
+                  typeof (payload as any)?.entitlementSource === 'string' ? (payload as any).entitlementSource : 'none',
+              });
+      }
+    } catch {
+      retentionDays = FREE_RETENTION_DAYS;
+    }
+  }
+
   retentionCache.set(cacheKey, { value: retentionDays, ts: Date.now() });
   return retentionDays;
 }

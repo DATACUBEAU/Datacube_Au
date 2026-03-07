@@ -6,8 +6,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ShieldAlert, LogIn, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { getRetentionPolicyNotice } from '@/lib/plans/subscription-policy';
 
 export function InactivityPolicyBanner() {
+  const retentionPolicy = getRetentionPolicyNotice();
   const { session } = useSupabaseSession();
   const [isVisible, setIsVisible] = useState(false);
   const router = useRouter();
@@ -45,15 +47,7 @@ export function InactivityPolicyBanner() {
               Policy Update: Data Security Notice
             </AlertTitle>
             <AlertDescription className="text-red-700 dark:text-red-300 text-sm leading-relaxed">
-              {isSignedIn ? (
-                <>
-                  If you stay signed out for <strong>7 DAYS</strong>, uploaded documents are deleted. If inactive for <strong>14 DAYS</strong>, uploaded documents and derived chunks/embeddings are deleted.
-                </>
-              ) : (
-                <>
-                  If you stay signed out for <strong>7 DAYS</strong>, uploaded documents are deleted. If inactive for <strong>14 DAYS</strong>, uploaded documents and derived chunks/embeddings are deleted.
-                </>
-              )}
+              If you stay signed out for <strong>{retentionPolicy.signedOutDays} DAYS</strong>, uploaded documents are deleted. Free and Promo documents expire after <strong>{retentionPolicy.freeDays} DAYS</strong>. Paid Pro documents expire after <strong>{retentionPolicy.paidProDays} DAYS</strong>.
             </AlertDescription>
           </div>
           <div className="flex flex-col gap-2 min-w-[140px]">

@@ -1,9 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFeatureFlagsSnapshot } from '@/lib/server/feature-flags';
 import { getProEntitlementStatus } from '@/lib/server/entitlements';
+import {
+  computeUtcQuotaWindowBounds,
+  FREE_PLAN_EXPIRATION_DAYS,
+  PAID_PRO_PLAN_EXPIRATION_DAYS,
+  PREMIUM_PLAN_EXPIRATION_DAYS,
+  TOKEN_LIMITS_BY_PLAN,
+  normalizeEntitlementSource,
+} from '@/lib/plans/subscription-policy';
 
 const ONE_MB_BYTES = 1024 * 1024;
-const DAY_MS = 24 * 60 * 60 * 1000;
 const EPOCH_START_ISO = '1970-01-01T00:00:00.000Z';
 const FAR_FUTURE_END_ISO = '9999-12-31T23:59:59.999Z';
 
@@ -67,6 +74,8 @@ export type PlanMetadata = {
   cta_label: string;
   cta_href: string;
   sort_order: number;
+  retention_days: number;
+  expiration_days: number;
 };
 
 export type PublicPlanPricing = {
@@ -103,14 +112,14 @@ export const DEFAULT_PLAN_LIMITS: Record<EffectivePlanCode, CanonicalPlanLimits>
     max_documents_total: 50,
     max_chats_total: 3000,
     max_exams_total: 10,
-    max_tokens_total: 25_000,
+    max_tokens_total: TOKEN_LIMITS_BY_PLAN.free,
     max_storage_mb: 2_000,
     max_concurrent_jobs: 1,
     tokens_reset_every_days: 1,
     chats_reset_every_days: 1,
     uploads_reset_every_days: 0,
     documents_reset_every_days: 0,
-    exams_reset_every_days: 1,
+    exams_reset_every_days: 0,
     storage_reset_every_days: 0,
   },
   pro: {
@@ -119,14 +128,14 @@ export const DEFAULT_PLAN_LIMITS: Record<EffectivePlanCode, CanonicalPlanLimits>
     max_documents_total: 500,
     max_chats_total: 30_000,
     max_exams_total: 200,
-    max_tokens_total: 2_500_000,
+    max_tokens_total: TOKEN_LIMITS_BY_PLAN.pro,
     max_storage_mb: 20_000,
     max_concurrent_jobs: 3,
     tokens_reset_every_days: 1,
     chats_reset_every_days: 1,
     uploads_reset_every_days: 0,
     documents_reset_every_days: 0,
-    exams_reset_every_days: 1,
+    exams_reset_every_days: 0,
     storage_reset_every_days: 0,
   },
   premium: {
@@ -135,14 +144,14 @@ export const DEFAULT_PLAN_LIMITS: Record<EffectivePlanCode, CanonicalPlanLimits>
     max_documents_total: 1_500,
     max_chats_total: 100_000,
     max_exams_total: 1_000,
-    max_tokens_total: 10_000_000,
+    max_tokens_total: TOKEN_LIMITS_BY_PLAN.premium,
     max_storage_mb: 100_000,
     max_concurrent_jobs: 6,
     tokens_reset_every_days: 1,
     chats_reset_every_days: 1,
     uploads_reset_every_days: 0,
     documents_reset_every_days: 0,
-    exams_reset_every_days: 1,
+    exams_reset_every_days: 0,
     storage_reset_every_days: 0,
   },
 };
@@ -162,6 +171,8 @@ export const DEFAULT_PLAN_METADATA: Record<EffectivePlanCode, PlanMetadata> = {
     cta_label: 'Current plan',
     cta_href: '/dashboard',
     sort_order: 0,
+    retention_days: FREE_PLAN_EXPIRATION_DAYS,
+    expiration_days: FREE_PLAN_EXPIRATION_DAYS,
   },
   pro: {
     label: 'Pro',
@@ -177,6 +188,8 @@ export const DEFAULT_PLAN_METADATA: Record<EffectivePlanCode, PlanMetadata> = {
     cta_label: 'Upgrade now',
     cta_href: '/dashboard/settings/subscription',
     sort_order: 1,
+    retention_days: PAID_PRO_PLAN_EXPIRATION_DAYS,
+    expiration_days: PAID_PRO_PLAN_EXPIRATION_DAYS,
   },
   premium: {
     label: 'Premium',
@@ -192,6 +205,8 @@ export const DEFAULT_PLAN_METADATA: Record<EffectivePlanCode, PlanMetadata> = {
     cta_label: 'Contact admin',
     cta_href: '/dashboard/settings/subscription',
     sort_order: 2,
+    retention_days: PREMIUM_PLAN_EXPIRATION_DAYS,
+    expiration_days: PREMIUM_PLAN_EXPIRATION_DAYS,
   },
 };
 
@@ -200,6 +215,8 @@ export type EffectivePlan = {
   isAdmin: boolean;
   hasPro: boolean;
   source: 'au_user_entitlements' | 'profile' | 'billing' | 'default';
+  entitlementSource: 'paid' | 'promo' | 'none';
+  expiresAt: string | null;
 };
 
 export type QuotaWindowSnapshot = {
@@ -347,6 +364,8 @@ function normalizePlanMetadata(plan: EffectivePlanCode, input: unknown): PlanMet
     cta_label: asTrimmedString(source.cta_label ?? source.ctaLabel, defaults.cta_label),
     cta_href: asTrimmedString(source.cta_href ?? source.ctaHref, defaults.cta_href),
     sort_order: clampNonNegativeNumber(source.sort_order ?? source.sortOrder, defaults.sort_order),
+    retention_days: clampNonNegativeNumber(source.retention_days ?? source.retentionDays, defaults.retention_days),
+    expiration_days: clampNonNegativeNumber(source.expiration_days ?? source.expirationDays, defaults.expiration_days),
   };
 }
 
@@ -377,22 +396,8 @@ export function describeResetEveryDays(resetEveryDays: number): string {
   return `Resets every ${Math.floor(resetEveryDays)} days`;
 }
 
-function computeQuotaWindowBounds(resetEveryDays: number, now = new Date()): { start: string; end: string | null } {
-  const safeDays = Math.floor(Number(resetEveryDays) || 0);
-  if (safeDays <= 0) {
-    return { start: EPOCH_START_ISO, end: null };
-  }
-
-  const utcMidnightMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const epochDay = Math.floor(utcMidnightMs / DAY_MS);
-  const windowStartDay = epochDay - (epochDay % safeDays);
-  const startMs = windowStartDay * DAY_MS;
-  const endMs = startMs + safeDays * DAY_MS;
-
-  return {
-    start: new Date(startMs).toISOString(),
-    end: new Date(endMs).toISOString(),
-  };
+export function computeQuotaWindowBounds(resetEveryDays: number, now = new Date()): { start: string; end: string | null } {
+  return computeUtcQuotaWindowBounds(resetEveryDays, now);
 }
 
 function isWithinWindow(createdAt: string | null | undefined, startIso: string, endIso: string | null): boolean {
@@ -470,10 +475,10 @@ export async function resolveEffectivePlan(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<EffectivePlan> {
-  const [entitlementRes, profileRes] = await Promise.all([
+  const [entitlementRes, profileRes, billingEntitlement] = await Promise.all([
     supabase
       .from('au_user_entitlements')
-      .select('plan')
+      .select('plan,source,expires_at')
       .eq('user_id', userId)
       .maybeSingle(),
     supabase
@@ -481,45 +486,92 @@ export async function resolveEffectivePlan(
       .select('tier')
       .eq('user_id', userId)
       .maybeSingle(),
+    getProEntitlementStatus(supabase, userId).catch(() => null),
   ]);
 
   const profileInfo = normalizeProfileTier(profileRes.data?.tier);
+  const mirroredPlan = !entitlementRes.error && entitlementRes.data?.plan
+    ? normalizePlan((entitlementRes.data as any).plan)
+    : null;
+  const mirroredSource = normalizeEntitlementSource((entitlementRes.data as any)?.source);
+  const mirroredExpiresAt = typeof (entitlementRes.data as any)?.expires_at === 'string'
+    ? String((entitlementRes.data as any).expires_at)
+    : null;
 
-  if (!entitlementRes.error && entitlementRes.data?.plan) {
-    const plan = normalizePlan(entitlementRes.data.plan);
+  if (profileInfo.isAdmin) {
     return {
-      plan: profileInfo.isAdmin ? 'pro' : plan,
-      isAdmin: profileInfo.isAdmin,
-      hasPro: profileInfo.isAdmin || plan !== 'free',
+      plan: 'pro',
+      isAdmin: true,
+      hasPro: true,
+      source: 'profile',
+      entitlementSource: 'paid',
+      expiresAt: null,
+    };
+  }
+
+  if (profileInfo.plan === 'premium') {
+    return {
+      plan: 'premium',
+      isAdmin: false,
+      hasPro: true,
+      source: 'profile',
+      entitlementSource: 'paid',
+      expiresAt: null,
+    };
+  }
+
+  if (mirroredPlan === 'premium') {
+    return {
+      plan: 'premium',
+      isAdmin: false,
+      hasPro: true,
       source: 'au_user_entitlements',
+      entitlementSource: mirroredSource === 'none' ? 'paid' : mirroredSource,
+      expiresAt: mirroredExpiresAt,
+    };
+  }
+
+  if (billingEntitlement?.hasPro) {
+    return {
+      plan: 'pro',
+      isAdmin: false,
+      hasPro: true,
+      source: 'billing',
+      entitlementSource: normalizeEntitlementSource(billingEntitlement.source),
+      expiresAt: billingEntitlement.endsAt,
+    };
+  }
+
+  if (mirroredPlan) {
+    return {
+      plan: mirroredPlan,
+      isAdmin: false,
+      hasPro: mirroredPlan !== 'free',
+      source: 'au_user_entitlements',
+      entitlementSource: mirroredPlan === 'free' ? 'none' : (mirroredSource === 'none' ? 'paid' : mirroredSource),
+      expiresAt: mirroredExpiresAt,
     };
   }
 
   if (profileInfo.plan) {
     return {
       plan: profileInfo.plan,
-      isAdmin: profileInfo.isAdmin,
-      hasPro: profileInfo.isAdmin || profileInfo.plan !== 'free',
+      isAdmin: false,
+      hasPro: profileInfo.plan !== 'free',
       source: 'profile',
+      entitlementSource: profileInfo.plan === 'free' ? 'none' : 'paid',
+      expiresAt: null,
     };
   }
 
-  try {
-    const pro = await getProEntitlementStatus(supabase, userId);
-    return {
-      plan: pro.hasPro ? 'pro' : 'free',
-      isAdmin: profileInfo.isAdmin,
-      hasPro: profileInfo.isAdmin || pro.hasPro,
-      source: 'billing',
-    };
-  } catch {
-    return {
-      plan: profileInfo.isAdmin ? 'pro' : 'free',
-      isAdmin: profileInfo.isAdmin,
-      hasPro: profileInfo.isAdmin,
-      source: 'default',
-    };
-  }
+  return {
+    plan: 'free',
+    isAdmin: false,
+    hasPro: false,
+    source: 'default',
+    entitlementSource: 'none',
+    expiresAt: null,
+  };
 }
 
 export async function loadPlanLimits(
@@ -569,7 +621,7 @@ export async function loadPlanMetadata(
   const res = await supabase
     .from('au_plan_metadata')
     .select(
-      'label,description,price_display,monthly_amount_ngn,monthly_compare_at_ngn,monthly_badge,weekly_amount_ngn,weekly_compare_at_ngn,weekly_badge,feature_bullets,cta_label,cta_href,sort_order',
+      'label,description,price_display,monthly_amount_ngn,monthly_compare_at_ngn,monthly_badge,weekly_amount_ngn,weekly_compare_at_ngn,weekly_badge,feature_bullets,cta_label,cta_href,sort_order,retention_days,expiration_days',
     )
     .eq('plan', plan)
     .maybeSingle();
