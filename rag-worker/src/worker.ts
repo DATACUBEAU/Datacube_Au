@@ -173,12 +173,106 @@ export class RAGWorker {
         await Promise.all([
           this.pollJobs(),
           this.pollDeletions(),
+          this.reconcileStuckJobs(),
         ]);
         await this.wait(this.pollIntervalMs);
       } catch (err) {
         logger.error('Worker loop error', err);
         await this.wait(Math.max(this.pollIntervalMs * 2, 5000));
       }
+    }
+  }
+
+  private async reconcileStuckJobs() {
+    try {
+      // 1. Fix "Analyzing 100%" stuck jobs (1 minute grace period)
+      const stuckThreshold = new Date(Date.now() - 60000).toISOString();
+      const { data: stuckCompleted } = await this.supabase
+        .from('au_worker_jobs')
+        .select('id, document_id, bucket, object_path, owner_id, user_id')
+        .eq('status', 'processing')
+        .eq('progress', 100)
+        .lt('updated_at', stuckThreshold)
+        .limit(5);
+
+      if (stuckCompleted && stuckCompleted.length > 0) {
+        for (const job of stuckCompleted) {
+          logger.info('Reconciling stuck 100% job', { jobId: job.id });
+          await this.finalizeJobCompletion(job as UploadJob);
+        }
+      }
+
+      // 2. Fix stale processing jobs (15 mins timeout)
+      const staleThreshold = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+      const { data: staleJobs } = await this.supabase
+        .from('au_worker_jobs')
+        .select('id, document_id, bucket, object_path, owner_id, user_id')
+        .eq('status', 'processing')
+        .lt('updated_at', staleThreshold)
+        .limit(5);
+
+      if (staleJobs && staleJobs.length > 0) {
+        for (const job of staleJobs) {
+          logger.warn('Reconciling stale processing job', { jobId: job.id });
+          await this.markJobFailed(job as UploadJob, 'Job timed out (stale)', { recoverable: true });
+        }
+      }
+    } catch (err) {
+      logger.error('Error in reconcileStuckJobs', err);
+    }
+  }
+
+  private async finalizeJobCompletion(job: UploadJob) {
+    let completionError = await this.markJobCompleted(job);
+    if (completionError) {
+      logger.warn('Job completion update failed, retrying...', { jobId: job.id, message: completionError.message });
+      await this.wait(1000);
+      completionError = await this.markJobCompleted(job);
+    }
+
+    if (completionError) {
+      logger.error('CRITICAL: Job finished but status update failed', { jobId: job.id, message: completionError.message });
+    } else {
+      await this.incrementUsageCounters(String(job.owner_id || job.user_id || ''), {
+        jobs_completed: 1,
+      });
+
+      logger.info('Job completed', { jobId: job.id });
+      await this.logDebug('Job completed', { jobId: job.id });
+    }
+
+    try {
+      await this.supabase
+        .from('au_documents')
+        .update({
+          cleanup_pending: true,
+          cleanup_attempts: 0,
+          cleanup_last_error: null,
+          cleanup_last_attempt_at: new Date().toISOString(),
+        })
+        .eq('id', job.document_id);
+
+      const bucket = job.bucket || 'documents';
+      logger.info('Deleting file from Supabase Storage', { bucket, path: job.object_path });
+      const { error: deleteError } = await this.supabase.storage
+        .from(bucket)
+        .remove([job.object_path]);
+
+      if (deleteError) {
+        logger.error('Failed to delete file from storage', deleteError);
+        await this.updateCleanupState(
+          job.document_id,
+          false,
+          deleteError.message || String(deleteError),
+        );
+      } else {
+        logger.info('File deleted successfully');
+        await this.updateCleanupState(job.document_id, true);
+      }
+    } catch (delErr) {
+      logger.error('Failed to delete file (exception)', delErr);
+      const msg = delErr instanceof Error ? delErr.message : String(delErr);
+      await this.updateCleanupState(job.document_id, false, msg);
     }
   }
 
@@ -556,53 +650,11 @@ export class RAGWorker {
     try {
       await this.updateJobProgress(currentJob.id, 15);
       await this.processJob(currentJob);
-      await this.updateJobProgress(currentJob.id, 100);
 
-      const completionError = await this.markJobCompleted(currentJob);
-      if (completionError) {
-        logger.warn('Job completion update failed', { jobId: currentJob.id, message: completionError.message });
-      }
-
-      await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
-        jobs_completed: 1,
-      });
-
-      logger.info('Job completed', { jobId: currentJob.id });
-
-      await this.logDebug('Job completed', { jobId: currentJob.id });
-
-      try {
-        await this.supabase
-          .from('au_documents')
-          .update({
-            cleanup_pending: true,
-            cleanup_attempts: 0,
-            cleanup_last_error: null,
-            cleanup_last_attempt_at: new Date().toISOString(),
-          })
-          .eq('id', currentJob.document_id);
-
-        logger.info('Deleting file from Supabase Storage', { bucket: currentJob.bucket, path: currentJob.object_path });
-        const { error: deleteError } = await this.supabase.storage
-          .from(currentJob.bucket)
-          .remove([currentJob.object_path]);
-
-        if (deleteError) {
-          logger.error('Failed to delete file from storage', deleteError);
-          await this.updateCleanupState(
-            currentJob.document_id,
-            false,
-            deleteError.message || String(deleteError),
-          );
-        } else {
-          logger.info('File deleted successfully');
-          await this.updateCleanupState(currentJob.document_id, true);
-        }
-      } catch (delErr) {
-        logger.error('Failed to delete file (exception)', delErr);
-        const msg = delErr instanceof Error ? delErr.message : String(delErr);
-        await this.updateCleanupState(currentJob.document_id, false, msg);
-      }
+      // Critical fix: Combine final progress update and completion state
+      // Do not update to 100% separately to avoid "stuck at 100% analyzing" state
+      // if the subsequent completion update fails.
+      await this.finalizeJobCompletion(currentJob);
     } catch (processErr) {
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
 

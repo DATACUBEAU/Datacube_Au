@@ -330,6 +330,9 @@ export default function UploadCenter() {
     }
     // Phase 3: Analyzing
     if (job.status === 'processing') {
+      if (job.progress >= 100) {
+        return { label: 'Finalizing', progress: 100, color: 'bg-green-500' };
+      }
       return { label: 'Analyzing', progress: job.progress, color: 'bg-amber-500' };
     }
     // Phase 4: Completed
