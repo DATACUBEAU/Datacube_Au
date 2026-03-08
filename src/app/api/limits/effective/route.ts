@@ -15,7 +15,11 @@ export async function GET(req: NextRequest) {
         code: 'unauthorized',
         message: 'Sign in required.',
         requestId,
-        details: { reason: auth.reason },
+        details: { 
+          reason: auth.reason,
+          debug: auth.debug,
+          env: process.env.VERCEL ? 'vercel' : 'local' 
+        },
       },
       { status: 401, headers: { 'Cache-Control': 'no-store' } },
     );

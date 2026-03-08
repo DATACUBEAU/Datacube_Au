@@ -161,6 +161,7 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
         credentials: 'include',
         timeout: 10_000,
         silent: true,
+        suppressAuthError: true, // Prevent auth loop on 401
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data) {

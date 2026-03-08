@@ -17,6 +17,7 @@ interface SafeFetchOptions extends RequestInit {
   silent?: boolean; // If true, suppresses global toast on offline/error
   allowOffline?: boolean; // If true, caller handles offline fallback manually
   allowWhenAuthLocked?: boolean; // If true, bypasses auth-lock guard (used for login/reauth flows)
+  suppressAuthError?: boolean; // If true, 401/403 errors will not trigger global session expiry events
 }
 
 /**
@@ -38,6 +39,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     signal,
     allowOffline = false,
     allowWhenAuthLocked = false,
+    suppressAuthError = false,
     ...fetchOptions
   } = options;
 
@@ -129,7 +131,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         }
       }
 
-      if (typeof window !== 'undefined' && (response.status === 401 || response.status === 403)) {
+      if (typeof window !== 'undefined' && (response.status === 401 || response.status === 403) && !suppressAuthError) {
         console.warn('[safeFetch] auth error detected', {
           status: response.status,
           url,

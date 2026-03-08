@@ -14,6 +14,7 @@ type AuthFailure = {
   status: 401;
   error: 'unauthorized';
   reason: 'missing_token' | 'invalid_token';
+  debug?: string; // For diagnostics
 };
 
 export type RequestAuthResult = AuthSuccess | AuthFailure;
@@ -153,7 +154,19 @@ async function validateAccessToken(token: string): Promise<{ userId: string; ema
   );
 
   const { data, error } = await supabase.auth.getUser(token);
-  if (error || !data.user?.id) return null;
+  if (error || !data.user?.id) {
+    // Debug logging for Vercel
+    if (process.env.VERCEL) {
+      console.error('[validateAccessToken] Validation failed:', {
+        error: error?.message,
+        hasData: !!data,
+        hasUser: !!data?.user,
+        url: supabaseUrl.replace(/https:\/\/(.*?)\.supabase.*/, 'https://...$1...'), // Mask URL
+        hasAnonKey: !!anonKey,
+      });
+    }
+    return null;
+  }
   return {
     userId: data.user.id,
     email: data.user.email ?? null,
@@ -170,9 +183,14 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
     return { ok: false, status: 401, error: 'unauthorized', reason: 'missing_token' };
   }
 
+  let debugMessage = '';
+
   for (const token of uniqueTokens) {
     const validation = await validateAccessToken(token);
-    if (!validation?.userId) continue;
+    if (!validation?.userId) {
+      if (!debugMessage) debugMessage = `Validation failed for token: ${token.slice(0, 10)}...`;
+      continue;
+    }
 
     return {
       ok: true,
@@ -183,5 +201,5 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
     };
   }
 
-  return { ok: false, status: 401, error: 'unauthorized', reason: 'invalid_token' };
+  return { ok: false, status: 401, error: 'unauthorized', reason: 'invalid_token', debug: debugMessage };
 }
