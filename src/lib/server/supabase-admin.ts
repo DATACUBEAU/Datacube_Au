@@ -1,14 +1,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { firstEnv } from './env';
 
-export function firstEnv(...keys: string[]): string | null {
-  for (const key of keys) {
-    const value = process.env[key];
-    if (value && value.trim().length > 0) {
-      return value;
-    }
-  }
-  return null;
-}
+export { firstEnv } from './env';
 
 export function getSupabaseUrl(): string {
   const value = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
@@ -58,4 +51,3 @@ export function createSupabaseRlsClient(accessToken: string): SupabaseClient {
     },
   });
 }
-

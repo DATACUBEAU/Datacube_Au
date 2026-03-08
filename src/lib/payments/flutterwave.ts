@@ -1,4 +1,9 @@
-import { firstEnv } from '@/lib/server/supabase-admin';
+import { firstEnv } from '@/lib/server/env';
+import {
+  assertBillingGatewayCapability,
+  BillingConfigurationError,
+  type BillingConfigAction,
+} from '@/lib/server/billing-config';
 import type {
   PaymentGateway,
   PaymentInitializeData,
@@ -19,18 +24,28 @@ export class FlutterwaveError extends Error {
   }
 }
 
-export function getFlutterwaveSecretKey(): string {
+export function getFlutterwaveSecretKey(action: BillingConfigAction = 'checkout_initialize'): string {
+  assertBillingGatewayCapability({ gateway: 'flutterwave', action });
   const key = firstEnv('FLUTTERWAVE_SECRET_KEY');
   if (!key) {
-    throw new Error('Missing FLUTTERWAVE_SECRET_KEY.');
+    throw new BillingConfigurationError({
+      gateway: 'flutterwave',
+      action,
+      missingEnv: ['FLUTTERWAVE_SECRET_KEY'],
+    });
   }
   return key;
 }
 
 export function getFlutterwaveWebhookHash(): string {
+  assertBillingGatewayCapability({ gateway: 'flutterwave', action: 'webhook' });
   const hash = firstEnv('FLUTTERWAVE_WEBHOOK_SECRET_HASH', 'FLUTTERWAVE_SECRET_HASH');
   if (!hash) {
-    throw new Error('Missing FLUTTERWAVE_WEBHOOK_SECRET_HASH.');
+    throw new BillingConfigurationError({
+      gateway: 'flutterwave',
+      action: 'webhook',
+      missingEnv: ['FLUTTERWAVE_WEBHOOK_SECRET_HASH'],
+    });
   }
   return hash;
 }
@@ -44,7 +59,7 @@ async function flutterwaveRequest<T>(path: string, init?: RequestInit): Promise<
   const res = await fetch(`${FLUTTERWAVE_BASE_URL}${path}`, {
     method: init?.method || 'GET',
     headers: {
-      Authorization: `Bearer ${getFlutterwaveSecretKey()}`,
+      Authorization: `Bearer ${getFlutterwaveSecretKey(path.includes('/verify') ? 'payment_verify' : 'checkout_initialize')}`,
       'Content-Type': 'application/json',
       ...(init?.headers || {}),
     },

@@ -125,7 +125,7 @@ export default function DashboardPage() {
 
     const statusFromJob = (status: UploadJobStatus): AuDocumentRow['status'] | null => {
       if (status === 'completed') return 'completed';
-      if (status === 'failed') return 'failed';
+      if (status === 'failed' || status === 'stale_timeout') return 'failed';
       if (status === 'processing' || status === 'uploaded') return 'processing';
       if (status === 'uploading' || status === 'queued') return 'uploading';
       return null;

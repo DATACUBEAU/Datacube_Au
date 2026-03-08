@@ -182,18 +182,6 @@ export default function ChatPage() {
     isUsingCachedData,
     cachedAt,
   } = useAuDocuments();
-  const { 
-    history: currentChatHistory, 
-    setHistory: setCurrentChatHistory,
-    setHistoryPersisted,
-    deleteMessagePersisted,
-    isResponding,
-    sendMessage,
-    stopGeneration,
-    fetchPrompts,
-    isInitialized,
-    clearChat // Destructure clearChat here
-  } = useAuChat(selectedDocId);
   const { connectionStatus } = useChatRuntime();
 
   // Sync AU State with Global Background Animation
@@ -201,28 +189,6 @@ export default function ChatPage() {
   const auAnimationState = useStore(state => state.auAnimationState);
   const upgradeBlocked = useStore(state => state.upgradeBlocked);
   
-
-
-
-  useEffect(() => {
-    let newState: 'idle' | 'thinking' | 'responding' = 'idle';
-
-    if (isResponding) {
-      const lastMsg = currentChatHistory[currentChatHistory.length - 1];
-      // If last message is loading and has NO content, it's thinking.
-      // If it has content (streaming), it's responding.
-      if (lastMsg?.isLoading && !lastMsg.content) {
-        newState = 'thinking';
-      } else {
-        newState = 'responding';
-      }
-    }
-
-    if (auAnimationState !== newState) {
-        setAuAnimationState(newState);
-    }
-  }, [isResponding, currentChatHistory, setAuAnimationState, auAnimationState]);
-
   // Reset animation state when leaving chat page
   useEffect(() => {
       return () => setAuAnimationState('idle');
@@ -237,6 +203,7 @@ export default function ChatPage() {
           fileName: d.file_name,
           status: d.status,
           type: d.document_type,
+          createdAt: d.created_at,
           expiresAt: d.expires_at ?? undefined,
         })),
     [apiDocuments]
@@ -383,6 +350,46 @@ export default function ChatPage() {
 
   const selectedDoc = useMemo(() => documentList.find(doc => doc.id === selectedDocId), [documentList, selectedDocId]);
   const selectedDocName = useMemo(() => selectedDoc?.fileName, [selectedDoc]);
+  const lastUploadedDocument = useMemo(
+    () =>
+      documentList
+        .slice()
+        .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0] ?? null,
+    [documentList],
+  );
+  const { 
+    history: currentChatHistory, 
+    setHistory: setCurrentChatHistory,
+    setHistoryPersisted,
+    deleteMessagePersisted,
+    isResponding,
+    sendMessage,
+    stopGeneration,
+    fetchPrompts,
+    isInitialized,
+    clearChat // Destructure clearChat here
+  } = useAuChat(selectedDocId, {
+    activeDocumentName: selectedDocName ?? null,
+    lastUploadedDocumentId: lastUploadedDocument?.id ?? null,
+    documentCountInScope: documentList.length,
+  });
+
+  useEffect(() => {
+    let newState: 'idle' | 'thinking' | 'responding' = 'idle';
+
+    if (isResponding) {
+      const lastMsg = currentChatHistory[currentChatHistory.length - 1];
+      if (lastMsg?.isLoading && !lastMsg.content) {
+        newState = 'thinking';
+      } else {
+        newState = 'responding';
+      }
+    }
+
+    if (auAnimationState !== newState) {
+      setAuAnimationState(newState);
+    }
+  }, [isResponding, currentChatHistory, setAuAnimationState, auAnimationState]);
   const {
     primaryAlert: chatLimitAlert,
     toastCandidate: chatLimitToast,
@@ -1266,7 +1273,7 @@ export default function ChatPage() {
             <div className="text-xs text-muted-foreground">
               {chatMode === 'global' ? (
                   <span>
-                      <strong>Global Chat</strong> • Access to system info & internet trends. No private document access.
+                      <strong>Global Chat</strong> • App-wide help and navigation. No private document access.
                   </span>
               ) : selectedDocName ? (
                 <span>

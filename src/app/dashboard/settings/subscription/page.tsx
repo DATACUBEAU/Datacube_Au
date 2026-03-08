@@ -16,6 +16,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { OfflineGuard } from '@/components/offline-guard';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { safeFetch } from '@/lib/api/safe-fetch';
+import {
+  buildSubscriptionCardState,
+  canStartCheckoutForPlan,
+  deriveNormalizedSubscriptionState,
+  type BillingCheckoutCapability,
+  type NormalizedSubscriptionState,
+  type SubscriptionCardKey,
+} from '@/lib/billing/subscription-state';
+import { extractBillingReturnState, type BillingReturnState } from '@/lib/billing/payment-return';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
@@ -38,6 +47,14 @@ const EMPTY_PRICING = {
   weekly: { amount: 0, compare_at: 0, label: '' },
   monthly: { amount: 0, compare_at: 0, label: '' },
 } as const;
+
+const EMPTY_CURRENT_PLAN = deriveNormalizedSubscriptionState({});
+const EMPTY_CHECKOUT: BillingCheckoutCapability = {
+  enabled: false,
+  gateway: null,
+  code: 'billing_loading',
+  message: null,
+};
 
 const BILLING_ROUTE = '/dashboard/settings/subscription';
 const BILLING_STATUS_SOURCE = 'billing-status';
@@ -107,8 +124,11 @@ export default function SubscriptionPage() {
     weekly: { amount: number; compare_at: number; label: string };
     monthly: { amount: number; compare_at: number; label: string };
   }>(EMPTY_PRICING);
+  const [currentPlan, setCurrentPlan] = useState<NormalizedSubscriptionState>(EMPTY_CURRENT_PLAN);
+  const [checkoutCapability, setCheckoutCapability] = useState<BillingCheckoutCapability>(EMPTY_CHECKOUT);
   const isPromoUnlocked = promoActive;
-  const hasPaidProAccess = tier === 'pro' && entitlementSource === 'paid';
+  const hasPaidProAccess = currentPlan.managedPlan === 'pro' && currentPlan.hasPaidEntitlement;
+  const hasPremiumAccess = currentPlan.managedPlan === 'premium' && currentPlan.hasPaidEntitlement;
   const promoContent = useMemo(
     () => normalizePromoContentConfig(featureFlagRecords.promo_content?.config || {}),
     [featureFlagRecords],
@@ -134,6 +154,8 @@ export default function SubscriptionPage() {
   );
   const freePlanCatalog = catalogByPlan.free || null;
   const proPlanCatalog = catalogByPlan.pro || null;
+  const premiumPlanCatalog = catalogByPlan.premium || null;
+  const currentPaidPlanCatalog = currentPlan.managedPlan === 'premium' ? premiumPlanCatalog : proPlanCatalog;
   const freeExpirationDays = Number(freePlanCatalog?.metadata?.expiration_days || FREE_PLAN_EXPIRATION_DAYS);
   const proExpirationDays = Number(proPlanCatalog?.metadata?.expiration_days || PAID_PRO_PLAN_EXPIRATION_DAYS);
   const freeRetentionLabel = `Document expiration: ${formatExpirationWindowLabel(freeExpirationDays)}`;
@@ -142,6 +164,34 @@ export default function SubscriptionPage() {
     plan: tier,
     entitlementSource,
   });
+  const checkoutNotice = checkoutCapability.enabled ? null : checkoutCapability.message || null;
+  const freeCardState = useMemo(
+    () => buildSubscriptionCardState({
+      planKey: 'free',
+      state: currentPlan,
+      canAccessBilling,
+      checkout: checkoutCapability,
+    }),
+    [canAccessBilling, checkoutCapability, currentPlan],
+  );
+  const monthlyCardState = useMemo(
+    () => buildSubscriptionCardState({
+      planKey: 'pro_monthly',
+      state: currentPlan,
+      canAccessBilling,
+      checkout: checkoutCapability,
+    }),
+    [canAccessBilling, checkoutCapability, currentPlan],
+  );
+  const weeklyCardState = useMemo(
+    () => buildSubscriptionCardState({
+      planKey: 'pro_weekly',
+      state: currentPlan,
+      canAccessBilling,
+      checkout: checkoutCapability,
+    }),
+    [canAccessBilling, checkoutCapability, currentPlan],
+  );
 
   const billingRequest = useCallback(async <T,>(path: string, init?: RequestInit): Promise<{ data: T; retryAfter: string | null }> => {
       const headers = new Headers(init?.headers || {});
@@ -229,14 +279,38 @@ export default function SubscriptionPage() {
 
   const applyBillingStatus = useCallback((data: any, options?: { fromCache?: boolean }) => {
       if (!data) return;
-      setTier(data.tier || 'free');
+      const paymentsList = Array.isArray(data.payments) ? data.payments : [];
+      const subscriptionRow = data.subscription ?? null;
+      const latestPaymentPlanKey =
+          paymentsList.find((payment: any) => typeof payment?.plan_key === 'string')?.plan_key || null;
+      const normalizedCurrentPlan = deriveNormalizedSubscriptionState({
+          effectivePlan: data?.currentPlan?.effectivePlan || data.entitlementPlan || data.tier,
+          entitlementSource: data?.currentPlan?.entitlementSource || data.entitlementSource || 'none',
+          promoActive: data?.currentPlan?.promoActive ?? Boolean(data?.promo?.active),
+          subscriptionPlanKey: data?.currentPlan?.activePlanKey || subscriptionRow?.plan_key,
+          subscriptionStatus: data?.currentPlan?.subscriptionStatus || subscriptionRow?.status,
+          latestPaymentPlanKey: data?.currentPlan?.activePlanKey || latestPaymentPlanKey,
+          legacyTier: data?.currentPlan?.activePlanKey || data?.currentPlan?.managedPlan || data.tier,
+      });
+
+      setTier(data.tier || normalizedCurrentPlan.managedPlan || 'free');
       setExpiry(data.tier_expires_at ?? null);
-      setSubscription(data.subscription ?? null);
-      setPayments(Array.isArray(data.payments) ? data.payments : []);
+      setSubscription(subscriptionRow);
+      setPayments(paymentsList);
       setBillingEnabled(data.billingEnabled ?? false);
       setCanAccessBilling(Boolean(data?.canAccessBilling));
       setEntitlementSource((data.entitlementSource || 'none') as 'paid' | 'promo' | 'none');
       setPromoActive(Boolean(data?.promo?.active));
+      setCurrentPlan(normalizedCurrentPlan);
+      setCheckoutCapability(data?.checkout
+          ? {
+              ...EMPTY_CHECKOUT,
+              ...data.checkout,
+            }
+          : {
+              ...EMPTY_CHECKOUT,
+              enabled: Boolean(data?.canAccessBilling),
+            });
       if (typeof data?.promo?.ends_at_lagos === 'string' && data.promo.ends_at_lagos.trim()) {
           const label = new Date(data.promo.ends_at_lagos).toLocaleString('en-US', {
               timeZone: 'Africa/Lagos',
@@ -265,7 +339,7 @@ export default function SubscriptionPage() {
       if (Array.isArray(data.planCatalog)) {
           setPlanCatalog(data.planCatalog);
       }
-      if (Boolean(data?.canAccessBilling) && data.subscription?.status === 'active') {
+      if (Boolean(data?.canAccessBilling) && subscriptionRow?.status === 'active') {
           setIsAutoRenew(true);
       }
       if (options?.fromCache) {
@@ -329,6 +403,42 @@ export default function SubscriptionPage() {
       return null;
   }, [applyBillingStatus, billingRequest, isOnline, readCachedBillingStatus, session?.access_token, user?.id, writeCachedBillingStatus]);
 
+  const resolvePlanCardKey = useCallback((planType: 'weekly' | 'monthly'): SubscriptionCardKey => {
+      return planType === 'weekly' ? 'pro_weekly' : 'pro_monthly';
+  }, []);
+
+  const showPlanActionBlockedToast = useCallback((planKey: SubscriptionCardKey) => {
+      const cardState = buildSubscriptionCardState({
+          planKey,
+          state: currentPlan,
+          canAccessBilling,
+          checkout: checkoutCapability,
+      });
+      toast({
+          title: cardState.isCurrent ? 'Current plan' : 'Checkout unavailable',
+          description: cardState.reason || 'This plan is not selectable right now.',
+      });
+  }, [canAccessBilling, checkoutCapability, currentPlan, toast]);
+
+  const applyCheckoutFailureState = useCallback((error: any) => {
+      const errorCode = String(error?.payload?.error || error?.code || '');
+      const errorMessage = String(error?.payload?.message || error?.message || '').trim();
+      if (
+          errorCode === 'billing_gateway_not_configured' ||
+          errorCode === 'billing_plan_not_configured' ||
+          errorCode === 'billing_disabled' ||
+          errorCode === 'promo_active' ||
+          errorCode.endsWith('_env_missing')
+      ) {
+          setCheckoutCapability((current) => ({
+              ...current,
+              enabled: false,
+              code: errorCode || current.code || 'checkout_unavailable',
+              message: errorMessage || current.message || 'Checkout is temporarily unavailable.',
+          }));
+      }
+  }, []);
+
   const openManualBankTransfer = useCallback((planType: 'weekly' | 'monthly') => {
       if (isPromoUnlocked) {
           toast({
@@ -344,9 +454,19 @@ export default function SubscriptionPage() {
           });
           return;
       }
+      const planKey = resolvePlanCardKey(planType);
+      if (!canStartCheckoutForPlan({
+          planKey,
+          state: currentPlan,
+          canAccessBilling,
+          checkout: checkoutCapability,
+      })) {
+          showPlanActionBlockedToast(planKey);
+          return;
+      }
       setManualPlan(planType);
       setShowBankTransfer(true);
-  }, [canAccessBilling, isPromoUnlocked, toast]);
+  }, [canAccessBilling, checkoutCapability, currentPlan, isPromoUnlocked, resolvePlanCardKey, showPlanActionBlockedToast, toast]);
 
   const stopPolling = useCallback(() => {
       if (pollTimerRef.current) {
@@ -370,47 +490,63 @@ export default function SubscriptionPage() {
           });
 
           const data = await fetchBillingStatus();
-          if (data && data.canAccessBilling === true && data.tier === 'pro') {
+          if (data?.currentPlan?.hasPaidEntitlement === true && data?.currentPlan?.managedPlan !== 'free') {
               setPaymentState('success');
               stopPolling();
           }
       }, 3000);
   }, [fetchBillingStatus, stopPolling]);
 
-  const verifyPayment = useCallback(async (reference?: string | null) => {
+  const verifyPayment = useCallback(async (paymentReturn?: Pick<BillingReturnState, 'reference' | 'verificationTarget' | 'transactionId' | 'gatewayHint'>) => {
       if (!isOnline) return;
       if (!session?.access_token) return;
       try {
-          if (reference) {
+          const verificationTarget = paymentReturn?.verificationTarget || paymentReturn?.reference || null;
+          if (verificationTarget) {
               const headers = new Headers({
                   'Content-Type': 'application/json',
                   Authorization: `Bearer ${session.access_token}`,
               });
               const verifyRes = await safeFetch('/api/payments/verify', {
                   method: 'POST',
-                  body: JSON.stringify({ reference }),
+                  body: JSON.stringify({
+                      reference: paymentReturn?.reference || null,
+                      verification_target: verificationTarget,
+                      transaction_id: paymentReturn?.transactionId || null,
+                      gateway: paymentReturn?.gatewayHint || null,
+                  }),
                   headers,
                   credentials: 'include',
                   timeout: 15000,
                   silent: true,
               });
+              const verifyBody = await verifyRes.json().catch(() => ({} as any));
+              if (verifyRes.ok && verifyBody?.success === true) {
+                  await fetchBillingStatus();
+                  setPaymentState('success');
+                  return;
+              }
               if (verifyRes.ok) {
-                  const verifyBody = await verifyRes.json().catch(() => ({} as any));
-                  if (verifyBody?.success === true) {
-                      await fetchBillingStatus();
-                      setPaymentState('success');
+                  const paymentStatus = String(verifyBody?.payment_status || '').trim().toLowerCase();
+                  if (paymentStatus === 'failed' || paymentStatus === 'cancelled' || paymentStatus === 'canceled') {
+                      setPaymentState('error');
                       return;
                   }
+              }
+              if (!verifyRes.ok && Number(verifyRes.status || 0) >= 500) {
+                  console.error('Verification failed', verifyBody);
               }
           }
 
           const data = await fetchBillingStatus();
-          if (data?.tier === 'pro') {
+          if (data?.currentPlan?.hasPaidEntitlement === true && data?.currentPlan?.managedPlan !== 'free') {
               setPaymentState('success');
               return;
           }
-      } catch (e) {
-          console.error("Verification failed", e);
+      } catch (e: any) {
+          if (Number(e?.status || 0) >= 500 || !e?.status) {
+              console.error('Verification failed', e);
+          }
       }
       startPolling();
   }, [fetchBillingStatus, isOnline, session?.access_token, startPolling]);
@@ -430,20 +566,21 @@ export default function SubscriptionPage() {
         if (canceled) return;
         setIsInitialLoading(false);
 
-        // Check for payment provider return
-        const reference = searchParams.get('reference');
-        const success = searchParams.get('success');
-        
-        if (reference) {
+        // Check for payment provider return and clear callback params once consumed.
+        const paymentReturn = extractBillingReturnState(searchParams);
+
+        if (paymentReturn.isCanceled && !paymentReturn.isSuccess) {
+            setPaymentState('error');
+        } else if (paymentReturn.verificationTarget) {
             setPaymentState('confirming');
-            void verifyPayment(reference);
-        } else if (success === 'true') {
+            void verifyPayment(paymentReturn);
+        } else if (paymentReturn.isSuccess) {
             setPaymentState('confirming');
             startPolling();
         }
-        
-        if (searchParams.get('cancelled') === 'true') {
-            setPaymentState('error');
+
+        if (paymentReturn.hasCallbackState) {
+            router.replace(BILLING_ROUTE, { scroll: false });
         }
     };
 
@@ -453,7 +590,7 @@ export default function SubscriptionPage() {
         canceled = true;
         stopPolling();
     };
-  }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling]);
+  }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling, router]);
 
   useEffect(() => {
       if (isPromoUnlocked || !canAccessBilling) {
@@ -492,6 +629,7 @@ export default function SubscriptionPage() {
       planType: 'weekly' | 'monthly',
       methodOverride?: 'subscription' | 'transfer'
   ) => {
+      const planKey = resolvePlanCardKey(planType);
       if (!isOnline) {
           toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
           return;
@@ -508,6 +646,15 @@ export default function SubscriptionPage() {
           });
           return;
       }
+      if (!canStartCheckoutForPlan({
+          planKey,
+          state: currentPlan,
+          canAccessBilling,
+          checkout: checkoutCapability,
+      })) {
+          showPlanActionBlockedToast(planKey);
+          return;
+      }
       if (!session?.access_token) {
           toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
           return;
@@ -515,7 +662,6 @@ export default function SubscriptionPage() {
       setLoadingPlan(planType);
       
       try {
-          const planKey = planType === 'weekly' ? 'pro_weekly' : 'pro_monthly';
           const paymentMethod = methodOverride || (isAutoRenew ? 'subscription' : 'transfer');
           const response = await initializePaymentRequest({
               plan_key: planKey,
@@ -533,14 +679,30 @@ export default function SubscriptionPage() {
 
       } catch (e: any) {
           console.error(e);
-          if (Number(e?.status || 0) === 429) {
+          const errorCode = String(e?.payload?.error || e?.code || '');
+          const errorMessage = String(e?.payload?.message || e?.message || 'Failed to initialize payment');
+          applyCheckoutFailureState(e);
+          if (errorCode === 'plan_already_active' || errorCode === 'premium_plan_managed_separately') {
+              await fetchBillingStatus();
+              toast({
+                  title: errorCode === 'plan_already_active' ? 'Current plan' : 'Managed separately',
+                  description: errorMessage,
+              });
+          } else if (Number(e?.status || 0) === 429) {
               toast({
                   variant: 'destructive',
                   title: 'High demand / rate limited — retry shortly.',
                   description: 'Checkout is temporarily rate limited. Please retry in a few seconds.',
               });
           } else {
-              toast({ variant: 'destructive', title: 'Payment Error', description: e?.message || 'Failed to initialize payment' });
+              toast({
+                  variant: 'destructive',
+                  title:
+                      errorCode === 'billing_gateway_not_configured' || errorCode.endsWith('_env_missing')
+                          ? 'Checkout unavailable'
+                          : 'Payment Error',
+                  description: errorMessage,
+              });
           }
           setLoadingPlan(null);
           setPaymentState('idle');
@@ -563,12 +725,17 @@ export default function SubscriptionPage() {
 
       setIsCancelling(true);
       try {
-          await billingRequest('cancel', {
+          const { data } = await billingRequest<{ outcome?: string; message?: string }>('cancel', {
               method: 'POST',
               body: JSON.stringify({ reason: cancelReason }),
           });
-          
-          toast({ title: "Subscription Canceled", description: "Your plan will not renew." });
+
+          const isNoop = data?.outcome === 'already_scheduled' || data?.outcome === 'no_subscription';
+          toast({
+              title: isNoop ? 'Subscription Updated' : 'Subscription Canceled',
+              description: data?.message || 'Your plan will not renew.',
+          });
+          setCancelReason('');
           setIsCancelDialogOpen(false);
           fetchBillingStatus();
 
@@ -690,7 +857,8 @@ export default function SubscriptionPage() {
     loading, 
     highlighted, 
     savedLabel,
-    disabled
+    disabled,
+    ctaLabel,
   }: any) => (
     <div className={cn(
         "relative flex flex-col bg-card rounded-3xl shadow-sm overflow-hidden transition-all duration-300",
@@ -760,10 +928,10 @@ export default function SubscriptionPage() {
                     disabled && "cursor-not-allowed opacity-50"
                 )}
              >
-                {loading ? <Loader2 className="animate-spin" /> : (disabled ? 'CURRENT PLAN' : 'SELECT PLAN')}
+                {loading ? <Loader2 className="animate-spin" /> : (ctaLabel || (disabled ? 'CURRENT PLAN' : 'SELECT PLAN'))}
              </Button>
-          </div>
-      </div>
+           </div>
+       </div>
     </div>
   );
 
@@ -832,6 +1000,277 @@ export default function SubscriptionPage() {
       );
   }
 
+  const activeBillingSummary = (hasPaidProAccess || hasPremiumAccess) ? (
+      <div className="mb-8 max-w-4xl mx-auto space-y-8">
+          <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
+              <div className="flex items-center justify-between mb-8">
+                  <div>
+                      <h2 className="text-2xl font-bold text-foreground">{currentPlan.currentPlanLabel} Active</h2>
+                      <p className="text-muted-foreground mt-1">
+                          {hasPremiumAccess
+                              ? 'Your Premium workspace is active and managed separately from self-serve upgrades.'
+                              : 'Your current paid plan is active and synchronized across billing and entitlements.'}
+                      </p>
+                  </div>
+                  <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
+                      <CheckCircle2 className="h-6 w-6 text-green-600" />
+                  </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                  <div className="space-y-4">
+                      {(currentPaidPlanCatalog?.metadata?.feature_bullets?.length ? currentPaidPlanCatalog.metadata.feature_bullets : [
+                          'Premium model access',
+                          'High-priority processing',
+                          'Expanded study tools',
+                      ]).slice(0, 4).map((feature) => (
+                          <div key={feature} className="flex items-center gap-3">
+                              <CheckCircle2 className="h-5 w-5 text-primary" />
+                              <span className="font-medium">{feature}</span>
+                          </div>
+                      ))}
+                  </div>
+                  <div className="bg-muted/40 rounded-2xl p-6">
+                      <div className="text-sm text-muted-foreground mb-1">
+                          {subscription?.status === 'active' ? 'Renews on' : 'Expires on'}
+                      </div>
+                      <div className="text-2xl font-bold text-foreground mb-4">
+                          {formatDate(expiry || '')}
+                      </div>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                          Current plan: {currentPlan.currentPlanLabel}
+                      </p>
+                      <p className="mb-4 text-xs text-muted-foreground">
+                          Document expiration window: {formatExpirationWindowLabel(currentExpirationDays)}
+                      </p>
+                      {subscription?.status === 'active' && !hasPremiumAccess ? (
+                          <OfflineGuard>
+                              <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
+                                  <DialogTrigger asChild>
+                                      <Button variant="outline" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-100">
+                                          Cancel Auto-renew
+                                      </Button>
+                                  </DialogTrigger>
+                                  <DialogContent>
+                                      <DialogHeader>
+                                          <DialogTitle>Cancel Subscription</DialogTitle>
+                                          <DialogDescription>
+                                              Are you sure? You will lose access to Pro features at the end of your current billing period.
+                                          </DialogDescription>
+                                      </DialogHeader>
+                                      <div className="space-y-4 py-4">
+                                          <Label>Reason for cancellation (required)</Label>
+                                          <Textarea
+                                              placeholder="Please tell us why you are leaving..."
+                                              value={cancelReason}
+                                              onChange={(e) => setCancelReason(e.target.value)}
+                                          />
+                                      </div>
+                                      <DialogFooter>
+                                          <Button variant="outline" onClick={() => setIsCancelDialogOpen(false)}>Keep Plan</Button>
+                                          <Button variant="destructive" onClick={handleCancelSubscription} disabled={isCancelling}>
+                                              {isCancelling ? <Loader2 className="animate-spin h-4 w-4" /> : 'Confirm Cancellation'}
+                                          </Button>
+                                      </DialogFooter>
+                                  </DialogContent>
+                              </Dialog>
+                          </OfflineGuard>
+                      ) : hasPremiumAccess ? (
+                          <Button variant="outline" className="w-full" disabled>
+                              Manage Premium via Support
+                          </Button>
+                      ) : (
+                          <OfflineGuard>
+                              <Button className="w-full bg-primary hover:bg-primary/90" onClick={() => setTier('free')}>
+                                  Re-subscribe
+                              </Button>
+                          </OfflineGuard>
+                      )}
+                  </div>
+              </div>
+          </div>
+
+          <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
+              <div className="flex items-center gap-2 mb-6">
+                  <Clock className="h-5 w-5 text-muted-foreground" />
+                  <h2 className="text-xl font-bold text-foreground">Payment History</h2>
+              </div>
+
+              {payments.length > 0 ? (
+                  <div className="overflow-x-auto">
+                      <Table>
+                          <TableHeader>
+                              <TableRow>
+                                  <TableHead>Date</TableHead>
+                                  <TableHead>Description</TableHead>
+                                  <TableHead>Amount</TableHead>
+                                  <TableHead>Status</TableHead>
+                                  <TableHead className="text-right">Reference</TableHead>
+                              </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                              {payments.map((p) => (
+                                  <TableRow key={p.reference}>
+                                      <TableCell className="font-medium">{formatDate(p.created_at)}</TableCell>
+                                      <TableCell className="capitalize">{p.plan} Plan</TableCell>
+                                      <TableCell>NGN {p.amount_ngn.toLocaleString()}</TableCell>
+                                      <TableCell>
+                                          <Badge variant={p.status === 'success' ? 'default' : 'secondary'} className={p.status === 'success' ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
+                                              {p.status}
+                                          </Badge>
+                                      </TableCell>
+                                      <TableCell className="text-right font-mono text-xs text-muted-foreground">{p.reference.substring(0, 8)}...</TableCell>
+                                  </TableRow>
+                              ))}
+                          </TableBody>
+                      </Table>
+                  </div>
+              ) : (
+                  <div className="text-center py-8 text-muted-foreground bg-muted/30 rounded-xl">
+                      No payment history found.
+                  </div>
+              )}
+          </div>
+      </div>
+  ) : null;
+
+  const pricingOptions = (
+      <div className="space-y-8">
+          {isPromoUnlocked ? (
+              <div className="mb-8 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm">
+                  <p className="font-semibold">{promoCopy.intro}</p>
+                  <p className="text-muted-foreground">{proPlanCatalog?.metadata?.price_display ? `Pricing after promo: ${proPlanCatalog.metadata.price_display}` : promoCopy.pricing}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                      Promo access keeps the {formatExpirationWindowLabel(FREE_PLAN_EXPIRATION_DAYS)} document expiration window.
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{promoCopy.ending}</p>
+              </div>
+          ) : null}
+
+          {!canAccessBilling && !isPromoUnlocked ? (
+              <div className="rounded-3xl border border-amber-300 bg-amber-50/70 p-6 text-sm dark:border-amber-800 dark:bg-amber-950/20">
+                  <p className="font-semibold text-amber-900 dark:text-amber-200">Billing is unavailable right now.</p>
+                  <p className="mt-2 text-amber-800/90 dark:text-amber-300">
+                      Current plan data stays visible, but checkout actions are disabled until billing verification completes.
+                  </p>
+              </div>
+          ) : null}
+
+          {checkoutNotice && canAccessBilling && !isPromoUnlocked ? (
+              <div className="rounded-3xl border border-amber-300 bg-amber-50/70 p-6 text-sm dark:border-amber-800 dark:bg-amber-950/20">
+                  <p className="font-semibold text-amber-900 dark:text-amber-200">Checkout is temporarily unavailable.</p>
+                  <p className="mt-2 text-amber-800/90 dark:text-amber-300">
+                      {checkoutNotice}
+                  </p>
+              </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+              <PricingCard
+                  title={freePlanCatalog?.metadata?.label || 'Free'}
+                  price={freePlanCatalog?.metadata?.price_display || 'Loading...'}
+                  period="forever"
+                  features={withLeadingFeature(
+                      freeRetentionLabel,
+                      freePlanCatalog?.metadata?.feature_bullets?.length ? freePlanCatalog.metadata.feature_bullets : [
+                          'Core chat',
+                          'Basic support',
+                      ],
+                  )}
+                  onSelect={() => {}}
+                  disabled={freeCardState.disabled}
+                  ctaLabel={freeCardState.ctaLabel}
+              />
+
+              <OfflineGuard asChild>
+                  <PricingCard
+                      title={`${proPlanCatalog?.metadata?.label || 'Pro'} Monthly`}
+                      price={pricing.monthly.amount > 0 ? `NGN ${pricing.monthly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
+                      originalPrice={pricing.monthly.compare_at > 0 ? `NGN ${pricing.monthly.compare_at.toLocaleString()}` : undefined}
+                      period="month"
+                      highlighted={monthlyCardState.isCurrent || !weeklyCardState.isCurrent}
+                      savedLabel={pricing.monthly.label || proPlanCatalog?.pricing?.monthly?.label || undefined}
+                      loading={loadingPlan === 'monthly'}
+                      onSelect={() => handlePaymentCheckout('monthly')}
+                      disabled={monthlyCardState.disabled}
+                      ctaLabel={monthlyCardState.ctaLabel}
+                      features={withLeadingFeature(
+                          proRetentionLabel,
+                          proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
+                              'Priority processing',
+                              'Advanced data analysis',
+                          ],
+                      )}
+                  />
+              </OfflineGuard>
+
+              <OfflineGuard asChild>
+                  <PricingCard
+                      title={`${proPlanCatalog?.metadata?.label || 'Pro'} Weekly`}
+                      price={pricing.weekly.amount > 0 ? `NGN ${pricing.weekly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
+                      originalPrice={pricing.weekly.compare_at > 0 ? `NGN ${pricing.weekly.compare_at.toLocaleString()}` : undefined}
+                      period="week"
+                      highlighted={weeklyCardState.isCurrent}
+                      savedLabel={pricing.weekly.label || proPlanCatalog?.pricing?.weekly?.label || undefined}
+                      loading={loadingPlan === 'weekly'}
+                      onSelect={() => handlePaymentCheckout('weekly')}
+                      disabled={weeklyCardState.disabled}
+                      ctaLabel={weeklyCardState.ctaLabel}
+                      features={withLeadingFeature(
+                          proRetentionLabel,
+                          proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
+                              'All Pro features',
+                              'Cancel anytime',
+                              'Standard support',
+                          ],
+                      )}
+                  />
+              </OfflineGuard>
+          </div>
+
+          <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <OfflineGuard asChild>
+                  <Button
+                      variant="outline"
+                      onClick={() => openManualBankTransfer('monthly')}
+                      disabled={!canStartCheckoutForPlan({
+                          planKey: 'pro_monthly',
+                          state: currentPlan,
+                          canAccessBilling,
+                          checkout: checkoutCapability,
+                      })}
+                      >
+                          <Banknote className="mr-2 h-4 w-4" />
+                      {monthlyCardState.isCurrent
+                          ? 'Current Monthly Plan'
+                          : monthlyCardState.disabled
+                            ? 'Transfer Unavailable'
+                            : 'Pay with Transfer (Monthly)'}
+                  </Button>
+              </OfflineGuard>
+              <OfflineGuard asChild>
+                  <Button
+                      variant="outline"
+                      onClick={() => openManualBankTransfer('weekly')}
+                      disabled={!canStartCheckoutForPlan({
+                          planKey: 'pro_weekly',
+                          state: currentPlan,
+                          canAccessBilling,
+                          checkout: checkoutCapability,
+                      })}
+                      >
+                          <Banknote className="mr-2 h-4 w-4" />
+                      {weeklyCardState.isCurrent
+                          ? 'Current Weekly Plan'
+                          : weeklyCardState.disabled
+                            ? 'Transfer Unavailable'
+                            : 'Pay with Transfer (Weekly)'}
+                  </Button>
+              </OfflineGuard>
+          </div>
+      </div>
+  );
+
     // --- Main Render ---
 
   return (
@@ -856,7 +1295,7 @@ export default function SubscriptionPage() {
                 </p>
 
                 {/* Toggle Switch */}
-                {tier !== 'pro' && canAccessBilling && (
+                {canAccessBilling && currentPlan.managedPlan !== 'premium' && (
                     <div className="flex flex-wrap items-center justify-center gap-4 pt-6">
                         <span className={cn("text-sm font-medium transition-colors", !isAutoRenew ? "text-foreground" : "text-muted-foreground") }>
                             One-time Transfer (manual renew)
@@ -878,259 +1317,8 @@ export default function SubscriptionPage() {
         {/* Pricing Cards Grid */}
         <div className="container max-w-6xl mx-auto px-4 pt-10 relative z-20">
             <UsageMeter />
-            {isPromoUnlocked ? (
-                <div className="mb-8 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-sm">
-                    <p className="font-semibold">{promoCopy.intro}</p>
-                    <p className="text-muted-foreground">{proPlanCatalog?.metadata?.price_display ? `Pricing after promo: ${proPlanCatalog.metadata.price_display}` : promoCopy.pricing}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                        Promo access keeps the {formatExpirationWindowLabel(FREE_PLAN_EXPIRATION_DAYS)} document expiration window.
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">{promoCopy.ending}</p>
-                </div>
-            ) : null}
-            {hasPaidProAccess ? (
-                // Active Pro View
-                <div className="max-w-4xl mx-auto space-y-8">
-                    {/* Subscription Status */}
-                    <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
-                        <div className="flex items-center justify-between mb-8">
-                            <div>
-                                <h2 className="text-2xl font-bold text-foreground">Pro Plan Active</h2>
-                                <p className="text-muted-foreground mt-1">You have full access to all premium features.</p>
-                            </div>
-                            <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
-                                <CheckCircle2 className="h-6 w-6 text-green-600" />
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                            <div className="space-y-4">
-                                {(proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
-                                    'Premium model access',
-                                    'High-priority processing',
-                                    'Expanded study tools',
-                                ]).slice(0, 4).map((feature) => (
-                                    <div key={feature} className="flex items-center gap-3">
-                                        <CheckCircle2 className="h-5 w-5 text-primary" />
-                                        <span className="font-medium">{feature}</span>
-                                    </div>
-                                ))}
-                            </div>
-                            <div className="bg-muted/40 rounded-2xl p-6">
-                                <div className="text-sm text-muted-foreground mb-1">
-                                    {subscription?.status === 'active' ? 'Renews on' : 'Expires on'}
-                                </div>
-                                <div className="text-2xl font-bold text-foreground mb-4">
-                                    {formatDate(expiry || '')}
-                                </div>
-                                <p className="mb-4 text-xs text-muted-foreground">
-                                    Document expiration window: {formatExpirationWindowLabel(currentExpirationDays)}
-                                </p>
-                                {subscription?.status === 'active' ? (
-                                    <OfflineGuard>
-                                        <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
-                                            <DialogTrigger asChild>
-                                                <Button variant="outline" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-100">
-                                                    Cancel Auto-renew
-                                                </Button>
-                                            </DialogTrigger>
-                                            <DialogContent>
-                                                <DialogHeader>
-                                                    <DialogTitle>Cancel Subscription</DialogTitle>
-                                                    <DialogDescription>
-                                                        Are you sure? You will lose access to Pro features at the end of your current billing period.
-                                                    </DialogDescription>
-                                                </DialogHeader>
-                                                <div className="space-y-4 py-4">
-                                                    <Label>Reason for cancellation (required)</Label>
-                                                    <Textarea
-                                                        placeholder="Please tell us why you are leaving..."
-                                                        value={cancelReason}
-                                                        onChange={(e) => setCancelReason(e.target.value)}
-                                                    />
-                                                </div>
-                                                <DialogFooter>
-                                                    <Button variant="outline" onClick={() => setIsCancelDialogOpen(false)}>Keep Plan</Button>
-                                                    <Button variant="destructive" onClick={handleCancelSubscription} disabled={isCancelling}>
-                                                        {isCancelling ? <Loader2 className="animate-spin h-4 w-4" /> : 'Confirm Cancellation'}
-                                                    </Button>
-                                                </DialogFooter>
-                                            </DialogContent>
-                                        </Dialog>
-                                    </OfflineGuard>
-                                ) : (
-                                    <OfflineGuard>
-                                        <Button className="w-full bg-primary hover:bg-primary/90" onClick={() => setTier('free')}>
-                                            Re-subscribe
-                                        </Button>
-                                    </OfflineGuard>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Payment History Table */}
-                    <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
-                        <div className="flex items-center gap-2 mb-6">
-                            <Clock className="h-5 w-5 text-muted-foreground" />
-                            <h2 className="text-xl font-bold text-foreground">Payment History</h2>
-                        </div>
-
-                        {payments.length > 0 ? (
-                            <div className="overflow-x-auto">
-                                <Table>
-                                    <TableHeader>
-                                        <TableRow>
-                                            <TableHead>Date</TableHead>
-                                            <TableHead>Description</TableHead>
-                                            <TableHead>Amount</TableHead>
-                                            <TableHead>Status</TableHead>
-                                            <TableHead className="text-right">Reference</TableHead>
-                                        </TableRow>
-                                    </TableHeader>
-                                    <TableBody>
-                                        {payments.map((p) => (
-                                            <TableRow key={p.reference}>
-                                                <TableCell className="font-medium">{formatDate(p.created_at)}</TableCell>
-                                                <TableCell className="capitalize">{p.plan} Plan</TableCell>
-                                                <TableCell>NGN {p.amount_ngn.toLocaleString()}</TableCell>
-                                                <TableCell>
-                                                    <Badge variant={p.status === 'success' ? 'default' : 'secondary'} className={p.status === 'success' ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
-                                                        {p.status}
-                                                    </Badge>
-                                                </TableCell>
-                                                <TableCell className="text-right font-mono text-xs text-muted-foreground">{p.reference.substring(0, 8)}...</TableCell>
-                                            </TableRow>
-                                        ))}
-                                    </TableBody>
-                                </Table>
-                            </div>
-                        ) : (
-                            <div className="text-center py-8 text-muted-foreground bg-muted/30 rounded-xl">
-                                No payment history found.
-                            </div>
-                        )}
-                    </div>
-                </div>
-            ) : (
-                // Pricing Options
-                <div className="space-y-8">
-                    {isPromoUnlocked ? (
-                        <div className="relative min-h-[440px] overflow-hidden rounded-3xl border border-primary/20 bg-card">
-                            <div className="absolute inset-0 z-0 p-6">
-                                <div className="grid h-full grid-cols-1 gap-6 md:grid-cols-3">
-                                    <div className="rounded-3xl border border-border/60 bg-muted/30" />
-                                    <div className="rounded-3xl border border-border/60 bg-muted/30" />
-                                    <div className="rounded-3xl border border-border/60 bg-muted/30" />
-                                </div>
-                            </div>
-                            <div className="absolute inset-0 z-10 bg-background/85 backdrop-blur-sm" />
-                            <div className="absolute inset-0 z-20 flex items-center justify-center p-6">
-                                <div className="max-w-lg rounded-2xl border border-primary/20 bg-card p-8 text-center shadow-xl">
-                                    <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                                        <CheckCircle2 className="h-6 w-6 text-primary" />
-                                    </div>
-                                    <h3 className="mb-2 text-xl font-bold font-headline">Free Premium Access</h3>
-                                    <p className="mb-2 text-muted-foreground">{promoCopy.intro}</p>
-                                    <p className="mb-2 text-sm text-muted-foreground">{proPlanCatalog?.metadata?.price_display ? `Pricing after promo: ${proPlanCatalog.metadata.price_display}` : promoCopy.pricing}</p>
-                                    <p className="mb-4 text-xs text-muted-foreground">{promoCopy.ending}</p>
-                                    <p className="mb-4 text-xs text-muted-foreground">
-                                        After promo ends, only active paid entitlements retain Pro access.
-                                    </p>
-                                    <Badge variant="outline" className="border-primary/20 bg-primary/5">Limited Time Offer</Badge>
-                                </div>
-                            </div>
-                        </div>
-                    ) : !canAccessBilling ? (
-                        <div className="rounded-3xl border border-amber-300 bg-amber-50/70 p-6 text-sm dark:border-amber-800 dark:bg-amber-950/20">
-                            <p className="font-semibold text-amber-900 dark:text-amber-200">Billing is unavailable right now.</p>
-                            <p className="mt-2 text-amber-800/90 dark:text-amber-300">
-                                Payment actions stay hidden until your entitlement state is verified. Reconnect and refresh to continue.
-                            </p>
-                        </div>
-                    ) : (
-                        <>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-                                {/* Free Plan */}
-                                <PricingCard
-                                    title={freePlanCatalog?.metadata?.label || 'Free'}
-                                    price={freePlanCatalog?.metadata?.price_display || 'Loading...'}
-                                    period="forever"
-                                    features={withLeadingFeature(
-                                        freeRetentionLabel,
-                                        freePlanCatalog?.metadata?.feature_bullets?.length ? freePlanCatalog.metadata.feature_bullets : [
-                                            'Core chat',
-                                            'Basic support',
-                                        ],
-                                    )}
-                                    onSelect={() => {}}
-                                    disabled={true}
-                                />
-
-                                {/* Monthly (Highlighted) */}
-                                <OfflineGuard asChild>
-                                    <PricingCard
-                                        title={`${proPlanCatalog?.metadata?.label || 'Pro'} Monthly`}
-                                        price={pricing.monthly.amount > 0 ? `NGN ${pricing.monthly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
-                                        originalPrice={pricing.monthly.compare_at > 0 ? `NGN ${pricing.monthly.compare_at.toLocaleString()}` : undefined}
-                                        period="month"
-                                        highlighted={true}
-                                        savedLabel={pricing.monthly.label || proPlanCatalog?.pricing?.monthly?.label || undefined}
-                                        loading={loadingPlan === 'monthly'}
-                                        onSelect={() => handlePaymentCheckout('monthly')}
-                                        disabled={isPromoUnlocked}
-                                        features={withLeadingFeature(
-                                            proRetentionLabel,
-                                            proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
-                                                'Priority processing',
-                                                'Advanced data analysis',
-                                            ],
-                                        )}
-                                    />
-                                </OfflineGuard>
-
-                                {/* Weekly */}
-                                <OfflineGuard asChild>
-                                    <PricingCard
-                                        title={`${proPlanCatalog?.metadata?.label || 'Pro'} Weekly`}
-                                        price={pricing.weekly.amount > 0 ? `NGN ${pricing.weekly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
-                                        originalPrice={pricing.weekly.compare_at > 0 ? `NGN ${pricing.weekly.compare_at.toLocaleString()}` : undefined}
-                                        period="week"
-                                        savedLabel={pricing.weekly.label || proPlanCatalog?.pricing?.weekly?.label || undefined}
-                                        loading={loadingPlan === 'weekly'}
-                                        onSelect={() => handlePaymentCheckout('weekly')}
-                                        disabled={isPromoUnlocked}
-                                        features={withLeadingFeature(
-                                            proRetentionLabel,
-                                            proPlanCatalog?.metadata?.feature_bullets?.length ? proPlanCatalog.metadata.feature_bullets : [
-                                                'All Pro features',
-                                                'Cancel anytime',
-                                                'Standard support',
-                                            ],
-                                        )}
-                                    />
-                                </OfflineGuard>
-                            </div>
-
-                            <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
-                                <OfflineGuard asChild>
-                                    <Button variant="outline" onClick={() => openManualBankTransfer('monthly')}>
-                                        <Banknote className="mr-2 h-4 w-4" />
-                                        Pay with Transfer (Monthly)
-                                    </Button>
-                                </OfflineGuard>
-                                <OfflineGuard asChild>
-                                    <Button variant="outline" onClick={() => openManualBankTransfer('weekly')}>
-                                        <Banknote className="mr-2 h-4 w-4" />
-                                        Pay with Transfer (Weekly)
-                                    </Button>
-                                </OfflineGuard>
-                            </div>
-                        </>
-                    )}
-
-                </div>
-            )}
+            {activeBillingSummary}
+            {pricingOptions}
 
             <div className="mt-12 text-center">
                  <div className="inline-flex items-center gap-2 text-xs text-muted-foreground bg-card/50 px-4 py-2 rounded-full border border-border shadow-sm">
@@ -1159,7 +1347,15 @@ export default function SubscriptionPage() {
                     <Button
                         className="w-full"
                         onClick={() => void handlePaymentCheckout(manualPlan, 'transfer')}
-                        disabled={loadingPlan === manualPlan}
+                        disabled={
+                            loadingPlan === manualPlan ||
+                            !canStartCheckoutForPlan({
+                                planKey: manualPlan === 'weekly' ? 'pro_weekly' : 'pro_monthly',
+                                state: currentPlan,
+                                canAccessBilling,
+                                checkout: checkoutCapability,
+                            })
+                        }
                     >
                         {loadingPlan === manualPlan ? (
                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />

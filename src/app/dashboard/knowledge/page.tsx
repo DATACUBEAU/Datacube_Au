@@ -41,6 +41,13 @@ import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { FREE_PLAN_EXPIRATION_DAYS, PAID_PRO_PLAN_EXPIRATION_DAYS } from '@/lib/plans/subscription-policy';
 import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
 import { useFeatureOutput } from '@/hooks/api/use-feature-output';
+import {
+  clearKnowledgeGenerationLockRecord,
+  readKnowledgeGenerationLockRecord,
+  resolveKnowledgeGenerateButtonState,
+  writeKnowledgeGenerationLockRecord,
+  type KnowledgeGenerationLockRecord,
+} from '@/lib/knowledge/generation-lock';
 
 // Lazy-load the animation components to keep the initial bundle small
 const AnimatedText = dynamic(() => import('@/components/animated-text'), {
@@ -118,6 +125,7 @@ function KnowledgePageContent() {
   const { documents: apiDocuments, loading: docsLoading } = useAuDocuments();
 
   const [selectedDocId, setSelectedDocId] = useState<string | null>(null);
+  const [persistedLock, setPersistedLock] = useState<KnowledgeGenerationLockRecord | null>(null);
   const [isConceptMapDevOpen, setIsConceptMapDevOpen] = useState(false);
   const [conceptMapClickedTerm, setConceptMapClickedTerm] = useState<string | null>(null);
 
@@ -164,10 +172,80 @@ function KnowledgePageContent() {
     setKnowledgeData,
   } = useStore();
 
+  const visibleKnowledgeData = knowledgeOutput.status === 'missing' ? null : knowledgeData;
+  const knowledgeButtonState = useMemo(
+    () =>
+      resolveKnowledgeGenerateButtonState({
+        documentId: selectedDocId,
+        isGenerating: isGeneratingKnowledge,
+        isOnline,
+        documentReady: Boolean(selectedDocReady),
+        remoteStatus: knowledgeOutput.status,
+        localLockStatus: persistedLock?.status ?? null,
+      }),
+    [isGeneratingKnowledge, isOnline, knowledgeOutput.status, persistedLock?.status, selectedDocId, selectedDocReady],
+  );
+
   useEffect(() => {
     if (knowledgeOutput.status !== 'ready' || !knowledgeOutput.output) return;
     setKnowledgeData(knowledgeOutput.output);
   }, [knowledgeOutput.output, knowledgeOutput.status, setKnowledgeData]);
+
+  useEffect(() => {
+    if (!selectedDocId || typeof window === 'undefined') {
+      setPersistedLock(null);
+      return;
+    }
+    setPersistedLock(readKnowledgeGenerationLockRecord(selectedDocId, window.localStorage));
+  }, [selectedDocId]);
+
+  useEffect(() => {
+    if (!selectedDocId || typeof window === 'undefined') return;
+
+    if (knowledgeOutput.status === 'ready') {
+      if (knowledgeOutput.output) {
+        const historyToStore: StoredKnowledgeHistory = {
+          timestamp: Date.now(),
+          data: knowledgeOutput.output,
+        };
+        window.localStorage.setItem(`knowledge_history_user_${selectedDocId}`, JSON.stringify(historyToStore));
+      }
+
+      const nextLock: KnowledgeGenerationLockRecord = {
+        documentId: selectedDocId,
+        status: 'ready',
+        docVersionId: knowledgeOutput.docVersionId || null,
+        updatedAt: knowledgeOutput.generatedAt || null,
+      };
+      writeKnowledgeGenerationLockRecord(window.localStorage, nextLock);
+      setPersistedLock(nextLock);
+      return;
+    }
+
+    if (knowledgeOutput.status === 'failed') {
+      const nextLock: KnowledgeGenerationLockRecord = {
+        documentId: selectedDocId,
+        status: 'failed',
+        docVersionId: knowledgeOutput.docVersionId || null,
+        updatedAt: knowledgeOutput.generatedAt || null,
+      };
+      writeKnowledgeGenerationLockRecord(window.localStorage, nextLock);
+      setPersistedLock(nextLock);
+      return;
+    }
+
+    if (knowledgeOutput.status === 'missing') {
+      clearKnowledgeGenerationLockRecord(selectedDocId, window.localStorage);
+      window.localStorage.removeItem(`knowledge_history_user_${selectedDocId}`);
+      setPersistedLock(null);
+    }
+  }, [
+    knowledgeOutput.docVersionId,
+    knowledgeOutput.generatedAt,
+    knowledgeOutput.output,
+    knowledgeOutput.status,
+    selectedDocId,
+  ]);
 
   const handleDocSelectionChange = (docId: string) => {
     setSelectedDocId(docId);
@@ -191,13 +269,25 @@ function KnowledgePageContent() {
 
           if (stillValid) {
             setKnowledgeData(stored.data); // Directly set the data in the store
+            const cachedLock: KnowledgeGenerationLockRecord = {
+              documentId: docId,
+              status: 'ready',
+              docVersionId: null,
+              updatedAt: new Date(stored.timestamp).toISOString(),
+            };
+            writeKnowledgeGenerationLockRecord(window.localStorage, cachedLock);
+            setPersistedLock(cachedLock);
             toast({ title: 'Loaded from history', description: 'Showing cached knowledge materials.' });
           } else {
             localStorage.removeItem(cacheKey); // Stale data
+            clearKnowledgeGenerationLockRecord(docId, window.localStorage);
+            setPersistedLock(null);
           }
         } catch (e) {
           console.error('Failed to parse knowledge history from localStorage', e);
           localStorage.removeItem(cacheKey);
+          clearKnowledgeGenerationLockRecord(docId, window.localStorage);
+          setPersistedLock(null);
         }
       }
     }
@@ -251,6 +341,16 @@ function KnowledgePageContent() {
         }
 
         await generateKnowledge(selectedDocId, documentContent, pastQuestionsContent);
+        if (typeof window !== 'undefined') {
+          const optimisticLock: KnowledgeGenerationLockRecord = {
+            documentId: selectedDocId,
+            status: 'ready',
+            docVersionId: knowledgeOutput.docVersionId || null,
+            updatedAt: new Date().toISOString(),
+          };
+          writeKnowledgeGenerationLockRecord(window.localStorage, optimisticLock);
+          setPersistedLock(optimisticLock);
+        }
 
     } catch (error: any) {
       console.error('Failed to prepare for study material generation:', error);
@@ -270,22 +370,22 @@ function KnowledgePageContent() {
   }, [toast]);
 
   const handleGenerateClick = async () => {
-    if (knowledgeOutput.status === 'ready') {
+    if (knowledgeButtonState.effectiveLockStatus === 'ready') {
       showGeneratedExplanation();
       return;
     }
-    if (knowledgeOutput.status === 'running' || knowledgeOutput.status === 'loading') {
-      toast({
-        title: 'Generating in progress',
-        description: 'Knowledge Hub is already generating for this document.',
-      });
-      return;
-    }
-    if (knowledgeOutput.status === 'failed') {
+    if (knowledgeButtonState.effectiveLockStatus === 'failed') {
       toast({
         variant: 'destructive',
         title: 'Generation locked',
         description: 'This document has a failed cached output. Upload a new version or ask an admin to clear the cache before retrying.',
+      });
+      return;
+    }
+    if (knowledgeButtonState.isBusy) {
+      toast({
+        title: 'Generating in progress',
+        description: 'Knowledge Hub is already generating for this document.',
       });
       return;
     }
@@ -316,7 +416,7 @@ function KnowledgePageContent() {
   };
 
   const renderContent = () => {
-    if (!isOnline && !knowledgeData) {
+    if (!isOnline && !visibleKnowledgeData) {
       return (
         <div className="flex h-full min-h-[400px] flex-col items-center justify-center">
           <div className="space-y-2 text-center text-muted-foreground">
@@ -346,7 +446,7 @@ function KnowledgePageContent() {
       );
     }
 
-    if (!knowledgeData) {
+    if (!visibleKnowledgeData) {
       return (
          <div className="flex h-full min-h-[400px] flex-col items-center justify-center">
               <div className="space-y-2 text-center text-muted-foreground">
@@ -373,7 +473,7 @@ function KnowledgePageContent() {
             <CardHeader><CardTitle className="font-headline">Document Summary</CardTitle><CardDescription>A concise overview of your selected document.</CardDescription></CardHeader>
             <CardContent>
                 <div className="pr-6">
-                    {AnimatedText && <AnimatedText text={knowledgeData.summary} />}
+                    {AnimatedText && <AnimatedText text={visibleKnowledgeData.summary} />}
                 </div>
             </CardContent>
           </Card>
@@ -392,7 +492,7 @@ function KnowledgePageContent() {
                       initial="hidden"
                       animate="visible"
                   >
-                  {coerceMultiline((knowledgeData as any)?.keyPoints).split('\n').filter((p: string) => p.trim()).map((point: string, index: number) => (
+                  {coerceMultiline((visibleKnowledgeData as any)?.keyPoints).split('\n').filter((p: string) => p.trim()).map((point: string, index: number) => (
                       <motion.div key={index} variants={itemVariants} className="flex items-start rounded-lg border bg-secondary/50 p-4">
                       <div className="mr-4 mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary"><span className="text-xs font-bold text-primary-foreground">{index + 1}</span></div>
                       <p className="text-sm leading-relaxed">{point.replace(/^\d+\.\s*/, '')}</p>
@@ -413,7 +513,7 @@ function KnowledgePageContent() {
                      <div className="relative pr-6">
                         {InteractiveConceptMap && (
                           <InteractiveConceptMap
-                            content={knowledgeData.conceptMap}
+                            content={visibleKnowledgeData.conceptMap}
                             onConceptClick={(term) => {
                               setConceptMapClickedTerm(term);
                               setIsConceptMapDevOpen(true);
@@ -491,7 +591,7 @@ function KnowledgePageContent() {
             <CardHeader><CardTitle className="font-headline">Topic Relationships</CardTitle><CardDescription>How different topics in the document relate to each other.</CardDescription></CardHeader>
             <CardContent>
                 <div className="pr-6">
-                    {AnimatedText && <AnimatedText text={knowledgeData.topicRelationships} />}
+                    {AnimatedText && <AnimatedText text={visibleKnowledgeData.topicRelationships} />}
                 </div>
             </CardContent>
           </Card>
@@ -511,7 +611,7 @@ function KnowledgePageContent() {
                 initial="hidden"
                 animate="visible"
                 >
-                {coerceMultiline((knowledgeData as any)?.studyRoadmap).split('\n').filter((s: string) => s.trim().length > 0).map((item: string, index: number) => {
+                {coerceMultiline((visibleKnowledgeData as any)?.studyRoadmap).split('\n').filter((s: string) => s.trim().length > 0).map((item: string, index: number) => {
                     const [title, ...descriptionParts] = item.replace(/^\d+\.\s*/, '').split(': ');
                     const description = descriptionParts.join(': ');
                     return (
@@ -589,8 +689,8 @@ function KnowledgePageContent() {
 
           <Button 
             onClick={() => void handleGenerateClick()}
-            disabled={!selectedDocId || isGeneratingKnowledge || !isOnline || !selectedDocReady || knowledgeOutput.status === 'loading' || knowledgeOutput.status === 'running'}
-            aria-disabled={knowledgeOutput.status === 'ready' || knowledgeOutput.status === 'running' || knowledgeOutput.status === 'loading'}
+            disabled={knowledgeButtonState.disabled}
+            aria-disabled={knowledgeButtonState.ariaDisabled}
             className="shrink-0 gap-2 shadow-md hover:shadow-lg transition-all"
           >
             {isGeneratingKnowledge || knowledgeOutput.status === 'loading' || knowledgeOutput.status === 'running' ? (
@@ -598,16 +698,26 @@ function KnowledgePageContent() {
             ) : (
               <Wand2 className="h-4 w-4" aria-hidden="true" />
             )}
-            {knowledgeOutput.status === 'ready' ? 'Already Generated' : 'Generate'}
+            {knowledgeButtonState.label}
           </Button>
         </div>
       </div>
         <div className="mt-4 flex-1">
           {renderContent()}
         </div>
-        {knowledgeOutput.status === 'ready' && (
+        {knowledgeButtonState.effectiveLockStatus === 'ready' && (
           <div className="mt-2 text-center text-xs text-muted-foreground">
             Saved output loaded. Regeneration is locked until the document version changes or an admin clears the cache.
+          </div>
+        )}
+        {knowledgeButtonState.effectiveLockStatus === 'failed' && (
+          <div className="mt-2 text-center text-xs text-muted-foreground">
+            This document has a failed cached output. Upload a new version or ask an admin to clear the cache before retrying.
+          </div>
+        )}
+        {knowledgeOutput.errorMessage && (
+          <div className="mt-2 text-center text-xs text-muted-foreground">
+            Could not refresh saved generation status. {knowledgeButtonState.effectiveLockStatus ? 'Keeping the last confirmed lock for this document.' : 'Retry once the connection recovers.'}
           </div>
         )}
         <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">

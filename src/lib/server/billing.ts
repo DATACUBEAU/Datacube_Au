@@ -1,7 +1,21 @@
 import { createHash, randomUUID } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
-import { firstEnv } from '@/lib/server/supabase-admin';
+import {
+  normalizeCanonicalBillingPlanKey,
+  normalizeEffectiveEntitlementPlan,
+} from '@/lib/billing/plans';
+import {
+  deriveNormalizedSubscriptionState,
+  type BillingCheckoutCapability,
+} from '@/lib/billing/subscription-state';
+import { resolveSubscriptionCancellation } from '@/lib/billing/subscription-cancel';
+import {
+  BillingApiError,
+  assertBillingGatewayCapability,
+  getBillingGatewayCapability,
+} from '@/lib/server/billing-config';
+import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
+import { firstEnv } from '@/lib/server/env';
 import type { PaymentGatewayId, PaymentVerifyResult } from '@/lib/payments/payment-gateway';
 import {
   getPaymentGatewayById,
@@ -9,9 +23,9 @@ import {
 } from '@/lib/payments/gateway-resolver';
 import {
   PROMO_PRO_END_LAGOS_ISO,
-  getProEntitlementStatus,
+  PROMO_PRO_END_UTC_ISO,
   isPromoModeActive,
-} from '@/lib/server/entitlements';
+} from '@/lib/server/promo-entitlements';
 import { disablePaystackSubscription } from '@/lib/server/paystack';
 import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
 import { applyPlanTransition } from '@/lib/server/plan-sync';
@@ -80,14 +94,75 @@ function inferChannel(method: PaymentMethod): string {
 }
 
 function normalizeInterval(raw: unknown): BillingInterval {
-  return String(raw || '').toLowerCase() === 'weekly' ? 'weekly' : 'monthly';
+  return normalizeCanonicalBillingPlanKey(raw) === 'pro_weekly' || String(raw || '').toLowerCase() === 'weekly'
+    ? 'weekly'
+    : 'monthly';
 }
 
 function normalizePlanKey(raw: unknown): string {
-  const v = String(raw || '').trim().toLowerCase();
-  if (v === 'weekly' || v === 'pro_weekly') return 'pro_weekly';
-  if (v === 'monthly' || v === 'pro_monthly') return 'pro_monthly';
+  const planKey = normalizeCanonicalBillingPlanKey(raw);
+  if (planKey === 'pro_weekly' || planKey === 'pro_monthly') {
+    return planKey;
+  }
   return '';
+}
+
+function resolveLatestTransactionPlanKey(rows: any[] | null | undefined): string | null {
+  const ordered = rows || [];
+  for (const requireSuccess of [true, false]) {
+    for (const row of ordered) {
+      const status = String((row as any)?.status || '').trim().toLowerCase();
+      if (requireSuccess && status !== 'success') continue;
+      const metadata = ((row as any)?.metadata || {}) as Record<string, unknown>;
+      const planKey = normalizePlanKey(metadata.plan_key);
+      if (planKey) return planKey;
+    }
+  }
+  return null;
+}
+
+function buildCheckoutCapability(input: {
+  billingEnabled: boolean;
+  promoActive: boolean;
+  gateway: PaymentGatewayId;
+}): BillingCheckoutCapability {
+  if (!input.billingEnabled) {
+    return {
+      enabled: false,
+      gateway: input.gateway,
+      code: 'billing_disabled',
+      message: 'Billing is currently disabled.',
+    };
+  }
+
+  if (input.promoActive) {
+    return {
+      enabled: false,
+      gateway: input.gateway,
+      code: 'promo_active',
+      message: 'Checkout is unavailable while promo Pro access is active.',
+    };
+  }
+
+  const gatewayCapability = getBillingGatewayCapability({
+    gateway: input.gateway,
+    action: 'checkout_initialize',
+  });
+  if (!gatewayCapability.enabled) {
+    return {
+      enabled: false,
+      gateway: input.gateway,
+      code: gatewayCapability.issue?.code || 'billing_gateway_not_configured',
+      message: gatewayCapability.issue?.message || 'Checkout is not configured on the server.',
+    };
+  }
+
+  return {
+    enabled: true,
+    gateway: input.gateway,
+    code: null,
+    message: null,
+  };
 }
 
 function paystackCallbackUrl(origin: string): string {
@@ -143,6 +218,49 @@ function resolveGatewayFromMetadata(metadata: Record<string, unknown> | null | u
 
 function normalizeGatewayId(raw: unknown): PaymentGatewayId {
   return String(raw || '').trim().toLowerCase() === 'flutterwave' ? 'flutterwave' : 'paystack';
+}
+
+function asTrimmedString(raw: unknown): string {
+  return String(raw || '').trim();
+}
+
+function buildGatewayVerificationOrder(
+  gatewayHint: PaymentGatewayId | null,
+  preferredGateway: PaymentGatewayId | null
+): PaymentGatewayId[] {
+  const ordered: PaymentGatewayId[] = [];
+  const candidates: Array<PaymentGatewayId | null> = [
+    gatewayHint,
+    preferredGateway,
+    resolvePaymentGateway().gateway,
+    'paystack',
+    'flutterwave',
+  ];
+  for (const gateway of candidates) {
+    if (!gateway || ordered.includes(gateway)) continue;
+    ordered.push(gateway);
+  }
+  return ordered;
+}
+
+function isGatewayLookupMiss(error: unknown): boolean {
+  const status = Number((error as any)?.status || 0);
+  const message = String((error as any)?.message || '').trim().toLowerCase();
+  if (status === 404) return true;
+  if (status === 400 || status === 422) {
+    return /(not found|invalid reference|transaction.*not found|reference.*not found|no transaction)/i.test(message);
+  }
+  return false;
+}
+
+function isGatewayAlreadyCanceledError(error: unknown): boolean {
+  const status = Number((error as any)?.status || 0);
+  const message = String((error as any)?.message || '').trim().toLowerCase();
+  if (status === 404) return true;
+  if (status === 400 || status === 409 || status === 422) {
+    return /(already disabled|already cancelled|already canceled|not active|subscription.*not found|disabled already)/i.test(message);
+  }
+  return false;
 }
 
 function paymentCallbackUrl(origin: string): string {
@@ -383,28 +501,100 @@ export async function createCheckout(input: {
 }): Promise<CheckoutResult> {
   const { supabase, userId, email, planKeyRaw, paymentMethodRaw, origin } = input;
   await ensurePlanCatalog(supabase);
-  const billingEnabled = await getFeatureFlagBoolean(supabase, 'billing_enabled', false);
-  if (!billingEnabled) {
-    throw new Error('Billing is currently disabled.');
+  const effectiveEntitlements = await getEffectiveEntitlementsSnapshot(supabase, userId);
+  if (!effectiveEntitlements.billingEnabled) {
+    throw new BillingApiError(503, 'billing_disabled', 'Billing is currently disabled.');
   }
-  const entitlement = await getProEntitlementStatus(supabase, userId);
-  if (entitlement.promoActive) {
-    throw new Error('Checkout is unavailable while promo Pro access is active.');
+  if (effectiveEntitlements.promoActive) {
+    throw new BillingApiError(409, 'promo_active', 'Checkout is unavailable while promo Pro access is active.');
   }
 
   const planKey = normalizePlanKey(planKeyRaw);
   if (!planKey) {
-    throw new Error('Invalid plan key.');
+    throw new BillingApiError(400, 'invalid_plan_key', 'Invalid plan key.');
   }
 
   const paymentMethod = normalizePaymentMethod(paymentMethodRaw);
   const plan = await loadBillingPlan(supabase, planKey);
   if (!plan) {
-    throw new Error('Selected plan is not available.');
+    throw new BillingApiError(404, 'plan_not_available', 'Selected plan is not available.');
   }
+
+  const [
+    { data: subscriptionRows, error: subscriptionError },
+    { data: txRows, error: txError },
+    { data: profileRow, error: profileError },
+  ] = await Promise.all([
+    supabase
+      .from('billing_subscriptions')
+      .select('plan_key,status')
+      .eq('user_id', userId)
+      .order('updated_at', { ascending: false })
+      .limit(1),
+    supabase
+      .from('billing_transactions')
+      .select('metadata')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5),
+    supabase
+      .from('au_user_profiles')
+      .select('tier')
+      .eq('user_id', userId)
+      .maybeSingle(),
+  ]);
+  if (subscriptionError) throw subscriptionError;
+  if (txError) throw txError;
+  if (profileError) throw profileError;
+
+  const currentPlan = deriveNormalizedSubscriptionState({
+    effectivePlan: effectiveEntitlements.plan,
+    entitlementSource: effectiveEntitlements.entitlementSource,
+    promoActive: effectiveEntitlements.promoActive,
+    subscriptionPlanKey: subscriptionRows?.[0]?.plan_key,
+    subscriptionStatus: subscriptionRows?.[0]?.status,
+    latestPaymentPlanKey: resolveLatestTransactionPlanKey(txRows || []),
+    legacyTier: (profileRow as any)?.tier ?? effectiveEntitlements.plan,
+  });
+
+  if (currentPlan.managedPlan === 'premium') {
+    throw new BillingApiError(
+      409,
+      'premium_plan_managed_separately',
+      'Premium subscriptions are managed separately.',
+      {
+        currentPlanKey: currentPlan.activePlanKey,
+      },
+    );
+  }
+
+  if (
+    currentPlan.hasPaidEntitlement &&
+    (currentPlan.activePlanKey === planKey || currentPlan.activePlanKey === 'pro')
+  ) {
+    throw new BillingApiError(
+      409,
+      'plan_already_active',
+      'This plan is already active on your account.',
+      {
+        requestedPlanKey: planKey,
+        currentPlanKey: currentPlan.activePlanKey,
+      },
+    );
+  }
+
   const gateway = resolvePaymentGateway();
+  assertBillingGatewayCapability({ gateway: gateway.gateway, action: 'checkout_initialize' });
   if (gateway.gateway === 'paystack' && paymentMethod === 'subscription' && !plan.paystack_plan_code) {
-    throw new Error('Recurring plan is not configured. Missing Paystack plan code.');
+    throw new BillingApiError(
+      503,
+      'billing_plan_not_configured',
+      'Recurring plan is not configured. Missing Paystack plan code.',
+      {
+        requestedPlanKey: plan.plan_key,
+        gateway: gateway.gateway,
+      },
+    );
   }
 
   const reference = makeReference(plan.plan_key, userId);
@@ -467,7 +657,9 @@ export async function createCheckout(input: {
 export async function verifyCheckoutPayment(input: {
   supabase: SupabaseClient;
   userId: string;
-  reference: string;
+  reference?: string | null;
+  verificationTarget?: string | null;
+  gatewayHint?: PaymentGatewayId | null;
 }): Promise<{
   gateway: PaymentGatewayId;
   reference: string;
@@ -475,80 +667,199 @@ export async function verifyCheckoutPayment(input: {
   success: boolean;
   amountKobo: number;
 }> {
-  const reference = String(input.reference || '').trim();
-  if (!reference) {
-    throw new Error('Missing payment reference.');
+  const reference = asTrimmedString(input.reference);
+  const verificationTarget = asTrimmedString(input.verificationTarget) || reference;
+  if (!verificationTarget) {
+    throw new BillingApiError(400, 'missing_reference', 'A payment reference is required.');
   }
 
-  const { data: existingTx, error: txLookupError } = await input.supabase
-    .from('billing_transactions')
-    .select('user_id,amount_kobo,metadata,status')
-    .eq('reference', reference)
-    .maybeSingle();
-  if (txLookupError) throw txLookupError;
-  if (!existingTx) {
-    throw new Error('Payment reference not found.');
+  let existingTx: any = null;
+  if (reference) {
+    const { data, error } = await input.supabase
+      .from('billing_transactions')
+      .select('user_id,amount_kobo,metadata,status')
+      .eq('reference', reference)
+      .maybeSingle();
+    if (error) throw error;
+    existingTx = data;
   }
 
-  const existingUserId = String((existingTx as any)?.user_id || '').trim();
-  if (!existingUserId || existingUserId !== input.userId) {
-    throw new Error('Payment reference does not belong to this user.');
+  if (existingTx) {
+    const existingUserId = asTrimmedString((existingTx as any)?.user_id);
+    if (!existingUserId || existingUserId !== input.userId) {
+      throw new BillingApiError(403, 'payment_reference_forbidden', 'That payment reference does not belong to this account.');
+    }
+
+    const existingMetadata = (((existingTx as any)?.metadata || {}) as Record<string, unknown>) || {};
+    const gateway = resolveGatewayFromMetadata(existingMetadata);
+    const existingStatus = asTrimmedString((existingTx as any)?.status).toLowerCase();
+    const expectedAmountKobo = Math.max(0, Math.round(Number((existingTx as any)?.amount_kobo || 0)));
+
+    if (existingStatus === 'success') {
+      return {
+        gateway,
+        reference,
+        status: 'success',
+        success: true,
+        amountKobo: expectedAmountKobo,
+      };
+    }
+
+    if (existingStatus === 'failed') {
+      return {
+        gateway,
+        reference,
+        status: 'failed',
+        success: false,
+        amountKobo: expectedAmountKobo,
+      };
+    }
+
+    let verified: PaymentVerifyResult;
+    try {
+      verified = await getPaymentGatewayById(gateway).verifyPayment(verificationTarget);
+    } catch (error) {
+      if (isGatewayLookupMiss(error)) {
+        throw new BillingApiError(404, 'payment_reference_not_found', 'We could not verify that payment reference yet.');
+      }
+      throw error;
+    }
+
+    const verifiedAmountKobo = Math.max(0, Math.round(Number(verified.amountKobo || 0)));
+    if (expectedAmountKobo > 0 && verifiedAmountKobo > 0 && expectedAmountKobo !== verifiedAmountKobo) {
+      throw new BillingApiError(
+        409,
+        'payment_amount_mismatch',
+        'Verified payment amount does not match the pending checkout amount.'
+      );
+    }
+    const verifiedReference = asTrimmedString(verified.reference || reference);
+    if (verifiedReference && reference && verifiedReference !== reference) {
+      throw new BillingApiError(
+        409,
+        'payment_reference_mismatch',
+        'Verified payment reference does not match the requested checkout reference.'
+      );
+    }
+    const verifiedMetadata = (verified.metadata || {}) as Record<string, unknown>;
+    const metadataUserId = asTrimmedString(verifiedMetadata.user_id || existingMetadata.user_id);
+    if (metadataUserId && metadataUserId !== input.userId) {
+      throw new BillingApiError(
+        403,
+        'payment_user_mismatch',
+        'Verified payment user does not match the authenticated account.'
+      );
+    }
+    const mergedMetadata: Record<string, unknown> = {
+      ...existingMetadata,
+      ...verifiedMetadata,
+      user_id: input.userId,
+      gateway,
+    };
+
+    await handleSuccessfulPayment({
+      supabase: input.supabase,
+      gateway,
+      verified: {
+        ...verified,
+        reference: verified.reference || reference,
+        metadata: mergedMetadata,
+      },
+      payload: {
+        event: 'api.verify',
+        data: {
+          reference: verified.reference || reference,
+          metadata: mergedMetadata,
+          amount: verified.amountKobo,
+          channel: verified.channel,
+          customer: {
+            email: verified.customerEmail,
+          },
+        },
+      },
+      idempotencyKey: `verify:${verified.reference || reference || verificationTarget}`,
+      traceId: `verify-${reference || verificationTarget}`,
+    });
+
+    return {
+      gateway,
+      reference: verified.reference || reference,
+      status: verified.success ? 'success' : verified.status,
+      success: verified.success,
+      amountKobo: verified.amountKobo,
+    };
   }
 
-  const existingMetadata = (((existingTx as any)?.metadata || {}) as Record<string, unknown>) || {};
-  const gateway = resolveGatewayFromMetadata(existingMetadata);
-  const verified = await getPaymentGatewayById(gateway).verifyPayment(reference);
-  const expectedAmountKobo = Math.max(0, Math.round(Number((existingTx as any)?.amount_kobo || 0)));
-  const verifiedAmountKobo = Math.max(0, Math.round(Number(verified.amountKobo || 0)));
-  if (expectedAmountKobo > 0 && verifiedAmountKobo > 0 && expectedAmountKobo !== verifiedAmountKobo) {
-    throw new Error('Verified payment amount does not match the pending checkout amount.');
+  let verifiedResult: { gateway: PaymentGatewayId; verified: PaymentVerifyResult } | null = null;
+  let lastError: unknown = null;
+  for (const gateway of buildGatewayVerificationOrder(input.gatewayHint || null, null)) {
+    try {
+      const verified = await getPaymentGatewayById(gateway).verifyPayment(verificationTarget);
+      verifiedResult = { gateway, verified };
+      break;
+    } catch (error) {
+      if (isGatewayLookupMiss(error)) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
   }
-  const verifiedReference = String(verified.reference || reference).trim();
-  if (verifiedReference && verifiedReference !== reference) {
-    throw new Error('Verified payment reference does not match the requested checkout reference.');
+
+  if (!verifiedResult) {
+    if (lastError && isGatewayLookupMiss(lastError)) {
+      throw new BillingApiError(404, 'payment_reference_not_found', 'We could not verify that payment reference yet.');
+    }
+    throw new BillingApiError(404, 'payment_reference_not_found', 'Payment reference was not found.');
   }
-  const verifiedMetadata = (verified.metadata || {}) as Record<string, unknown>;
-  const metadataUserId = String(verifiedMetadata.user_id || existingMetadata.user_id || '').trim();
-  if (metadataUserId && metadataUserId !== input.userId) {
-    throw new Error('Verified payment user does not match the authenticated account.');
+
+  const verifiedMetadata = (verifiedResult.verified.metadata || {}) as Record<string, unknown>;
+  const metadataUserId = asTrimmedString(verifiedMetadata.user_id);
+  if (!metadataUserId || metadataUserId !== input.userId) {
+    throw new BillingApiError(
+      403,
+      'payment_reference_forbidden',
+      'That payment reference does not belong to this account.'
+    );
   }
+
   const mergedMetadata: Record<string, unknown> = {
-    ...existingMetadata,
     ...verifiedMetadata,
     user_id: input.userId,
-    gateway,
+    gateway: verifiedResult.gateway,
   };
 
+  const resolvedReference = asTrimmedString(verifiedResult.verified.reference || reference || verificationTarget);
   await handleSuccessfulPayment({
     supabase: input.supabase,
-    gateway,
+    gateway: verifiedResult.gateway,
     verified: {
-      ...verified,
-      reference: verified.reference || reference,
+      ...verifiedResult.verified,
+      reference: resolvedReference,
       metadata: mergedMetadata,
     },
     payload: {
-      event: 'api.verify',
+      event: 'api.verify.recovered',
       data: {
-        reference: verified.reference || reference,
+        reference: resolvedReference,
         metadata: mergedMetadata,
-        amount: verified.amountKobo,
-        channel: verified.channel,
+        amount: verifiedResult.verified.amountKobo,
+        channel: verifiedResult.verified.channel,
         customer: {
-          email: verified.customerEmail,
+          email: verifiedResult.verified.customerEmail,
         },
       },
     },
-    idempotencyKey: `verify:${verified.reference || reference}`,
-    traceId: `verify-${reference}`,
+    idempotencyKey: `verify:${resolvedReference}`,
+    traceId: `verify-${resolvedReference}`,
   });
 
   return {
-    gateway,
-    reference: verified.reference || reference,
-    status: verified.success ? 'success' : verified.status,
-    success: verified.success,
-    amountKobo: verified.amountKobo,
+    gateway: verifiedResult.gateway,
+    reference: resolvedReference,
+    status: verifiedResult.verified.success ? 'success' : verifiedResult.verified.status,
+    success: verifiedResult.verified.success,
+    amountKobo: verifiedResult.verified.amountKobo,
   };
 }
 
@@ -558,26 +869,26 @@ export async function getBillingStatus(
 ): Promise<Record<string, unknown>> {
   await ensurePlanCatalog(supabase);
 
-  const billingEnabled = await getFeatureFlagBoolean(supabase, 'billing_enabled', false);
+  const effectiveEntitlements = await getEffectiveEntitlementsSnapshot(supabase, userId);
   const { data: profileRow } = await supabase
     .from('au_user_profiles')
     .select('tier')
     .eq('user_id', userId)
     .maybeSingle();
-  const currentTier = String((profileRow as any)?.tier || '').toLowerCase();
-  const entitlement = await getProEntitlementStatus(supabase, userId);
+  const profileTierRaw = (profileRow as any)?.tier;
+  const currentTier = normalizeEffectiveEntitlementPlan(profileTierRaw);
 
-  if (currentTier !== 'admin') {
+  if (currentTier !== 'admin' && effectiveEntitlements.plan !== 'admin') {
     await applyPlanTransition(supabase, {
       userId,
-      targetPlan: currentTier === 'premium' ? 'premium' : (entitlement.hasPro ? 'pro' : 'free'),
-      entitlementSource: currentTier === 'premium' && !entitlement.hasPro ? 'paid' : entitlement.source,
-      entitlementEndsAt: currentTier === 'premium' && !entitlement.hasPro ? null : entitlement.endsAt,
+      targetPlan: effectiveEntitlements.plan === 'premium' ? 'premium' : (effectiveEntitlements.hasPro ? 'pro' : 'free'),
+      entitlementSource: effectiveEntitlements.entitlementSource,
+      entitlementEndsAt: effectiveEntitlements.entitlementEndsAt,
       transitionKind: 'sync',
       source: 'billing_status',
       reason: 'status_sync',
       metadata: {
-        billing_enabled: billingEnabled,
+        billing_enabled: effectiveEntitlements.billingEnabled,
       },
     });
   }
@@ -618,7 +929,22 @@ export async function getBillingStatus(
     };
   }
 
-  const tier = entitlement.hasPro ? 'pro' : 'free';
+  const currentSubscription = subscriptions?.[0] || null;
+  const currentPlan = deriveNormalizedSubscriptionState({
+    effectivePlan: effectiveEntitlements.plan,
+    entitlementSource: effectiveEntitlements.entitlementSource,
+    promoActive: effectiveEntitlements.promoActive,
+    subscriptionPlanKey: currentSubscription?.plan_key,
+    subscriptionStatus: currentSubscription?.status,
+    latestPaymentPlanKey: resolveLatestTransactionPlanKey(txs || []),
+    legacyTier: profileTierRaw ?? currentTier,
+  });
+  const gateway = resolvePaymentGateway();
+  const checkout = buildCheckoutCapability({
+    billingEnabled: effectiveEntitlements.billingEnabled,
+    promoActive: effectiveEntitlements.promoActive,
+    gateway: gateway.gateway,
+  });
   const payments = (txs || []).map((row: any) => ({
     reference: row.reference,
     status: row.status,
@@ -626,67 +952,115 @@ export async function getBillingStatus(
     channel: row.channel,
     created_at: row.created_at,
     paid_at: row.paid_at,
+    plan_key: normalizePlanKey((row.metadata || {}).plan_key) || null,
     plan: String((row.metadata || {}).plan_key || '').replace('pro_', '') || 'pro',
   }));
 
   return {
-    billingEnabled,
-    canAccessBilling: billingEnabled && !entitlement.promoActive,
-    tier,
-    entitlementSource: entitlement.source,
-    tier_expires_at: entitlement.endsAt,
+    billingEnabled: effectiveEntitlements.billingEnabled,
+    canAccessBilling: effectiveEntitlements.canAccessBilling,
+    tier: currentPlan.managedPlan,
+    entitlementPlan: effectiveEntitlements.plan,
+    entitlementSource: effectiveEntitlements.entitlementSource,
+    tier_expires_at: effectiveEntitlements.entitlementEndsAt,
     promo: {
-      active: entitlement.promoActive,
+      active: effectiveEntitlements.promoActive,
       ends_at_lagos: PROMO_PRO_END_LAGOS_ISO,
-      ends_at_utc: '2026-04-01T23:00:00.000Z',
+      ends_at_utc: PROMO_PRO_END_UTC_ISO,
     },
+    currentPlan,
+    checkout,
     pricing,
     planCatalog,
-    subscription: subscriptions?.[0] || null,
+    subscription: currentSubscription,
     payments,
   };
 }
 
 export async function cancelUserSubscription(
   supabase: SupabaseClient,
-  userId: string
-): Promise<void> {
+  userId: string,
+  options?: {
+    reason?: string | null;
+  }
+): Promise<{
+  outcome: 'scheduled' | 'already_scheduled' | 'no_subscription';
+  message: string;
+}> {
   const { data: subscription, error } = await supabase
     .from('billing_subscriptions')
-    .select('paystack_subscription_code,paystack_email_token,status,metadata')
+    .select('paystack_subscription_code,paystack_email_token,status,metadata,cancel_at_period_end')
     .eq('user_id', userId)
-    .in('status', ['active', 'non_renewing'])
     .order('updated_at', { ascending: false })
     .limit(1)
     .maybeSingle();
   if (error) throw error;
-  if (!subscription) throw new Error('No active subscription found.');
+  if (!subscription) {
+    return {
+      outcome: 'no_subscription',
+      message: 'No active subscription was found for this account.',
+    };
+  }
 
-  const code = String((subscription as any).paystack_subscription_code || '');
-  const token = String((subscription as any).paystack_email_token || '');
+  const code = String((subscription as any).paystack_subscription_code || '').trim();
+  const token = String((subscription as any).paystack_email_token || '').trim();
   const metadata = ((subscription as any)?.metadata || {}) as Record<string, unknown>;
   const gateway = resolveGatewayFromMetadata(metadata);
-  if (gateway !== 'paystack' && (!code || !token)) {
-    throw new Error('Automatic cancellation is currently available only for Paystack subscriptions.');
-  }
-  if (!code || !token) {
-    throw new Error('Subscription cannot be canceled automatically (missing Paystack token).');
+  const resolution = resolveSubscriptionCancellation({
+    status: (subscription as any)?.status,
+    cancelAtPeriodEnd: (subscription as any)?.cancel_at_period_end === true,
+    gateway,
+    paystackSubscriptionCode: code,
+    paystackEmailToken: token,
+  });
+  if (resolution.mode === 'noop') {
+    return {
+      outcome: resolution.reason === 'no_subscription' ? 'no_subscription' : 'already_scheduled',
+      message:
+        resolution.reason === 'no_subscription'
+          ? 'No active subscription was found for this account.'
+          : 'Auto-renew is already turned off for this subscription.',
+    };
   }
 
-  await disablePaystackSubscription({ code, token });
+  if (resolution.mode === 'remote_cancel') {
+    try {
+      await disablePaystackSubscription({ code, token });
+    } catch (error) {
+      if (!isGatewayAlreadyCanceledError(error)) {
+        throw new BillingApiError(
+          502,
+          'subscription_cancel_failed',
+          'The billing provider could not confirm the cancellation request right now.'
+        );
+      }
+    }
+  }
 
-  await supabase
+  const canceledAt = new Date().toISOString();
+  const nextMetadata = {
+    ...metadata,
+    canceled_at: canceledAt,
+    canceled_by: 'user',
+    cancel_reason: asTrimmedString(options?.reason) || null,
+    gateway_cancel_mode: resolution.mode,
+    gateway_cancel_reason: resolution.reason,
+  };
+
+  const { error: updateError } = await supabase
     .from('billing_subscriptions')
     .update({
       status: 'non_renewing',
       cancel_at_period_end: true,
-      metadata: {
-        canceled_at: new Date().toISOString(),
-        canceled_by: 'user',
-      },
+      metadata: nextMetadata,
     })
-    .eq('user_id', userId)
-    .eq('paystack_subscription_code', code);
+    .eq('user_id', userId);
+  if (updateError) throw updateError;
+
+  return {
+    outcome: 'scheduled',
+    message: 'Auto-renew has been turned off for this subscription.',
+  };
 }
 
 async function insertWebhookEvent(
@@ -1172,8 +1546,8 @@ export async function reconcileBilling(
     for (const row of proProfiles || []) {
       const userId = String((row as any).user_id || '').trim();
       if (!userId) continue;
-      const entitlement = await getProEntitlementStatus(supabase, userId);
-      if (!entitlement.hasPro) {
+      const effectiveEntitlements = await getEffectiveEntitlementsSnapshot(supabase, userId);
+      if (!effectiveEntitlements.hasPro) {
         await applyPlanTransition(supabase, {
           userId,
           targetPlan: 'free',

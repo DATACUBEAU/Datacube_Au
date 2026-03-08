@@ -1,6 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  normalizeBillingEntitlementSource,
+  normalizeEffectiveEntitlementPlan,
+} from '@/lib/billing/plans';
 import { safeFetch } from '@/lib/api/safe-fetch';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
@@ -11,7 +15,7 @@ import { FREE_PLAN_EXPIRATION_DAYS } from '@/lib/plans/subscription-policy';
 
 export type EffectiveEntitlements = {
   userId: string | null;
-  plan: 'free' | 'pro' | 'promo_pro' | 'admin';
+  plan: 'free' | 'pro' | 'promo_pro' | 'premium' | 'admin';
   hasPro: boolean;
   entitlementSource: 'paid' | 'promo' | 'none';
   entitlementEndsAt: string | null;
@@ -59,18 +63,11 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function normalizePlan(raw: unknown): EffectiveEntitlements['plan'] {
-  const value = String(raw || '').trim().toLowerCase();
-  if (value === 'admin') return 'admin';
-  if (value === 'pro') return 'pro';
-  if (value === 'promo_pro') return 'promo_pro';
-  return 'free';
+  return normalizeEffectiveEntitlementPlan(raw);
 }
 
 function normalizeSource(raw: unknown): EffectiveEntitlements['entitlementSource'] {
-  const value = String(raw || '').trim().toLowerCase();
-  if (value === 'paid') return 'paid';
-  if (value === 'promo') return 'promo';
-  return 'none';
+  return normalizeBillingEntitlementSource(raw);
 }
 
 function normalizeEntitlements(payload: unknown, fallbackUserId: string | null): EffectiveEntitlements {
@@ -79,11 +76,14 @@ function normalizeEntitlements(payload: unknown, fallbackUserId: string | null):
   const normalizedPlan = normalizePlan(row.plan);
   const promoActive = row.promoActive === true;
   const isAdminPlan = normalizedPlan === 'admin';
+  const isPremiumPlan = normalizedPlan === 'premium';
   const hasPaidEntitlement = normalizedSource === 'paid';
   const hasPromoEntitlement = normalizedSource === 'promo' || promoActive;
-  const effectiveHasPro = isAdminPlan || hasPaidEntitlement || hasPromoEntitlement;
+  const effectiveHasPro = isAdminPlan || isPremiumPlan || hasPaidEntitlement || hasPromoEntitlement;
   const effectivePlan: EffectiveEntitlements['plan'] = isAdminPlan
     ? 'admin'
+    : isPremiumPlan
+      ? 'premium'
     : hasPromoEntitlement
       ? 'promo_pro'
       : hasPaidEntitlement

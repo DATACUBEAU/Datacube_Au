@@ -1,9 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
-
-export const PROMO_PRO_END_LAGOS_ISO = '2026-04-02T00:00:00+01:00';
-export const PROMO_PRO_END_UTC_ISO = '2026-04-01T23:00:00.000Z';
-const PROMO_PRO_END_MS = new Date(PROMO_PRO_END_UTC_ISO).getTime();
+import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
+import {
+  PROMO_PRO_END_LAGOS_ISO,
+  PROMO_PRO_END_UTC_ISO,
+  isPromoModeActive,
+  isPromoProActive,
+} from '@/lib/server/promo-entitlements';
 
 export type ProEntitlementStatus = {
   hasPro: boolean;
@@ -26,66 +28,16 @@ export class EntitlementError extends Error {
   }
 }
 
-export function isPromoProActive(now = Date.now()): boolean {
-  return now < PROMO_PRO_END_MS;
-}
-
-export async function isPromoModeActive(
-  supabase: SupabaseClient,
-  now = Date.now(),
-): Promise<boolean> {
-  const promoEnabled = await getFeatureFlagBoolean(supabase, 'promo_enabled', false);
-  return promoEnabled && isPromoProActive(now);
-}
-
 export async function getProEntitlementStatus(
   supabase: SupabaseClient,
   userId: string
 ): Promise<ProEntitlementStatus> {
-  const nowIso = new Date().toISOString();
-  const promoActive = await isPromoModeActive(supabase);
-
-  const { data: grants, error } = await supabase
-    .from('entitlement_grants')
-    .select('id,starts_at,ends_at,status')
-    .eq('user_id', userId)
-    .eq('entitlement', 'pro')
-    .eq('status', 'active')
-    .lte('starts_at', nowIso)
-    .gte('ends_at', nowIso)
-    .order('ends_at', { ascending: false })
-    .limit(1);
-
-  if (error) {
-    throw error;
-  }
-
-  const activeGrant = grants?.[0] ?? null;
-  if (activeGrant) {
-    return {
-      hasPro: true,
-      source: 'paid',
-      endsAt: String((activeGrant as any).ends_at || null),
-      promoActive,
-      promoEndsAt: PROMO_PRO_END_LAGOS_ISO,
-    };
-  }
-
-  if (promoActive) {
-    return {
-      hasPro: true,
-      source: 'promo',
-      endsAt: PROMO_PRO_END_UTC_ISO,
-      promoActive: true,
-      promoEndsAt: PROMO_PRO_END_LAGOS_ISO,
-    };
-  }
-
+  const snapshot = await getEffectiveEntitlementsSnapshot(supabase, userId);
   return {
-    hasPro: false,
-    source: 'none',
-    endsAt: null,
-    promoActive: false,
+    hasPro: snapshot.hasPro,
+    source: snapshot.entitlementSource,
+    endsAt: snapshot.entitlementEndsAt,
+    promoActive: snapshot.promoActive,
     promoEndsAt: PROMO_PRO_END_LAGOS_ISO,
   };
 }

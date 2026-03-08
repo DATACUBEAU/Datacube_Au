@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFeatureFlagsSnapshot } from '@/lib/server/feature-flags';
+import { matchGlobalChatTemplate, type ChatTemplateResponse } from '@shared/global-chat-routing';
+import { classifyDocumentIntent, hasDocumentScopedReference } from '@shared/document-chat-context';
 
 export type IdempotencyRecord = {
   statusCode: number;
@@ -663,7 +665,7 @@ function matchesLoosePattern(input: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(input));
 }
 
-export function classifyTemplateResponse(message: string, context: 'doc' | 'global'): string | null {
+export function classifyTemplateResponse(message: string, context: 'doc' | 'global'): ChatTemplateResponse | null {
   const normalized = String(message || '').trim().toLowerCase();
   if (!normalized) return null;
 
@@ -676,15 +678,24 @@ export function classifyTemplateResponse(message: string, context: 'doc' | 'glob
     /^(ok|okay|cool|nice)[!. ]*thanks[!. ]*$/i,
   ];
 
+  if (context === 'global') {
+    return matchGlobalChatTemplate(normalized);
+  }
+
   if (matchesLoosePattern(normalized, greetingPatterns)) {
-    return context === 'doc'
-      ? 'Hello. Ask about the selected document and I will answer from it first.'
-      : 'Hello. Ask anything and I will keep the answer direct and useful.';
+    return {
+      answer: 'Hello. Ask about the selected document and I will stay grounded in it.',
+      navAction: null,
+    };
   }
 
   if (matchesLoosePattern(normalized, thanksPatterns)) {
-    return 'You are welcome.';
+    return { answer: "You're welcome.", navAction: null };
   }
+
+  // Handle document-scoped intents with deterministic templates if possible
+  // For now, we just ensure the intent is classified so the backend can use it.
+  // But we can add short fallbacks here if we detect missing context.
 
   return null;
 }

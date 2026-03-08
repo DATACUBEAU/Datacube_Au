@@ -26,6 +26,8 @@ import { useStore } from '@/hooks/use-store';
 import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
+import { getLargeFileGate, LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 
 // Use both MIME types and extensions for better browser compatibility
 const ACCEPT = 'application/pdf,.pdf,text/plain,.txt,text/markdown,.md,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx,application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx';
@@ -48,6 +50,8 @@ function statusLabel(status: string) {
       return { text: 'Failed', variant: 'destructive' as const };
     case 'cancelled':
       return { text: 'Cancelled', variant: 'outline' as const };
+    case 'stale_timeout':
+      return { text: 'Timed out', variant: 'destructive' as const };
     default:
       return { text: status, variant: 'outline' as const };
   }
@@ -89,6 +93,7 @@ export default function UploadCenter() {
   const [isDragging, setIsDragging] = useState(false);
   const [reattachJobId, setReattachJobId] = useState<string | null>(null);
   const [pendingUploadSizeMb, setPendingUploadSizeMb] = useState<number | null>(null);
+  const { records: featureFlagRecords } = useFeatureFlags();
 
   const supportsUploads = Boolean(session?.access_token) && Boolean(user) && isOnline && !upgradeBlocked;
 
@@ -152,18 +157,23 @@ export default function UploadCenter() {
         return;
       }
 
-      if (files.length > 0) {
-        const largestMb = Math.max(...files.map((file) => file.size)) / (1024 * 1024);
-        setPendingUploadSizeMb(Number.isFinite(largestMb) ? largestMb : null);
-      } else {
-        setPendingUploadSizeMb(null);
-      }
-
       const accepted: File[] = [];
       const validationErrors: string[] = [];
+      let blockedByLargeFile = false;
 
       for (const file of files) {
-        const { valid, error } = validateFile(file);
+        const largeFileGate = getLargeFileGate({
+          fileSizeBytes: file.size,
+          flags: featureFlagRecords,
+        });
+
+        if (largeFileGate.blocked) {
+          blockedByLargeFile = true;
+          validationErrors.push(`${file.name}: ${largeFileGate.message}`);
+          continue;
+        }
+
+        const { valid, error } = validateFile(file, maxUploadSize);
         if (valid) {
           accepted.push(file);
         } else if (error) {
@@ -171,15 +181,19 @@ export default function UploadCenter() {
         }
       }
 
+      if (accepted.length > 0) {
+        const largestMb = Math.max(...accepted.map((file) => file.size)) / (1024 * 1024);
+        setPendingUploadSizeMb(Number.isFinite(largestMb) ? largestMb : null);
+      } else {
+        setPendingUploadSizeMb(null);
+      }
+
       if (validationErrors.length > 0) {
-        // Check if any error is about file size to match specific requirement
-        const hasSizeError = validationErrors.some(e => e.includes('File size exceeds'));
-        
         toast({
           variant: 'destructive',
-          title: hasSizeError ? 'Upload failed' : 'Validation Error',
-          description: hasSizeError 
-            ? `File size exceeds ${(maxUploadSize / 1024 / 1024).toFixed(0)}MB limit.` 
+          title: 'Upload failed',
+          description: blockedByLargeFile
+            ? LARGE_FILE_DISABLED_MESSAGE
             : validationErrors.join('\n'),
         });
       }
@@ -233,7 +247,7 @@ export default function UploadCenter() {
         if (inputRef.current) inputRef.current.value = '';
       }
     },
-    [supportsUploads, user, session?.access_token, needsParent, parentId, label, docType, enqueueUploads, toast, maxUploadSize]
+    [supportsUploads, user, session?.access_token, featureFlagRecords, needsParent, parentId, label, docType, enqueueUploads, toast, maxUploadSize]
   );
 
   const onFilesChanged = useCallback(
@@ -319,11 +333,11 @@ export default function UploadCenter() {
       return { label: 'Analyzing', progress: job.progress, color: 'bg-amber-500' };
     }
     // Phase 4: Completed
-    if (job.status === 'completed') {
+    if (job.status === 'completed' || job.status === 'done') {
       return { label: 'Done', progress: 100, color: 'bg-green-500' };
     }
     // Phase 5: Failed
-    if (job.status === 'failed') {
+    if (job.status === 'failed' || job.status === 'stale_timeout') {
       return { label: 'Failed', progress: job.progress, color: 'bg-destructive' };
     }
     return { label: job.status, progress: job.progress, color: 'bg-muted-foreground' };
@@ -361,11 +375,19 @@ export default function UploadCenter() {
         return;
       }
 
-      await attachFileToJob(jobId, file);
-      await retryJob(jobId);
-
-      setReattachJobId(null);
-      if (retryFileInputRef.current) retryFileInputRef.current.value = '';
+      try {
+        await attachFileToJob(jobId, file);
+        await retryJob(jobId);
+        setReattachJobId(null);
+      } catch (error: any) {
+        toast({
+          variant: 'destructive',
+          title: 'Upload failed',
+          description: typeof error?.message === 'string' ? error.message : LARGE_FILE_DISABLED_MESSAGE,
+        });
+      } finally {
+        if (retryFileInputRef.current) retryFileInputRef.current.value = '';
+      }
     },
     [attachFileToJob, jobsById, reattachJobId, retryJob, toast]
   );
@@ -487,12 +509,12 @@ export default function UploadCenter() {
               {jobsToDisplay.map((job) => {
               const badge = statusLabel(job.status);
               const isBusy = job.status === 'uploading' || job.status === 'processing' || job.status === 'queued' || job.status === 'uploaded' || job.status === 'deleting';
-              const canRetry = job.status === 'failed';
-              const canRemove = job.status === 'failed' || job.status === 'cancelled';
+              const canRetry = job.status === 'failed' || job.status === 'stale_timeout';
+              const canRemove = job.status === 'failed' || job.status === 'cancelled' || job.status === 'stale_timeout';
               const icon =
                 job.status === 'completed' ? (
                   <CheckCircle2 className="h-4 w-4 text-green-500" />
-                ) : job.status === 'failed' ? (
+                ) : job.status === 'failed' || job.status === 'stale_timeout' ? (
                   <AlertTriangle className="h-4 w-4 text-red-500" />
                 ) : job.status === 'deleting' ? (
                   <Loader2 className="h-4 w-4 animate-spin text-destructive" />
@@ -516,12 +538,14 @@ export default function UploadCenter() {
                         <Badge variant={badge.variant}>{badge.text}</Badge>
                         {job.label ? <Badge variant="outline">{job.label}</Badge> : null}
                       </div>
-                      {job.status === 'failed' && (
+                      {(job.status === 'failed' || job.status === 'stale_timeout') && (
                         <Alert variant="destructive" className="mt-2 py-2 px-3">
                           <AlertTriangle className="h-4 w-4" />
                           <AlertTitle className="text-xs font-bold">Processing Error</AlertTitle>
                           <AlertDescription className="text-xs opacity-90 leading-tight">
-                            {job.error || 'The analysis phase failed. This usually happens with very large documents or server timeouts.'}
+                            {job.status === 'stale_timeout'
+                              ? 'Processing timed out. Retry to continue.'
+                              : (job.error || 'The analysis phase failed. This usually happens with very large documents or server timeouts.')}
                           </AlertDescription>
                         </Alert>
                       )}

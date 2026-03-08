@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from './utils';
+import { isJobOlderThan } from './job-recovery';
 
 function resolveBucket(): string {
   return process.env.BUCKET || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
@@ -10,6 +11,14 @@ function resolveBucket(): string {
 function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return String(error);
+}
+
+function isMissingColumnError(error: any, column: string): boolean {
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  const target = column.toLowerCase();
+  return (message.includes(target) && message.includes('does not exist')) ||
+    (details.includes(target) && details.includes('does not exist'));
 }
 
 async function cleanup() {
@@ -67,6 +76,32 @@ async function cleanup() {
       .eq('id', documentId);
   };
 
+  const updateWorkerJob = async (
+    jobId: string,
+    payload: Record<string, unknown>,
+    fallbackColumns: string[] = [],
+  ) => {
+    const { error } = await supabase
+      .from('au_worker_jobs')
+      .update(payload)
+      .eq('id', jobId);
+    if (!error) return null;
+
+    const missingColumns = fallbackColumns.filter((column) => isMissingColumnError(error, column));
+    if (missingColumns.length === 0) return error;
+
+    const nextPayload = { ...payload };
+    for (const column of missingColumns) {
+      delete (nextPayload as any)[column];
+    }
+
+    const { error: retryError } = await supabase
+      .from('au_worker_jobs')
+      .update(nextPayload)
+      .eq('id', jobId);
+    return retryError ?? null;
+  };
+
   // 1. Failed Jobs Cleanup
   const { data: failedJobs, error } = await supabase
     .from('au_worker_jobs')
@@ -109,6 +144,95 @@ async function cleanup() {
               error: toErrorMessage(e),
             });
         }
+    }
+  }
+
+  const processingThresholdMs = Math.max(5 * 60 * 1000, Number(process.env.PROCESSING_RECONCILE_MS || 5 * 60 * 1000));
+  const staleThresholdMs = Math.max(15 * 60 * 1000, Number(process.env.PROCESSING_STALE_MS || 20 * 60 * 1000));
+  const staleBeforeMs = Date.now() - staleThresholdMs;
+  const staleBefore = new Date(staleBeforeMs).toISOString();
+
+  const { data: processingJobs, error: processingError } = await supabase
+    .from('au_worker_jobs')
+    .select('id,document_id,progress,updated_at,locked_until,owner_id,user_id')
+    .eq('status', 'processing')
+    .order('updated_at', { ascending: true })
+    .limit(100);
+
+  if (processingError) {
+    logger.error('Failed to fetch processing jobs for reconciliation', processingError);
+  } else if (processingJobs && processingJobs.length > 0) {
+    const docIds = Array.from(new Set(processingJobs.map((job: any) => String(job.document_id || '')).filter(Boolean)));
+    const { data: docRows } = await supabase
+      .from('au_documents')
+      .select('id,status')
+      .in('id', docIds);
+    const docMap = new Map<string, string>();
+    for (const row of docRows || []) {
+      if (!row?.id) continue;
+      docMap.set(String(row.id), String(row.status || '').toLowerCase());
+    }
+
+    for (const job of processingJobs) {
+      const docStatus = docMap.get(String(job.document_id || '')) || '';
+      const shouldReconcile = isJobOlderThan(job.updated_at, processingThresholdMs);
+      const hasCompletedDoc = docStatus === 'completed' || docStatus === 'done' || docStatus === 'indexed';
+
+      if (hasCompletedDoc) {
+        await updateWorkerJob(job.id, {
+          status: 'completed',
+          progress: 100,
+          locked_at: null,
+          locked_until: null,
+          updated_at: new Date().toISOString(),
+          completed_at: new Date().toISOString(),
+        }, ['completed_at']);
+        continue;
+      }
+
+      if (shouldReconcile && Number(job.progress || 0) >= 95 && job.document_id) {
+        const { count } = await supabase
+          .from('au_document_chunks')
+          .select('id', { count: 'exact', head: true })
+          .eq('document_id', job.document_id);
+        if (Number(count || 0) > 0) {
+          await updateWorkerJob(job.id, {
+            status: 'completed',
+            progress: 100,
+            locked_at: null,
+            locked_until: null,
+            updated_at: new Date().toISOString(),
+            completed_at: new Date().toISOString(),
+          }, ['completed_at']);
+        }
+      }
+    }
+  }
+
+  const { data: staleJobs, error: staleJobsError } = await supabase
+    .from('au_worker_jobs')
+    .select('id,document_id,updated_at,locked_until')
+    .eq('status', 'processing')
+    .lt('updated_at', staleBefore)
+    .limit(100);
+
+  if (staleJobsError) {
+    logger.error('Failed to fetch stale jobs', staleJobsError);
+  } else if (staleJobs && staleJobs.length > 0) {
+    for (const job of staleJobs) {
+      if (!job.document_id) continue;
+      const nowIso = new Date().toISOString();
+      await updateWorkerJob(job.id, {
+        status: 'stale_timeout',
+        error: 'stale_timeout',
+        locked_at: null,
+        locked_until: null,
+        updated_at: nowIso,
+      }, ['error']);
+      await supabase
+        .from('au_documents')
+        .update({ status: 'failed', error: 'stale_timeout' })
+        .eq('id', job.document_id);
     }
   }
 

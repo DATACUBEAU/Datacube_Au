@@ -8,6 +8,8 @@ import {
   type AuGuideInput,
   type CanonicalChatPayload,
 } from '@shared/chat-payload';
+import type { ChatDocumentContext } from '@shared/document-chat-context';
+import type { GlobalChatNavAction } from '@shared/global-chat-routing';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -21,6 +23,7 @@ export type ChatMessage = {
   content: string;
   thought?: string;
   citations?: string[];
+  navAction?: GlobalChatNavAction | null;
   isLoading?: boolean;
   isSystem?: boolean;
   isError?: boolean;
@@ -97,6 +100,7 @@ export type ChatRequest = {
   doc_id?: string;
   retrieval?: { top_k?: number; min_score?: number };
   au_handoff_hint?: { allow_suggest_global_chat?: boolean };
+  document_context?: ChatDocumentContext;
 
   // Legacy/Shared
   selectedDocId?: string;
@@ -108,6 +112,12 @@ export type ChatRequest = {
   clientMessageId?: string;
   policyVersion?: string;
   memory?: any; // Legacy simple memory
+};
+
+type ChatResponse = RagBasedQuestionAnsweringOutput & {
+  thought?: string;
+  navAction?: GlobalChatNavAction | null;
+  documentContext?: ChatDocumentContext | null;
 };
 
 const DEFAULT_MODEL_IDS: string[] = []; 
@@ -227,6 +237,7 @@ function buildCanonicalPayload(
     browsingMode: request.browsingMode,
     app_context: request.app_context,
     memory_pack: request.memory_pack,
+    document_context: request.document_context,
     recent_snippet: request.recent_snippet,
     secondary_snippet: request.secondary_snippet,
     retrieval: request.retrieval,
@@ -253,7 +264,7 @@ function buildCanonicalPayload(
 
 async function invokeLegacyAuChatFallback(
   request: ChatRequest,
-): Promise<RagBasedQuestionAnsweringOutput & { thought?: string }> {
+): Promise<ChatResponse> {
   const question = extractLatestUserInput(request);
   if (!question) {
     throw {
@@ -279,7 +290,27 @@ async function invokeLegacyAuChatFallback(
     answer: String(data.answer || ''),
     thought: typeof data.thought === 'string' ? data.thought : undefined,
     citations: Array.isArray(data.citations) ? data.citations : [],
-  } as RagBasedQuestionAnsweringOutput & { thought?: string };
+  } as ChatResponse;
+}
+
+function normalizeChatResponse(data: any): ChatResponse {
+  return {
+    answer: String(data?.answer || ''),
+    thought: typeof data?.thought === 'string' ? data.thought : undefined,
+    citations: Array.isArray(data?.citations) ? data.citations : [],
+    navAction:
+      data?.nav_action && typeof data.nav_action === 'object'
+        ? (data.nav_action as GlobalChatNavAction)
+        : data?.navAction && typeof data.navAction === 'object'
+          ? (data.navAction as GlobalChatNavAction)
+          : null,
+    documentContext:
+      data?.document_context && typeof data.document_context === 'object'
+        ? (data.document_context as ChatDocumentContext)
+        : data?.documentContext && typeof data.documentContext === 'object'
+          ? (data.documentContext as ChatDocumentContext)
+          : null,
+  };
 }
 
 /**
@@ -288,7 +319,7 @@ async function invokeLegacyAuChatFallback(
 export async function sendChatMessage(
   request: ChatRequest,
   opts?: { signal?: AbortSignal; clientMessageId?: string }
-): Promise<RagBasedQuestionAnsweringOutput & { thought?: string }> {
+): Promise<ChatResponse> {
   // ROUTING LOGIC:
   // 1. Global Chat -> 'global-chat' endpoint
   // 2. AU Chat (RAG) -> 'au-chat' endpoint
@@ -308,7 +339,7 @@ export async function sendChatMessage(
     clientMessageId: opts?.clientMessageId,
   });
 
-  const { data, error } = await invokeEdgeFunction<RagBasedQuestionAnsweringOutput & { thought?: string }>(endpoint, {
+  const { data, error } = await invokeEdgeFunction<any>(endpoint, {
     method: 'POST',
     requireAuth: true,
     timeoutMs: 120_000,
@@ -331,11 +362,19 @@ export async function sendChatMessage(
     clearAuChatSchemaOutage();
   }
   if (!data) throw { message: 'Chat request failed', status: 500 };
-  return data;
+  return normalizeChatResponse(data);
 }
 
 export type ChatStreamDeltaEvent = { type: 'delta'; text: string };
-export type ChatStreamDoneEvent = { type: 'done'; answer: string; thought?: string; citations?: any[]; requestId?: string };
+export type ChatStreamDoneEvent = {
+  type: 'done';
+  answer: string;
+  thought?: string;
+  citations?: any[];
+  requestId?: string;
+  navAction?: GlobalChatNavAction | null;
+  documentContext?: ChatDocumentContext | null;
+};
 export type ChatStreamErrorEvent = { type: 'error'; error: string; details?: any; isThrottled?: boolean; requestId?: string };
 export type ChatStreamEvent = ChatStreamDeltaEvent | ChatStreamDoneEvent | ChatStreamErrorEvent;
 
@@ -450,6 +489,25 @@ export async function sendChatMessageStream(
     };
   }
 
+  const responseContentType = String(res.headers.get('content-type') || '').toLowerCase();
+  if (!responseContentType.includes('text/event-stream')) {
+    const json = await res.json().catch(() => null);
+    if (!json) {
+      throw new Error('Chat stream returned an unexpected non-stream response.');
+    }
+    const normalized = normalizeChatResponse(json);
+    const doneEvent: ChatStreamDoneEvent = {
+      type: 'done',
+      answer: normalized.answer,
+      thought: normalized.thought,
+      citations: normalized.citations,
+      navAction: normalized.navAction,
+      documentContext: normalized.documentContext,
+    };
+    handlers.onEvent(doneEvent);
+    return doneEvent;
+  }
+
   if (!res.body) throw new Error('Missing response body');
   if (!isGlobal && endpoint === 'au-chat') {
     clearAuChatSchemaOutage();
@@ -478,6 +536,19 @@ export async function sendChatMessageStream(
         evt = JSON.parse(raw) as ChatStreamEvent;
       } catch {
         continue;
+      }
+
+      if (evt.type === 'done') {
+        const normalized = normalizeChatResponse(evt as any);
+        evt = {
+          type: 'done',
+          answer: normalized.answer,
+          thought: normalized.thought,
+          citations: normalized.citations,
+          requestId: (evt as any).requestId,
+          navAction: normalized.navAction,
+          documentContext: normalized.documentContext,
+        };
       }
 
       handlers.onEvent(evt);

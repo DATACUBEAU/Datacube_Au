@@ -25,6 +25,9 @@ import { useLimits } from '@/components/providers/limits-provider';
 import { extractLimitExceededPayload } from '@/lib/limits/limit-errors';
 import { registerAuthBoundAbortController } from '@/lib/auth/session-expiry-events';
 import { isRetryableUploadError } from '@/lib/upload/retry-policy';
+import { useFeatureFlags } from '@/components/feature-flag-provider';
+import { getLargeFileGate, LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
+import { isActiveStatus, isTerminalStatus, reconcileJobsWithDocumentRows } from '@/lib/upload/job-status';
 
 type UploadJobsContextValue = {
   jobs: UploadJobRow[];
@@ -43,14 +46,6 @@ type UploadJobsContextValue = {
 
 const UploadJobsContext = createContext<UploadJobsContextValue | null>(null);
 
-function isActiveStatus(status: UploadJobStatus) {
-  return status === 'queued' || status === 'uploading' || status === 'uploaded' || status === 'processing';
-}
-
-function isTerminalStatus(status: UploadJobStatus) {
-  return status === 'failed' || status === 'cancelled' || status === 'done' || status === 'completed';
-}
-
 function statusRank(status: UploadJobStatus): number {
   switch (status) {
     case 'uploading':
@@ -66,6 +61,7 @@ function statusRank(status: UploadJobStatus): number {
       return 5;
     case 'failed':
     case 'cancelled':
+    case 'stale_timeout':
       return 6;
     case 'deleting':
       return 7;
@@ -185,6 +181,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
   const { usage: limitsUsage, reportServerLimitError } = useLimits();
+  const { records: featureFlagRecords } = useFeatureFlags();
 
   const [jobs, setJobs] = useState<UploadJobRow[]>([]);
   const [isThrottled, setIsThrottled] = useState(false);
@@ -326,49 +323,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       }
       if (!documentRows) return rows;
 
-      const docMap = new Map<string, any>();
-      for (const row of documentRows) {
-        if (!row?.id) continue;
-        docMap.set(String(row.id), row);
-      }
-
-      return rows.map((job) => {
-        const doc = docMap.get(job.document_id);
-        if (!doc) return job;
-
-        const docStatus = String(doc.status || '').toLowerCase();
-        const docTimestamp = typeof doc.created_at === 'string' ? doc.created_at : job.updated_at;
-
-        if (docStatus === 'failed') {
-          return {
-            ...job,
-            status: 'failed',
-            error: (typeof doc.error === 'string' && doc.error) || job.error || 'Document processing failed.',
-            updated_at: docTimestamp,
-          };
-        }
-
-        if (docStatus === 'completed' || docStatus === 'done' || docStatus === 'indexed') {
-          return {
-            ...job,
-            status: 'done',
-            progress: 100,
-            error: null,
-            updated_at: docTimestamp,
-          };
-        }
-
-        if (docStatus === 'processing' || docStatus === 'uploaded') {
-          return {
-            ...job,
-            status: 'processing',
-            progress: Math.max(job.progress || 0, 92),
-            updated_at: docTimestamp,
-          };
-        }
-
-        return job;
-      });
+      return reconcileJobsWithDocumentRows(rows, documentRows);
     },
     [user?.id],
   );
@@ -661,6 +616,14 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         if (!effectiveUserId) throw new Error('Could not determine owner ID. Please sign in or refresh.');
         if (!accessToken) throw new Error('Sign in required to upload.');
 
+        const largeFileGate = getLargeFileGate({
+          fileSizeBytes: file.size,
+          flags: featureFlagRecords,
+        });
+        if (largeFileGate.blocked) {
+          throw new Error(largeFileGate.message || LARGE_FILE_DISABLED_MESSAGE);
+        }
+
         // Use dynamic limit
         if (file.size > maxUploadSize) {
           throw new Error(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds the ${(maxUploadSize / 1024 / 1024).toFixed(0)}MB limit.`);
@@ -870,7 +833,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
       }
     },
-    [isAuthLocked, isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
+    [featureFlagRecords, isAuthLocked, isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
   );
 
   useEffect(() => {
@@ -928,6 +891,15 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       for (const input of inputs) {
         const file = input.file;
 
+        const largeFileGate = getLargeFileGate({
+          fileSizeBytes: file.size,
+          flags: featureFlagRecords,
+        });
+        if (largeFileGate.blocked) {
+          errors.push(`${file.name}: ${largeFileGate.message}`);
+          continue;
+        }
+
         // Use dynamic limit
         const fileVal = validateFile(file, maxUploadSize);
         if (!fileVal.valid) {
@@ -976,7 +948,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [isAuthLocked, isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
+    [featureFlagRecords, isAuthLocked, isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
   );
 
   const cancelJob = useCallback(
@@ -1092,6 +1064,14 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       const job = jobs.find((j) => j.id === jobId);
       if (!job) return;
 
+      const largeFileGate = getLargeFileGate({
+        fileSizeBytes: file.size,
+        flags: featureFlagRecords,
+      });
+      if (largeFileGate.blocked) {
+        throw new Error(largeFileGate.message || LARGE_FILE_DISABLED_MESSAGE);
+      }
+
       await putJobFile(jobId, file);
       blockedAutoRestartRef.current.delete(jobId);
 
@@ -1126,7 +1106,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       applyOwnershipFilter(docUpdateQuery, conditions);
       await docUpdateQuery;
     },
-    [jobs, updateJobLocal, updateJobRow, user]
+    [featureFlagRecords, jobs, updateJobLocal, updateJobRow, user]
   );
 
   const activeJobs = useMemo(

@@ -1,4 +1,4 @@
-import type { AuDocumentType } from '@/lib/au/types';
+import type { AuDocumentType } from '../au/types';
 
 export type UploadJobStatus =
   | 'queued'
@@ -9,6 +9,7 @@ export type UploadJobStatus =
   | 'done'
   | 'failed'
   | 'cancelled'
+  | 'stale_timeout'
   | 'deleting';
 
 export type UploadJobRow = {

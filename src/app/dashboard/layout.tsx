@@ -332,6 +332,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
   const planStatusLabel = useMemo(() => {
     if (entitlements.plan === 'admin') return 'Admin';
+    if (entitlements.plan === 'premium') return 'Premium';
     if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo Pro';
     if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) return 'Pro';
     return 'Free';
@@ -339,6 +340,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
   const planStatusBadge = useMemo(() => {
     if (entitlements.plan === 'admin') return 'Admin';
+    if (entitlements.plan === 'premium') return 'Premium';
     if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo';
     if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) return 'Active';
     return 'Free';
@@ -812,13 +814,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* Global Chat Development Dialog */}
-      <GlobalChatDevDialog 
-        open={showGlobalChatDevDialog} 
-        onOpenChange={setShowGlobalChatDevDialog}
-        onContactSupport={() => setShowWhatsappDialog(true)}
-      />
 
         <div className="flex min-h-dvh w-full bg-transparent">
           <Sidebar collapsible="icon" side="left" variant="sidebar" className="group-data-[variant=sidebar]:border-r">

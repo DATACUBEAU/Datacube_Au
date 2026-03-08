@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
 import { getProEntitlementStatus } from '@/lib/server/entitlements';
+import { LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 import {
   DEFAULT_MAX_UPLOAD_MB,
   FLAGGED_MAX_UPLOAD_MB,
@@ -252,11 +253,14 @@ async function enforceUploadSizeOrThrow(input: {
   const sizeMb = raw / (1024 * 1024);
   const maxMb = await resolveUploadMaxMb(input.supabase);
   if (sizeMb <= maxMb) return;
+  const message = maxMb <= 50 && sizeMb > 50
+    ? LARGE_FILE_DISABLED_MESSAGE
+    : `File exceeds upload size limit (${maxMb}MB).`;
   throw new TierAccessError(
     429,
     buildLimitReachedPayload({
       key: 'max_upload_size_mb',
-      message: `File exceeds upload size limit (${maxMb}MB).`,
+      message,
       count: Math.ceil(sizeMb),
       limit: maxMb,
       resetAt: null,

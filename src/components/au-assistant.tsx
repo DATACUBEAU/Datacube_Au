@@ -16,7 +16,7 @@ interface Step {
 const TOUR_STEPS: Record<string, Step> = {
   '/dashboard': {
     title: 'Welcome to Dashboard',
-    content: 'This is your control center. Start with Documents, then move into AU Chat, Knowledge Hub, Predictions, Practice, Global Assistant, and Settings as you study.',
+    content: 'This is your control center. Start with Documents, then move into AU Chat, Knowledge Hub, Predictions, Practice, Global Chat, and Settings as you study.',
   },
   '/dashboard/documents': {
     title: 'Document Management',
@@ -27,8 +27,8 @@ const TOUR_STEPS: Record<string, Step> = {
     content: 'This is document-grounded chat. Ask about the selected material and AU answers from your uploaded content first, with retrieval and usage limits enforced server-side.',
   },
   '/dashboard/global-chat': {
-    title: 'AU Global Assistant',
-    content: 'Use this for app-wide help, general reasoning, and broader questions that are not limited to one document. Keep document-specific questions in AU Chat for grounded answers.',
+    title: 'Datacube AU Global Chat',
+    content: 'Use this for app-wide help and navigation. Keep document-specific questions in AU Chat for grounded answers.',
   },
   '/dashboard/knowledge': {
     title: 'Knowledge Hub',

@@ -1,22 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
+import { extractBillingReturnState } from '@/lib/billing/payment-return';
 import { verifyCheckoutPayment } from '@/lib/server/billing';
+import { serializeBillingApiError } from '@/lib/server/billing-config';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID();
   try {
     const auth = await requireUserFromRequest(req);
     if (!auth.ok) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+      return NextResponse.json({ error: 'unauthorized', requestId }, { status: 401 });
     }
 
     const body = await req.json().catch(() => ({}));
-    const reference = String((body as any)?.reference || '').trim();
-    if (!reference) {
+    const bodyState = extractBillingReturnState(body as Record<string, unknown>);
+    const queryState = extractBillingReturnState(req.nextUrl.searchParams);
+    const reference = bodyState.reference || queryState.reference;
+    const verificationTarget = bodyState.verificationTarget || queryState.verificationTarget;
+    const gatewayHint = bodyState.gatewayHint || queryState.gatewayHint;
+    if (!verificationTarget) {
       return NextResponse.json(
-        { error: 'missing_reference', message: 'A payment reference is required.' },
+        { error: 'missing_reference', message: 'A payment reference is required.', requestId },
         { status: 400 }
       );
     }
@@ -26,6 +33,8 @@ export async function POST(req: NextRequest) {
       supabase,
       userId: auth.userId,
       reference,
+      verificationTarget,
+      gatewayHint,
     });
 
     return NextResponse.json(
@@ -40,12 +49,12 @@ export async function POST(req: NextRequest) {
       { status: 200 }
     );
   } catch (error: any) {
-    return NextResponse.json(
-      {
-        error: 'verify_failed',
-        message: String(error?.message || 'Payment verification failed.'),
-      },
-      { status: 400 }
-    );
+    const failure = serializeBillingApiError(error, {
+      status: 500,
+      code: 'verify_failed',
+      message: 'Payment verification failed.',
+      requestId,
+    });
+    return NextResponse.json(failure.body, { status: failure.status });
   }
 }

@@ -20,6 +20,17 @@ export const AuGuideSchema = z.object({
 }).partial();
 export type AuGuideInput = z.infer<typeof AuGuideSchema>;
 
+export const DocumentContextSchema = z.object({
+  active_document_id: z.string().min(1).nullable().optional(),
+  active_document_name: z.string().min(1).nullable().optional(),
+  last_uploaded_document_id: z.string().min(1).nullable().optional(),
+  last_retrieved_document_id: z.string().min(1).nullable().optional(),
+  last_retrieved_source_ids: z.array(z.string().min(1)).max(12).optional(),
+  document_count_in_scope: z.number().int().min(0).optional(),
+  last_resolved_reference_at: z.string().min(1).nullable().optional(),
+}).partial();
+export type DocumentContextInput = z.infer<typeof DocumentContextSchema>;
+
 export const CanonicalChatPayloadSchema = z.object({
   messages: z.array(ChatMessageSchema).min(1),
   userId: z.string().min(1).optional(),
@@ -27,6 +38,7 @@ export const CanonicalChatPayloadSchema = z.object({
   feature: z.string().min(1),
   activeDocIds: z.array(z.string().min(1)).optional(),
   auGuide: AuGuideSchema.optional(),
+  documentContext: DocumentContextSchema.optional(),
   idempotencyKey: z.string().min(8).max(200),
   correlationId: z.string().min(1).optional(),
 });
@@ -139,6 +151,50 @@ function normalizeAuGuide(raw: any): AuGuideInput | undefined {
   return undefined;
 }
 
+function normalizeDocumentContext(raw: any): DocumentContextInput | undefined {
+  const source =
+    raw?.documentContext && typeof raw.documentContext === 'object' && !Array.isArray(raw.documentContext)
+      ? raw.documentContext
+      : raw?.document_context && typeof raw.document_context === 'object' && !Array.isArray(raw.document_context)
+        ? raw.document_context
+        : null;
+
+  if (!source) return undefined;
+
+  const next: DocumentContextInput = {};
+  const assignString = (key: keyof DocumentContextInput) => {
+    const value = source[key as string];
+    if (typeof value === 'string' && value.trim()) {
+      (next as any)[key] = value.trim();
+    } else if (value === null) {
+      (next as any)[key] = null;
+    }
+  };
+
+  assignString('active_document_id');
+  assignString('active_document_name');
+  assignString('last_uploaded_document_id');
+  assignString('last_retrieved_document_id');
+  assignString('last_resolved_reference_at');
+
+  if (Array.isArray(source.last_retrieved_source_ids)) {
+    next.last_retrieved_source_ids = Array.from(
+      new Set(
+        source.last_retrieved_source_ids
+          .map((value: unknown) => (typeof value === 'string' ? value.trim() : ''))
+          .filter(Boolean),
+      ),
+    );
+  }
+
+  const count = Number(source.document_count_in_scope);
+  if (Number.isFinite(count) && count >= 0) {
+    next.document_count_in_scope = Math.floor(count);
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
 export function normalizeChatPayload(input: unknown): CanonicalChatPayload {
   const raw = input && typeof input === 'object' ? input : {};
   const activeDocIds = normalizeActiveDocIds(raw);
@@ -173,6 +229,7 @@ export function normalizeChatPayload(input: unknown): CanonicalChatPayload {
     feature: normalizeFeature(raw, activeDocIds),
     activeDocIds: activeDocIds.length > 0 ? activeDocIds : undefined,
     auGuide: normalizeAuGuide(raw),
+    documentContext: normalizeDocumentContext(raw),
     idempotencyKey: typeof (raw as any)?.idempotencyKey === 'string'
       ? (raw as any).idempotencyKey.trim() || undefined
       : typeof (raw as any)?.idempotency_key === 'string'
@@ -227,6 +284,7 @@ export function toLegacyEdgePayload(
     feature: payload.feature,
     activeDocIds: payload.activeDocIds,
     auGuide: payload.auGuide,
+    document_context: payload.documentContext,
     idempotencyKey: payload.idempotencyKey,
     correlation_id: payload.correlationId,
     ...(extras || {}),
@@ -267,5 +325,6 @@ export function redactChatPayloadForLog(payload: CanonicalChatPayload): Record<s
             : undefined,
         }
       : undefined,
+    documentContext: payload.documentContext,
   };
 }

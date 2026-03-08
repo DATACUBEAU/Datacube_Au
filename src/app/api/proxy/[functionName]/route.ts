@@ -708,6 +708,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         browsingMode: parsedBody?.browsingMode,
         app_context: parsedBody?.app_context,
         memory_pack: parsedBody?.memory_pack,
+        document_context: parsedBody?.document_context,
         recent_snippet: parsedBody?.recent_snippet,
         secondary_snippet: parsedBody?.secondary_snippet,
         retrieval: parsedBody?.retrieval,
@@ -842,9 +843,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       );
       if (templateResponse) {
         const payload = {
-          answer: templateResponse,
+          answer: templateResponse.answer,
           thought: null,
           citations: [],
+          nav_action: templateResponse.navAction ?? null,
           correlation_id: correlationId,
           cache_hit: true,
           source: 'template',

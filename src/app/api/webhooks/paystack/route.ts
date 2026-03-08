@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID } from 'crypto';
 import { processPaystackWebhook } from '@/lib/server/billing';
+import { serializeBillingApiError } from '@/lib/server/billing-config';
 import { verifyPaystackWebhookSignature } from '@/lib/server/paystack';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 
@@ -43,13 +44,18 @@ export async function POST(req: NextRequest) {
       { status: 200 }
     );
   } catch (error: any) {
+    const failure = serializeBillingApiError(error, {
+      status: 500,
+      code: 'webhook_processing_failed',
+      message: 'Webhook processing failed.',
+      requestId: traceId,
+    });
     return NextResponse.json(
       {
-        error: 'webhook_processing_failed',
-        message: String(error?.message || 'Webhook processing failed.'),
+        ...failure.body,
         traceId,
       },
-      { status: 500 }
+      { status: failure.status },
     );
   }
 }

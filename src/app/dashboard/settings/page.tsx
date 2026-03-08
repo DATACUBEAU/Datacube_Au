@@ -101,6 +101,7 @@ export default function SettingsPage() {
   const planStatusLabel = useMemo(() => {
     if (isPlanStatusLoading) return 'Updating...';
     if (entitlements.plan === 'admin') return 'Admin';
+    if (entitlements.plan === 'premium') return 'Premium';
     if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo Pro';
     if (hasPaidPro) return 'Pro';
     return 'Free';
@@ -127,6 +128,20 @@ export default function SettingsPage() {
         }
       }
       return 'Promo mode active';
+    }
+
+    if (entitlements.plan === 'premium') {
+      if (entitlements.entitlementEndsAt) {
+        const expires = new Date(entitlements.entitlementEndsAt);
+        if (!Number.isNaN(expires.getTime())) {
+          return `Premium expires: ${expires.toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+          })}`;
+        }
+      }
+      return 'Premium entitlement active';
     }
 
     if (hasPaidPro && entitlements.entitlementEndsAt) {

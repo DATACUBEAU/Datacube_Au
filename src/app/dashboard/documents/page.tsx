@@ -178,7 +178,7 @@ export default function DocumentsPage() {
       // Map UploadJobStatus to DocumentStatus
       let status: DocumentStatus = "uploading";
       if (job.status === "completed" || job.status === "done") status = "completed";
-      else if (job.status === "failed") status = "failed";
+      else if (job.status === "failed" || job.status === "stale_timeout") status = "failed";
       else if (job.status === "processing" || job.status === "uploaded") status = "processing";
 
       if (map.has(id)) {

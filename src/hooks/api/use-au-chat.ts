@@ -15,6 +15,7 @@ import { logEvent } from '@/lib/analytics';
 import { guardRequest } from '@/lib/api/request-guard';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { mergeDocumentContext, normalizeDocumentContext, type ChatDocumentContext } from '@shared/document-chat-context';
 
 const CHAT_EVENT_STARTED = 'au-chat:started';
 const CHAT_EVENT_COMPLETED = 'au-chat:completed';
@@ -46,7 +47,28 @@ const simpleHash = (str: string) => {
   return hash.toString();
 };
 
-export function useAuChat(selectedDocId: string | null) {
+type UseAuChatOptions = {
+  activeDocumentName?: string | null;
+  lastUploadedDocumentId?: string | null;
+  documentCountInScope?: number | null;
+};
+
+function buildDocumentContextSeed(input: {
+  selectedDocId: string | null;
+  activeDocumentName?: string | null;
+  lastUploadedDocumentId?: string | null;
+  documentCountInScope?: number | null;
+}): ChatDocumentContext | null {
+  if (!input.selectedDocId || input.selectedDocId === 'global') return null;
+  return normalizeDocumentContext({
+    active_document_id: input.selectedDocId,
+    active_document_name: input.activeDocumentName ?? null,
+    last_uploaded_document_id: input.lastUploadedDocumentId ?? input.selectedDocId,
+    document_count_in_scope: input.documentCountInScope ?? null,
+  });
+}
+
+export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions = {}) {
   const [user, session] = useSupabaseUser();
   const { toast } = useToast();
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
@@ -71,6 +93,16 @@ export function useAuChat(selectedDocId: string | null) {
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [isInitialized, setIsInitialized] = useState(false);
+  const [documentContext, setDocumentContext] = useState<ChatDocumentContext | null>(null);
+  const documentContextRef = useRef<ChatDocumentContext | null>(null);
+
+  const updateDocumentContext = useCallback((updates: Partial<ChatDocumentContext> | null) => {
+    setDocumentContext((prev) => {
+      const next = mergeDocumentContext(prev, updates);
+      documentContextRef.current = next;
+      return next;
+    });
+  }, []);
 
   const ensureAccessToken = useCallback(async (): Promise<string | null> => {
     return await getSupabaseAccessToken();
@@ -97,6 +129,7 @@ export function useAuChat(selectedDocId: string | null) {
       turns,
       summary: current?.summary ?? '',
       pinnedFacts: current?.pinnedFacts ?? [],
+      documentContext: mergeDocumentContext(current?.documentContext, documentContextRef.current),
       lastUpdatedAt: current?.lastUpdatedAt ?? Date.now(),
       expiresAt: current?.expiresAt,
       serverUpdatedAt: current?.serverUpdatedAt,
@@ -164,10 +197,35 @@ export function useAuChat(selectedDocId: string | null) {
       .catch(err => console.error("Failed to load models:", err));
   }, [isAuthLocked, isOnline, session?.access_token, user]);
 
+  useEffect(() => {
+    const seed = buildDocumentContextSeed({
+      selectedDocId,
+      activeDocumentName: config.activeDocumentName,
+      lastUploadedDocumentId: config.lastUploadedDocumentId,
+      documentCountInScope: config.documentCountInScope,
+    });
+
+    if (!seed) {
+      documentContextRef.current = null;
+      setDocumentContext(null);
+      return;
+    }
+
+    updateDocumentContext(seed);
+  }, [
+    config.activeDocumentName,
+    config.documentCountInScope,
+    config.lastUploadedDocumentId,
+    selectedDocId,
+    updateDocumentContext,
+  ]);
+
   // --- PERSISTENCE: Load history on mount or doc change ---
   useEffect(() => {
     if (!selectedDocId || !user?.id) {
       setHistory([]);
+      documentContextRef.current = null;
+      setDocumentContext(null);
       setIsInitialized(true);
       return;
     }
@@ -178,13 +236,37 @@ export function useAuChat(selectedDocId: string | null) {
       .then(payload => {
         const messages = payload?.turns?.map(t => ({ id: t.id, role: t.role, content: t.text } as ChatMessage)) ?? [];
         setHistory(messages);
+        const seededContext = buildDocumentContextSeed({
+          selectedDocId,
+          activeDocumentName: config.activeDocumentName,
+          lastUploadedDocumentId: config.lastUploadedDocumentId,
+          documentCountInScope: config.documentCountInScope,
+        });
+        const nextContext = seededContext
+          ? mergeDocumentContext(payload?.documentContext, seededContext)
+          : normalizeDocumentContext(payload?.documentContext || {});
+        documentContextRef.current = nextContext;
+        setDocumentContext(nextContext);
         setIsInitialized(true);
       })
       .catch(() => {
         setHistory([]);
+        documentContextRef.current = buildDocumentContextSeed({
+          selectedDocId,
+          activeDocumentName: config.activeDocumentName,
+          lastUploadedDocumentId: config.lastUploadedDocumentId,
+          documentCountInScope: config.documentCountInScope,
+        });
+        setDocumentContext(documentContextRef.current);
         setIsInitialized(true);
       });
-  }, [selectedDocId, user?.id]);
+  }, [
+    config.activeDocumentName,
+    config.documentCountInScope,
+    config.lastUploadedDocumentId,
+    selectedDocId,
+    user?.id,
+  ]);
 
   const clearChat = useCallback(async () => {
     setHistory([]);
@@ -283,6 +365,23 @@ export function useAuChat(selectedDocId: string | null) {
 
     const scope = selectedDocId === 'global' ? 'global' : 'doc';
     const memoryKey = scope === 'global' ? globalMemoryKey(user.id) : docMemoryKey(user.id, selectedDocId);
+    const existingMemory = await loadWorkingMemory(memoryKey).catch(() => null);
+    const seededDocumentContext = buildDocumentContextSeed({
+      selectedDocId,
+      activeDocumentName: config.activeDocumentName,
+      lastUploadedDocumentId: config.lastUploadedDocumentId,
+      documentCountInScope: config.documentCountInScope,
+    });
+    const requestDocumentContext =
+      scope === 'doc'
+        ? mergeDocumentContext(existingMemory?.documentContext ?? documentContextRef.current, seededDocumentContext)
+        : null;
+
+    if (requestDocumentContext) {
+      documentContextRef.current = requestDocumentContext;
+      setDocumentContext(requestDocumentContext);
+    }
+
     appendTurn(
       memoryKey,
       { id: userMessage.id, ts: Date.now(), role: 'user', text: userMessage.content },
@@ -336,19 +435,20 @@ export function useAuChat(selectedDocId: string | null) {
         }
       }, cachedResult ? 140 : 650); // Fast and readable cadence
 
-      let result;
+      let result: any;
+      let assistantTurnResult: Awaited<ReturnType<typeof appendTurn>> | null = null;
 
       if (cachedResult) {
           // Simulate brief network delay for UX smoothness
           await new Promise(resolve => setTimeout(resolve, 220));
           result = cachedResult;
-          await appendTurn(
+          assistantTurnResult = await appendTurn(
             memoryKey,
             { id: loadingId, ts: Date.now(), role: 'assistant', text: String((cachedResult as any)?.answer || '') },
             scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
           );
       } else {
-          const existing = await loadWorkingMemory(memoryKey);
+          const existing = existingMemory;
           const recentTurns = existing?.turns?.slice(-8).map(t => ({ role: t.role, content: t.text })) ?? [];
           const recentSnippet = recentTurns.length > 0
             ? {
@@ -393,6 +493,7 @@ export function useAuChat(selectedDocId: string | null) {
               recent_snippet: recentSnippet as any,
               secondary_snippet: secondarySnippet,
               memory_pack: scope === 'global' ? { global_digest: existing?.summary || '' } : undefined,
+              document_context: requestDocumentContext || undefined,
               guide: options?.guide,
               summaryMode: options?.summaryMode,
               browsingMode: options?.browsingMode,
@@ -409,25 +510,32 @@ export function useAuChat(selectedDocId: string | null) {
             { signal: abortControllerRef.current?.signal }
           );
 
-          result = { answer: done.answer, citations: (done as any).citations, thought: (done as any).thought } as any;
+          result = {
+            answer: done.answer,
+            citations: (done as any).citations,
+            thought: (done as any).thought,
+            navAction: (done as any).navAction,
+            documentContext: (done as any).documentContext,
+          } as any;
 
-          const turnResult = await appendTurn(
+          assistantTurnResult = await appendTurn(
             memoryKey,
             { id: loadingId, ts: Date.now(), role: 'assistant', text: done.answer },
             scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
           );
+          const assistantTurnPayload = assistantTurnResult.payload;
 
           // --- SYNC TO SERVER (Long-term Memory) ---
-          if ((turnResult.payload.turnsSinceServerSync ?? 0) >= 10) {
+          if ((assistantTurnPayload.turnsSinceServerSync ?? 0) >= 10) {
             upsertMemorySummary({
               scope: scope as any,
               docId: scope === 'doc' ? selectedDocId : undefined,
-              summary: turnResult.payload.summary,
-              pinnedFacts: turnResult.payload.pinnedFacts
+              summary: assistantTurnPayload.summary,
+              pinnedFacts: assistantTurnPayload.pinnedFacts
             }).then(success => {
               if (success) {
                 // Reset counter locally
-                const next = { ...turnResult.payload, turnsSinceServerSync: 0, serverUpdatedAt: Date.now() };
+                const next = { ...assistantTurnPayload, turnsSinceServerSync: 0, serverUpdatedAt: Date.now() };
                 saveWorkingMemory(memoryKey, next, scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId });
               }
             });
@@ -438,7 +546,28 @@ export function useAuChat(selectedDocId: string | null) {
               localStorage.setItem(cacheKey, JSON.stringify(result));
           } catch (e) {
               // Ignore quota errors
-          }
+           }
+      }
+
+      if (scope === 'doc') {
+        const nextDocumentContext = mergeDocumentContext(
+          requestDocumentContext,
+          result?.documentContext || null,
+        );
+        documentContextRef.current = nextDocumentContext;
+        setDocumentContext(nextDocumentContext);
+        result.documentContext = nextDocumentContext;
+
+        if (assistantTurnResult) {
+          await saveWorkingMemory(
+            memoryKey,
+            {
+              ...assistantTurnResult.payload,
+              documentContext: nextDocumentContext,
+            },
+            { scope: 'doc', userId: user.id, docId: selectedDocId },
+          ).catch(() => {});
+        }
       }
 
       if (thinkingInterval) clearInterval(thinkingInterval);
@@ -453,7 +582,8 @@ export function useAuChat(selectedDocId: string | null) {
         role: 'assistant',
         content: result.answer,
         citations: result.citations,
-        thought: result.thought
+        thought: result.thought,
+        navAction: result.navAction,
       } : m));
       emitChatLifecycleEvent(CHAT_EVENT_COMPLETED, {
         requestId,
@@ -556,7 +686,23 @@ export function useAuChat(selectedDocId: string | null) {
         setAuThinkingSteps([]); // Clear steps after done
       }, 1200);
     }
-  }, [isAuthLocked, selectedDocId, user, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, session?.access_token, toast]);
+  }, [
+    config.activeDocumentName,
+    config.documentCountInScope,
+    config.lastUploadedDocumentId,
+    ensureAccessToken,
+    isAuthLocked,
+    isOnline,
+    selectedDocId,
+    selectedModel,
+    session?.access_token,
+    setAuAnimationState,
+    setAuThinkingStatus,
+    setAuThinkingSteps,
+    toast,
+    updateAuThinkingStep,
+    user,
+  ]);
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;

@@ -65,6 +65,7 @@ import { useChatRuntime } from '@/components/providers/chat-runtime-provider';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { GlobalChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { GLOBAL_CHAT_TITLE, GLOBAL_CHAT_WELCOME_COPY } from '@shared/global-chat-routing';
 
 // Typing Animation Component
 const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, shouldAnimate?: boolean }) => {
@@ -142,7 +143,7 @@ export default function GlobalChatPage() {
 
   // Hardcoded to 'global'
   const selectedDocId = GLOBAL_CHAT_ID;
-  const selectedDocName = "AU Global Assistant";
+  const selectedDocName = GLOBAL_CHAT_TITLE;
 
   const { 
     history: currentChatHistory, 
@@ -160,8 +161,6 @@ export default function GlobalChatPage() {
     isUsingCachedData,
     cachedAt,
   } = useAuDocuments();
-  const [referencedDocId, setReferencedDocId] = useState<string | undefined>(undefined);
-
   // Sync AU State with Global Background Animation
   const setAuAnimationState = useStore(state => state.setAuAnimationState);
   const auAnimationState = useStore(state => state.auAnimationState);
@@ -327,7 +326,6 @@ export default function GlobalChatPage() {
       await sendMessage(currentInput, {
         summaryMode: overrideMode || summaryMode,
         browsingMode,
-        referenceDocId: referencedDocId
       });
     } catch (error: any) {
       console.error("[GlobalChatPage] Message error:", error);
@@ -340,81 +338,6 @@ export default function GlobalChatPage() {
 
   if (isBootLoading && showSkeleton) {
     return <GlobalChatPageSkeleton />;
-  }
-
-  if (!isGlobalChatEnabled) {
-    return (
-      <main className="flex h-[calc(100dvh-3.5rem)] flex-col items-center justify-center relative p-4">
-        <div className="max-w-md w-full space-y-8 bg-background/95 backdrop-blur-md p-8 rounded-2xl border border-primary/20 shadow-2xl">
-          <div className="text-center space-y-4">
-            <div className="mx-auto w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center mb-2">
-              <motion.div
-                animate={{ 
-                  rotate: [0, 360],
-                  scale: [1, 1.1, 1]
-                }}
-                transition={{ 
-                  rotate: { duration: 20, repeat: Infinity, ease: "linear" },
-                  scale: { duration: 2, repeat: Infinity, ease: "easeInOut" }
-                }}
-              >
-                <Globe className="w-8 h-8 text-primary" />
-              </motion.div>
-            </div>
-            <h1 className="text-center font-headline text-2xl uppercase tracking-tight text-primary">
-              AU Global Assistant
-            </h1>
-            <div className="flex items-center justify-center gap-2 py-1 px-3 rounded-full bg-primary/10 w-fit mx-auto border border-primary/20">
-              <Sparkles className="h-3 w-3 text-primary animate-pulse" />
-              <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Under Development</span>
-            </div>
-            <p className="text-center text-base pt-2 text-foreground/80 leading-relaxed">
-              AU Global is currently being fine-tuned to provide a comprehensive study experience across <strong>all your documents at once</strong>.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            <div className="rounded-xl border border-primary/10 bg-primary/5 p-4 space-y-3">
-              <div className="flex items-start gap-3">
-                <div className="mt-1 bg-primary/20 rounded-md p-1">
-                  <Info className="h-4 w-4 text-primary" />
-                </div>
-                <div className="space-y-1">
-                  <h4 className="font-bold text-sm text-primary uppercase tracking-tight">What is AU Global?</h4>
-                  <p className="text-sm text-muted-foreground leading-snug">
-                    Unlike regular chat which focuses on one document, AU Global connects your entire library. Cross-reference facts, find overarching themes, and synthesize knowledge from every file you've uploaded.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 p-4 rounded-xl border border-dashed border-muted-foreground/20 bg-muted/5">
-              <div className="bg-muted-foreground/10 rounded-full p-2">
-                <MessageCircle className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="font-bold text-sm text-foreground/80 uppercase tracking-tight">Suggestions?</h4>
-                <p className="text-xs text-muted-foreground">
-                  We're building this for you. Tell us what cross-document features would help you study better!
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <Button variant="outline" onClick={() => router.push('/dashboard')} className="flex-1 uppercase font-bold tracking-tighter">
-              Close
-            </Button>
-            <Button 
-              onClick={() => window.open('https://wa.me/2349036553377', '_blank')} 
-              className="flex-1 font-bold uppercase tracking-tighter shadow-lg shadow-primary/20"
-            >
-              Contact Support
-            </Button>
-          </div>
-        </div>
-      </main>
-    );
   }
 
   return (
@@ -441,7 +364,7 @@ export default function GlobalChatPage() {
       <header className="flex h-auto flex-col justify-center gap-2 border-b bg-background/80 backdrop-blur-md px-4 py-3 md:h-14 md:flex-row md:items-center md:px-8 shrink-0 z-10">
         <div className="flex items-center gap-2">
            <Globe className="h-5 w-5 text-primary" />
-           <h1 className="font-headline text-lg font-semibold md:text-xl">AU Global Assistant</h1>
+           <h1 className="font-headline text-lg font-semibold md:text-xl">{GLOBAL_CHAT_TITLE}</h1>
         </div>
         
         <div className="flex w-full flex-col gap-2 md:ml-auto md:w-auto md:flex-row md:items-center" />
@@ -456,8 +379,8 @@ export default function GlobalChatPage() {
                   <div className="bg-primary/5 p-4 rounded-full mb-4">
                       <Globe className="h-10 w-10 text-primary" />
                   </div>
-                  <h3 className="font-headline text-xl font-semibold text-foreground mb-2">Welcome to AU Global Assistant</h3>
-                  <p className="max-w-md">Use this as the lightweight brain box for Datacube AU: general questions, app navigation, study strategy, and compact answers across the whole system.</p>
+                  <h3 className="font-headline text-xl font-semibold text-foreground mb-2">{GLOBAL_CHAT_TITLE}</h3>
+                  <p className="max-w-md">{GLOBAL_CHAT_WELCOME_COPY}</p>
                 </div>
               )}
 
@@ -511,6 +434,18 @@ export default function GlobalChatPage() {
                                 ))}
                               </div>
                             )}
+
+                            {message.navAction?.available ? (
+                              <div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => router.push(message.navAction!.href)}
+                                >
+                                  {message.navAction.label}
+                                </Button>
+                              </div>
+                            ) : null}
 
                             <div className="flex items-center gap-1 mt-2 opacity-50 hover:opacity-100 transition-opacity">
                               <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md" onClick={() => handleCopy(message.id, message.content)}>
@@ -580,7 +515,7 @@ export default function GlobalChatPage() {
                     ? "Offline mode"
                     : !session?.access_token
                       ? "Sign in required"
-                      : "Ask AU Global Assistant..."
+                      : `Ask ${GLOBAL_CHAT_TITLE}...`
                 }
                 className="flex-1 resize-none rounded-full border bg-secondary p-3 px-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
                 value={input}

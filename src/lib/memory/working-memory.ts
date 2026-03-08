@@ -1,4 +1,5 @@
 import { getWorkingMemoryStore } from '@/lib/memory/kv-store';
+import type { ChatDocumentContext } from '@shared/document-chat-context';
 
 export type WorkingMemoryScope = 'global' | 'doc';
 
@@ -15,6 +16,7 @@ export type WorkingMemoryPayload = {
   turns: WorkingMemoryTurn[];
   summary: string;
   pinnedFacts: string[];
+  documentContext?: ChatDocumentContext;
   lastUpdatedAt: number;
   expiresAt?: number;
   serverUpdatedAt?: number;
@@ -75,6 +77,9 @@ function normalizePayload(input: Partial<WorkingMemoryPayload> | null): WorkingM
     turns: Array.isArray(input?.turns) ? input!.turns : [],
     summary: typeof input?.summary === 'string' ? input.summary : '',
     pinnedFacts: Array.isArray(input?.pinnedFacts) ? (input!.pinnedFacts as any[]).filter(v => typeof v === 'string') : [],
+    documentContext: input?.documentContext && typeof input.documentContext === 'object'
+      ? input.documentContext
+      : undefined,
     lastUpdatedAt: typeof input?.lastUpdatedAt === 'number' ? input.lastUpdatedAt : now,
     expiresAt: typeof input?.expiresAt === 'number' ? input.expiresAt : undefined,
     serverUpdatedAt: typeof input?.serverUpdatedAt === 'number' ? input.serverUpdatedAt : undefined,
@@ -118,6 +123,7 @@ function pruneToHardLimit(
       turns: [],
       summary: current.summary,
       pinnedFacts: current.pinnedFacts,
+      documentContext: current.documentContext,
       lastUpdatedAt: current.lastUpdatedAt,
       expiresAt: current.expiresAt,
     };

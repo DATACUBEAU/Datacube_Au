@@ -9,6 +9,8 @@ import {
   TOKEN_LIMITS_BY_PLAN,
   normalizeEntitlementSource,
 } from '@/lib/plans/subscription-policy';
+import { LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
+import { safeSelectDocuments, type DocumentUsageRow } from '@/lib/server/document-usage-query';
 
 const ONE_MB_BYTES = 1024 * 1024;
 const EPOCH_START_ISO = '1970-01-01T00:00:00.000Z';
@@ -289,8 +291,13 @@ function isSchemaDriftError(error: any): boolean {
   return (
     code === '42P01' ||
     code === '42703' ||
+    code.startsWith('PGRST') || // Catch PostgREST errors like PGRST204 (table not found)
     message.includes('does not exist') ||
-    details.includes('does not exist')
+    details.includes('does not exist') ||
+    message.includes('schema cache') ||
+    details.includes('schema cache') ||
+    message.includes('could not find') ||
+    details.includes('could not find')
   );
 }
 
@@ -768,36 +775,6 @@ export async function loadPublicPlanCatalog(supabase: SupabaseClient): Promise<P
   });
 }
 
-async function safeSelectDocuments(
-  supabase: SupabaseClient,
-  userId: string,
-): Promise<Array<{ id: string; file_size_bytes: number | null; created_at: string | null }>> {
-  const res = await supabase
-    .from('au_documents')
-    .select('id,file_size_bytes,created_at')
-    .or(`owner_id.eq.${userId},user_id.eq.${userId}`);
-
-  if (res.error && !isSchemaDriftError(res.error)) {
-    throw res.error;
-  }
-
-  if (!res.error) {
-    return (res.data || []) as Array<{ id: string; file_size_bytes: number | null; created_at: string | null }>;
-  }
-
-  const fallback = await supabase
-    .from('au_documents')
-    .select('id,file_size_bytes,created_at')
-    .eq('user_id', userId);
-
-  if (fallback.error) {
-    if (isSchemaDriftError(fallback.error)) return [];
-    throw fallback.error;
-  }
-
-  return (fallback.data || []) as Array<{ id: string; file_size_bytes: number | null; created_at: string | null }>;
-}
-
 async function safeExactCount(
   supabase: SupabaseClient,
   table: string,
@@ -1067,12 +1044,16 @@ export function throwUploadLimitIfNeeded(input: {
   const uploadsTotal = clampNonNegativeNumber(usage.total.used_uploads, 0);
 
   if (fileSizeMb > canonicalLimits.max_file_size_mb) {
+    const sizeLimitMessage =
+      canonicalLimits.max_file_size_mb <= 50 && fileSizeMb > 50
+        ? LARGE_FILE_DISABLED_MESSAGE
+        : `File exceeds upload size limit (${canonicalLimits.max_file_size_mb}MB).`;
     throw new EffectiveLimitError(
       413,
       buildLimitPayload({
         status: 413,
         code: 'LIMIT_EXCEEDED',
-        message: `File exceeds upload size limit (${canonicalLimits.max_file_size_mb}MB).`,
+        message: sizeLimitMessage,
         limit: 'max_file_size_mb',
         current: fileSizeMb,
         max: canonicalLimits.max_file_size_mb,

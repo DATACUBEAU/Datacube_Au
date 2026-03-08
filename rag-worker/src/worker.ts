@@ -55,13 +55,16 @@ export class RAGWorker {
 
   private async updateJobProgress(jobId: string, progress: number) {
     const clamped = Math.max(0, Math.min(100, Math.floor(progress)));
-    await this.supabase
-      .from('au_worker_jobs')
-      .update({
-        progress: clamped,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', jobId);
+    const nowIso = new Date().toISOString();
+    const payload: Record<string, unknown> = {
+      progress: clamped,
+      updated_at: nowIso,
+      last_progress_at: nowIso,
+    };
+    const error = await this.updateJobRow(jobId, payload, ['last_progress_at']);
+    if (error) {
+      logger.warn('Failed to update job progress', { jobId, message: error.message });
+    }
   }
 
   private beginLeaseHeartbeat(jobId: string): () => void {
@@ -70,16 +73,19 @@ export class RAGWorker {
       try {
         const now = new Date();
         const leaseUntil = new Date(now.getTime() + this.leaseDurationMs).toISOString();
-        const { error } = await this.supabase
-          .from('au_worker_jobs')
-          .update({
-            locked_at: now.toISOString(),
-            locked_until: leaseUntil,
-            claimed_by: this.workerInstanceId,
-            updated_at: now.toISOString(),
-          })
-          .eq('id', jobId)
-          .eq('status', 'processing');
+        const payload: Record<string, unknown> = {
+          locked_at: now.toISOString(),
+          locked_until: leaseUntil,
+          claimed_by: this.workerInstanceId,
+          updated_at: now.toISOString(),
+          last_heartbeat_at: now.toISOString(),
+        };
+        const error = await this.updateJobRow(
+          jobId,
+          payload,
+          ['last_heartbeat_at'],
+          (query) => query.eq('status', 'processing'),
+        );
         if (error) {
           logger.warn('Failed to renew worker lease', { jobId, message: error.message });
         }
@@ -226,6 +232,57 @@ export class RAGWorker {
       bucket: String(raw.bucket || 'documents'),
       object_path: objectPath,
     };
+  }
+
+  private async updateJobRow(
+    jobId: string,
+    payload: Record<string, unknown>,
+    fallbackColumns: string[] = [],
+    applyFilter?: (query: any) => any,
+  ): Promise<Error | null> {
+    let query = this.supabase
+      .from('au_worker_jobs')
+      .update(payload)
+      .eq('id', jobId);
+    if (applyFilter) {
+      query = applyFilter(query);
+    }
+    const { error } = await query;
+    if (!error) return null;
+
+    const missingColumns = fallbackColumns.filter((column) => this.isMissingColumnError(error, column));
+    if (missingColumns.length === 0) {
+      return error;
+    }
+
+    const nextPayload = { ...payload };
+    for (const column of missingColumns) {
+      delete (nextPayload as any)[column];
+    }
+
+    let retryQuery = this.supabase
+      .from('au_worker_jobs')
+      .update(nextPayload)
+      .eq('id', jobId);
+    if (applyFilter) {
+      retryQuery = applyFilter(retryQuery);
+    }
+    const { error: retryError } = await retryQuery;
+    return retryError ?? null;
+  }
+
+  private async markJobCompleted(job: UploadJob): Promise<Error | null> {
+    const nowIso = new Date().toISOString();
+    const payload: Record<string, unknown> = {
+      status: 'completed',
+      progress: 100,
+      locked_at: null,
+      locked_until: null,
+      updated_at: nowIso,
+      completed_at: nowIso,
+      last_progress_at: nowIso,
+    };
+    return await this.updateJobRow(job.id, payload, ['completed_at', 'last_progress_at']);
   }
 
   private async findFallbackCandidate(): Promise<any | null> {
@@ -501,16 +558,10 @@ export class RAGWorker {
       await this.processJob(currentJob);
       await this.updateJobProgress(currentJob.id, 100);
 
-      await this.supabase
-        .from('au_worker_jobs')
-        .update({
-          status: 'completed',
-          progress: 100,
-          locked_at: null,
-          locked_until: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', currentJob.id);
+      const completionError = await this.markJobCompleted(currentJob);
+      if (completionError) {
+        logger.warn('Job completion update failed', { jobId: currentJob.id, message: completionError.message });
+      }
 
       await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
         jobs_completed: 1,

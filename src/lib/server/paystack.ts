@@ -1,5 +1,10 @@
 import { createHmac } from 'crypto';
-import { firstEnv } from '@/lib/server/supabase-admin';
+import { firstEnv } from '@/lib/server/env';
+import {
+  assertBillingGatewayCapability,
+  BillingConfigurationError,
+  type BillingConfigAction,
+} from '@/lib/server/billing-config';
 
 const PAYSTACK_BASE_URL = 'https://api.paystack.co';
 
@@ -14,28 +19,34 @@ export class PaystackError extends Error {
   }
 }
 
-export function getPaystackSecretKey(): string {
+export function getPaystackSecretKey(action: BillingConfigAction = 'checkout_initialize'): string {
+  assertBillingGatewayCapability({ gateway: 'paystack', action });
   const key = firstEnv('PAYSTACK_SECRET_KEY', 'PAYSTACK_SECRET');
   if (!key) {
-    throw new Error('Missing PAYSTACK_SECRET_KEY.');
+    throw new BillingConfigurationError({
+      gateway: 'paystack',
+      action,
+      missingEnv: ['PAYSTACK_SECRET_KEY'],
+    });
   }
   return key;
 }
 
 export function verifyPaystackWebhookSignature(rawBody: string, signature: string | null): boolean {
   if (!signature) return false;
-  const expected = createHmac('sha512', getPaystackSecretKey()).update(rawBody).digest('hex');
+  const expected = createHmac('sha512', getPaystackSecretKey('webhook')).update(rawBody).digest('hex');
   return expected === signature;
 }
 
 async function paystackRequest<T>(
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  action: BillingConfigAction = 'checkout_initialize',
 ): Promise<T> {
   const res = await fetch(`${PAYSTACK_BASE_URL}${path}`, {
     method: init?.method || 'GET',
     headers: {
-      Authorization: `Bearer ${getPaystackSecretKey()}`,
+      Authorization: `Bearer ${getPaystackSecretKey(action)}`,
       'Content-Type': 'application/json',
       ...(init?.headers || {}),
     },
@@ -95,7 +106,7 @@ export async function initializePaystackTransaction(input: {
   return paystackRequest<PaystackInitializeResponse>('/transaction/initialize', {
     method: 'POST',
     body: JSON.stringify(payload),
-  });
+  }, 'checkout_initialize');
 }
 
 export type PaystackVerifyResponse = {
@@ -122,7 +133,9 @@ export type PaystackVerifyResponse = {
 
 export async function verifyPaystackTransaction(reference: string): Promise<PaystackVerifyResponse> {
   return paystackRequest<PaystackVerifyResponse>(
-    `/transaction/verify/${encodeURIComponent(reference)}`
+    `/transaction/verify/${encodeURIComponent(reference)}`,
+    undefined,
+    'payment_verify',
   );
 }
 
@@ -136,5 +149,5 @@ export async function disablePaystackSubscription(input: {
       code: input.code,
       token: input.token,
     }),
-  });
+  }, 'subscription_cancel');
 }
