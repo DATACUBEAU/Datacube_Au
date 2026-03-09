@@ -205,7 +205,7 @@ export const DEFAULT_PLAN_METADATA: Record<EffectivePlanCode, PlanMetadata> = {
     weekly_badge: '',
     feature_bullets: ['Everything in Pro', 'Higher concurrency', 'Custom support', 'Expanded storage'],
     cta_label: 'Contact admin',
-    cta_href: '/dashboard/settings/subscription',
+    cta_href: 'https://wa.me/2349036553377',
     sort_order: 2,
     retention_days: PREMIUM_PLAN_EXPIRATION_DAYS,
     expiration_days: PREMIUM_PLAN_EXPIRATION_DAYS,

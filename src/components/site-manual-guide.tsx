@@ -153,11 +153,62 @@ export function SiteManualGuide({
 
   const features = useMemo(
     () => [
-      { icon: FileText, title: 'Documents', description: 'Upload textbooks or notes, AU analyzes them and creates summaries.', bg: 'bg-blue-100', fg: 'text-blue-600' },
-      { icon: MessageCircle, title: 'AU Chat', description: 'Ask specific questions. AU cites exact pages.', bg: 'bg-green-100', fg: 'text-green-600' },
-      { icon: ClipboardCheck, title: 'Predictions', description: 'AU predicts likely exam questions based on your documents.', bg: 'bg-purple-100', fg: 'text-purple-600' },
-      { icon: BrainCircuit, title: 'Knowledge Graph', description: 'Visualize concept connections interactively.', bg: 'bg-orange-100', fg: 'text-orange-600' },
-      { icon: PenTool, title: 'Practice Exam', description: 'Test your knowledge with realistic practice exams.', bg: 'bg-red-100', fg: 'text-red-600' },
+      {
+        icon: FileText,
+        title: 'Document Manager',
+        description: 'Upload textbooks, attach past questions, and manage document status from one place.',
+        bg: 'bg-blue-100',
+        fg: 'text-blue-600',
+      },
+      {
+        icon: MessageCircle,
+        title: 'AU Chat',
+        description: 'Chat with your selected textbook and ask focused questions while studying.',
+        bg: 'bg-green-100',
+        fg: 'text-green-600',
+      },
+      {
+        icon: Globe,
+        title: 'Global Chat',
+        description: 'Get platform-wide guidance and navigation help outside a specific document context.',
+        bg: 'bg-cyan-100',
+        fg: 'text-cyan-600',
+      },
+      {
+        icon: BrainCircuit,
+        title: 'Knowledge Hub (Pro)',
+        description: 'Generate summaries, key points, topic relationships, and a study roadmap from textbooks.',
+        bg: 'bg-orange-100',
+        fg: 'text-orange-600',
+      },
+      {
+        icon: ClipboardCheck,
+        title: 'Exam Prediction Engine (Pro)',
+        description: 'Use textbook plus past-question context to estimate likely exam topics and patterns.',
+        bg: 'bg-purple-100',
+        fg: 'text-purple-600',
+      },
+      {
+        icon: PenTool,
+        title: 'Practice Exam',
+        description: 'Create timed practice questions, submit answers, and review score feedback.',
+        bg: 'bg-red-100',
+        fg: 'text-red-600',
+      },
+      {
+        icon: HelpCircle,
+        title: 'Messages & Updates',
+        description: 'Read product announcements and open the community update channel.',
+        bg: 'bg-emerald-100',
+        fg: 'text-emerald-600',
+      },
+      {
+        icon: Settings,
+        title: 'Settings & Subscription',
+        description: 'Manage profile, app preferences, and plan/billing information.',
+        bg: 'bg-slate-100',
+        fg: 'text-slate-600',
+      },
     ],
     []
   );
@@ -174,9 +225,9 @@ export function SiteManualGuide({
             </Button>
           )}
 
-      <DialogContent className="w-[95vw] sm:max-w-[600px] max-h-[90svh] flex flex-col p-4 sm:p-6">
-        <Tabs defaultValue="guide" className="flex-1 flex flex-col overflow-hidden">
-          <div className="sticky top-0 bg-background z-10 pb-2">
+      <DialogContent className="w-[95vw] sm:max-w-[600px] h-[92svh] sm:h-auto sm:max-h-[90svh] flex flex-col overflow-hidden p-4 sm:p-6">
+        <Tabs defaultValue="guide" className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div className="sticky top-0 z-10 shrink-0 bg-background pb-2">
             <DialogHeader>
               <DialogTitle className="font-headline text-2xl flex items-center gap-2">
                 <Globe className="h-6 w-6 text-primary" /> DataCube AU User Guide
@@ -189,8 +240,8 @@ export function SiteManualGuide({
             </TabsList>
           </div>
 
-          <TabsContent value="guide" className="flex-1 relative mt-4 overflow-hidden">
-            <ScrollArea className="h-full pr-2 sm:pr-4">
+          <TabsContent value="guide" className="relative mt-4 flex-1 min-h-0 overflow-hidden">
+            <ScrollArea className="h-full min-h-0 pr-2 sm:pr-4">
               <div className="space-y-6 pb-8">
                 {features.map(f => (
                   <div key={f.title} className="flex flex-col sm:flex-row gap-4">
@@ -207,8 +258,8 @@ export function SiteManualGuide({
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="install" className="flex-1 mt-4 overflow-hidden">
-            <ScrollArea className="h-full pr-2 sm:pr-4">{renderInstallInstructions()}</ScrollArea>
+          <TabsContent value="install" className="mt-4 flex-1 min-h-0 overflow-hidden">
+            <ScrollArea className="h-full min-h-0 pr-2 sm:pr-4">{renderInstallInstructions()}</ScrollArea>
           </TabsContent>
         </Tabs>
 

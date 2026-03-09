@@ -7,6 +7,9 @@ import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
 import { formatExpirationWindowLabel } from '@/lib/plans/subscription-policy';
 
+const ADMIN_WHATSAPP_URL = 'https://wa.me/2349036553377';
+const ADMIN_WHATSAPP_MESSAGE = 'Hello Admin, I want to subscribe to the Premium plan.';
+
 function formatCount(value: number) {
   return Number(value || 0).toLocaleString();
 }
@@ -54,6 +57,11 @@ export default async function PricingPage({
           const highlighted = plan.plan === 'pro' || sourceParam?.includes('pro');
           const monthly = plan.pricing.monthly;
           const weekly = plan.pricing.weekly;
+          const isContactAdminCta = plan.metadata.cta_label.trim().toLowerCase() === 'contact admin';
+          const ctaHref = isContactAdminCta
+            ? `${ADMIN_WHATSAPP_URL}?text=${encodeURIComponent(ADMIN_WHATSAPP_MESSAGE)}`
+            : (plan.metadata.cta_href || '/dashboard/settings/subscription');
+          const ctaIsExternal = /^https?:\/\//i.test(ctaHref);
 
           return (
             <Card key={plan.plan} className={highlighted ? 'border-primary shadow-lg shadow-primary/10' : ''}>
@@ -98,7 +106,13 @@ export default async function PricingPage({
                 </div>
 
                 <Button asChild className="w-full" variant={plan.plan === 'free' ? 'outline' : 'default'}>
-                  <Link href={plan.metadata.cta_href || '/dashboard/settings/subscription'}>{plan.metadata.cta_label || 'Open plan'}</Link>
+                  <Link
+                    href={ctaHref}
+                    target={ctaIsExternal ? '_blank' : undefined}
+                    rel={ctaIsExternal ? 'noopener noreferrer' : undefined}
+                  >
+                    {plan.metadata.cta_label || 'Open plan'}
+                  </Link>
                 </Button>
               </CardContent>
             </Card>

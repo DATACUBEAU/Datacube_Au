@@ -37,13 +37,16 @@ function isPlan(value: string): value is EffectivePlanCode {
 
 function toUiLimits(row: CanonicalPlanLimits): Record<string, number> {
   return {
+    max_file_size_mb: Number(row.max_file_size_mb || 0),
     max_file_mb: Number(row.max_file_size_mb || 0),
     max_uploads_total: Number(row.max_uploads_total || 0),
+    max_documents_total: Number(row.max_documents_total || 0),
     max_docs_total: Number(row.max_documents_total || 0),
     max_chats_total: Number(row.max_chats_total || 0),
     max_exams_total: Number(row.max_exams_total || 0),
     max_tokens_total: Number(row.max_tokens_total || 0),
     max_storage_mb: Number(row.max_storage_mb || 0),
+    max_concurrent_jobs: Number(row.max_concurrent_jobs || 0),
     max_jobs_concurrent: Number(row.max_concurrent_jobs || 0),
     tokens_reset_every_days: Number(row.tokens_reset_every_days || 0),
     chats_reset_every_days: Number(row.chats_reset_every_days || 0),

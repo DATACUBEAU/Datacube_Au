@@ -1023,16 +1023,6 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       const job = jobs.find((j) => j.id === jobId);
       if (!job) return;
 
-      const file = await getJobFile(jobId);
-      if (!file) {
-        updateJobLocal(jobId, { status: 'failed', error: 'Missing file data. Re-add the file.' });
-        await updateJobRow(jobId, { status: 'failed', error: 'Missing file data. Re-add the file.' } as any);
-        return;
-      }
-
-      try {
-        await supabase.storage.from(job.bucket).remove([job.object_path]);
-      } catch {}
       try {
         const conditions = await getEffectiveOwnershipConditions(user);
         const chunkDeleteQuery = supabase.from('au_document_chunks')
@@ -1043,14 +1033,29 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         await chunkDeleteQuery;
       } catch {}
 
+      const controller = controllersRef.current.get(jobId);
+      if (controller) controller.abort();
+      controllersRef.current.delete(jobId);
+      runningRef.current.delete(jobId);
+
       blockedAutoRestartRef.current.delete(jobId);
-      updateJobLocal(jobId, { status: 'uploading', progress: 0, error: null, tus_url: null });
-      await updateJobRow(jobId, { status: 'uploading', progress: 0, error: null, tus_url: null, updated_at: new Date().toISOString() } as any);
+      const nowIso = new Date().toISOString();
+      updateJobLocal(jobId, { status: 'queued', progress: 0, error: null, tus_url: null, updated_at: nowIso });
+      await updateJobRow(jobId, {
+        status: 'queued',
+        progress: 0,
+        error: null,
+        tus_url: null,
+        claimed_by: null,
+        locked_at: null,
+        locked_until: null,
+        updated_at: nowIso,
+      } as any);
       
       const conditions = await getEffectiveOwnershipConditions(user);
       const docUpdateQuery = supabase
         .from('au_documents')
-        .update({ status: 'uploading', error: null })
+        .update({ status: 'queued', error: null })
         .eq('id', job.document_id);
       
       applyOwnershipFilter(docUpdateQuery, conditions);

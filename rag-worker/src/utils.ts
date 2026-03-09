@@ -28,6 +28,24 @@ export function computeHash(text: string): string {
 }
 
 /**
+ * Calculates the ratio of alphanumeric characters in a string.
+ */
+export function alnumRatio(text: string): number {
+  if (!text || text.length === 0) return 0;
+  const alnum = text.match(/[a-zA-Z0-9]/g);
+  return alnum ? alnum.length / text.length : 0;
+}
+
+/**
+ * Calculates the ratio of zero characters in a string.
+ */
+export function zeroRatio(text: string): number {
+  if (!text || text.length === 0) return 0;
+  const zeros = text.match(/0/g);
+  return zeros ? zeros.length / text.length : 0;
+}
+
+/**
  * Structured logger
  */
 export const logger = {

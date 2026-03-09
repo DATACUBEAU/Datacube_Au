@@ -1,9 +1,72 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { IngestionService } from './ingestion';
-import { logger, deterministicChunking } from './utils';
+import { logger, deterministicChunking, alnumRatio, zeroRatio } from './utils';
 import { UploadJob } from './types';
 import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
+
+function normalizeJobErrorMessage(error: unknown): string {
+  const candidateStrings: string[] = [];
+
+  if (typeof error === 'string') {
+    candidateStrings.push(error);
+  }
+
+  if (error instanceof Error) {
+    candidateStrings.push(error.message, error.name, String(error));
+  } else if (error && typeof error === 'object') {
+    const anyError = error as any;
+    if (typeof anyError.message === 'string') candidateStrings.push(anyError.message);
+    if (typeof anyError.error === 'string') candidateStrings.push(anyError.error);
+    if (typeof anyError.details === 'string') candidateStrings.push(anyError.details);
+    if (typeof anyError.hint === 'string') candidateStrings.push(anyError.hint);
+  }
+
+  for (const raw of candidateStrings) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed) continue;
+    if (trimmed === '{}' || trimmed === '[]' || trimmed === '[object Object]') continue;
+    return trimmed;
+  }
+
+  try {
+    const json = JSON.stringify(error);
+    const trimmed = typeof json === 'string' ? json.trim() : '';
+    if (trimmed && trimmed !== '{}' && trimmed !== '[]') {
+      return trimmed;
+    }
+  } catch {
+    // ignore JSON stringify errors
+  }
+
+  const fallback = String(error || '').trim();
+  if (fallback && fallback !== '{}' && fallback !== '[object Object]') {
+    return fallback;
+  }
+
+  return 'Unknown worker error';
+}
+
+function assertValidExtractedText(text: string, extension: string | undefined) {
+  const trimmed = text.trim();
+  const len = trimmed.length;
+  if (len < 500) {
+    if (extension === 'pdf') {
+      throw new Error('ocr_required: PDF content is too short, OCR may be required');
+    }
+    throw new Error(`extract_too_short: Text content is too short (${len} chars)`);
+  }
+
+  const alnum = alnumRatio(trimmed);
+  if (alnum < 0.15) {
+    throw new Error(`extract_nontext: Low alphanumeric content (${alnum.toFixed(2)})`);
+  }
+
+  const zeros = zeroRatio(trimmed);
+  if (zeros > 0.30) {
+    throw new Error(`extract_placeholder_zeros: High zero content (${zeros.toFixed(2)})`);
+  }
+}
 
 export class RAGWorker {
   private isRunning = false;
@@ -14,6 +77,7 @@ export class RAGWorker {
   private leaseHeartbeatMs: number;
   private chunkSize: number;
   private chunkOverlap: number;
+  private lastTerminalClaimReconcileAt = 0;
 
   constructor(
     private supabase: SupabaseClient,
@@ -185,6 +249,8 @@ export class RAGWorker {
 
   private async reconcileStuckJobs() {
     try {
+      await this.reconcileTerminalJobClaims();
+
       // 1. Fix "Analyzing 100%" stuck jobs (1 minute grace period)
       const stuckThreshold = new Date(Date.now() - 60000).toISOString();
       const { data: stuckCompleted } = await this.supabase
@@ -219,6 +285,56 @@ export class RAGWorker {
       }
     } catch (err) {
       logger.error('Error in reconcileStuckJobs', err);
+    }
+  }
+
+  private async reconcileTerminalJobClaims() {
+    const intervalMs = Math.max(
+      30000,
+      this.parsePositiveInt(process.env.WORKER_TERMINAL_CLAIM_RECONCILE_MS, 60000),
+    );
+
+    const nowMs = Date.now();
+    if (nowMs - this.lastTerminalClaimReconcileAt < intervalMs) return;
+    this.lastTerminalClaimReconcileAt = nowMs;
+
+    try {
+      const { data, error } = await this.supabase
+        .from('au_worker_jobs')
+        .select('id')
+        .in('status', ['failed', 'completed'])
+        .not('claimed_by', 'is', null)
+        .limit(50);
+
+      if (error) {
+        logger.warn('Failed to scan for terminal jobs with stale claims', { message: error.message });
+        return;
+      }
+
+      const ids = (data || []).map((row: any) => String(row?.id || '').trim()).filter(Boolean);
+      if (ids.length === 0) return;
+
+      const nowIso = new Date().toISOString();
+      const { error: updateError } = await this.supabase
+        .from('au_worker_jobs')
+        .update({
+          claimed_by: null,
+          locked_at: null,
+          locked_until: null,
+          updated_at: nowIso,
+        })
+        .in('id', ids);
+
+      if (updateError) {
+        logger.warn('Failed to reconcile terminal job claims', { message: updateError.message, count: ids.length });
+        return;
+      }
+
+      logger.info('Reconciled terminal jobs with stale claims', { count: ids.length });
+    } catch (err) {
+      logger.warn('Terminal job claim reconciliation threw', {
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 
@@ -370,13 +486,15 @@ export class RAGWorker {
     const payload: Record<string, unknown> = {
       status: 'completed',
       progress: 100,
+      error: null,
+      claimed_by: null,
       locked_at: null,
       locked_until: null,
       updated_at: nowIso,
       completed_at: nowIso,
       last_progress_at: nowIso,
     };
-    return await this.updateJobRow(job.id, payload, ['completed_at', 'last_progress_at']);
+    return await this.updateJobRow(job.id, payload, ['completed_at', 'last_progress_at', 'error', 'claimed_by']);
   }
 
   private async findFallbackCandidate(): Promise<any | null> {
@@ -504,36 +622,17 @@ export class RAGWorker {
       metadataBase.recoverable_at = new Date().toISOString();
     }
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       status: 'failed',
-      error: errorMessage,
+      error: String(errorMessage || '').trim(),
+      claimed_by: null,
       locked_at: null,
       locked_until: null,
       updated_at: new Date().toISOString(),
       ...(shouldMarkRecoverable ? { metadata: metadataBase } : {}),
     };
 
-    const { error } = await this.supabase
-      .from('au_worker_jobs')
-      .update(payload)
-      .eq('id', job.id);
-
-    if (error && this.isMissingColumnError(error, 'error')) {
-      const fallbackPayload: Record<string, unknown> = {
-        status: 'failed',
-        updated_at: new Date().toISOString(),
-      };
-      if (shouldMarkRecoverable && !this.isMissingColumnError(error, 'metadata')) {
-        fallbackPayload.metadata = metadataBase;
-      }
-
-      await this.supabase
-        .from('au_worker_jobs')
-        .update(fallbackPayload)
-        .eq('id', job.id);
-      return;
-    }
-
+    const error = await this.updateJobRow(job.id, payload, ['error', 'metadata', 'claimed_by']);
     if (error) {
       logger.error('Failed to mark job as failed', { jobId: job.id, error: error.message });
     }
@@ -658,7 +757,7 @@ export class RAGWorker {
     } catch (processErr) {
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
 
-      const errorMessage = processErr instanceof Error ? processErr.message : String(processErr);
+      const errorMessage = normalizeJobErrorMessage(processErr);
       const isRecoverable = Boolean((processErr as any)?.recoverable);
       const recoverableReason = isRecoverable ? 'fastembed_cache_corruption' : undefined;
 
@@ -715,6 +814,17 @@ export class RAGWorker {
 
     const extractDurationMs = Date.now() - downloadStartedAt;
     await this.updateJobProgress(job.id, 40);
+
+    this.logDebug('Extracted text stats', {
+      jobId: job.id,
+      documentId: job.document_id,
+      textLength: text.length,
+      alnumRatio: alnumRatio(text),
+      zeroRatio: zeroRatio(text),
+      preview: text.slice(0, 120),
+    });
+
+    assertValidExtractedText(text, extension);
 
     if (!text || text.trim().length === 0) {
       throw new Error('No text content extracted from document');
@@ -830,5 +940,35 @@ export class RAGWorker {
       retentionDays,
       expirySource,
     });
+  }
+
+  async reprocessDocument(documentId: string): Promise<void> {
+    const { data: job, error } = await this.supabase
+      .from('au_worker_jobs')
+      .select('id')
+      .eq('document_id', documentId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (error) {
+      throw new Error(`Failed to find job for document ${documentId}: ${error.message}`);
+    }
+
+    if (!job) {
+      throw new Error(`No job found for document ${documentId}`);
+    }
+
+    await this.updateJobRow(job.id, {
+      status: 'queued',
+      progress: 0,
+      error: null,
+      claimed_by: null,
+      locked_at: null,
+      locked_until: null,
+      updated_at: new Date().toISOString(),
+    });
+
+    logger.info('Job requeued for reprocessing', { jobId: job.id, documentId });
   }
 }

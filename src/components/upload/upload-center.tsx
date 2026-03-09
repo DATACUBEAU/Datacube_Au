@@ -47,7 +47,7 @@ function statusLabel(status: string) {
     case 'done':
       return { text: 'Done', variant: 'default' as const };
     case 'failed':
-      return { text: 'Failed', variant: 'destructive' as const };
+      return { text: 'FAILED', variant: 'destructive' as const };
     case 'cancelled':
       return { text: 'Cancelled', variant: 'outline' as const };
     case 'stale_timeout':
@@ -64,8 +64,6 @@ export default function UploadCenter() {
   const upgradeBlocked = useStore((s) => s.upgradeBlocked);
   const { 
     jobs, 
-    activeJobs,
-    hasFailedJobs,
     isThrottled,
     setIsThrottled,
     enqueueUploads, 
@@ -303,8 +301,14 @@ export default function UploadCenter() {
     setIsDragging(false);
   }, []);
 
-  // Use activeJobs from context instead of filtering here for consistency
-  const jobsToDisplay = activeJobs;
+  const jobsToDisplay = useMemo(
+    () =>
+      jobs
+        .filter((job) => job.status !== 'completed' && job.status !== 'done')
+        .slice()
+        .sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    [jobs],
+  );
   const jobsById = useMemo(() => new Map(jobsToDisplay.map((j) => [j.id, j])), [jobsToDisplay]);
   const {
     primaryAlert,
@@ -340,16 +344,14 @@ export default function UploadCenter() {
       return { label: 'Done', progress: 100, color: 'bg-green-500' };
     }
     // Phase 5: Failed
-    if (job.status === 'failed' || job.status === 'stale_timeout') {
-      return { label: 'Failed', progress: job.progress, color: 'bg-destructive' };
+    if (job.status === 'failed') {
+      return { label: 'FAILED', progress: job.progress, color: 'bg-destructive' };
+    }
+    if (job.status === 'stale_timeout') {
+      return { label: 'TIMED OUT', progress: job.progress, color: 'bg-destructive' };
     }
     return { label: job.status, progress: job.progress, color: 'bg-muted-foreground' };
   };
-
-  // Review status
-  const totalActive = jobsToDisplay.length;
-  const isUploading = jobsToDisplay.some(j => j.status === 'uploading');
-  const isProcessing = jobsToDisplay.some(j => j.status === 'processing');
 
   const onPickRetryFile = useCallback(
     (jobId: string) => {
@@ -380,7 +382,6 @@ export default function UploadCenter() {
 
       try {
         await attachFileToJob(jobId, file);
-        await retryJob(jobId);
         setReattachJobId(null);
       } catch (error: any) {
         toast({
@@ -392,7 +393,7 @@ export default function UploadCenter() {
         if (retryFileInputRef.current) retryFileInputRef.current.value = '';
       }
     },
-    [attachFileToJob, jobsById, reattachJobId, retryJob, toast]
+    [attachFileToJob, jobsById, reattachJobId, toast]
   );
 
   return (

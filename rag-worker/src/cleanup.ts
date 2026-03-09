@@ -182,11 +182,13 @@ async function cleanup() {
         await updateWorkerJob(job.id, {
           status: 'completed',
           progress: 100,
+          error: null,
+          claimed_by: null,
           locked_at: null,
           locked_until: null,
           updated_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
-        }, ['completed_at']);
+        }, ['completed_at', 'error', 'claimed_by']);
         continue;
       }
 
@@ -199,11 +201,13 @@ async function cleanup() {
           await updateWorkerJob(job.id, {
             status: 'completed',
             progress: 100,
+            error: null,
+            claimed_by: null,
             locked_at: null,
             locked_until: null,
             updated_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
-          }, ['completed_at']);
+          }, ['completed_at', 'error', 'claimed_by']);
         }
       }
     }
@@ -225,10 +229,11 @@ async function cleanup() {
       await updateWorkerJob(job.id, {
         status: 'stale_timeout',
         error: 'stale_timeout',
+        claimed_by: null,
         locked_at: null,
         locked_until: null,
         updated_at: nowIso,
-      }, ['error']);
+      }, ['error', 'claimed_by']);
       await supabase
         .from('au_documents')
         .update({ status: 'failed', error: 'stale_timeout' })

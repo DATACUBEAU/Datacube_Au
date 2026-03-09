@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
 import { getProEntitlementStatus } from '@/lib/server/entitlements';
+import { countTrulyActiveWorkerJobs } from '@/lib/server/worker-job-concurrency';
 import { LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 import {
   DEFAULT_MAX_UPLOAD_MB,
@@ -276,13 +277,11 @@ async function enforceConcurrentJobLimitOrThrow(input: {
   const cap = isProLikeTier(input.tierContext.tier)
     ? TIER_TUNING_POLICY.concurrentJobs.pro
     : TIER_TUNING_POLICY.concurrentJobs.free;
-  const { count, error } = await input.supabase
-    .from('au_worker_jobs')
-    .select('id', { count: 'exact', head: true })
-    .eq('owner_id', input.userId)
-    .in('status', ['queued', 'uploaded', 'processing']);
+  const { count: activeCount, error } = await countTrulyActiveWorkerJobs({
+    supabase: input.supabase,
+    ownerId: input.userId,
+  });
   if (error) return;
-  const activeCount = Number(count || 0);
   if (activeCount < cap) return;
   throw new TierAccessError(
     429,

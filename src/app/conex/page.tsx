@@ -165,7 +165,7 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
       weekly_badge: '',
       feature_bullets: 'Everything in Pro\nHigher concurrency\nCustom support\nExpanded storage',
       cta_label: 'Contact admin',
-      cta_href: '/dashboard/settings/subscription',
+      cta_href: 'https://wa.me/2349036553377',
       sort_order: '2',
       retention_days: '30',
       expiration_days: '30',
