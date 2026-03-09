@@ -217,6 +217,14 @@ const SidebarFooterMenu = ({
 
       <Separator className="my-2 bg-sidebar-border" />
 
+      <SidebarMenuItem>
+        <div className="rounded-md border border-sidebar-border/80 bg-sidebar-accent/20 px-3 py-2 text-[10px] leading-relaxed text-sidebar-foreground/70">
+          <p className="font-semibold text-sidebar-foreground">Datacube AU</p>
+          <p>Built by Zahed Investment Ltd</p>
+          <p>RC 8127949</p>
+        </div>
+      </SidebarMenuItem>
+
       {!isOnline && (
         <SidebarMenuItem>
           <SidebarMenuButton className="pointer-events-none text-yellow-500 bg-yellow-500/10" tooltip={{ children: 'You are currently offline.' }}>
@@ -425,7 +433,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
   const handleWhatsAppRedirect = () => {
     const phoneNumber = '2349036553377';
-    const message = "👋 Hello Fabian! I've just entered your domain from DataCube AU 🚀 and have a question...";
+    const message = "Hello Datacube AU Support! I just entered Datacube AU and have a question.";
     const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
     setShowWhatsappDialog(false);
@@ -545,7 +553,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       {
         key: 'whatsapp',
         icon: Icons.whatsapp,
-        label: 'Contact Fabian',
+        label: 'Contact Support',
         onClick: () => setShowWhatsappDialog(true),
       },
       isAuthenticated && {
@@ -803,9 +811,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       <AlertDialog open={showWhatsappDialog} onOpenChange={setShowWhatsappDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Speak with Fabian?</AlertDialogTitle>
+            <AlertDialogTitle>Contact Datacube AU Support?</AlertDialogTitle>
             <AlertDialogDescription>
-              Drop your message on WhatsApp and he will get back to you. Clicking 'Continue' will redirect you to WhatsApp.
+              Send your message on WhatsApp and our support team will get back to you. Clicking "Continue" opens WhatsApp.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

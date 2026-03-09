@@ -4,7 +4,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "DataCube AU",
     short_name: "DataCube AU",
-    description: "Your personal LLM for your own data.",
+    description: "Datacube AU is an AI study platform by Zahed Investment Ltd (RC 8127949).",
     start_url: "/dashboard",
     display: "standalone",
     orientation: "portrait",

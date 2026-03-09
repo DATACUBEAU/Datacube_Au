@@ -91,6 +91,7 @@ export default function LoginPage() {
       </Card>
       <footer className="mt-8 text-center text-sm text-muted-foreground">
         By continuing, you agree to our Terms of Service and Privacy Policy.
+        <p className="mt-2">Datacube AU is a product of Zahed Investment Ltd (RC 8127949).</p>
       </footer>
     </div>
   );

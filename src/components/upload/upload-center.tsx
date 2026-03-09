@@ -76,7 +76,7 @@ export default function UploadCenter() {
 
   const handleWhatsAppRedirect = useCallback(() => {
     const phoneNumber = '2349036553377';
-    const message = "👋 Hello Fabian! I've just entered your domain from DataCube AU 🚀 and have a question about AU being busy...";
+    const message = "Hello Datacube AU Support! I just entered Datacube AU and have a question about AU being busy.";
     const url = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
     window.open(url, '_blank');
   }, []);

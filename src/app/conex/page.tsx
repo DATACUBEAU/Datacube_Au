@@ -42,36 +42,30 @@ import {
   orderPlanKeys,
   parsePlanLimitsPayload,
   sanitizeLimitInput,
-  toPlanLimitDraftByPlan,
-  validatePlanLimitDraft,
-  type PlanLimitDraftByPlan,
-  type PlanLimitsByPlan,
 } from '@/lib/conex/plan-management';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const PROMO_CONTENT_FLAG_KEY = 'promo_content';
 const FALLBACK_PLAN_KEYS = ['free', 'pro', 'premium'] as const;
-const LIMIT_CAP_FIELDS: Array<{ key: string; label: string; description: string }> = [
-  { key: 'max_file_mb', label: 'Max file size (MB)', description: 'Per-file upload size limit.' },
-  { key: 'max_uploads_total', label: 'Max uploads total', description: 'Total uploads allowed for the account.' },
-  { key: 'max_docs_total', label: 'Max documents total', description: 'Total documents stored for the account.' },
-  { key: 'max_chats_total', label: 'Max chats total', description: 'Total chat messages allowed.' },
-  { key: 'max_exams_total', label: 'Max exams total', description: 'Total generated exams allowed.' },
-  { key: 'max_tokens_total', label: 'Max tokens total', description: 'Total token budget for AI usage.' },
-  { key: 'max_storage_mb', label: 'Max storage (MB)', description: 'Storage cap across all uploaded files.' },
-  { key: 'max_jobs_concurrent', label: 'Max concurrent jobs', description: 'Maximum simultaneous ingestion jobs.' },
-];
-const LIMIT_RESET_FIELDS: Array<{ key: string; label: string; description: string }> = [
-  { key: 'tokens_reset_every_days', label: 'Tokens reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
-  { key: 'chats_reset_every_days', label: 'Chats reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
-  { key: 'uploads_reset_every_days', label: 'Uploads reset every N days', description: 'Use `0` to keep uploads lifetime based.' },
-  { key: 'documents_reset_every_days', label: 'Documents reset every N days', description: 'Use `0` to keep documents lifetime based.' },
-  { key: 'exams_reset_every_days', label: 'Exams reset every N days', description: 'Use `1` for daily reset or `0` for lifetime.' },
-  { key: 'storage_reset_every_days', label: 'Storage reset every N days', description: 'Storage usually stays `0` because it is a current cap.' },
-];
-const LIMIT_FIELDS = [...LIMIT_CAP_FIELDS, ...LIMIT_RESET_FIELDS];
-const LIMIT_CAP_FIELD_KEYS = LIMIT_CAP_FIELDS.map((field) => field.key);
-const LIMIT_FIELD_KEYS = LIMIT_FIELDS.map((field) => field.key);
+const LIMIT_FIELD_KEYS = [
+  'max_file_mb',
+  'max_file_size_mb',
+  'max_uploads_total',
+  'max_docs_total',
+  'max_documents_total',
+  'max_chats_total',
+  'max_exams_total',
+  'max_tokens_total',
+  'max_storage_mb',
+  'max_jobs_concurrent',
+  'max_concurrent_jobs',
+  'tokens_reset_every_days',
+  'chats_reset_every_days',
+  'uploads_reset_every_days',
+  'documents_reset_every_days',
+  'exams_reset_every_days',
+  'storage_reset_every_days',
+] as const;
 const REDUNDANT_FLAG_KEYS = new Set<string>(['paid_mode_enabled']);
 const PLAN_EDITOR_FLAG_KEYS = [
   'enable_exam_prediction',
@@ -101,21 +95,6 @@ type PlanMetadataDraft = {
 };
 
 type PlanMetadataDraftByPlan = Record<string, PlanMetadataDraft>;
-
-function createEmptyPlanLimitRow(): Record<string, number | null> {
-  return Object.fromEntries(LIMIT_FIELD_KEYS.map((key) => [key, null])) as Record<string, number | null>;
-}
-
-function mergePlanLimitRows(
-  current?: Record<string, number | null>,
-  fallback?: Record<string, number | null>,
-): Record<string, number | null> {
-  const next = createEmptyPlanLimitRow();
-  for (const key of LIMIT_FIELD_KEYS) {
-    next[key] = current?.[key] ?? fallback?.[key] ?? null;
-  }
-  return next;
-}
 
 function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
   const defaults = {
@@ -205,14 +184,11 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
-  const [planLimitsByPlan, setPlanLimitsByPlan] = useState<PlanLimitsByPlan>({});
-  const [planLimitDraftByPlan, setPlanLimitDraftByPlan] = useState<PlanLimitDraftByPlan>({});
   const [planMetadataDraftByPlan, setPlanMetadataDraftByPlan] = useState<PlanMetadataDraftByPlan>({});
   const [planOptions, setPlanOptions] = useState<string[]>([...FALLBACK_PLAN_KEYS]);
   const [selectedPlan, setSelectedPlan] = useState<string>('free');
   const [loading, setLoading] = useState(true);
   const [savingConfig, setSavingConfig] = useState(false);
-  const [savingPlanLimits, setSavingPlanLimits] = useState(false);
   const [savingPlanMetadata, setSavingPlanMetadata] = useState(false);
   const [savingPromoContent, setSavingPromoContent] = useState(false);
   const [flagQuery, setFlagQuery] = useState('');
@@ -222,10 +198,8 @@ const AdminBilling = ({ token }: { token: string }) => {
   const { toast } = useToast();
   const { records: featureFlagRecords, setFlag, refreshFlags } = useFeatureFlags();
   const isFetchingRef = useRef(false);
-  const limitDirtyRef = useRef(false);
   const planMetadataDirtyRef = useRef(false);
   const promoDirtyRef = useRef(false);
-  const limitsSaveVersionRef = useRef(0);
   const metadataSaveVersionRef = useRef(0);
 
   const normalizeConexConfig = useCallback((raw: any) => ({
@@ -278,19 +252,8 @@ const AdminBilling = ({ token }: { token: string }) => {
           ...parsed.planKeys,
           ...parsedDefaults.planKeys,
         ]);
-        const mergedLimitsByPlan = planKeys.reduce((acc, plan) => {
-          acc[plan] = mergePlanLimitRows(
-            parsed.limitsByPlan[plan],
-            parsedDefaults.limitsByPlan[plan],
-          );
-          return acc;
-        }, {} as PlanLimitsByPlan);
-        if (!opts?.silent || !limitDirtyRef.current) {
-          setPlanLimitsByPlan(mergedLimitsByPlan);
-          setPlanLimitDraftByPlan(toPlanLimitDraftByPlan(mergedLimitsByPlan, LIMIT_FIELD_KEYS));
-          setPlanOptions(planKeys);
-          setSelectedPlan((current) => (planKeys.includes(current) ? current : (planKeys[0] || 'free')));
-        }
+        setPlanOptions(planKeys);
+        setSelectedPlan((current) => (planKeys.includes(current) ? current : (planKeys[0] || 'free')));
       }
 
       const planMetadataRes = await fetchAdmin('/api/admin/plan-metadata', {
@@ -445,128 +408,6 @@ const AdminBilling = ({ token }: { token: string }) => {
         setSavingConfig(false);
     }
   };
-
-  const updateSelectedPlanLimit = useCallback((limitKey: string, rawValue: string) => {
-    const sanitized = sanitizeLimitInput(rawValue);
-    limitDirtyRef.current = true;
-
-    setPlanLimitDraftByPlan((prev) => {
-      const currentPlanDraft = { ...(prev[selectedPlan] || {}) };
-      currentPlanDraft[limitKey] = sanitized;
-      return {
-        ...prev,
-        [selectedPlan]: currentPlanDraft,
-      };
-    });
-
-    setPlanLimitsByPlan((prev) => {
-      const currentPlanLimits = { ...(prev[selectedPlan] || {}) };
-      currentPlanLimits[limitKey] = sanitized === '' ? null : Number(sanitized);
-      return {
-        ...prev,
-        [selectedPlan]: currentPlanLimits,
-      };
-    });
-  }, [selectedPlan]);
-
-  const saveSelectedPlanLimits = useCallback(async () => {
-    const validation = validatePlanLimitDraft(planLimitDraftByPlan, selectedPlan, LIMIT_CAP_FIELD_KEYS);
-    if (!validation.ok) {
-      toast({
-        title: 'Validation failed',
-        description: validation.errors[0] || 'Please use non-negative integer values only.',
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    const nextLimits = {
-      ...(planLimitsByPlan[selectedPlan] || {}),
-      ...validation.limits,
-    };
-
-    setPlanLimitsByPlan((prev) => ({
-      ...prev,
-      [selectedPlan]: nextLimits,
-    }));
-    setPlanLimitDraftByPlan((prev) => ({
-      ...prev,
-      [selectedPlan]: {
-        ...(prev[selectedPlan] || {}),
-        ...validation.sanitizedDraft,
-      },
-    }));
-
-    const saveVersion = ++limitsSaveVersionRef.current;
-    setSavingPlanLimits(true);
-    try {
-      const res = await fetchAdmin('/api/admin/plan-limits', {
-        method: 'POST',
-        body: JSON.stringify({
-          plan: selectedPlan,
-          limits: nextLimits,
-        }),
-      });
-      if (!res.ok) {
-        const payload = (res as any).data || {};
-        throw new Error(payload?.code || payload?.error || payload?.message || `Failed to save ${selectedPlan} limits`);
-      }
-      if (saveVersion === limitsSaveVersionRef.current) {
-        limitDirtyRef.current = false;
-        toast({
-          title: 'Saved',
-          description: `${formatPlanLabel(selectedPlan)} limits updated.`,
-        });
-        void fetchConfig({ silent: true });
-      }
-    } catch (e: any) {
-      toast({
-        title: 'Save failed',
-        description: e?.message || String(e),
-        variant: 'destructive',
-      });
-    } finally {
-      if (saveVersion === limitsSaveVersionRef.current) {
-        setSavingPlanLimits(false);
-      }
-    }
-  }, [fetchConfig, planLimitDraftByPlan, planLimitsByPlan, selectedPlan, toast]);
-
-  const resetSelectedPlanLimits = useCallback(async () => {
-    const saveVersion = ++limitsSaveVersionRef.current;
-    setSavingPlanLimits(true);
-    try {
-      const res = await fetchAdmin('/api/admin/plan-limits', {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'reset_to_defaults',
-          plan: selectedPlan,
-        }),
-      });
-      if (!res.ok) {
-        const payload = (res as any).data || {};
-        throw new Error(payload?.code || payload?.error || payload?.message || `Failed to reset ${selectedPlan} limits`);
-      }
-      if (saveVersion === limitsSaveVersionRef.current) {
-        limitDirtyRef.current = false;
-        toast({
-          title: 'Reset',
-          description: `${formatPlanLabel(selectedPlan)} limits restored to defaults.`,
-        });
-        void fetchConfig({ silent: true });
-      }
-    } catch (e: any) {
-      toast({
-        title: 'Reset failed',
-        description: e?.message || String(e),
-        variant: 'destructive',
-      });
-    } finally {
-      if (saveVersion === limitsSaveVersionRef.current) {
-        setSavingPlanLimits(false);
-      }
-    }
-  }, [fetchConfig, selectedPlan, toast]);
 
   const updateSelectedPlanMetadata = useCallback((field: keyof PlanMetadataDraft, rawValue: string) => {
     planMetadataDirtyRef.current = true;
@@ -962,81 +803,25 @@ const AdminBilling = ({ token }: { token: string }) => {
 
                         <Card>
                             <CardHeader>
-                                <CardTitle>Limits & Usage Caps</CardTitle>
-                                <CardDescription>Edit fixed numeric plan caps. Values load from the live plan tables and apply immediately after save.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                <div className="space-y-2">
-                                  <Label className="block">Plan</Label>
-                                  <Tabs value={selectedPlan} onValueChange={setSelectedPlan} className="w-full">
-                                    <TabsList className="grid w-full md:w-auto" style={{ gridTemplateColumns: `repeat(${Math.max(planOptions.length, 1)}, minmax(0, 1fr))` }}>
-                                      {planOptions.map((plan) => (
-                                        <TabsTrigger key={plan} value={plan}>
-                                          {formatPlanLabel(plan)}
-                                        </TabsTrigger>
-                                      ))}
-                                    </TabsList>
-                                  </Tabs>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                  <Button variant="outline" onClick={() => void resetSelectedPlanLimits()} disabled={savingPlanLimits}>
-                                    Reset To Defaults
-                                  </Button>
-                                  <Button onClick={() => void saveSelectedPlanLimits()} disabled={savingPlanLimits}>
-                                    {savingPlanLimits ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                                    Save {formatPlanLabel(selectedPlan)} Limits
-                                  </Button>
-                                </div>
-                              </div>
-
-                              {planLimitDraftByPlan[selectedPlan] ? (
-                                <>
-                                  <div className="grid gap-4 md:grid-cols-2">
-                                    {LIMIT_CAP_FIELDS.map((field) => {
-                                      const value = String(planLimitDraftByPlan[selectedPlan]?.[field.key] ?? '');
-                                      return (
-                                        <div key={field.key} className="rounded-md border p-3 space-y-2">
-                                          <div>
-                                            <Label>{field.label}</Label>
-                                            <p className="text-xs text-muted-foreground">{field.description}</p>
-                                          </div>
-                                          <div className="flex items-center gap-2">
-                                            <Input
-                                              type="number"
-                                              min={0}
-                                              step={1}
-                                              inputMode="numeric"
-                                              value={value}
-                                              onChange={(e) => updateSelectedPlanLimit(field.key, e.target.value)}
-                                              placeholder="Enter cap"
-                                            />
-                                          </div>
-                                          <p className="text-[11px] text-muted-foreground">
-                                            Whole numbers only. Use `0` to fully block this action.
-                                          </p>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                  <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                                    Reset windows stay on their saved values. Use <span className="font-medium text-foreground">Reset To Defaults</span> if you need to restore the full plan policy.
-                                  </div>
-                                </>
-                              ) : (
-                                <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
-                                  Loading saved limits for {formatPlanLabel(selectedPlan)}.
-                                </div>
-                              )}
-                            </CardContent>
-                        </Card>
-
-                        <Card>
-                            <CardHeader>
                                 <CardTitle>Plan Info Editor</CardTitle>
                                 <CardDescription>Edit the public plan copy and the focused feature switches used by pricing and upgrade UI.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
+                              <div className="space-y-2">
+                                <Label className="block">Plan</Label>
+                                <Tabs value={selectedPlan} onValueChange={setSelectedPlan} className="w-full">
+                                  <TabsList
+                                    className="grid w-full md:w-auto"
+                                    style={{ gridTemplateColumns: `repeat(${Math.max(planOptions.length, 1)}, minmax(0, 1fr))` }}
+                                  >
+                                    {planOptions.map((plan) => (
+                                      <TabsTrigger key={plan} value={plan}>
+                                        {formatPlanLabel(plan)}
+                                      </TabsTrigger>
+                                    ))}
+                                  </TabsList>
+                                </Tabs>
+                              </div>
                               <div className="flex flex-wrap gap-2 justify-end">
                                 <Button variant="outline" onClick={() => void resetSelectedPlanMetadata()} disabled={savingPlanMetadata}>
                                   Reset To Defaults
@@ -3177,6 +2962,17 @@ export default function ConexPage() {
                                         {item.label}
                                     </Button>
                                 ))}
+                                <Button
+                                  variant="outline"
+                                  className="justify-start gap-2"
+                                  onClick={() => {
+                                    setIsMobileMenuOpen(false);
+                                    router.push('/conex/plan-limits');
+                                  }}
+                                >
+                                  <FolderTree className="h-4 w-4" />
+                                  Plan Limits
+                                </Button>
                                 <div className="h-px bg-muted my-2" />
                                 <Button variant="destructive" className="justify-start gap-2" onClick={handleLogout}>
                                     <Lock className="h-4 w-4" /> Logout
@@ -3186,6 +2982,10 @@ export default function ConexPage() {
                     </Sheet>
                 </div>
                 
+                <Button variant="outline" size="sm" onClick={() => router.push('/conex/plan-limits')} className="hidden md:flex gap-2">
+                  <FolderTree className="h-4 w-4" />
+                  Plan Limits
+                </Button>
                 <Button variant="outline" size="sm" onClick={handleLogout} className="hidden md:flex">Logout</Button>
             </div>
           </div>

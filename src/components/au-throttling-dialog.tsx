@@ -75,7 +75,7 @@ export function AUThrottlingDialog({ open, onOpenChange, onContactSupport }: AUT
 
         <div className="py-6">
           <p className="text-center text-muted-foreground leading-relaxed">
-            If you enjoy the experience and want faster, uninterrupted support, consider supporting the creator! Your support helps keep AU running smoothly and improves features for everyone. 💖
+            If you enjoy the experience and want faster, uninterrupted support, consider supporting Datacube AU. Support helps Zahed Investment Ltd keep AU running smoothly and improve features for everyone.
           </p>
         </div>
 
@@ -95,7 +95,7 @@ export function AUThrottlingDialog({ open, onOpenChange, onContactSupport }: AUT
             className="flex-1 font-bold uppercase tracking-tighter shadow-lg shadow-primary/20 gap-2"
           >
             <Heart className="h-4 w-4 fill-current" />
-            Support the Creator
+            Support Datacube AU
           </Button>
         </DialogFooter>
       </DialogContent>

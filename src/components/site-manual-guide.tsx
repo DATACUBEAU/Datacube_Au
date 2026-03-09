@@ -225,7 +225,7 @@ export function SiteManualGuide({
             </Button>
           )}
 
-      <DialogContent className="w-[95vw] sm:max-w-[600px] h-[92svh] sm:h-auto sm:max-h-[90svh] flex flex-col overflow-hidden p-4 sm:p-6">
+      <DialogContent className="w-[95vw] sm:max-w-[600px] h-[92dvh] max-h-[92dvh] min-h-0 flex flex-col overflow-hidden p-4 sm:p-6">
         <Tabs defaultValue="guide" className="flex-1 min-h-0 flex flex-col overflow-hidden">
           <div className="sticky top-0 z-10 shrink-0 bg-background pb-2">
             <DialogHeader>
@@ -240,8 +240,8 @@ export function SiteManualGuide({
             </TabsList>
           </div>
 
-          <TabsContent value="guide" className="relative mt-4 flex-1 min-h-0 overflow-hidden">
-            <ScrollArea className="h-full min-h-0 pr-2 sm:pr-4">
+          <TabsContent value="guide" className="relative mt-4 flex-1 min-h-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col">
+            <ScrollArea className="flex-1 min-h-0 pr-2 sm:pr-4">
               <div className="space-y-6 pb-8">
                 {features.map(f => (
                   <div key={f.title} className="flex flex-col sm:flex-row gap-4">
@@ -258,12 +258,12 @@ export function SiteManualGuide({
             </ScrollArea>
           </TabsContent>
 
-          <TabsContent value="install" className="mt-4 flex-1 min-h-0 overflow-hidden">
-            <ScrollArea className="h-full min-h-0 pr-2 sm:pr-4">{renderInstallInstructions()}</ScrollArea>
+          <TabsContent value="install" className="mt-4 flex-1 min-h-0 overflow-hidden data-[state=active]:flex data-[state=active]:flex-col">
+            <ScrollArea className="flex-1 min-h-0 pr-2 sm:pr-4">{renderInstallInstructions()}</ScrollArea>
           </TabsContent>
         </Tabs>
 
-        <DialogFooter className="mt-4 flex flex-col sm:flex-row gap-2">
+        <DialogFooter className="mt-4 shrink-0 flex flex-col sm:flex-row gap-2">
           <Button className="w-full sm:w-auto" onClick={() => setIsOpen(false)}>Close Guide</Button>
         </DialogFooter>
       </DialogContent>

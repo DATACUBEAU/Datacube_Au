@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
+import { CompanyFooter } from '@/components/company-footer';
 import { Home, Menu } from 'lucide-react';
 import { getRetentionPolicyNotice } from '@/lib/plans/subscription-policy';
 import {
@@ -78,6 +79,9 @@ export default function PolicyPage() {
           <p className="text-muted-foreground">
             These Terms govern your use of the DataCube AU application. By using the service, you acknowledge and accept these terms.
           </p>
+          <p className="text-muted-foreground">
+            This service is operated by Zahed Investment Ltd.
+          </p>
           <h2 className="font-headline text-xl font-semibold">User Responsibilities</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
             <li>Provide accurate information and keep your account secure.</li>
@@ -104,6 +108,9 @@ export default function PolicyPage() {
           <h1 className="font-headline text-3xl font-bold">Privacy Policy</h1>
           <p className="text-muted-foreground">
             This policy describes how we handle your data when you use DataCube AU.
+          </p>
+          <p className="text-muted-foreground">
+            Datacube AU is owned and operated by Zahed Investment Ltd.
           </p>
           <h2 className="font-headline text-xl font-semibold">Data We Process</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
@@ -148,16 +155,8 @@ export default function PolicyPage() {
         </section>
       </main>
 
-      <footer className="w-full border-t border-border/40">
-        <div className="container flex items-center justify-center py-6 md:justify-between">
-          <div className="flex items-center gap-2">
-            <Icons.logo className="h-6 w-6 text-primary" />
-            <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
-              Built by Fabian. © {new Date().getFullYear()} All rights reserved.
-            </p>
-          </div>
-        </div>
-      </footer>
+      <CompanyFooter />
     </div>
   );
 }
+

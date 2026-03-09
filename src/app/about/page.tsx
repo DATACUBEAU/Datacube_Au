@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Icons } from '@/components/icons';
+import { CompanyFooter } from '@/components/company-footer';
 import { Button } from '@/components/ui/button';
 import { Home, Menu } from 'lucide-react';
 import {
@@ -131,7 +132,7 @@ export default function AboutPage() {
           </p>
         </section>
 
-        {/* Founder Section */}
+        {/* Ownership Section */}
         <section className="my-20">
             <div className="relative rounded-lg border border-primary/20 bg-card p-8 shadow-lg transition-all duration-300 hover:shadow-primary/20">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
@@ -139,7 +140,7 @@ export default function AboutPage() {
                         <div className="relative h-48 w-48 rounded-full overflow-hidden border-2 border-primary">
                             <Image 
                                 src="/avater.png"
-                                alt="Founder of Datacube AU"
+                                alt="Datacube AU ownership representative"
                                 fill
                                 sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                                 style={{ objectFit: 'cover' }}
@@ -147,10 +148,10 @@ export default function AboutPage() {
                         </div>
                     </div>
                     <div className="md:col-span-2">
-                        <h2 className="font-headline text-3xl font-bold text-primary">Founder</h2>
-                        <h3 className="text-2xl font-semibold mt-1">Chikezie Fabian Onyebuchi</h3>
+                        <h2 className="font-headline text-3xl font-bold text-primary">Company Ownership</h2>
+                        <h3 className="text-2xl font-semibold mt-1">Zahed Investment Ltd</h3>
                         <p className="mt-4 text-muted-foreground leading-relaxed">
-                          Chikezie Fabian Onyebuchi created Datacube AU with a vision to give every student a personal learning companion—an AU that understands their notes, extracts key concepts, predicts exam patterns, and provides academically-precise answers.
+                          Datacube AU is a product of Zahed Investment Ltd (RC 8127949), built to give every student a personal learning companion that understands their notes, extracts key concepts, predicts exam patterns, and provides academically-precise answers.
                         </p>
                     </div>
                 </div>
@@ -190,16 +191,9 @@ export default function AboutPage() {
 
       </main>
 
-      <footer className="w-full border-t border-border/40">
-        <div className="container flex items-center justify-center py-6 md:justify-between">
-          <div className="flex items-center gap-2">
-            <Icons.logo className="h-6 w-6 text-primary" />
-            <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
-              Built by Fabian. © {new Date().getFullYear()} All rights reserved.
-            </p>
-          </div>
-        </div>
-      </footer>
+      <CompanyFooter />
     </div>
   );
 }
+
+

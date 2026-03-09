@@ -4,6 +4,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
+import { CompanyFooter } from '@/components/company-footer';
 import { PlaceHolderImages } from '@/lib/placeholder-images';
 import { Home, Menu } from 'lucide-react';
 import {
@@ -120,16 +121,8 @@ export default function LandingPage() {
         </div>
       </main>
 
-      <footer className="w-full border-t border-border/40">
-        <div className="container flex items-center justify-center py-6 md:justify-between">
-          <div className="flex items-center gap-2">
-            <Icons.logo className="h-6 w-6 text-primary" />
-            <p className="text-center text-sm leading-loose text-muted-foreground md:text-left">
-              Built by Fabian. © {new Date().getFullYear()} All rights reserved.
-            </p>
-          </div>
-        </div>
-      </footer>
+      <CompanyFooter />
     </div>
   );
 }
+

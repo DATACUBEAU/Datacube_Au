@@ -875,8 +875,7 @@ async function getQuotaWindow(
   metric: QuotaMetricKey,
   resetEveryDays: number,
 ): Promise<QuotaWindowSnapshot> {
-  const { start, end } = computeQuotaWindowBounds(resetEveryDays);
-  const label = describeResetEveryDays(resetEveryDays);
+  const snapshot = buildQuotaWindowSnapshot(metric, resetEveryDays);
 
   const { error } = await supabase
     .from('au_quota_windows')
@@ -884,8 +883,8 @@ async function getQuotaWindow(
       {
         user_id: userId,
         metric,
-        window_start: start,
-        window_end: end || FAR_FUTURE_END_ISO,
+        window_start: snapshot.window_start,
+        window_end: snapshot.window_end || FAR_FUTURE_END_ISO,
       },
       { onConflict: 'user_id,metric' },
     );
@@ -894,16 +893,76 @@ async function getQuotaWindow(
     throw error;
   }
 
+  return snapshot;
+}
+
+function buildQuotaWindowSnapshot(
+  metric: QuotaMetricKey,
+  resetEveryDays: number,
+): QuotaWindowSnapshot {
+  const { start, end } = computeQuotaWindowBounds(resetEveryDays);
   return {
     metric,
     reset_every_days: resetEveryDays,
     window_start: start,
     window_end: end,
-    label,
+    label: describeResetEveryDays(resetEveryDays),
   };
 }
 
-async function buildUsageSnapshot(
+export function buildZeroUsageSnapshot(canonicalLimits: CanonicalPlanLimits): EffectiveUsage {
+  const windows = {
+    tokens: buildQuotaWindowSnapshot('tokens', canonicalLimits.tokens_reset_every_days),
+    chats: buildQuotaWindowSnapshot('chats', canonicalLimits.chats_reset_every_days),
+    uploads: buildQuotaWindowSnapshot('uploads', canonicalLimits.uploads_reset_every_days),
+    documents: buildQuotaWindowSnapshot('documents', canonicalLimits.documents_reset_every_days),
+    exams: buildQuotaWindowSnapshot('exams', canonicalLimits.exams_reset_every_days),
+    storage: buildQuotaWindowSnapshot('storage', canonicalLimits.storage_reset_every_days),
+  } satisfies Record<QuotaMetricKey, QuotaWindowSnapshot>;
+
+  return {
+    today: {
+      used_chats: 0,
+      messages_count: 0,
+      used_uploads: 0,
+      uploads_count: 0,
+      used_documents: 0,
+      documents_count: 0,
+      used_exams: 0,
+      exams_count: 0,
+      used_tokens: 0,
+      tokens_used: 0,
+    },
+    total: {
+      used_uploads: 0,
+      uploads_count: 0,
+      used_documents: 0,
+      documents_count: 0,
+      used_chats: 0,
+      messages_count: 0,
+      used_exams: 0,
+      exams_count: 0,
+      used_tokens: 0,
+      tokens_used: 0,
+      used_storage_mb: 0,
+      uploaded_mb: 0,
+      running_jobs: 0,
+      active_jobs: 0,
+    },
+    reset_at: windows.tokens.window_end,
+    windows,
+    reset_policies: {
+      tokens_reset_every_days: canonicalLimits.tokens_reset_every_days,
+      chats_reset_every_days: canonicalLimits.chats_reset_every_days,
+      uploads_reset_every_days: canonicalLimits.uploads_reset_every_days,
+      documents_reset_every_days: canonicalLimits.documents_reset_every_days,
+      exams_reset_every_days: canonicalLimits.exams_reset_every_days,
+      storage_reset_every_days: canonicalLimits.storage_reset_every_days,
+    },
+  };
+}
+
+export async function buildUsageSnapshotForUser(
   supabase: SupabaseClient,
   userId: string,
   canonicalLimits: CanonicalPlanLimits,
@@ -997,7 +1056,7 @@ export async function getEffectiveLimits(
   ]);
 
   const canonicalLimits = applyLimitOverrides(effectivePlan.plan, planLimits, proUpload100Enabled);
-  const usage = await buildUsageSnapshot(supabase, userId, canonicalLimits);
+  const usage = await buildUsageSnapshotForUser(supabase, userId, canonicalLimits);
 
   return {
     plan: effectivePlan.plan,

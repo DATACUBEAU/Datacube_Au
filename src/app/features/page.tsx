@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
+import { CompanyFooter } from '@/components/company-footer';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -198,6 +199,7 @@ export default function FeaturesPage() {
           </div>
         </div>
       </div>
+      <CompanyFooter />
     </div>
   );
 }

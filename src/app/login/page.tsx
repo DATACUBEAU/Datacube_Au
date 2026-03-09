@@ -325,6 +325,7 @@ export default function LoginPage() {
         <Link href="/policy#terms" className="text-primary underline underline-offset-4">Terms of Service</Link>
         {' '}and{' '}
         <Link href="/policy#privacy" className="text-primary underline underline-offset-4">Privacy Policy</Link>.
+        <p className="mt-2">Datacube AU is a product of Zahed Investment Ltd (RC 8127949).</p>
       </footer>
     </div>
   );

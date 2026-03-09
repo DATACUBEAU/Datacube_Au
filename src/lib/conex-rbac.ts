@@ -1,5 +1,13 @@
-export const CONEX_ROOT_ADMIN_EMAIL = 'fabiansazzy1214@gmail.com';
-export const CONEX_ROOT_ADMIN_EMAIL_FALLBACK = 'fabiansazzy121@gmail.com';
+export const CONEX_ROOT_ADMIN_EMAIL = String(
+  process.env.NEXT_PUBLIC_CONEX_ROOT_ADMIN_EMAIL ?? process.env.CONEX_ROOT_ADMIN_EMAIL ?? ''
+)
+  .trim()
+  .toLowerCase();
+export const CONEX_ROOT_ADMIN_EMAIL_FALLBACK = String(
+  process.env.NEXT_PUBLIC_CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? process.env.CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? ''
+)
+  .trim()
+  .toLowerCase();
 export const CONEX_ROOT_ADMIN_USER_ID = '05ad2f16-b3ce-48eb-bf24-41b407556ffd';
 
 export type ConexTier = 'admin' | 'free';

@@ -14,7 +14,9 @@ import { ServiceWorkerUpdater } from '@/components/service-worker-updater';
 import './globals.css';
 
 const APP_NAME = 'DataCube AU';
-const APP_DESCRIPTION = 'Your personal LLM for your own data.';
+const APP_DESCRIPTION = 'Datacube AU is an AI study platform for your own data.';
+const COMPANY_NAME = 'Zahed Investment Ltd';
+const COMPANY_RC = '8127949';
 
 export const metadata: Metadata = {
   applicationName: APP_NAME,
@@ -23,6 +25,20 @@ export const metadata: Metadata = {
     template: `%s | ${APP_NAME}` ,
   },
   description: APP_DESCRIPTION,
+  creator: COMPANY_NAME,
+  publisher: COMPANY_NAME,
+  authors: [{ name: COMPANY_NAME }],
+  openGraph: {
+    title: APP_NAME,
+    description: `${APP_DESCRIPTION} Built by ${COMPANY_NAME}. RC ${COMPANY_RC}.`,
+    siteName: APP_NAME,
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: APP_NAME,
+    description: `${APP_DESCRIPTION} Built by ${COMPANY_NAME}. RC ${COMPANY_RC}.`,
+  },
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
