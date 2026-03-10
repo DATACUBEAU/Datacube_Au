@@ -2,6 +2,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { IngestionService } from './ingestion';
 import { logger, deterministicChunking, alnumRatio, zeroRatio } from './utils';
 import { UploadJob } from './types';
+import { finalizeDocumentSourceCleanup, markDocumentCleanupPending } from './source-cleanup';
 import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
 
@@ -164,46 +165,6 @@ export class RAGWorker {
     return () => clearInterval(timer);
   }
 
-  private async updateCleanupState(
-    documentId: string,
-    success: boolean,
-    errorMessage?: string,
-  ): Promise<void> {
-    const now = new Date().toISOString();
-    let attempts = 1;
-
-    try {
-      const { data } = await this.supabase
-        .from('au_documents')
-        .select('cleanup_attempts')
-        .eq('id', documentId)
-        .maybeSingle();
-      attempts = Number(data?.cleanup_attempts || 0) + 1;
-    } catch {
-      attempts = 1;
-    }
-
-    const payload = success
-      ? {
-        storage_deleted_at: now,
-        cleanup_pending: false,
-        cleanup_attempts: attempts,
-        cleanup_last_error: null,
-        cleanup_last_attempt_at: now,
-      }
-      : {
-        cleanup_pending: true,
-        cleanup_attempts: attempts,
-        cleanup_last_error: errorMessage || 'unknown_error',
-        cleanup_last_attempt_at: now,
-      };
-
-    await this.supabase
-      .from('au_documents')
-      .update(payload)
-      .eq('id', documentId);
-  }
-
   private async extractPdfText(buffer: Buffer): Promise<string> {
     const legacyDefault = (pdfParseModule as any)?.default;
     if (typeof legacyDefault === 'function') {
@@ -264,7 +225,7 @@ export class RAGWorker {
       if (stuckCompleted && stuckCompleted.length > 0) {
         for (const job of stuckCompleted) {
           logger.info('Reconciling stuck 100% job', { jobId: job.id });
-          await this.finalizeJobCompletion(job as UploadJob);
+          await this.finalizeDocumentIngestion(job as UploadJob);
         }
       }
 
@@ -338,7 +299,7 @@ export class RAGWorker {
     }
   }
 
-  private async finalizeJobCompletion(job: UploadJob) {
+  private async finalizeDocumentIngestion(job: UploadJob) {
     let completionError = await this.markJobCompleted(job);
     if (completionError) {
       logger.warn('Job completion update failed, retrying...', { jobId: job.id, message: completionError.message });
@@ -348,47 +309,53 @@ export class RAGWorker {
 
     if (completionError) {
       logger.error('CRITICAL: Job finished but status update failed', { jobId: job.id, message: completionError.message });
-    } else {
-      await this.incrementUsageCounters(String(job.owner_id || job.user_id || ''), {
-        jobs_completed: 1,
-      });
-
-      logger.info('Job completed', { jobId: job.id });
-      await this.logDebug('Job completed', { jobId: job.id });
+      return;
     }
 
+    await this.incrementUsageCounters(String(job.owner_id || job.user_id || ''), {
+      jobs_completed: 1,
+    });
+
+    logger.info('Job completed', { jobId: job.id });
+    await this.logDebug('Job completed', { jobId: job.id });
+
     try {
-      await this.supabase
-        .from('au_documents')
-        .update({
-          cleanup_pending: true,
-          cleanup_attempts: 0,
-          cleanup_last_error: null,
-          cleanup_last_attempt_at: new Date().toISOString(),
-        })
-        .eq('id', job.document_id);
+      await markDocumentCleanupPending({
+        supabase: this.supabase,
+        documentId: job.document_id,
+      });
 
-      const bucket = job.bucket || 'documents';
-      logger.info('Deleting file from Supabase Storage', { bucket, path: job.object_path });
-      const { error: deleteError } = await this.supabase.storage
-        .from(bucket)
-        .remove([job.object_path]);
+      const cleanupResult = await finalizeDocumentSourceCleanup({
+        supabase: this.supabase,
+        documentId: job.document_id,
+        preferredBucket: String(job.bucket || '').trim() || null,
+        preferredObjectPath: String(job.object_path || '').trim() || null,
+        defaultBucket: process.env.BUCKET || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents',
+      });
 
-      if (deleteError) {
-        logger.error('Failed to delete file from storage', deleteError);
-        await this.updateCleanupState(
-          job.document_id,
-          false,
-          deleteError.message || String(deleteError),
-        );
+      if (!cleanupResult.success) {
+        logger.error('Failed to finalize document source cleanup', {
+          jobId: job.id,
+          documentId: job.document_id,
+          bucket: cleanupResult.bucket,
+          objectPath: cleanupResult.objectPath,
+          cleanupCode: cleanupResult.code,
+          cleanupError: cleanupResult.error,
+          cleanupAttempts: cleanupResult.attempts,
+        });
       } else {
-        logger.info('File deleted successfully');
-        await this.updateCleanupState(job.document_id, true);
+        logger.info('Document source cleanup completed', {
+          jobId: job.id,
+          documentId: job.document_id,
+          bucket: cleanupResult.bucket,
+          objectPath: cleanupResult.objectPath,
+          cleanupCode: cleanupResult.code,
+          cleanupAttempts: cleanupResult.attempts,
+          sourceDeletedAt: cleanupResult.deletedAt,
+        });
       }
-    } catch (delErr) {
-      logger.error('Failed to delete file (exception)', delErr);
-      const msg = delErr instanceof Error ? delErr.message : String(delErr);
-      await this.updateCleanupState(job.document_id, false, msg);
+    } catch (cleanupError) {
+      logger.error('Failed to finalize document source cleanup (exception)', cleanupError);
     }
   }
 
@@ -753,7 +720,7 @@ export class RAGWorker {
       // Critical fix: Combine final progress update and completion state
       // Do not update to 100% separately to avoid "stuck at 100% analyzing" state
       // if the subsequent completion update fails.
-      await this.finalizeJobCompletion(currentJob);
+      await this.finalizeDocumentIngestion(currentJob);
     } catch (processErr) {
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
 

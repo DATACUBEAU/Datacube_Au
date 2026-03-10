@@ -1,6 +1,20 @@
 import { RAGWorker } from '../src/worker';
 import { IngestionService } from '../src/ingestion';
 import { SupabaseClient } from '@supabase/supabase-js';
+import { finalizeDocumentSourceCleanup, markDocumentCleanupPending } from '../src/source-cleanup';
+
+jest.mock('../src/source-cleanup', () => ({
+  finalizeDocumentSourceCleanup: jest.fn().mockResolvedValue({
+    success: true,
+    code: 'deleted',
+    bucket: 'documents',
+    objectPath: 'test.pdf',
+    attempts: 1,
+    deletedAt: '2026-03-10T00:00:00.000Z',
+    error: null,
+  }),
+  markDocumentCleanupPending: jest.fn().mockResolvedValue(undefined),
+}));
 
 // Create mock functions
 const mockSelect = jest.fn();
@@ -12,6 +26,7 @@ const mockIn = jest.fn();
 const mockLt = jest.fn();
 const mockOr = jest.fn();
 const mockIs = jest.fn();
+const mockNot = jest.fn();
 const mockOrder = jest.fn();
 const mockLimit = jest.fn();
 const mockMaybeSingle = jest.fn();
@@ -32,6 +47,7 @@ const builder: any = {
   lt: mockLt,
   or: mockOr,
   is: mockIs,
+  not: mockNot,
   order: mockOrder,
   limit: mockLimit,
   maybeSingle: mockMaybeSingle,
@@ -48,6 +64,7 @@ mockIn.mockReturnValue(builder);
 mockLt.mockReturnValue(builder);
 mockOr.mockReturnValue(builder);
 mockIs.mockReturnValue(builder);
+mockNot.mockReturnValue(builder);
 mockOrder.mockReturnValue(builder);
 // mockLimit is NOT returning builder, it returns the result promise directly in our test case
 
@@ -79,6 +96,8 @@ describe('RAGWorker Lifecycle', () => {
     mockStorageRemove.mockResolvedValue({ error: null });
     
     mockRpc.mockResolvedValue({ data: [], error: null });
+    (finalizeDocumentSourceCleanup as jest.Mock).mockClear();
+    (markDocumentCleanupPending as jest.Mock).mockClear();
 
     worker = new RAGWorker(mockSupabase, mockIngestion);
   });
@@ -95,9 +114,10 @@ describe('RAGWorker Lifecycle', () => {
       updated_at: new Date(Date.now() - 120000).toISOString(), // 2 mins ago
     };
 
-    // 1. stuckCompleted query: limit(5)
-    // 2. staleJobs query: limit(5)
-    
+    // 1. terminal-claim reconcile query
+    // 2. stuckCompleted query
+    // 3. staleJobs query
+    mockLimit.mockImplementationOnce(() => Promise.resolve({ data: [], error: null }));
     mockLimit.mockImplementationOnce(() => Promise.resolve({ data: [stuckJob], error: null }));
     mockLimit.mockImplementationOnce(() => Promise.resolve({ data: [], error: null }));
 
@@ -105,14 +125,19 @@ describe('RAGWorker Lifecycle', () => {
     
     await (worker as any).reconcileStuckJobs();
 
-    // Check if update was called with correct status
-    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'completed',
-      progress: 100,
-    }));
+    const hasCompletedUpdate = mockUpdate.mock.calls.some(([payload]) =>
+      payload?.status === 'completed' && payload?.progress === 100,
+    );
+    expect(hasCompletedUpdate).toBe(true);
     
-    // Check if storage cleanup was called
-    expect(mockStorageRemove).toHaveBeenCalledWith(['test.pdf']);
+    expect(markDocumentCleanupPending).toHaveBeenCalledWith({
+      supabase: mockSupabase,
+      documentId: 'doc-stuck-100',
+    });
+    expect(finalizeDocumentSourceCleanup).toHaveBeenCalledWith(expect.objectContaining({
+      documentId: 'doc-stuck-100',
+      preferredObjectPath: 'test.pdf',
+    }));
   });
 
   test('reconcileStuckJobs should fail stale processing jobs', async () => {
@@ -127,17 +152,18 @@ describe('RAGWorker Lifecycle', () => {
       updated_at: new Date(Date.now() - 20 * 60000).toISOString(), // 20 mins ago
     };
 
-    // 1. stuckCompleted query -> []
-    // 2. staleJobs query -> [staleJob]
+    // 1. terminal-claim reconcile query
+    // 2. stuckCompleted query -> []
+    // 3. staleJobs query -> [staleJob]
+    mockLimit.mockImplementationOnce(() => Promise.resolve({ data: [], error: null }));
     mockLimit.mockImplementationOnce(() => Promise.resolve({ data: [], error: null }));
     mockLimit.mockImplementationOnce(() => Promise.resolve({ data: [staleJob], error: null }));
     
     await (worker as any).reconcileStuckJobs();
 
-    // Check if update was called with failed status
-    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      status: 'failed',
-      error: expect.stringContaining('stale'),
-    }));
+    const hasFailedUpdate = mockUpdate.mock.calls.some(([payload]) =>
+      payload?.status === 'failed' && String(payload?.error || '').includes('stale'),
+    );
+    expect(hasFailedUpdate).toBe(true);
   });
 });

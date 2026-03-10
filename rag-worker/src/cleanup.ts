@@ -102,6 +102,46 @@ async function cleanup() {
     return retryError ?? null;
   };
 
+  const reconcileTerminalClaimedJobs = async () => {
+    const { data, error } = await supabase
+      .from('au_worker_jobs')
+      .select('id')
+      .in('status', ['failed', 'completed'])
+      .not('claimed_by', 'is', null)
+      .limit(200);
+
+    if (error) {
+      logger.warn('Failed to scan terminal jobs with stale claims', { message: error.message });
+      return;
+    }
+
+    const ids = (data || []).map((row: any) => String(row?.id || '').trim()).filter(Boolean);
+    if (ids.length === 0) return;
+
+    const nowIso = new Date().toISOString();
+    const { error: updateError } = await supabase
+      .from('au_worker_jobs')
+      .update({
+        claimed_by: null,
+        locked_at: null,
+        locked_until: null,
+        updated_at: nowIso,
+      })
+      .in('id', ids);
+
+    if (updateError) {
+      logger.warn('Failed to reconcile terminal claims in cleanup task', {
+        message: updateError.message,
+        count: ids.length,
+      });
+      return;
+    }
+
+    logger.info('Cleanup reconciled terminal jobs with stale claims', { count: ids.length });
+  };
+
+  await reconcileTerminalClaimedJobs();
+
   // 1. Failed Jobs Cleanup
   const { data: failedJobs, error } = await supabase
     .from('au_worker_jobs')

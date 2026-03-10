@@ -21,6 +21,13 @@ type ChunkRow = {
   text: string;
 };
 
+type CanonicalChunkRecord = {
+  id: string;
+  index: number;
+  text: string;
+  hash: string;
+};
+
 class RecoverableModelCacheError extends Error {
   recoverable = true;
 
@@ -1003,6 +1010,226 @@ export class IngestionService {
     return embeddings;
   }
 
+  private chunkPreview(text: string): string {
+    return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  }
+
+  private validateCanonicalChunkText(documentId: string, chunkIndex: number, value: unknown): string {
+    if (typeof value !== 'string') {
+      throw new Error(`invalid_chunk_text_non_string: document=${documentId} chunk_index=${chunkIndex}`);
+    }
+
+    const text = value;
+    const trimmed = text.trim();
+    if (!trimmed) {
+      throw new Error(`invalid_chunk_text_empty: document=${documentId} chunk_index=${chunkIndex}`);
+    }
+
+    if (/^0+$/.test(trimmed)) {
+      throw new Error(`invalid_chunk_text_zero_fill: document=${documentId} chunk_index=${chunkIndex}`);
+    }
+
+    return text;
+  }
+
+  private buildCanonicalChunkRecords(
+    documentId: string,
+    ownerId: string,
+    chunks: string[],
+  ): CanonicalChunkRecord[] {
+    return chunks.map((rawText, index) => {
+      const text = this.validateCanonicalChunkText(documentId, index, rawText);
+      const hash = computeHash(text);
+
+      logger.info('Canonical chunk prepared', {
+        documentId,
+        ownerId,
+        chunkIndex: index,
+        textLength: text.length,
+        textPreview: this.chunkPreview(text),
+        textHash: hash,
+      });
+
+      return {
+        id: this.stablePointId(ownerId, documentId, index),
+        index,
+        text,
+        hash,
+      };
+    });
+  }
+
+  private async fetchChunkRowsForVerification(documentId: string, ownerId: string): Promise<ChunkRow[]> {
+    const strategies: Array<(query: any) => any> = [
+      (query) => query.eq('owner_id', ownerId),
+      (query) => query.eq('user_id', ownerId),
+      (query) => query,
+    ];
+
+    let lastError: any = null;
+    for (const apply of strategies) {
+      const query = this.supabase
+        .from('au_document_chunks')
+        .select('id,document_id,chunk_index,text')
+        .eq('document_id', documentId)
+        .order('chunk_index', { ascending: true });
+      apply(query);
+      const { data, error } = await query;
+      if (!error) {
+        return (data || []) as ChunkRow[];
+      }
+
+      if (this.isMissingTableError(error)) {
+        throw new Error(
+          'Missing table public.au_document_chunks. Apply worker pipeline migrations before running ingestion.'
+        );
+      }
+      if (
+        this.isMissingColumnError(error, 'owner_id') ||
+        this.isMissingColumnError(error, 'user_id')
+      ) {
+        lastError = error;
+        continue;
+      }
+      throw error;
+    }
+
+    if (lastError) throw lastError;
+    return [];
+  }
+
+  private verifyChunkRowInvariants(
+    documentId: string,
+    canonicalChunks: CanonicalChunkRecord[],
+    rows: ChunkRow[],
+  ): void {
+    if (rows.length !== canonicalChunks.length) {
+      throw new Error(
+        `chunk_row_invariant_count_mismatch: document=${documentId} expected=${canonicalChunks.length} got=${rows.length}`
+      );
+    }
+
+    for (let index = 0; index < canonicalChunks.length; index += 1) {
+      const expected = canonicalChunks[index];
+      const row = rows[index];
+      const rowDocumentId = String((row as any)?.document_id || '').trim();
+      const rowIndex = Number((row as any)?.chunk_index);
+      const rowText = this.validateCanonicalChunkText(documentId, index, (row as any)?.text);
+      const rowHash = computeHash(rowText);
+
+      if (rowDocumentId !== documentId) {
+        throw new Error(
+          `chunk_row_invariant_document_mismatch: document=${documentId} chunk_index=${index} row_document=${rowDocumentId}`
+        );
+      }
+      if (rowIndex !== expected.index) {
+        throw new Error(
+          `chunk_row_invariant_index_mismatch: document=${documentId} expected_index=${expected.index} row_index=${rowIndex}`
+        );
+      }
+      if (rowText !== expected.text) {
+        throw new Error(
+          `chunk_row_invariant_text_mismatch: document=${documentId} chunk_index=${index}`
+        );
+      }
+      if (rowHash !== expected.hash) {
+        throw new Error(
+          `chunk_row_invariant_hash_mismatch: document=${documentId} chunk_index=${index}`
+        );
+      }
+    }
+  }
+
+  private async fetchQdrantPointsForDocument(
+    collectionName: string,
+    documentId: string,
+    ownerId: string,
+    expectedCount: number,
+  ): Promise<any[]> {
+    const allPoints: any[] = [];
+    let offset: any = undefined;
+
+    while (allPoints.length < expectedCount) {
+      const result = await this.withQdrantRetry('Qdrant verification scroll', () =>
+        this.qdrant.scroll(collectionName, {
+          filter: this.ownerFilter(documentId, ownerId),
+          limit: Math.min(256, Math.max(expectedCount - allPoints.length, 1)),
+          with_payload: true,
+          with_vector: false,
+          offset,
+        } as any)
+      );
+
+      const points = Array.isArray((result as any)?.points) ? (result as any).points : [];
+      allPoints.push(...points);
+      offset = (result as any)?.next_page_offset;
+
+      if (!offset || points.length === 0) {
+        break;
+      }
+    }
+
+    return allPoints;
+  }
+
+  private verifyQdrantPayloadInvariants(
+    documentId: string,
+    canonicalChunks: CanonicalChunkRecord[],
+    points: any[],
+  ): void {
+    if (points.length !== canonicalChunks.length) {
+      throw new Error(
+        `qdrant_payload_invariant_count_mismatch: document=${documentId} expected=${canonicalChunks.length} got=${points.length}`
+      );
+    }
+
+    const byIndex = new Map<number, CanonicalChunkRecord>();
+    for (const chunk of canonicalChunks) {
+      byIndex.set(chunk.index, chunk);
+    }
+
+    const seen = new Set<number>();
+    for (const point of points) {
+      const payload = point?.payload || {};
+      const payloadDocumentId = String(payload.document_id || '').trim();
+      const payloadIndex = Number(payload.chunk_index);
+      const payloadText = this.validateCanonicalChunkText(documentId, payloadIndex, payload.text);
+      const payloadHash = String(payload.text_hash || computeHash(payloadText)).trim();
+      const expected = byIndex.get(payloadIndex);
+
+      if (!expected) {
+        throw new Error(
+          `qdrant_payload_invariant_unknown_chunk_index: document=${documentId} chunk_index=${payloadIndex}`
+        );
+      }
+      if (payloadDocumentId !== documentId) {
+        throw new Error(
+          `qdrant_payload_invariant_document_mismatch: document=${documentId} payload_document=${payloadDocumentId} chunk_index=${payloadIndex}`
+        );
+      }
+      if (payloadText !== expected.text) {
+        throw new Error(
+          `qdrant_payload_invariant_text_mismatch: document=${documentId} chunk_index=${payloadIndex}`
+        );
+      }
+      if (payloadHash !== expected.hash) {
+        throw new Error(
+          `qdrant_payload_invariant_hash_mismatch: document=${documentId} chunk_index=${payloadIndex}`
+        );
+      }
+
+      seen.add(payloadIndex);
+    }
+
+    for (const chunk of canonicalChunks) {
+      if (!seen.has(chunk.index)) {
+        throw new Error(
+          `qdrant_payload_invariant_missing_chunk: document=${documentId} chunk_index=${chunk.index}`
+        );
+      }
+    }
+  }
+
   /**
    * Upserts chunks into Qdrant and verifies chunk/vector integrity.
    */
@@ -1021,12 +1248,7 @@ export class IngestionService {
     const collectionName = 'au_chunks';
     await this.ensureCollection(collectionName);
 
-    const chunkData = chunks.map((text, index) => ({
-      id: this.stablePointId(ownerId, documentId, index),
-      text,
-      hash: computeHash(text),
-      index,
-    }));
+    const chunkData = this.buildCanonicalChunkRecords(documentId, ownerId, chunks);
 
     const createdAt = Math.floor(Date.now() / 1000);
 
@@ -1045,6 +1267,9 @@ export class IngestionService {
     if (dbChunkCount !== chunkData.length) {
       throw new Error(`Chunk row mismatch: expected ${chunkData.length}, got ${dbChunkCount}`);
     }
+
+    const persistedChunkRows = await this.fetchChunkRowsForVerification(documentId, ownerId);
+    this.verifyChunkRowInvariants(documentId, chunkData, persistedChunkRows);
 
     try {
       await this.withQdrantRetry('Qdrant delete preflight', () =>
@@ -1115,6 +1340,14 @@ export class IngestionService {
     if (!Number.isFinite(storedCount) || storedCount !== chunkData.length) {
       throw new Error(`Qdrant stored count mismatch: expected ${chunkData.length}, got ${storedCount}`);
     }
+
+    const storedPoints = await this.fetchQdrantPointsForDocument(
+      collectionName,
+      documentId,
+      ownerId,
+      chunkData.length,
+    );
+    this.verifyQdrantPayloadInvariants(documentId, chunkData, storedPoints);
 
     const documentUpdate = await this.supabase
       .from('au_documents')

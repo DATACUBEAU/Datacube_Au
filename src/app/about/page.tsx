@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
+import { AnimatePresence, motion } from 'framer-motion';
 import { Icons } from '@/components/icons';
 import { CompanyFooter } from '@/components/company-footer';
 import { Button } from '@/components/ui/button';
@@ -30,6 +31,14 @@ const features = [
   "Personalized Answer Style",
   "Fast & Interactive",
   "CBT Simulator"
+];
+
+const founderExpertise = [
+  'AI Systems',
+  'RAG Architecture',
+  'SaaS Engineering',
+  'Backend Infrastructure',
+  'AI Learning Platforms',
 ];
 
 function TypingAnimation() {
@@ -65,7 +74,8 @@ function TypingAnimation() {
 }
 
 export default function AboutPage() {
-    const navLinks = [
+  const [showFounderInfo, setShowFounderInfo] = useState(false);
+  const navLinks = [
     { href: '/', label: 'Home', icon: Home },
     { href: '/features', label: 'Features' },
     { href: '/about', label: 'About' },
@@ -137,7 +147,23 @@ export default function AboutPage() {
             <div className="relative rounded-lg border border-primary/20 bg-card p-8 shadow-lg transition-all duration-300 hover:shadow-primary/20">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
                     <div className="md:col-span-1 flex justify-center">
-                        <div className="relative h-48 w-48 rounded-full overflow-hidden border-2 border-primary">
+                      <div className="relative">
+                        <button
+                          type="button"
+                          aria-expanded={showFounderInfo}
+                          aria-controls="founder-info-panel"
+                          onClick={() => setShowFounderInfo((prev) => !prev)}
+                          className="group relative block rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                        >
+                          <span
+                            aria-hidden
+                            className={`pointer-events-none absolute inset-0 rounded-full ring-2 transition ${
+                              showFounderInfo
+                                ? 'ring-primary/70'
+                                : 'ring-primary/40 group-hover:ring-primary/70 group-focus-visible:ring-primary/80'
+                            }`}
+                          />
+                          <div className="relative h-48 w-48 rounded-full overflow-hidden border-2 border-primary">
                             <Image 
                                 src="/avater.png"
                                 alt="Datacube AU ownership representative"
@@ -145,7 +171,12 @@ export default function AboutPage() {
                                 sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
                                 style={{ objectFit: 'cover' }}
                             />
-                        </div>
+                          </div>
+                        </button>
+                        <span className="pointer-events-none absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-primary/40 bg-background/90 px-3 py-1 text-[11px] font-medium text-primary animate-pulse">
+                          {showFounderInfo ? 'Click to hide founder info' : 'Click to view founder info'}
+                        </span>
+                      </div>
                     </div>
                     <div className="md:col-span-2">
                         <h2 className="font-headline text-3xl font-bold text-primary">Company Ownership</h2>
@@ -155,6 +186,42 @@ export default function AboutPage() {
                         </p>
                     </div>
                 </div>
+                <AnimatePresence initial={false}>
+                  {showFounderInfo && (
+                    <motion.div
+                      id="founder-info-panel"
+                      initial={{ opacity: 0, y: -10, height: 0 }}
+                      animate={{ opacity: 1, y: 0, height: 'auto' }}
+                      exit={{ opacity: 0, y: -10, height: 0 }}
+                      transition={{ duration: 0.3, ease: 'easeInOut' }}
+                      className="mt-10 overflow-hidden"
+                    >
+                      <div className="rounded-lg border border-primary/30 bg-background/60 p-5 sm:p-6 backdrop-blur-sm">
+                        <p className="text-xs uppercase tracking-[0.2em] text-primary/80">Founder Profile</p>
+                        <h3 className="mt-2 text-2xl font-semibold">Chikezie Fabian Onyebuchi</h3>
+                        <p className="mt-1 text-sm font-medium text-primary">
+                          Founder &amp; Lead Developer - Datacube AU
+                        </p>
+                        <div className="mt-4">
+                          <p className="text-sm font-semibold text-foreground">Expertise</p>
+                          <ul className="mt-2 flex flex-wrap gap-2">
+                            {founderExpertise.map((expertise) => (
+                              <li
+                                key={expertise}
+                                className="rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
+                              >
+                                {expertise}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                        <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+                          Founder of Datacube AU, an AI-powered learning and document intelligence platform designed to analyze textbooks and past questions, identify patterns, and help students prepare smarter.
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
             </div>
         </section>
 

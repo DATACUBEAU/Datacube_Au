@@ -26,6 +26,7 @@ describe('Ingestion Validation', () => {
       insert: jest.fn().mockResolvedValue({ data: {} }),
       delete: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       maybeSingle: jest.fn().mockResolvedValue({ data: { document_type: 'textbook' } })
     }));
@@ -35,6 +36,7 @@ describe('Ingestion Validation', () => {
       upsert: jest.fn(),
       delete: jest.fn(),
       count: jest.fn().mockResolvedValue({ count: 1 }),
+      scroll: jest.fn().mockResolvedValue({ points: [], next_page_offset: null }),
       getCollection: jest.fn(),
       createPayloadIndex: jest.fn(),
     } as any;
@@ -46,6 +48,10 @@ describe('Ingestion Validation', () => {
       },
       embedTexts: jest.fn().mockResolvedValue([new Float32Array(384), new Float32Array(384)]),
     });
+    ingestion['fetchChunkRowsForVerification'] = jest.fn().mockResolvedValue([]);
+    ingestion['verifyChunkRowInvariants'] = jest.fn();
+    ingestion['fetchQdrantPointsForDocument'] = jest.fn().mockResolvedValue([]);
+    ingestion['verifyQdrantPayloadInvariants'] = jest.fn();
 
     worker = new RAGWorker(supabase, ingestion);
   });
@@ -69,6 +75,7 @@ describe('Ingestion Validation', () => {
       insert: jest.fn().mockResolvedValue({ data: {} }),
       delete: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
+      order: jest.fn().mockReturnThis(),
       limit: jest.fn().mockReturnThis(),
       maybeSingle: jest.fn().mockResolvedValue({ data: { document_type: 'textbook' } })
     }));
@@ -99,6 +106,7 @@ describe('Ingestion Validation', () => {
     const buffer = await pdfDoc.save();
 
     (supabase.storage.from('documents').download as jest.Mock).mockResolvedValueOnce({ data: { arrayBuffer: () => Promise.resolve(buffer) } });
+    worker['extractPdfText'] = jest.fn().mockResolvedValue('short pdf text');
     ingestion['countChunkRows'] = jest.fn().mockResolvedValue(1);
 
     await expect(worker['processJob'](job as any)).rejects.toThrow('ocr_required');

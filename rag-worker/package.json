@@ -9,6 +9,7 @@
     "dev": "ts-node src/index.ts",
     "cleanup": "ts-node src/cleanup.ts",
     "cleanup:prod": "node dist/cleanup.js",
+    "repair:ingestion": "ts-node src/repair.ts",
     "audit:pipeline": "node audit-pipeline.js",
     "smoke:transformers": "node tests/smoke-transformers-mode.cjs",
     "test": "jest"
