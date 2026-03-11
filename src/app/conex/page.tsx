@@ -1045,6 +1045,8 @@ const AdminManualPayments = (_props: { token: string }) => {
     const [transactions, setTransactions] = useState<any[]>([]);
     const [subscriptions, setSubscriptions] = useState<any[]>([]);
     const [entitlementAudit, setEntitlementAudit] = useState<any[]>([]);
+    const [cancellationFeedback, setCancellationFeedback] = useState<any[]>([]);
+    const [deletingFeedbackId, setDeletingFeedbackId] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const { toast } = useToast();
 
@@ -1069,6 +1071,7 @@ const AdminManualPayments = (_props: { token: string }) => {
             setTransactions(Array.isArray(payload?.transactions) ? payload.transactions : []);
             setSubscriptions(Array.isArray(payload?.subscriptions) ? payload.subscriptions : []);
             setEntitlementAudit(Array.isArray(payload?.entitlementAudit) ? payload.entitlementAudit : []);
+            setCancellationFeedback(Array.isArray(payload?.cancellationFeedback) ? payload.cancellationFeedback : []);
         } catch (e) {
             console.error(e);
             toast({ title: 'Error', description: 'Failed to load billing overview.', variant: 'destructive' });
@@ -1078,6 +1081,40 @@ const AdminManualPayments = (_props: { token: string }) => {
     }, [toast]);
 
     useEffect(() => { void fetchPayments(); }, [fetchPayments]);
+
+    const handleDeleteCancellationFeedback = useCallback(async (id: string) => {
+        const feedbackId = String(id || '').trim();
+        if (!feedbackId) return;
+        if (!confirm('Delete this cancellation feedback entry?')) return;
+        setDeletingFeedbackId(feedbackId);
+        try {
+            const accessToken = await getSupabaseAccessToken();
+            if (!accessToken) throw new Error('Missing access token');
+            const res = await fetch('/api/admin/billing/overview', {
+                method: 'DELETE',
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',
+                body: JSON.stringify({ id: feedbackId }),
+            });
+            const payload = await res.json().catch(() => null);
+            if (!res.ok) {
+                throw new Error(payload?.message || payload?.error || `Request failed (${res.status})`);
+            }
+            setCancellationFeedback((rows) => rows.filter((row) => String(row?.id || '') !== feedbackId));
+            toast({ title: 'Deleted', description: 'Cancellation feedback entry removed.' });
+        } catch (e: any) {
+            toast({
+                title: 'Delete failed',
+                description: String(e?.message || 'Failed to delete cancellation feedback.'),
+                variant: 'destructive',
+            });
+        } finally {
+            setDeletingFeedbackId(null);
+        }
+    }, [toast]);
 
     const renderStatus = (statusRaw: string) => {
         const status = String(statusRaw || '').toLowerCase();
@@ -1106,6 +1143,7 @@ const AdminManualPayments = (_props: { token: string }) => {
                     <TabsTrigger value="manual">Transactions</TabsTrigger>
                     <TabsTrigger value="card">Subscriptions</TabsTrigger>
                     <TabsTrigger value="audit">Entitlement Audit</TabsTrigger>
+                    <TabsTrigger value="cancellations">Cancellation Feedback</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="manual">
@@ -1224,6 +1262,68 @@ const AdminManualPayments = (_props: { token: string }) => {
                                                     <td className="p-3">{row.action}</td>
                                                     <td className="p-3">{row.source}</td>
                                                     <td className="p-3 font-mono text-xs">{row.trace_id || '-'}</td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </CardContent>
+                    </Card>
+                </TabsContent>
+
+                <TabsContent value="cancellations">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Cancellation Feedback</CardTitle>
+                            <CardDescription>User-provided reasons captured when auto-renew is turned off.</CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <div className="rounded-md border overflow-x-auto">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-muted">
+                                        <tr>
+                                            <th className="p-3 text-left">Time</th>
+                                            <th className="p-3 text-left">User ID</th>
+                                            <th className="p-3 text-left">Plan</th>
+                                            <th className="p-3 text-left">Gateway</th>
+                                            <th className="p-3 text-left">Reason</th>
+                                            <th className="p-3 text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {cancellationFeedback.length === 0 ? (
+                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No cancellation feedback found.</td></tr>
+                                        ) : (
+                                            cancellationFeedback.map((row) => (
+                                                <tr key={row.id} className="border-t hover:bg-muted/30 align-top">
+                                                    <td className="p-3 whitespace-nowrap">{new Date(row.created_at).toLocaleString()}</td>
+                                                    <td className="p-3 font-mono text-xs">{row.user_id}</td>
+                                                    <td className="p-3 text-xs">
+                                                        <div>{row.plan_key || '-'}</div>
+                                                        <div className="text-muted-foreground">{row.subscription_status || '-'}</div>
+                                                    </td>
+                                                    <td className="p-3 text-xs">
+                                                        <div>{row.gateway || '-'}</div>
+                                                        <div className="text-muted-foreground">{row.cancellation_mode || '-'}</div>
+                                                    </td>
+                                                    <td className="p-3 max-w-[420px]">
+                                                        <p className="whitespace-pre-wrap break-words">{String(row.cancellation_reason || '').trim() || '-'}</p>
+                                                    </td>
+                                                    <td className="p-3 text-right">
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="text-destructive hover:text-destructive"
+                                                            onClick={() => void handleDeleteCancellationFeedback(String(row.id || ''))}
+                                                            disabled={deletingFeedbackId === String(row.id || '')}
+                                                        >
+                                                            {deletingFeedbackId === String(row.id || '')
+                                                                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                                                : <Trash2 className="mr-2 h-4 w-4" />}
+                                                            Delete
+                                                        </Button>
+                                                    </td>
                                                 </tr>
                                             ))
                                         )}

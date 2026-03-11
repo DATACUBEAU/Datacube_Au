@@ -151,3 +151,16 @@ export async function disablePaystackSubscription(input: {
     }),
   }, 'subscription_cancel');
 }
+
+export async function enablePaystackSubscription(input: {
+  code: string;
+  token: string;
+}): Promise<{ status: boolean; message: string; data: Record<string, unknown> }> {
+  return paystackRequest('/subscription/enable', {
+    method: 'POST',
+    body: JSON.stringify({
+      code: input.code,
+      token: input.token,
+    }),
+  }, 'subscription_cancel');
+}

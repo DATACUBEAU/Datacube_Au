@@ -61,3 +61,6 @@ Dockerfile
 .last-run.json
 playwright-report/
 test-results/
+
+# PowerShell Deployment Scripts
+deploy-rag-worker.ps1

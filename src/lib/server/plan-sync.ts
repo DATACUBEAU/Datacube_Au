@@ -67,6 +67,7 @@ function isMissingRpcError(error: any): boolean {
 
 function normalizeSubscription(input: PlanTransitionSubscriptionInput | null | undefined): Record<string, unknown> {
   if (!input) return {};
+  const nowIso = new Date().toISOString();
   return {
     plan_key: input.planKey ?? null,
     status: input.status ?? null,
@@ -76,6 +77,7 @@ function normalizeSubscription(input: PlanTransitionSubscriptionInput | null | u
     ends_at: input.endsAt ?? null,
     cancel_at_period_end: input.cancelAtPeriodEnd === true,
     metadata: input.metadata || {},
+    updated_at: nowIso,
   };
 }
 

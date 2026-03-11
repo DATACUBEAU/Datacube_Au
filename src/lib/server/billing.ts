@@ -8,7 +8,10 @@ import {
   deriveNormalizedSubscriptionState,
   type BillingCheckoutCapability,
 } from '@/lib/billing/subscription-state';
-import { resolveSubscriptionCancellation } from '@/lib/billing/subscription-cancel';
+import {
+  resolveSubscriptionCancellation,
+  resolveSubscriptionResumption,
+} from '@/lib/billing/subscription-cancel';
 import {
   BillingApiError,
   assertBillingGatewayCapability,
@@ -26,7 +29,10 @@ import {
   PROMO_PRO_END_UTC_ISO,
   isPromoModeActive,
 } from '@/lib/server/promo-entitlements';
-import { disablePaystackSubscription } from '@/lib/server/paystack';
+import {
+  disablePaystackSubscription,
+  enablePaystackSubscription,
+} from '@/lib/server/paystack';
 import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
 import { applyPlanTransition } from '@/lib/server/plan-sync';
 
@@ -85,8 +91,15 @@ function entitlementDays(interval: BillingInterval): number {
   return interval === 'weekly' ? 7 : 30;
 }
 
-function normalizePaymentMethod(raw: unknown): PaymentMethod {
-  return String(raw || '').toLowerCase() === 'transfer' ? 'transfer' : 'subscription';
+function normalizePaymentMethod(raw: unknown): PaymentMethod | null {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'subscription' || value === 'card' || value === 'auto_renew' || value === 'auto-renew') {
+    return 'subscription';
+  }
+  if (value === 'transfer' || value === 'bank_transfer' || value === 'bank-transfer' || value === 'manual') {
+    return 'transfer';
+  }
+  return null;
 }
 
 function inferChannel(method: PaymentMethod): string {
@@ -261,6 +274,56 @@ function isGatewayAlreadyCanceledError(error: unknown): boolean {
     return /(already disabled|already cancelled|already canceled|not active|subscription.*not found|disabled already)/i.test(message);
   }
   return false;
+}
+
+function isGatewayAlreadyResumedError(error: unknown): boolean {
+  const status = Number((error as any)?.status || 0);
+  const message = String((error as any)?.message || '').trim().toLowerCase();
+  if (status === 404) return true;
+  if (status === 400 || status === 409 || status === 422) {
+    return /(already enabled|already active|not disabled|subscription.*active|enabled already)/i.test(message);
+  }
+  return false;
+}
+
+const CANCELLATION_REASON_MIN_LENGTH = 10;
+const CANCELLATION_REASON_MAX_LENGTH = 1000;
+
+function normalizeCancellationReason(raw: unknown): string {
+  return String(raw || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+async function persistCancellationFeedback(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  subscriptionId: number | null;
+  planKey: string | null;
+  subscriptionStatus: string | null;
+  gateway: PaymentGatewayId;
+  cancellationMode: string;
+  cancellationReason: string;
+  context?: Record<string, unknown>;
+}) {
+  const { supabase } = input;
+  const { error } = await supabase.from('billing_cancellation_feedback').insert({
+    user_id: input.userId,
+    subscription_id: input.subscriptionId,
+    plan_key: input.planKey,
+    subscription_status: input.subscriptionStatus,
+    gateway: input.gateway,
+    cancellation_mode: input.cancellationMode,
+    cancellation_reason: input.cancellationReason,
+    context: input.context || {},
+  });
+  if (!error) return;
+  const code = String((error as any)?.code || '');
+  if (code === '42P01') {
+    // Keep cancellation resilient when this optional table is not migrated yet.
+    return;
+  }
+  throw error;
 }
 
 function paymentCallbackUrl(origin: string): string {
@@ -475,6 +538,7 @@ async function markTransaction(input: {
   metadata?: Record<string, unknown>;
 }) {
   const { supabase } = input;
+  const updatedAt = new Date().toISOString();
   await supabase.from('billing_transactions').upsert(
     {
       user_id: input.userId,
@@ -486,6 +550,7 @@ async function markTransaction(input: {
       raw_event_json: input.rawEventJson || null,
       idempotency_key: input.idempotencyKey,
       metadata: input.metadata || {},
+      updated_at: updatedAt,
     },
     { onConflict: 'reference' }
   );
@@ -515,6 +580,9 @@ export async function createCheckout(input: {
   }
 
   const paymentMethod = normalizePaymentMethod(paymentMethodRaw);
+  if (!paymentMethod) {
+    throw new BillingApiError(400, 'invalid_payment_method', 'Payment method must be subscription or transfer.');
+  }
   const plan = await loadBillingPlan(supabase, planKey);
   if (!plan) {
     throw new BillingApiError(404, 'plan_not_available', 'Selected plan is not available.');
@@ -630,6 +698,7 @@ export async function createCheckout(input: {
       user_id: userId,
       email: email.toLowerCase(),
       metadata: {},
+      updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' }
   );
@@ -929,7 +998,35 @@ export async function getBillingStatus(
     };
   }
 
-  const currentSubscription = subscriptions?.[0] || null;
+  let currentSubscription = subscriptions?.[0] || null;
+  const subscriptionStatus = String(currentSubscription?.status || '').trim().toLowerCase();
+  const subscriptionEndsAtMs = new Date(String(currentSubscription?.ends_at || '')).getTime();
+  const shouldMarkSubscriptionExpired =
+    !!currentSubscription &&
+    Number.isFinite(subscriptionEndsAtMs) &&
+    subscriptionEndsAtMs <= Date.now() &&
+    (subscriptionStatus === 'active' || subscriptionStatus === 'trialing' || subscriptionStatus === 'non_renewing');
+
+  if (shouldMarkSubscriptionExpired) {
+    const updatedAt = new Date().toISOString();
+    const { error: expireError } = await supabase
+      .from('billing_subscriptions')
+      .update({
+        status: 'expired',
+        cancel_at_period_end: true,
+        updated_at: updatedAt,
+      })
+      .eq('user_id', userId);
+    if (!expireError) {
+      currentSubscription = {
+        ...(currentSubscription as any),
+        status: 'expired',
+        cancel_at_period_end: true,
+        updated_at: updatedAt,
+      } as any;
+    }
+  }
+
   const currentPlan = deriveNormalizedSubscriptionState({
     effectivePlan: effectiveEntitlements.plan,
     entitlementSource: effectiveEntitlements.entitlementSource,
@@ -987,9 +1084,25 @@ export async function cancelUserSubscription(
   outcome: 'scheduled' | 'already_scheduled' | 'no_subscription';
   message: string;
 }> {
+  const cancellationReason = normalizeCancellationReason(options?.reason);
+  if (cancellationReason.length < CANCELLATION_REASON_MIN_LENGTH) {
+    throw new BillingApiError(
+      400,
+      'invalid_cancellation_reason',
+      `Cancellation reason must be at least ${CANCELLATION_REASON_MIN_LENGTH} characters.`
+    );
+  }
+  if (cancellationReason.length > CANCELLATION_REASON_MAX_LENGTH) {
+    throw new BillingApiError(
+      400,
+      'invalid_cancellation_reason',
+      `Cancellation reason must be ${CANCELLATION_REASON_MAX_LENGTH} characters or fewer.`
+    );
+  }
+
   const { data: subscription, error } = await supabase
     .from('billing_subscriptions')
-    .select('paystack_subscription_code,paystack_email_token,status,metadata,cancel_at_period_end')
+    .select('id,plan_key,paystack_subscription_code,paystack_email_token,status,metadata,cancel_at_period_end,ends_at')
     .eq('user_id', userId)
     .order('updated_at', { ascending: false })
     .limit(1)
@@ -1042,7 +1155,8 @@ export async function cancelUserSubscription(
     ...metadata,
     canceled_at: canceledAt,
     canceled_by: 'user',
-    cancel_reason: asTrimmedString(options?.reason) || null,
+    cancel_reason: cancellationReason,
+    cancel_reason_length: cancellationReason.length,
     gateway_cancel_mode: resolution.mode,
     gateway_cancel_reason: resolution.reason,
   };
@@ -1053,13 +1167,153 @@ export async function cancelUserSubscription(
       status: 'non_renewing',
       cancel_at_period_end: true,
       metadata: nextMetadata,
+      updated_at: canceledAt,
     })
     .eq('user_id', userId);
   if (updateError) throw updateError;
 
+  const subscriptionIdRaw = Number((subscription as any)?.id);
+  await persistCancellationFeedback({
+    supabase,
+    userId,
+    subscriptionId: Number.isFinite(subscriptionIdRaw) ? subscriptionIdRaw : null,
+    planKey: asTrimmedString((subscription as any)?.plan_key) || null,
+    subscriptionStatus: asTrimmedString((subscription as any)?.status) || null,
+    gateway,
+    cancellationMode: resolution.mode,
+    cancellationReason,
+    context: {
+      gateway_cancel_reason: resolution.reason,
+      ends_at: (subscription as any)?.ends_at || null,
+    },
+  });
+
+  void writeEntitlementAudit(supabase, {
+    userId,
+    action: 'subscription_cancel_requested',
+    before: {
+      status: (subscription as any)?.status || null,
+      cancel_at_period_end: (subscription as any)?.cancel_at_period_end === true,
+    },
+    after: {
+      status: 'non_renewing',
+      cancel_at_period_end: true,
+    },
+    source: 'billing_cancel',
+    traceId: `cancel-${userId}-${Date.now()}`,
+  }).catch(() => undefined);
+
   return {
     outcome: 'scheduled',
     message: 'Auto-renew has been turned off for this subscription.',
+  };
+}
+
+export async function resumeUserSubscription(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<{
+  outcome: 'resumed' | 'already_renewing' | 'not_resumable' | 'no_subscription';
+  message: string;
+}> {
+  const { data: subscription, error } = await supabase
+    .from('billing_subscriptions')
+    .select('id,plan_key,paystack_subscription_code,paystack_email_token,status,metadata,cancel_at_period_end')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw error;
+  if (!subscription) {
+    return {
+      outcome: 'no_subscription',
+      message: 'No subscription was found for this account.',
+    };
+  }
+
+  const code = String((subscription as any).paystack_subscription_code || '').trim();
+  const token = String((subscription as any).paystack_email_token || '').trim();
+  const metadata = ((subscription as any)?.metadata || {}) as Record<string, unknown>;
+  const gateway = resolveGatewayFromMetadata(metadata);
+  const resolution = resolveSubscriptionResumption({
+    status: (subscription as any)?.status,
+    cancelAtPeriodEnd: (subscription as any)?.cancel_at_period_end === true,
+    gateway,
+    paystackSubscriptionCode: code,
+    paystackEmailToken: token,
+  });
+
+  if (resolution.mode === 'noop') {
+    if (resolution.reason === 'already_renewing') {
+      return {
+        outcome: 'already_renewing',
+        message: 'Auto-renew is already active for this subscription.',
+      };
+    }
+    if (resolution.reason === 'already_stopped') {
+      return {
+        outcome: 'not_resumable',
+        message: 'This subscription has already ended. Please start a new checkout to subscribe again.',
+      };
+    }
+    return {
+      outcome: 'no_subscription',
+      message: 'No subscription was found for this account.',
+    };
+  }
+
+  if (resolution.mode === 'remote_resume') {
+    try {
+      await enablePaystackSubscription({ code, token });
+    } catch (error) {
+      if (!isGatewayAlreadyResumedError(error)) {
+        throw new BillingApiError(
+          502,
+          'subscription_resume_failed',
+          'The billing provider could not restore auto-renew right now.'
+        );
+      }
+    }
+  }
+
+  const resumedAt = new Date().toISOString();
+  const nextMetadata = {
+    ...metadata,
+    resumed_at: resumedAt,
+    resumed_by: 'user',
+    gateway_resume_mode: resolution.mode,
+    gateway_resume_reason: resolution.reason,
+  };
+
+  const { error: updateError } = await supabase
+    .from('billing_subscriptions')
+    .update({
+      status: 'active',
+      cancel_at_period_end: false,
+      metadata: nextMetadata,
+      updated_at: resumedAt,
+    })
+    .eq('user_id', userId);
+  if (updateError) throw updateError;
+
+  void writeEntitlementAudit(supabase, {
+    userId,
+    action: 'subscription_resume_requested',
+    before: {
+      status: (subscription as any)?.status || null,
+      cancel_at_period_end: (subscription as any)?.cancel_at_period_end === true,
+    },
+    after: {
+      status: 'active',
+      cancel_at_period_end: false,
+    },
+    source: 'billing_resume',
+    traceId: `resume-${userId}-${Date.now()}`,
+  }).catch(() => undefined);
+
+  return {
+    outcome: 'resumed',
+    message: 'Auto-renew has been restored for your subscription.',
   };
 }
 
@@ -1150,6 +1404,7 @@ async function handleSuccessfulPayment(input: {
               gateway,
               latest_transaction_id: transactionId,
             },
+      updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' }
   );
@@ -1157,7 +1412,7 @@ async function handleSuccessfulPayment(input: {
   const plan = await loadBillingPlan(supabase, planKey);
   if (!plan) return;
 
-  const chargeMethod = normalizePaymentMethod(metadata.payment_method);
+  const chargeMethod = normalizePaymentMethod(metadata.payment_method) || 'subscription';
   const grant = await grantProEntitlement({
     supabase,
     userId,
@@ -1317,6 +1572,7 @@ async function processSubscriptionEvent(input: {
         ...data,
         gateway: 'paystack',
       },
+      updated_at: new Date().toISOString(),
     },
     { onConflict: 'user_id' }
   );
@@ -1529,7 +1785,7 @@ export async function reconcileBilling(
 
   await supabase
     .from('billing_subscriptions')
-    .update({ status: 'expired' })
+    .update({ status: 'expired', updated_at: nowIso })
     .in('status', ['active', 'non_renewing'])
     .eq('cancel_at_period_end', true)
     .lt('ends_at', nowIso);

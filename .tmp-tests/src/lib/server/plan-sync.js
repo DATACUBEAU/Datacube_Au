@@ -19,6 +19,7 @@ function isMissingRpcError(error) {
 function normalizeSubscription(input) {
     if (!input)
         return {};
+    const nowIso = new Date().toISOString();
     return {
         plan_key: input.planKey ?? null,
         status: input.status ?? null,
@@ -28,6 +29,7 @@ function normalizeSubscription(input) {
         ends_at: input.endsAt ?? null,
         cancel_at_period_end: input.cancelAtPeriodEnd === true,
         metadata: input.metadata || {},
+        updated_at: nowIso,
     };
 }
 async function applyFallbackPlanTransition(supabase, input) {

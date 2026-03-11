@@ -1,4 +1,5 @@
 export type SubscriptionCancelMode = 'noop' | 'remote_cancel' | 'local_schedule';
+export type SubscriptionResumeMode = 'noop' | 'remote_resume' | 'local_resume';
 
 export type SubscriptionCancelResolution = {
   mode: SubscriptionCancelMode;
@@ -7,6 +8,17 @@ export type SubscriptionCancelResolution = {
     | 'already_non_renewing'
     | 'already_stopped'
     | 'remote_cancel_supported'
+    | 'missing_gateway_credentials'
+    | 'unsupported_gateway';
+};
+
+export type SubscriptionResumeResolution = {
+  mode: SubscriptionResumeMode;
+  reason:
+    | 'no_subscription'
+    | 'already_renewing'
+    | 'already_stopped'
+    | 'remote_resume_supported'
     | 'missing_gateway_credentials'
     | 'unsupported_gateway';
 };
@@ -68,6 +80,61 @@ export function resolveSubscriptionCancellation(input: {
 
   return {
     mode: 'local_schedule',
+    reason: 'missing_gateway_credentials',
+  };
+}
+
+export function resolveSubscriptionResumption(input: {
+  status?: unknown;
+  cancelAtPeriodEnd?: boolean;
+  gateway?: unknown;
+  paystackSubscriptionCode?: unknown;
+  paystackEmailToken?: unknown;
+}): SubscriptionResumeResolution {
+  const status = normalizeText(input.status);
+  if (!status) {
+    return {
+      mode: 'noop',
+      reason: 'no_subscription',
+    };
+  }
+
+  if (STOPPED_STATUSES.has(status)) {
+    return {
+      mode: 'noop',
+      reason: 'already_stopped',
+    };
+  }
+
+  if (input.cancelAtPeriodEnd !== true && status !== 'non_renewing') {
+    return {
+      mode: 'noop',
+      reason: 'already_renewing',
+    };
+  }
+
+  const gateway = normalizeText(input.gateway) || 'paystack';
+  const hasPaystackCredentials = Boolean(
+    String(input.paystackSubscriptionCode || '').trim() &&
+    String(input.paystackEmailToken || '').trim()
+  );
+
+  if (gateway === 'paystack' && hasPaystackCredentials) {
+    return {
+      mode: 'remote_resume',
+      reason: 'remote_resume_supported',
+    };
+  }
+
+  if (gateway !== 'paystack') {
+    return {
+      mode: 'local_resume',
+      reason: 'unsupported_gateway',
+    };
+  }
+
+  return {
+    mode: 'local_resume',
     reason: 'missing_gateway_credentials',
   };
 }

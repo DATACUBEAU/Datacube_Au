@@ -355,6 +355,9 @@ function withAliases(limits: CanonicalPlanLimits): Record<string, number> {
 function normalizePlanMetadata(plan: EffectivePlanCode, input: unknown): PlanMetadata {
   const source = asRecord(input);
   const defaults = DEFAULT_PLAN_METADATA[plan];
+  const minPaidRetentionDays = plan === 'pro' || plan === 'premium' ? PAID_PRO_PLAN_EXPIRATION_DAYS : 0;
+  const retentionDays = clampNonNegativeNumber(source.retention_days ?? source.retentionDays, defaults.retention_days);
+  const expirationDays = clampNonNegativeNumber(source.expiration_days ?? source.expirationDays, defaults.expiration_days);
   return {
     label: asTrimmedString(source.label, defaults.label),
     description: asTrimmedString(source.description, defaults.description),
@@ -371,8 +374,8 @@ function normalizePlanMetadata(plan: EffectivePlanCode, input: unknown): PlanMet
     cta_label: asTrimmedString(source.cta_label ?? source.ctaLabel, defaults.cta_label),
     cta_href: asTrimmedString(source.cta_href ?? source.ctaHref, defaults.cta_href),
     sort_order: clampNonNegativeNumber(source.sort_order ?? source.sortOrder, defaults.sort_order),
-    retention_days: clampNonNegativeNumber(source.retention_days ?? source.retentionDays, defaults.retention_days),
-    expiration_days: clampNonNegativeNumber(source.expiration_days ?? source.expirationDays, defaults.expiration_days),
+    retention_days: Math.max(minPaidRetentionDays, retentionDays),
+    expiration_days: Math.max(minPaidRetentionDays, expirationDays),
   };
 }
 

@@ -7,6 +7,7 @@ import {
   type EffectivePlanCode,
   type PlanMetadata,
 } from '@/lib/server/au-limits';
+import { PAID_PRO_PLAN_EXPIRATION_DAYS } from '@/lib/plans/subscription-policy';
 
 export const runtime = 'nodejs';
 
@@ -34,6 +35,7 @@ function normalizeFeatureBullets(value: unknown, fallback: string[]): string[] {
 function normalizeMetadata(plan: EffectivePlanCode, raw: unknown): PlanMetadata {
   const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {};
   const defaults = DEFAULT_PLAN_METADATA[plan];
+  const minPaidDays = plan === 'pro' || plan === 'premium' ? PAID_PRO_PLAN_EXPIRATION_DAYS : 0;
 
   const asInt = (value: unknown, fallback: number | null) => {
     if (value === null || value === undefined || value === '') return fallback;
@@ -47,7 +49,7 @@ function normalizeMetadata(plan: EffectivePlanCode, raw: unknown): PlanMetadata 
     return next || fallback;
   };
 
-  return {
+  const normalized: PlanMetadata = {
     label: asText(source.label, defaults.label),
     description: asText(source.description, defaults.description),
     price_display: asText(source.price_display ?? source.priceDisplay, defaults.price_display),
@@ -64,6 +66,11 @@ function normalizeMetadata(plan: EffectivePlanCode, raw: unknown): PlanMetadata 
     retention_days: asInt(source.retention_days ?? source.retentionDays, defaults.retention_days) ?? defaults.retention_days,
     expiration_days: asInt(source.expiration_days ?? source.expirationDays, defaults.expiration_days) ?? defaults.expiration_days,
   };
+  if (minPaidDays > 0) {
+    normalized.retention_days = Math.max(minPaidDays, normalized.retention_days);
+    normalized.expiration_days = Math.max(minPaidDays, normalized.expiration_days);
+  }
+  return normalized;
 }
 
 export async function GET(req: NextRequest) {

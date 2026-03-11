@@ -102,6 +102,35 @@ async function main() {
         strict_1.default.equal(result.mode, 'noop');
         strict_1.default.equal(result.reason, 'no_subscription');
     });
+    await run('non-renewing paystack subscriptions with credentials use remote resumption', () => {
+        const result = (0, subscription_cancel_js_1.resolveSubscriptionResumption)({
+            status: 'non_renewing',
+            cancelAtPeriodEnd: true,
+            gateway: 'paystack',
+            paystackSubscriptionCode: 'SUB_123',
+            paystackEmailToken: 'TOKEN_123',
+        });
+        strict_1.default.equal(result.mode, 'remote_resume');
+        strict_1.default.equal(result.reason, 'remote_resume_supported');
+    });
+    await run('already-renewing subscriptions are idempotent no-ops for resume', () => {
+        const result = (0, subscription_cancel_js_1.resolveSubscriptionResumption)({
+            status: 'active',
+            cancelAtPeriodEnd: false,
+            gateway: 'paystack',
+        });
+        strict_1.default.equal(result.mode, 'noop');
+        strict_1.default.equal(result.reason, 'already_renewing');
+    });
+    await run('non-paystack resume requests safely fall back to local resumption', () => {
+        const result = (0, subscription_cancel_js_1.resolveSubscriptionResumption)({
+            status: 'non_renewing',
+            cancelAtPeriodEnd: true,
+            gateway: 'flutterwave',
+        });
+        strict_1.default.equal(result.mode, 'local_resume');
+        strict_1.default.equal(result.reason, 'unsupported_gateway');
+    });
     if (failed > 0) {
         process.exit(1);
     }

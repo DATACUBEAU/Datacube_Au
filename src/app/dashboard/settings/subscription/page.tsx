@@ -102,6 +102,7 @@ export default function SubscriptionPage() {
   // Loading states
   const [loadingPlan, setLoadingPlan] = useState<string | null>(null); // 'weekly', 'monthly'
   const [isCancelling, setIsCancelling] = useState(false);
+  const [isResubscribing, setIsResubscribing] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
   const [billingEnabled, setBillingEnabled] = useState(false);
@@ -157,7 +158,10 @@ export default function SubscriptionPage() {
   const premiumPlanCatalog = catalogByPlan.premium || null;
   const currentPaidPlanCatalog = currentPlan.managedPlan === 'premium' ? premiumPlanCatalog : proPlanCatalog;
   const freeExpirationDays = Number(freePlanCatalog?.metadata?.expiration_days || FREE_PLAN_EXPIRATION_DAYS);
-  const proExpirationDays = Number(proPlanCatalog?.metadata?.expiration_days || PAID_PRO_PLAN_EXPIRATION_DAYS);
+  const catalogProExpirationDays = Number(proPlanCatalog?.metadata?.expiration_days || 0);
+  const proExpirationDays = Number.isFinite(catalogProExpirationDays)
+      ? Math.max(PAID_PRO_PLAN_EXPIRATION_DAYS, catalogProExpirationDays)
+      : PAID_PRO_PLAN_EXPIRATION_DAYS;
   const freeRetentionLabel = `Document expiration: ${formatExpirationWindowLabel(freeExpirationDays)}`;
   const proRetentionLabel = `Document expiration: ${formatExpirationWindowLabel(proExpirationDays)}`;
   const currentExpirationDays = resolvePlanExpirationDays({
@@ -746,6 +750,48 @@ export default function SubscriptionPage() {
       }
   };
 
+  const handleResubscribe = async () => {
+      if (!isOnline) {
+          toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+          return;
+      }
+      if (!session?.access_token) {
+          toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
+          return;
+      }
+
+      setIsResubscribing(true);
+      try {
+          const { data } = await billingRequest<{ outcome?: string; message?: string }>('resubscribe', {
+              method: 'POST',
+              body: JSON.stringify({}),
+          });
+          const outcome = String(data?.outcome || '');
+          if (outcome === 'not_resumable') {
+              toast({
+                  title: 'Subscription ended',
+                  description: data?.message || 'This subscription has ended. Please start a new checkout.',
+              });
+          } else if (outcome === 'already_renewing') {
+              toast({
+                  title: 'Auto-renew active',
+                  description: data?.message || 'Auto-renew is already active for this subscription.',
+              });
+          } else {
+              toast({
+                  title: 'Auto-renew restored',
+                  description: data?.message || 'Your subscription will now renew automatically.',
+              });
+          }
+          await fetchBillingStatus();
+      } catch (e: any) {
+          const message = String(e?.payload?.message || e?.message || 'Failed to restore auto-renew.');
+          toast({ variant: 'destructive', title: 'Error', description: message });
+      } finally {
+          setIsResubscribing(false);
+      }
+  };
+
   const formatDate = (dateStr: string) => {
       if (!dateStr) return '';
       return new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
@@ -1000,6 +1046,9 @@ export default function SubscriptionPage() {
       );
   }
 
+  const isAutoRenewActive = subscription?.status === 'active' && subscription?.cancel_at_period_end !== true;
+  const canResumeAutoRenew = subscription?.cancel_at_period_end === true || subscription?.status === 'non_renewing';
+
   const activeBillingSummary = (hasPaidProAccess || hasPremiumAccess) ? (
       <div className="mb-8 max-w-4xl mx-auto space-y-8">
           <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
@@ -1043,7 +1092,7 @@ export default function SubscriptionPage() {
                       <p className="mb-4 text-xs text-muted-foreground">
                           Document expiration window: {formatExpirationWindowLabel(currentExpirationDays)}
                       </p>
-                      {subscription?.status === 'active' && !hasPremiumAccess ? (
+                      {isAutoRenewActive && !hasPremiumAccess ? (
                           <OfflineGuard>
                               <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
                                   <DialogTrigger asChild>
@@ -1079,12 +1128,20 @@ export default function SubscriptionPage() {
                           <Button variant="outline" className="w-full" disabled>
                               Manage Premium via Support
                           </Button>
-                      ) : (
+                      ) : canResumeAutoRenew ? (
                           <OfflineGuard>
-                              <Button className="w-full bg-primary hover:bg-primary/90" onClick={() => setTier('free')}>
-                                  Re-subscribe
+                              <Button
+                                  className="w-full bg-primary hover:bg-primary/90"
+                                  onClick={() => void handleResubscribe()}
+                                  disabled={isResubscribing}
+                              >
+                                  {isResubscribing ? <Loader2 className="animate-spin h-4 w-4" /> : 'Re-subscribe'}
                               </Button>
                           </OfflineGuard>
+                      ) : (
+                          <Button variant="outline" className="w-full" disabled>
+                              Subscription managed by gateway
+                          </Button>
                       )}
                   </div>
               </div>
