@@ -20,6 +20,7 @@ export type DocumentReferenceStrategy =
   | 'active_document'
   | 'last_uploaded_document'
   | 'last_retrieved_document'
+  | 'latest_successful_document'
   | 'single_document_scope'
   | 'none';
 
@@ -129,7 +130,14 @@ export function hasDocumentScopedReference(message: string): boolean {
     /\bthis pdf\b/,
     /\bthe document\b/,
     /\bthe file\b/,
+    /\bthe uploaded file\b/,
+    /\buploaded file\b/,
     /\bthe pdf\b/,
+    /\bthis textbook\b/,
+    /\bthe textbook\b/,
+    /\bthis past question\b/,
+    /\bthe past question\b/,
+    /\bpast questions\b/,
     /\bsummarize this\b/,
     /\bsummarise this\b/,
     /\boverview of this\b/,

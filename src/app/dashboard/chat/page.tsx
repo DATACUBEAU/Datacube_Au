@@ -80,7 +80,7 @@ import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
 
-import { sendChatMessage, type ChatMessage } from '@/lib/api/chat';
+import { type ChatMessage } from '@/lib/api/chat';
 
 // Add TypingAnimation component
 type TypingAnimationProps = { content: string; shouldAnimate?: boolean };
@@ -123,13 +123,18 @@ interface StoredChatHistory {
   messages: ChatMessage[];
 }
 
-const getLocalStorageKey = (userId: string, docId: string) => `chat_prompt_starters_${userId}_${docId}`;
-const getChatHistoryKey = (userId: string, docId: string) => `chat_history_${userId}_${docId}`;
 const getSummaryModeKey = (userId: string, docId: string) => `chat_summary_mode_${userId}_${docId}`;
 const getInputKey = (userId: string, docId: string) => `chat_input_${userId}_${docId}`;
 const getGuideKey = (userId: string) => `au_chat_guide_${userId}`;
 const defaultGuideText =
   "Use this AU Guide to tell the assistant how you like to study. For example, ask for short step-by-step explanations, exam-focused answers, or extra context. You can edit this text any time and AU will follow it when answering your questions.";
+const QUICK_ACTION_PROMPTS = [
+  'Summarize this document.',
+  'What is this document about?',
+  'Extract the key topics from this document.',
+  'Generate study questions from this document.',
+  'Analyze past question relevance for this textbook and linked past questions.',
+] as const;
 
 function sanitizeAnswer(text: any) {
   const raw = typeof text === 'string' ? text : (Array.isArray(text) ? text.join('\n') : String(text ?? ''));
@@ -215,15 +220,12 @@ export default function ChatPage() {
   const [promptStudioInput, setPromptStudioInput] = useState('');
   const [generatedPrompts, setGeneratedPrompts] = useState<string[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [promptStarters, setPromptStarters] = useState<string[]>([]);
-  const [isFetchingPrompts, setIsFetchingPrompts] = useState(false);
   const [isGuideOpen, setIsGuideOpen] = useState(false);
   const [guideText, setGuideText] = useState(defaultGuideText);
   const [browsingMode, setBrowsingMode] = useState(false);
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fetchingPromptsRef = useRef(false);
 
   const [summaryMode, setSummaryMode] = useState<'short' | 'mid' | 'detailed' | null>(null);
   const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; role: 'user' | 'assistant' } | null>(null);
@@ -349,13 +351,17 @@ export default function ChatPage() {
   }, [guideText, user]);
 
   const selectedDoc = useMemo(() => documentList.find(doc => doc.id === selectedDocId), [documentList, selectedDocId]);
+  const completedDocumentList = useMemo(
+    () => documentList.filter((doc) => doc.status === 'completed'),
+    [documentList],
+  );
   const selectedDocName = useMemo(() => selectedDoc?.fileName, [selectedDoc]);
   const lastUploadedDocument = useMemo(
     () =>
-      documentList
+      completedDocumentList
         .slice()
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0] ?? null,
-    [documentList],
+    [completedDocumentList],
   );
   const { 
     history: currentChatHistory, 
@@ -371,7 +377,7 @@ export default function ChatPage() {
   } = useAuChat(selectedDocId, {
     activeDocumentName: selectedDocName ?? null,
     lastUploadedDocumentId: lastUploadedDocument?.id ?? null,
-    documentCountInScope: documentList.length,
+    documentCountInScope: completedDocumentList.length,
   });
 
   useEffect(() => {
@@ -486,7 +492,6 @@ export default function ChatPage() {
       setSelectedDocId(newSelectedId);
       updateUrlParams(newSelectedId);
       setCurrentChatHistory([]);
-      setPromptStarters([]);
       setTimeout(() => setIsSwitchingDocs(false), 100);
     }
   }, [selectedDocId, updateUrlParams, setCurrentChatHistory]);
@@ -628,66 +633,6 @@ export default function ChatPage() {
       }
   }, [handleScroll]);
 
-  const fetchPromptStarters = useCallback(async () => {
-    if (!selectedDocId || !selectedDocName || !user || !session?.access_token || !canChat || fetchingPromptsRef.current) return;
-    fetchingPromptsRef.current = true;
-    setIsFetchingPrompts(true);
-    setPromptStarters([]);
-    try {
-      const documentContent = await getDocumentContent(selectedDocId);
-      if (!documentContent) return;
-      const data = await sendChatMessage({
-        selectedDocId,
-        doc_id: selectedDocId,
-        user_input: `Based on the document "${selectedDocName}", generate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.`,
-      });
-      let prompts: string[] = [];
-      try {
-        const parsed = JSON.parse(data.answer);
-        prompts = Array.isArray(parsed) ? parsed : [];
-      } catch {
-        // Fallback to legacy function if smart generation fails or returns plain text
-        // Don't call another function here to avoid recursive failures or more errors.
-        // Just extract bullet points if possible or default to empty.
-        prompts = []; 
-      }
-      
-      setPromptStarters(prompts);
-      localStorage.setItem(getLocalStorageKey(user.id, selectedDocId), JSON.stringify(prompts));
-    } catch (error) {
-      // Silent fail for prompts is better than crashing or noisy toasts
-      logOnce('warn', 'chat:prompt_starters:failed', '[fetchPromptStarters] Failed to generate prompts', error);
-      setPromptStarters([]);
-    } finally {
-      setIsFetchingPrompts(false);
-      fetchingPromptsRef.current = false;
-    }
-  }, [selectedDocId, selectedDocName, user, session?.access_token, getDocumentContent, canChat]);
-
-  const PROMPT_GENERATED_KEY = (userId: string, docId: string) => `au_prompt_generated_${userId}_${docId}`;
-
-  useEffect(() => {
-    if (!selectedDocId || !user) {
-      setPromptStarters([]);
-      return;
-    }
-
-    const generatedKey = PROMPT_GENERATED_KEY(user.id, selectedDocId);
-    if (localStorage.getItem(generatedKey) === 'true') {
-      return;
-    }
-
-    const storedPrompts = localStorage.getItem(getLocalStorageKey(user.id, selectedDocId));
-    if (storedPrompts) {
-      setPromptStarters(JSON.parse(storedPrompts));
-      localStorage.setItem(generatedKey, 'true');
-    } else if (canChat) {
-      fetchPromptStarters().finally(() => {
-        localStorage.setItem(generatedKey, 'true');
-      });
-    }
-  }, [selectedDocId, user, canChat, fetchPromptStarters]);
-
   const handleEnhancePrompt = async () => {
     if (!promptStudioInput.trim() || !selectedDocId || isGenerating || !user) return;
     if (!canChat) {
@@ -809,8 +754,6 @@ export default function ChatPage() {
       setInput('');
     }
 
-    setPromptStarters([]);
-    
     // Construct message with reply context if present
     let finalMessage = currentInput;
     if (replyingTo) {
@@ -1035,14 +978,14 @@ export default function ChatPage() {
 
               {currentChatHistory.length === 0 && !isResponding && (
                 <div className="flex h-full flex-col items-center justify-center pt-16">
-                  {isLoading || isFetchingPrompts ? (
+                  {isLoading ? (
                     <div className="flex flex-col items-center justify-center text-center">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <p className="mt-4 text-muted-foreground">{selectedDocName ? `Generating ideas for ${selectedDocName}...` : 'Loading...'}</p>
+                      <p className="mt-4 text-muted-foreground">{selectedDocName ? `Loading ${selectedDocName}...` : 'Loading...'}</p>
                     </div>
-                  ) : promptStarters.length > 0 ? (
+                  ) : selectedDocId ? (
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                      {promptStarters.map((prompt, i) => (
+                      {QUICK_ACTION_PROMPTS.map((prompt, i) => (
                         <OfflineGuard key={i}>
                           <button onClick={(e) => handleSendMessage(e as unknown as React.FormEvent, prompt)} className="group w-full flex items-start justify-between rounded-lg bg-muted p-4 text-left text-sm transition-all hover:-translate-y-1 hover:bg-secondary">
                             <p>{prompt}</p>
@@ -1052,9 +995,7 @@ export default function ChatPage() {
                       ))}
                     </div>
                   ) : (
-                    <div className="text-center text-muted-foreground">
-                      {selectedDocId ? <p>Ask a question about {selectedDocName} to get started.</p> : <p>Select a document above to begin.</p>}
-                    </div>
+                    <div className="text-center text-muted-foreground"><p>Select a document above to begin.</p></div>
                   )}
                 </div>
               )}
