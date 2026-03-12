@@ -178,11 +178,30 @@ function tryParseJson(raw: string): any | null {
   }
 }
 
+function inferJsonPayload(raw: string): any | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const first = trimmed[0];
+  const looksJson =
+    first === '{' ||
+    first === '[' ||
+    first === '"' ||
+    first === '-' ||
+    (first >= '0' && first <= '9') ||
+    first === 't' ||
+    first === 'f' ||
+    first === 'n';
+
+  if (!looksJson) return null;
+  return tryParseJson(trimmed);
+}
+
 async function parseErrorPayload(response: Response): Promise<{ details: unknown; raw: string }> {
   const raw = await response.text().catch(() => '');
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-  if (contentType.includes('application/json')) {
-    const parsed = tryParseJson(raw);
+  const parsed = inferJsonPayload(raw);
+  if (contentType.includes('application/json') || parsed !== null) {
     return { details: parsed ?? raw, raw };
   }
   return { details: raw, raw };
@@ -348,9 +367,12 @@ function buildFeatureSourceTexts(functionName: string, body: any): Array<string 
 }
 
 async function parseJsonClone(response: Response): Promise<any | null> {
+  const raw = await response.clone().text().catch(() => '');
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-  if (!contentType.includes('application/json')) return null;
-  return response.clone().json().catch(() => null);
+  if (contentType.includes('application/json')) {
+    return inferJsonPayload(raw);
+  }
+  return inferJsonPayload(raw);
 }
 
 function withDebugHeaders(
@@ -442,9 +464,9 @@ async function relaySuccessfulResponse(
     };
   }
 
-  if (isJsonContentType(contentType)) {
-    const text = rawBuffer.toString('utf8');
-    const parsed = tryParseJson(text);
+  const text = rawBuffer.toString('utf8');
+  const parsed = inferJsonPayload(text);
+  if (isJsonContentType(contentType) || parsed !== null) {
     if (parsed !== null) {
       outHeaders.set('Content-Type', 'application/json; charset=utf-8');
       return {

@@ -45,6 +45,7 @@ export function ConexAccessControl() {
   const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const getAuthorizedHeaders = useCallback(async (base?: HeadersInit) => {
     const token = await getSupabaseAccessToken();
@@ -58,6 +59,7 @@ export function ConexAccessControl() {
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const headers = await getAuthorizedHeaders({ Accept: 'application/json' });
       const res = await fetch('/conex/users', {
@@ -72,10 +74,17 @@ export function ConexAccessControl() {
       }
 
       setUsers(Array.isArray((payload as ConexUsersResponse).users) ? (payload as ConexUsersResponse).users : []);
+      if (process.env.NODE_ENV !== 'production') {
+        console.debug('[ConexAccessControl] loaded users', {
+          count: Array.isArray((payload as ConexUsersResponse).users) ? (payload as ConexUsersResponse).users.length : 0,
+        });
+      }
     } catch (error: any) {
+      const message = error?.message || 'Unable to load Conex access users.';
+      setLoadError(message);
       toast({
         title: 'Access list error',
-        description: error?.message || 'Unable to load Conex access users.',
+        description: message,
         variant: 'destructive',
       });
     } finally {
@@ -169,6 +178,14 @@ export function ConexAccessControl() {
           <div className="flex items-center justify-center py-8 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin mr-2" />
             Loading Conex access users...
+          </div>
+        ) : loadError ? (
+          <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">
+            <div>{loadError}</div>
+            <Button type="button" variant="outline" size="sm" className="mt-3" onClick={() => loadUsers().catch(() => {})}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Retry
+            </Button>
           </div>
         ) : filteredUsers.length === 0 ? (
           <div className="py-6 text-sm text-muted-foreground">No users found.</div>

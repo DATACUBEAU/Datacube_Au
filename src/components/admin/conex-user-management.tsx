@@ -128,6 +128,7 @@ export function ConexUserManagement() {
   const pageSize = 25;
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
@@ -169,6 +170,7 @@ export function ConexUserManagement() {
       const silent = Boolean(opts?.silent);
       if (!silent) setLoadingUsers(true);
       if (silent) setRefreshing(true);
+      if (!silent) setLoadError(null);
 
       try {
         const params = new URLSearchParams({
@@ -191,6 +193,16 @@ export function ConexUserManagement() {
         setTotalUsers(Number(payload.totalUsers || 0));
         setFilteredTotal(Number(payload.filteredTotal || 0));
         setSourceMode(payload.source === 'au_users_fallback' ? 'au_users_fallback' : 'auth_admin');
+        setLoadError(null);
+
+        if (process.env.NODE_ENV !== 'production') {
+          console.debug('[ConexUserManagement] loaded users', {
+            count: nextUsers.length,
+            totalUsers: Number(payload.totalUsers || 0),
+            filteredTotal: Number(payload.filteredTotal || 0),
+            source: payload.source,
+          });
+        }
 
         if (nextUsers.length === 0) {
           setSelectedUserId(null);
@@ -199,9 +211,11 @@ export function ConexUserManagement() {
           setSelectedUserId(nextUsers[0].user_id);
         }
       } catch (error: any) {
+        const message = error?.message || 'Unable to load users.';
+        setLoadError(message);
         toast({
           title: 'User list failed',
-          description: error?.message || 'Unable to load users.',
+          description: message,
           variant: 'destructive',
         });
       } finally {
@@ -547,6 +561,20 @@ export function ConexUserManagement() {
 
   return (
     <div className="space-y-4">
+      {loadError ? (
+        <Card className="border-destructive/30 bg-destructive/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">User Management Load Failed</CardTitle>
+            <CardDescription className="text-destructive">{loadError}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button type="button" variant="outline" size="sm" onClick={() => fetchUsers().catch(() => {})}>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Retry
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
       {isReadOnlyMode && (
         <Card className="border-yellow-500/40 bg-yellow-50/50 dark:bg-yellow-900/10">
           <CardHeader className="pb-2">

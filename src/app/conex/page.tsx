@@ -181,6 +181,51 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
   };
 }
 
+function readAdminPayload<T = Record<string, unknown>>(response: Response): T {
+  const payload = (response as any)?.data;
+  return (payload && typeof payload === 'object' ? payload : {}) as T;
+}
+
+function readAdminError(response: Response, fallback: string): string {
+  const payload = readAdminPayload<any>(response);
+  const message =
+    payload?.message ||
+    payload?.error ||
+    payload?.details?.message ||
+    (typeof payload?.details === 'string' ? payload.details : '');
+
+  return typeof message === 'string' && message.trim() ? message.trim() : fallback;
+}
+
+function logConexDebug(scope: string, details: Record<string, unknown>) {
+  if (process.env.NODE_ENV !== 'production') {
+    console.debug(`[Conex:${scope}]`, details);
+  }
+}
+
+function AdminLoadError({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <Alert variant="destructive">
+      <AlertCircle className="h-4 w-4" />
+      <AlertTitle>Data Load Failed</AlertTitle>
+      <AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <span>{message}</span>
+        {onRetry ? (
+          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        ) : null}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 // Admin Dashboard Components
 const AdminBilling = ({ token }: { token: string }) => {
   const [config, setConfig] = useState<any>({});
@@ -188,6 +233,7 @@ const AdminBilling = ({ token }: { token: string }) => {
   const [planOptions, setPlanOptions] = useState<string[]>([...FALLBACK_PLAN_KEYS]);
   const [selectedPlan, setSelectedPlan] = useState<string>('free');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [savingConfig, setSavingConfig] = useState(false);
   const [savingPlanMetadata, setSavingPlanMetadata] = useState(false);
   const [savingPromoContent, setSavingPromoContent] = useState(false);
@@ -227,41 +273,52 @@ const AdminBilling = ({ token }: { token: string }) => {
     if (!opts?.silent) {
       setLoading(true);
     }
+    setLoadError(null);
 
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_conex_config' })
       });
-      if (res.ok) {
-        setConfig(normalizeConexConfig((res as any).config || {}));
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to load billing configuration.'));
       }
+      const configPayload = readAdminPayload<any>(res);
+      setConfig(normalizeConexConfig(configPayload?.config || {}));
 
       const planLimitsRes = await fetchAdmin('/api/admin/plan-limits', {
         method: 'GET',
       });
-      if (planLimitsRes.ok) {
-        const payload = (planLimitsRes as any).data || (planLimitsRes as any);
-        const parsed = parsePlanLimitsPayload(payload, LIMIT_FIELD_KEYS);
-        const parsedDefaults = parsePlanLimitsPayload(
-          { limitsByPlan: payload?.defaultLimitsByPlan || {} },
-          LIMIT_FIELD_KEYS,
-        );
-        const planKeys = orderPlanKeys([
-          ...FALLBACK_PLAN_KEYS,
-          ...parsed.planKeys,
-          ...parsedDefaults.planKeys,
-        ]);
-        setPlanOptions(planKeys);
-        setSelectedPlan((current) => (planKeys.includes(current) ? current : (planKeys[0] || 'free')));
+      if (!planLimitsRes.ok) {
+        throw new Error(readAdminError(planLimitsRes, 'Failed to load plan limits.'));
       }
+      const planLimitsPayload = readAdminPayload<any>(planLimitsRes);
+      const parsed = parsePlanLimitsPayload(planLimitsPayload, LIMIT_FIELD_KEYS);
+      const parsedDefaults = parsePlanLimitsPayload(
+        { limitsByPlan: planLimitsPayload?.defaultLimitsByPlan || {} },
+        LIMIT_FIELD_KEYS,
+      );
+      const planKeys = orderPlanKeys([
+        ...FALLBACK_PLAN_KEYS,
+        ...parsed.planKeys,
+        ...parsedDefaults.planKeys,
+      ]);
+      setPlanOptions(planKeys);
+      setSelectedPlan((current) => (planKeys.includes(current) ? current : (planKeys[0] || 'free')));
 
       const planMetadataRes = await fetchAdmin('/api/admin/plan-metadata', {
         method: 'GET',
       });
-      if (planMetadataRes.ok) {
-        const payload = ((planMetadataRes as any).data || (planMetadataRes as any)) as any;
-        const metadataByPlan = payload?.metadataByPlan || {};
+      if (!planMetadataRes.ok) {
+        if (!opts?.silent || !planMetadataDirtyRef.current) {
+          setPlanMetadataDraftByPlan(
+            Object.fromEntries(FALLBACK_PLAN_KEYS.map((plan) => [plan, normalizePlanMetadataDraft(plan, null)])) as PlanMetadataDraftByPlan,
+          );
+        }
+        throw new Error(readAdminError(planMetadataRes, 'Failed to load plan metadata.'));
+      } else {
+        const metadataPayload = readAdminPayload<any>(planMetadataRes);
+        const metadataByPlan = metadataPayload?.metadataByPlan || {};
         const draftByPlan = Object.fromEntries(
           orderPlanKeys([...FALLBACK_PLAN_KEYS, ...Object.keys(metadataByPlan || {})]).map((plan) => [
             plan,
@@ -271,10 +328,12 @@ const AdminBilling = ({ token }: { token: string }) => {
         if (!opts?.silent || !planMetadataDirtyRef.current) {
           setPlanMetadataDraftByPlan(draftByPlan);
         }
-      } else if (!opts?.silent || !planMetadataDirtyRef.current) {
-        setPlanMetadataDraftByPlan(
-          Object.fromEntries(FALLBACK_PLAN_KEYS.map((plan) => [plan, normalizePlanMetadataDraft(plan, null)])) as PlanMetadataDraftByPlan,
-        );
+      }
+
+      if (process.env.NODE_ENV !== 'production') {
+        logConexDebug('billing', {
+          planCount: planKeys.length,
+        });
       }
 
       const accessToken = await getSupabaseAccessToken();
@@ -293,6 +352,7 @@ const AdminBilling = ({ token }: { token: string }) => {
       }
 
     } catch (e: any) {
+        setLoadError(String(e?.message || 'Failed to load billing controls.'));
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
       setLoading(false);
@@ -397,11 +457,12 @@ const AdminBilling = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'update_conex_config', config: newConfig })
       });
-      if (res.ok) {
-          toast({ title: 'Saved', description: 'Billing configuration updated.' });
-          setConfig(normalizeConexConfig(newConfig));
-          void fetchConfig({ silent: true });
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to update billing configuration.'));
       }
+      toast({ title: 'Saved', description: 'Billing configuration updated.' });
+      setConfig(normalizeConexConfig(newConfig));
+      void fetchConfig({ silent: true });
     } catch (e: any) {
         toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
@@ -578,6 +639,7 @@ const AdminBilling = ({ token }: { token: string }) => {
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
+        {loadError ? <AdminLoadError message={loadError} onRetry={() => void fetchConfig()} /> : null}
         <Tabs defaultValue="config">
             <TabsList>
                 <TabsTrigger value="config">Configuration</TabsTrigger>
@@ -1365,6 +1427,7 @@ const AdminUsage = ({ token }: { token: string }) => {
   const [totalUsers, setTotalUsers] = useState(0);
   const [isUsingCachedData, setIsUsingCachedData] = useState(false);
   const [cachedAt, setCachedAt] = useState<number | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
   const [user] = useSupabaseUser();
@@ -1429,11 +1492,18 @@ const AdminUsage = ({ token }: { token: string }) => {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       if (!isOnline) {
         const cached = await readUsageCache();
         if (cached.data) {
           applyPayload(cached.data, { fromCache: true, cachedAt: cached.cachedAt });
+          logConexDebug('usage', {
+            source: 'cache',
+            count: Array.isArray(cached.data?.usage) ? cached.data.usage.length : 0,
+          });
+        } else {
+          setLoadError('You are offline and no cached usage data is available yet.');
         }
         return;
       }
@@ -1463,17 +1533,28 @@ const AdminUsage = ({ token }: { token: string }) => {
         },
       };
       applyPayload(payload);
+      logConexDebug('usage', {
+        source: 'live',
+        count: Array.isArray(payload.usage) ? payload.usage.length : 0,
+        totalCalls: Number(payload.stats?.totalCalls || 0),
+      });
       void writeUsageCache(payload);
     } catch (e) {
       const cached = await readUsageCache();
       if (cached.data) {
         applyPayload(cached.data, { fromCache: true, cachedAt: cached.cachedAt });
+        setLoadError(null);
+        logConexDebug('usage', {
+          source: 'cache-after-error',
+          count: Array.isArray(cached.data?.usage) ? cached.data.usage.length : 0,
+        });
       } else {
         console.error('[AdminUsage] fetch error:', e);
         const message =
           e instanceof Error && e.message.toLowerCase().includes('unauthorized')
             ? 'Session expired. Please sign in again, then re-open Conex.'
             : 'Failed to load usage dashboard.';
+        setLoadError(message);
         toast({ title: 'Error', description: message, variant: 'destructive' });
       }
     } finally {
@@ -1491,6 +1572,7 @@ const AdminUsage = ({ token }: { token: string }) => {
   return (
     <div className="space-y-6">
       {showSlowNotice && loading ? <SlowNetworkNotice onRetry={() => void fetchData()} /> : null}
+      {loadError && !isUsingCachedData ? <AdminLoadError message={loadError} onRetry={() => void fetchData()} /> : null}
       {isUsingCachedData && !isOnline ? (
         <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
           Offline - showing cached admin usage data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
@@ -1663,9 +1745,12 @@ const AdminRegistry = ({ token }: { token: string }) => {
   const [registrySource, setRegistrySource] = useState<'free' | 'pro'>('free');
   const [diagnostics, setDiagnostics] = useState<any>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const fetchRegistry = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
@@ -1674,15 +1759,25 @@ const AdminRegistry = ({ token }: { token: string }) => {
             keyAlias: selectedKey?.service // Pass the selected key alias to filter models!
         })
       });
-      if (res.ok) {
-        const payload = (res as any).data || res;
-        setKeys((payload as any).keys || []);
-        setModels((payload as any).models || []);
-        setRegistrySource(((payload as any).registrySource === 'pro' ? 'pro' : 'free') as any);
-        setDiagnostics((payload as any).diagnostics || {});
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to load registry.'));
       }
-    } catch (e) {
+
+      const payload = readAdminPayload<any>(res);
+      const nextKeys = Array.isArray(payload?.keys) ? payload.keys : [];
+      const nextModels = Array.isArray(payload?.models) ? payload.models : [];
+      setKeys(nextKeys);
+      setModels(nextModels);
+      setRegistrySource((payload?.registrySource === 'pro' ? 'pro' : 'free') as any);
+      setDiagnostics(payload?.diagnostics || {});
+      logConexDebug('registry', {
+        keys: nextKeys.length,
+        models: nextModels.length,
+        registrySource: payload?.registrySource || 'free',
+      });
+    } catch (e: any) {
       console.error('[AdminRegistry] fetch error:', e);
+      setLoadError(String(e?.message || 'Failed to load registry.'));
     } finally {
       setLoading(false);
     }
@@ -1711,10 +1806,11 @@ const AdminRegistry = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'update_api_key', keyData })
       });
-      if (res.ok) {
-        toast({ title: 'Success', description: 'API Key configuration saved.' });
-        fetchRegistry();
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to save API key.'));
       }
+      toast({ title: 'Success', description: 'API Key configuration saved.' });
+      fetchRegistry();
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -1756,11 +1852,12 @@ const AdminRegistry = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'delete_api_key', service })
       });
-      if (res.ok) {
-        toast({ title: 'Deleted', description: 'API Key removed.' });
-        setSelectedKey(null);
-        fetchRegistry();
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to delete API key.'));
       }
+      toast({ title: 'Deleted', description: 'API Key removed.' });
+      setSelectedKey(null);
+      fetchRegistry();
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -1773,10 +1870,11 @@ const AdminRegistry = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'update_model', model, registry: registrySource })
       });
-      if (res.ok) {
-        toast({ title: 'Success', description: 'Model updated.' });
-        fetchRegistry();
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to update model.'));
       }
+      toast({ title: 'Success', description: 'Model updated.' });
+      fetchRegistry();
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -1788,10 +1886,11 @@ const AdminRegistry = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'update_model', model, registry: registrySource })
       });
-      if (res.ok) {
-        toast({ title: 'Success', description: 'Model added successfully.' });
-        fetchRegistry();
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to add model.'));
       }
+      toast({ title: 'Success', description: 'Model added successfully.' });
+      fetchRegistry();
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -1801,6 +1900,15 @@ const AdminRegistry = ({ token }: { token: string }) => {
 
   return (
     <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-muted-foreground">
+          {keys.length} keys, {models.length} models
+        </div>
+        <Button variant="outline" size="sm" onClick={() => void fetchRegistry()} disabled={loading}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </Button>
+      </div>
+      {loadError ? <AdminLoadError message={loadError} onRetry={() => void fetchRegistry()} /> : null}
       {(diagnostics?.keysTableMissing || diagnostics?.modelsTableMissing) ? (
         <Alert>
           <AlertCircle className="h-4 w-4" />
@@ -2190,32 +2298,43 @@ const AdminActivity = ({ token }: { token: string }) => {
   const [activitySource, setActivitySource] = useState<'au_events' | 'au_user_activity'>('au_events');
   const [eventsTableMissing, setEventsTableMissing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const fetchEvents = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_active_users' }),
       });
-      if (res.ok) {
-        const payload = (res as any).data || res;
-        const nextEvents = Array.isArray((payload as any).events) ? (payload as any).events : [];
-        setEvents(nextEvents);
-        setWindowMinutes(Number((payload as any).windowMinutes || 15));
-        setActivitySource(((payload as any).source === 'au_user_activity' ? 'au_user_activity' : 'au_events') as any);
-        setEventsTableMissing(Boolean((payload as any)?.diagnostics?.eventsTableMissing));
-        const countedActiveUsers = Number((payload as any).activeUsers || 0);
-        if (countedActiveUsers > 0) {
-          setActiveUsers(countedActiveUsers);
-        } else {
-          setActiveUsers(new Set(nextEvents.map((entry: any) => entry?.user_id).filter(Boolean)).size);
-        }
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to load activity feed.'));
       }
+
+      const payload = readAdminPayload<any>(res);
+      const nextEvents = Array.isArray(payload?.events) ? payload.events : [];
+      setEvents(nextEvents);
+      setWindowMinutes(Number(payload?.windowMinutes || 15));
+      setActivitySource((payload?.source === 'au_user_activity' ? 'au_user_activity' : 'au_events') as any);
+      setEventsTableMissing(Boolean(payload?.diagnostics?.eventsTableMissing));
+      const countedActiveUsers = Number(payload?.activeUsers || 0);
+      if (countedActiveUsers > 0) {
+        setActiveUsers(countedActiveUsers);
+      } else {
+        setActiveUsers(new Set(nextEvents.map((entry: any) => entry?.user_id).filter(Boolean)).size);
+      }
+      logConexDebug('activity', {
+        count: nextEvents.length,
+        source: payload?.source || 'au_events',
+        activeUsers: countedActiveUsers,
+      });
     } catch (e: any) {
       console.error('[AdminActivity] fetch error:', e);
-      toast({ title: 'Error', description: 'Failed to load activity feed.', variant: 'destructive' });
+      const message = String(e?.message || 'Failed to load activity feed.');
+      setLoadError(message);
+      toast({ title: 'Error', description: message, variant: 'destructive' });
     } finally {
       setLoading(false);
     }
@@ -2247,6 +2366,7 @@ const AdminActivity = ({ token }: { token: string }) => {
 
   return (
     <div className="space-y-4">
+      {loadError ? <AdminLoadError message={loadError} onRetry={() => void fetchEvents()} /> : null}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <div className={`h-2 w-2 rounded-full ${isLive ? 'bg-green-500 animate-pulse' : 'bg-muted'}`} />
@@ -2364,17 +2484,31 @@ const AdminActivity = ({ token }: { token: string }) => {
 const AdminFeedback = ({ token }: { token: string }) => {
   const [feedback, setFeedback] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetchAdmin('admin-handler', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'get_feedback' })
+      const res = await fetchAdmin('/api/admin/feedback?limit=250', {
+        method: 'GET',
       });
-      if (res.ok) setFeedback((res as any).feedback || []);
-    } catch (e) {
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to load user feedback.'));
+      }
+
+      const payload = readAdminPayload<any>(res);
+      const nextFeedback = Array.isArray(payload?.feedback) ? payload.feedback : [];
+      setFeedback(nextFeedback);
+      logConexDebug('feedback', {
+        count: nextFeedback.length,
+        sourceTable: payload?.meta?.sourceTable || 'au_feedback',
+      });
+    } catch (e: any) {
       console.error('[AdminFeedback] fetch error:', e);
+      const message = String(e?.message || 'Failed to load user feedback.');
+      setLoadError(message);
     } finally {
       setLoading(false);
     }
@@ -2384,38 +2518,52 @@ const AdminFeedback = ({ token }: { token: string }) => {
     fetchFeedback();
   }, [fetchFeedback]);
 
-  const handleExport = () => {
-    const csvContent = "data:text/csv;charset=utf-8," 
-      + ["Date,User,Section,Rating,Comment"].join(",") + "\n"
-      + feedback.map(f => [
-          new Date(f.created_at).toLocaleString(),
-          f.user_id || 'Anonymous',
-          f.section,
-          f.rating,
-          `"${f.comment?.replace(/"/g, '""') || ''}"`
-        ].join(",")).join("\n");
-    
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `au_feedback_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const handleExport = useCallback(async () => {
+    setExporting(true);
+    try {
+      const res = await fetchAdmin('/api/admin/feedback/export.csv', {
+        method: 'GET',
+        headers: {
+          Accept: 'text/csv',
+        },
+      });
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to export feedback.'));
+      }
+
+      const csv = await res.text();
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `au_feedback_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setLoadError(String(e?.message || 'Failed to export feedback.'));
+    } finally {
+      setExporting(false);
+    }
+  }, []);
 
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
   return (
     <div className="space-y-4">
+      {loadError ? <AdminLoadError message={loadError} onRetry={() => void fetchFeedback()} /> : null}
       <div className="flex justify-between items-center mb-4">
-        <h3 className="text-lg font-medium">User Feedback</h3>
+        <div>
+          <h3 className="text-lg font-medium">User Feedback</h3>
+          <p className="text-xs text-muted-foreground">{feedback.length} record{feedback.length === 1 ? '' : 's'} loaded from <code>au_feedback</code>.</p>
+        </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={fetchFeedback} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => void fetchFeedback()} disabled={loading}>
             <Activity className="h-4 w-4 mr-2" /> Refresh
           </Button>
-          <Button variant="outline" size="sm" onClick={handleExport} disabled={feedback.length === 0}>
-            <Download className="h-4 w-4 mr-2" /> Export CSV
+          <Button variant="outline" size="sm" onClick={() => void handleExport()} disabled={feedback.length === 0 || exporting}>
+            {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />} Export CSV
           </Button>
         </div>
       </div>
@@ -2440,13 +2588,27 @@ const AdminFeedback = ({ token }: { token: string }) => {
                   <td className="p-2 text-xs">{new Date(f.created_at).toLocaleString()}</td>
                   <td className="p-2"><Badge variant="outline" className="text-[10px]">{f.section}</Badge></td>
                   <td className="p-2">
-                    <Badge className={`text-[10px] ${f.rating === 'positive' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-                      {f.rating === 'positive' ? <ThumbsUp className="h-3 w-3 mr-1" /> : <ThumbsDown className="h-3 w-3 mr-1" />}
-                      {f.rating}
+                    <Badge
+                      className={`text-[10px] ${
+                        f.rating_variant === 'positive'
+                          ? 'bg-green-100 text-green-700'
+                          : f.rating_variant === 'negative'
+                            ? 'bg-red-100 text-red-700'
+                            : 'bg-muted text-foreground'
+                      }`}
+                    >
+                      {f.rating_variant === 'positive' ? <ThumbsUp className="h-3 w-3 mr-1" /> : null}
+                      {f.rating_variant === 'negative' ? <ThumbsDown className="h-3 w-3 mr-1" /> : null}
+                      {f.rating_label}
                     </Badge>
                   </td>
                   <td className="p-2 text-xs italic">{f.comment || '-'}</td>
-                  <td className="p-2 text-xs font-mono text-muted-foreground">{f.user_id?.slice(0,8) || 'Anon'}...</td>
+                  <td className="p-2 text-xs">
+                    <div className="flex flex-col">
+                      <span className="font-medium">{f.user_label || 'Anonymous'}</span>
+                      {f.user_email ? <span className="font-mono text-[10px] text-muted-foreground">{f.user_email}</span> : null}
+                    </div>
+                  </td>
                 </tr>
               ))
             )}
@@ -2461,21 +2623,32 @@ const AdminAlerts = ({ token }: { token: string }) => {
   const [configs, setConfigs] = useState<any[]>([]);
   const [tableMissing, setTableMissing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const fetchConfigs = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_alert_config' })
       });
-      if (res.ok) {
-        const payload = (res as any).data || res;
-        setConfigs(Array.isArray((payload as any).configs) ? (payload as any).configs : []);
-        setTableMissing(Boolean((payload as any)?.diagnostics?.tableMissing));
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to load alert rules.'));
       }
-    } catch (e) {
+
+      const payload = readAdminPayload<any>(res);
+      const nextConfigs = Array.isArray(payload?.configs) ? payload.configs : [];
+      setConfigs(nextConfigs);
+      setTableMissing(Boolean(payload?.diagnostics?.tableMissing));
+      logConexDebug('alerts', {
+        count: nextConfigs.length,
+        tableMissing: Boolean(payload?.diagnostics?.tableMissing),
+      });
+    } catch (e: any) {
       console.error('[AdminAlerts] fetch error:', e);
+      setLoadError(String(e?.message || 'Failed to load alert rules.'));
     } finally {
       setLoading(false);
     }
@@ -2491,10 +2664,11 @@ const AdminAlerts = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'update_alert_config', config })
       });
-      if (res.ok) {
-        toast({ title: 'Config Updated', description: `Alerts for ${config.event_type} updated.` });
-        fetchConfigs();
+      if (!res.ok) {
+        throw new Error(readAdminError(res, `Failed to update alert rule for ${config.event_type}.`));
       }
+      toast({ title: 'Config Updated', description: `Alerts for ${config.event_type} updated.` });
+      fetchConfigs();
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     }
@@ -2504,6 +2678,13 @@ const AdminAlerts = ({ token }: { token: string }) => {
 
   return (
     <div className="max-w-3xl mx-auto space-y-6">
+      <div className="flex items-center justify-between">
+        <div className="text-sm text-muted-foreground">{configs.length} alert rule{configs.length === 1 ? '' : 's'}</div>
+        <Button variant="outline" size="sm" onClick={() => void fetchConfigs()} disabled={loading}>
+          <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} /> Refresh
+        </Button>
+      </div>
+      {loadError ? <AdminLoadError message={loadError} onRetry={() => void fetchConfigs()} /> : null}
       {tableMissing ? (
         <Alert>
           <AlertCircle className="h-4 w-4" />
@@ -2567,18 +2748,30 @@ const AdminLogs = ({ token }: { token: string }) => {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const fetchLogs = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'get_debug_logs' })
       });
-      if (res.ok) setLogs((res as any).logs || []);
-    } catch (e) {
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to load debug logs.'));
+      }
+
+      const payload = readAdminPayload<any>(res);
+      const nextLogs = Array.isArray(payload?.logs) ? payload.logs : [];
+      setLogs(nextLogs);
+      logConexDebug('logs', {
+        count: nextLogs.length,
+      });
+    } catch (e: any) {
       console.error('[AdminLogs] fetch error:', e);
+      setLoadError(String(e?.message || 'Failed to load debug logs.'));
     } finally {
       setLoading(false);
     }
@@ -2592,10 +2785,11 @@ const AdminLogs = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'clear_logs' })
       });
-      if (res.ok) {
-        toast({ title: 'Logs Cleared', description: 'All debug logs have been removed.' });
-        setLogs([]);
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to clear debug logs.'));
       }
+      toast({ title: 'Logs Cleared', description: 'All debug logs have been removed.' });
+      setLogs([]);
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
     } finally {
@@ -2609,6 +2803,7 @@ const AdminLogs = ({ token }: { token: string }) => {
 
   return (
     <div className="space-y-4">
+      {loadError ? <AdminLoadError message={loadError} onRetry={() => void fetchLogs()} /> : null}
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-medium">System Debug Logs</h3>
         <div className="flex gap-2">
@@ -2674,23 +2869,31 @@ const AdminHealth = ({ token }: { token: string }) => {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [reloading, setReloading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const verify = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetchAdmin('admin-handler', {
         method: 'POST',
         body: JSON.stringify({ action: 'verify_system' })
       });
-      if (res.ok) {
-        const payload = (res as any).data || res;
-        setResults((payload as any).results || {});
-        setDetails((payload as any).details || {});
-        setCounts((payload as any).counts || {});
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to verify system integrity.'));
       }
-    } catch (e) {
+
+      const payload = readAdminPayload<any>(res);
+      setResults(payload?.results || {});
+      setDetails(payload?.details || {});
+      setCounts(payload?.counts || {});
+      logConexDebug('health', {
+        tables: Object.keys(payload?.results || {}).length,
+      });
+    } catch (e: any) {
       console.error('[AdminHealth] verify error:', e);
+      setLoadError(String(e?.message || 'Failed to verify system integrity.'));
     } finally {
       setLoading(false);
     }
@@ -2703,17 +2906,18 @@ const AdminHealth = ({ token }: { token: string }) => {
         method: 'POST',
         body: JSON.stringify({ action: 'reload_schema' })
       });
-      if (res.ok) {
-        const payload = (res as any).data || res;
-        if ((payload as any).warning) {
-          toast({
-            title: 'Reload Warning',
-            description: String((payload as any).warning),
-            variant: 'destructive',
-          });
-        } else {
-          toast({ title: 'Success', description: 'Schema reload signal sent. Tables should appear shortly.' });
-        }
+      if (!res.ok) {
+        throw new Error(readAdminError(res, 'Failed to reload schema cache.'));
+      }
+      const payload = readAdminPayload<any>(res);
+      if (payload?.warning) {
+        toast({
+          title: 'Reload Warning',
+          description: String(payload.warning),
+          variant: 'destructive',
+        });
+      } else {
+        toast({ title: 'Success', description: 'Schema reload signal sent. Tables should appear shortly.' });
       }
     } catch (e: any) {
       toast({ title: 'Error', description: e.message, variant: 'destructive' });
@@ -2726,6 +2930,7 @@ const AdminHealth = ({ token }: { token: string }) => {
 
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
+      {loadError ? <AdminLoadError message={loadError} onRetry={() => void verify()} /> : null}
       <div className="flex justify-between items-center">
         <h3 className="text-lg font-medium">System Integrity</h3>
         <div className="flex gap-2">
