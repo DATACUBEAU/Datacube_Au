@@ -53,6 +53,10 @@ type UseAuChatOptions = {
   documentCountInScope?: number | null;
 };
 
+const MAX_RECENT_SNIPPET_TURNS = 8;
+const MAX_RECENT_SNIPPET_CHARS = 300;
+const MAX_RECENT_SUMMARY_CHARS = 600;
+
 function buildDocumentContextSeed(input: {
   selectedDocId: string | null;
   activeDocumentName?: string | null;
@@ -66,6 +70,32 @@ function buildDocumentContextSeed(input: {
     last_uploaded_document_id: input.lastUploadedDocumentId ?? input.selectedDocId,
     document_count_in_scope: input.documentCountInScope ?? null,
   });
+}
+
+function truncateSnippetText(value: unknown, maxChars: number): string {
+  return String(value || '').trim().slice(0, maxChars);
+}
+
+function buildRecentSnippetFromMemory(memory: WorkingMemoryPayload | null | undefined) {
+  const recentTurns = (memory?.turns ?? [])
+    .slice(-MAX_RECENT_SNIPPET_TURNS)
+    .map((turn) => ({
+      role: turn.role,
+      content: truncateSnippetText(turn.text, MAX_RECENT_SNIPPET_CHARS),
+    }))
+    .filter((turn) => turn.content.length > 0);
+
+  if (recentTurns.length > 0) {
+    return {
+      mode: 'turns' as const,
+      turns: recentTurns,
+    };
+  }
+
+  return {
+    mode: 'summary' as const,
+    summary: truncateSnippetText(memory?.summary, MAX_RECENT_SUMMARY_CHARS),
+  };
 }
 
 export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions = {}) {
@@ -449,16 +479,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           );
       } else {
           const existing = existingMemory;
-          const recentTurns = existing?.turns?.slice(-8).map(t => ({ role: t.role, content: t.text })) ?? [];
-          const recentSnippet = recentTurns.length > 0
-            ? {
-                mode: 'turns' as const,
-                turns: recentTurns,
-              }
-            : {
-                mode: 'summary' as const,
-                summary: existing?.summary || '',
-              };
+          const recentSnippet = buildRecentSnippetFromMemory(existing);
 
           let streamedText = '';
 
@@ -469,16 +490,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
                   const docKey = docMemoryKey(user.id, options.referenceDocId);
                   const docMem = await loadWorkingMemory(docKey);
                   if (docMem) {
-                     const secondaryTurns = docMem.turns?.slice(-5).map((t: any) => ({ role: t.role, content: t.text })) || [];
-                     secondarySnippet = secondaryTurns.length > 0
-                       ? {
-                          mode: 'turns',
-                          turns: secondaryTurns
-                        }
-                       : {
-                          mode: 'summary',
-                          summary: docMem.summary || ''
-                        };
+                     secondarySnippet = buildRecentSnippetFromMemory(docMem);
                   }
               } catch (e) { console.error('Failed to load secondary memory', e); }
           }

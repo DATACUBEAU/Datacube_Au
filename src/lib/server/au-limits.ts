@@ -1442,7 +1442,11 @@ export async function savePlanLimitScopeRules(input: {
   if (removeKeys.length > 0) {
     const deleteRes = await input.supabase.from('au_plan_limit_rules').delete().eq('scope', input.scope).in('limit_key', removeKeys);
     if (deleteRes.error) {
-      if (isSchemaDriftError(deleteRes.error)) throw new Error('Apply the latest plan-limits migration before saving limits.');
+      if (isSchemaDriftError(deleteRes.error)) {
+        throw new Error(
+          'Missing canonical plan-limits schema. Run `npm run supabase:db:push` to apply the latest backend migration before saving limits.',
+        );
+      }
       throw deleteRes.error;
     }
   }
@@ -1450,7 +1454,11 @@ export async function savePlanLimitScopeRules(input: {
   if (upsertRows.length > 0) {
     const upsertRes = await input.supabase.from('au_plan_limit_rules').upsert(upsertRows, { onConflict: 'scope,limit_key' });
     if (upsertRes.error) {
-      if (isSchemaDriftError(upsertRes.error)) throw new Error('Apply the latest plan-limits migration before saving limits.');
+      if (isSchemaDriftError(upsertRes.error)) {
+        throw new Error(
+          'Missing canonical plan-limits schema. Run `npm run supabase:db:push` to apply the latest backend migration before saving limits.',
+        );
+      }
       throw upsertRes.error;
     }
   }
