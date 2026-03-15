@@ -2,6 +2,7 @@ export type DocumentUsageRow = {
   id: string;
   file_size_bytes: number | null;
   created_at: string | null;
+  status: string | null;
 };
 
 type DocumentUsageClient = {
@@ -27,6 +28,7 @@ function mapDocumentUsageRowsWithoutFileSize(
     id: String(row.id),
     created_at: typeof row.created_at === 'string' ? row.created_at : null,
     file_size_bytes: null,
+    status: typeof row.status === 'string' ? row.status : null,
   }));
 }
 
@@ -34,8 +36,8 @@ export async function safeSelectDocuments(
   supabase: DocumentUsageClient,
   userId: string,
 ): Promise<DocumentUsageRow[]> {
-  const columnsWithFileSize = 'id,file_size_bytes,created_at';
-  const columnsWithoutFileSize = 'id,created_at';
+  const columnsWithFileSize = 'id,file_size_bytes,created_at,status';
+  const columnsWithoutFileSize = 'id,created_at,status';
   const ownerOrUserFilter = `owner_id.eq.${userId},user_id.eq.${userId}`;
 
   const ownerOrUserWithFileSize = await supabase

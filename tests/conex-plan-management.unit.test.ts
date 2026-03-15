@@ -28,14 +28,14 @@ function run(name: string, fn: () => void) {
 }
 
 const limitKeys = [
-  'max_file_mb',
+  'max_file_size_mb',
   'max_uploads_total',
-  'max_docs_total',
   'max_chats_total',
-  'max_exams_total',
   'max_tokens_total',
-  'max_storage_mb',
-  'max_jobs_concurrent',
+  'max_concurrent_jobs',
+  'max_exam_predictions',
+  'max_practice_exams',
+  'max_knowledge_hub',
 ];
 
 run('parsePlanLimitsPayload supports nested limitsByPlan.plan.limits shape', () => {
@@ -43,15 +43,16 @@ run('parsePlanLimitsPayload supports nested limitsByPlan.plan.limits shape', () 
     limitsByPlan: {
       free: {
         limits: {
-          max_file_mb: 50,
+          max_file_size_mb: 50,
           max_uploads_total: 4,
+          max_knowledge_hub: 8,
         },
       },
       pro: {
         limits: {
-          max_file_mb: '100',
+          max_file_size_mb: '100',
           max_uploads_total: '10',
-          max_jobs_concurrent: 8,
+          max_concurrent_jobs: 8,
         },
       },
     },
@@ -59,11 +60,11 @@ run('parsePlanLimitsPayload supports nested limitsByPlan.plan.limits shape', () 
 
   const parsed = parsePlanLimitsPayload(payload, limitKeys);
   assert.deepEqual(parsed.planKeys, ['free', 'pro']);
-  assert.equal(parsed.limitsByPlan.free.max_file_mb, 50);
-  assert.equal(parsed.limitsByPlan.pro.max_file_mb, 100);
+  assert.equal(parsed.limitsByPlan.free.max_file_size_mb, 50);
+  assert.equal(parsed.limitsByPlan.pro.max_file_size_mb, 100);
   assert.equal(parsed.limitsByPlan.pro.max_uploads_total, 10);
-  assert.equal(parsed.limitsByPlan.pro.max_jobs_concurrent, 8);
-  assert.equal(parsed.limitsByPlan.pro.max_storage_mb, null);
+  assert.equal(parsed.limitsByPlan.pro.max_concurrent_jobs, 8);
+  assert.equal(parsed.limitsByPlan.pro.max_knowledge_hub, null);
 });
 
 run('parsePlanLimitsPayload supports array payload shape and direct plan fields', () => {
@@ -72,11 +73,11 @@ run('parsePlanLimitsPayload supports array payload shape and direct plan fields'
       planLimits: [
         {
           plan: 'weekly',
-          limits: { max_file_mb: 80, max_uploads_total: 9 },
+          limits: { max_file_size_mb: 80, max_uploads_total: 9 },
         },
         {
           plan: 'monthly',
-          max_file_mb: 120,
+          max_file_size_mb: 120,
           max_uploads_total: 20,
         },
       ],
@@ -85,8 +86,8 @@ run('parsePlanLimitsPayload supports array payload shape and direct plan fields'
 
   const parsed = parsePlanLimitsPayload(payload, limitKeys);
   assert.deepEqual(parsed.planKeys, ['weekly', 'monthly']);
-  assert.equal(parsed.limitsByPlan.weekly.max_file_mb, 80);
-  assert.equal(parsed.limitsByPlan.monthly.max_file_mb, 120);
+  assert.equal(parsed.limitsByPlan.weekly.max_file_size_mb, 80);
+  assert.equal(parsed.limitsByPlan.monthly.max_file_size_mb, 120);
   assert.equal(parsed.limitsByPlan.monthly.max_uploads_total, 20);
 });
 
@@ -96,13 +97,13 @@ run('plan switch keeps each plan limit value instead of collapsing to zero', () 
       free: {
         limits: {
           max_uploads_total: 4,
-          max_file_mb: 50,
+          max_file_size_mb: 50,
         },
       },
       pro: {
         limits: {
           max_uploads_total: 10,
-          max_file_mb: 100,
+          max_file_size_mb: 100,
         },
       },
     },
@@ -113,43 +114,43 @@ run('plan switch keeps each plan limit value instead of collapsing to zero', () 
 
   assert.equal(drafts.free.max_uploads_total, '4');
   assert.equal(drafts.pro.max_uploads_total, '10');
-  assert.equal(drafts.free.max_file_mb, '50');
-  assert.equal(drafts.pro.max_file_mb, '100');
+  assert.equal(drafts.free.max_file_size_mb, '50');
+  assert.equal(drafts.pro.max_file_size_mb, '100');
 });
 
 run('validatePlanLimitDraft normalizes empty values to 0 caps', () => {
   const draft: PlanLimitDraftByPlan = {
     free: {
-      max_file_mb: '50',
+      max_file_size_mb: '50',
       max_uploads_total: '',
-      max_docs_total: '004',
       max_chats_total: '',
-      max_exams_total: '',
       max_tokens_total: '',
-      max_storage_mb: '',
-      max_jobs_concurrent: '2',
+      max_concurrent_jobs: '2',
+      max_exam_predictions: '',
+      max_practice_exams: '',
+      max_knowledge_hub: '004',
     },
   };
 
   const result = validatePlanLimitDraft(draft, 'free', limitKeys);
   assert.equal(result.ok, true);
-  assert.equal(result.limits.max_file_mb, 50);
+  assert.equal(result.limits.max_file_size_mb, 50);
   assert.equal(result.limits.max_uploads_total, 0);
-  assert.equal(result.limits.max_docs_total, 4);
-  assert.equal(result.limits.max_jobs_concurrent, 2);
+  assert.equal(result.limits.max_knowledge_hub, 4);
+  assert.equal(result.limits.max_concurrent_jobs, 2);
 });
 
 run('validatePlanLimitDraft rejects non-integer values', () => {
   const draft: PlanLimitDraftByPlan = {
     pro: {
-      max_file_mb: '40.5',
+      max_file_size_mb: '40.5',
       max_uploads_total: 'abc',
-      max_docs_total: '10',
       max_chats_total: '2',
-      max_exams_total: '2',
       max_tokens_total: '2000',
-      max_storage_mb: '50',
-      max_jobs_concurrent: '2',
+      max_concurrent_jobs: '2',
+      max_exam_predictions: '2',
+      max_practice_exams: '2',
+      max_knowledge_hub: '10',
     },
   };
 

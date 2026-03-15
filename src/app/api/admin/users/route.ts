@@ -15,6 +15,7 @@ import {
   type ManagedUserRecord,
   type UserRole,
 } from '@/lib/server/admin-user-management';
+import { deleteUserAccountWithRetention } from '@/lib/server/retention';
 
 export const runtime = 'nodejs';
 
@@ -614,18 +615,19 @@ async function handleCreateUser(payload: z.infer<typeof createUserSchema>, supab
   return NextResponse.json({ ok: true, userId, email: payload.email });
 }
 
-async function handleDeleteUser(userId: string, supabaseAdmin: ReturnType<typeof createServiceRoleClient>) {
-  await supabaseAdmin.from('au_user_activity').delete().eq('user_id', userId);
-  await supabaseAdmin.from('au_messages').delete().eq('user_id', userId);
-  await supabaseAdmin.from('au_sessions').delete().eq('user_id', userId);
-  await supabaseAdmin.from('au_user_profiles').delete().eq('user_id', userId);
-  await supabaseAdmin.from('au_users').delete().eq('id', userId);
+async function handleDeleteUser(
+  userId: string,
+  supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
+  initiatedBy?: string | null,
+) {
+  const lookup = await supabaseAdmin.auth.admin.getUserById(userId);
+  const email = lookup.error ? null : lookup.data.user?.email ?? null;
 
-  const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
-  if (error) {
-    throw new ApiError(500, 'delete_user_failed', error.message);
-  }
-
+  await deleteUserAccountWithRetention(userId, {
+    email,
+    initiatedBy,
+    supabase: supabaseAdmin as any,
+  });
   return NextResponse.json({ ok: true, userId });
 }
 
@@ -745,7 +747,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (payload.action === 'delete_user') {
-      return await handleDeleteUser(payload.userId, supabaseAdmin);
+        return await handleDeleteUser(payload.userId, supabaseAdmin, actor.userId);
     }
 
     if (payload.action === 'reset_password') {
@@ -778,7 +780,7 @@ export async function POST(req: NextRequest) {
 
       for (const userId of payload.userIds) {
         try {
-          await handleDeleteUser(userId, supabaseAdmin);
+            await handleDeleteUser(userId, supabaseAdmin, actor.userId);
           successCount += 1;
         } catch (error: any) {
           failures.push({ userId, error: String(error?.message || 'delete_failed') });

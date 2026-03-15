@@ -15,20 +15,6 @@ const FLAG_DEFAULTS: Record<string, { enabled: boolean; config: Record<string, u
   upload_100mb: { enabled: false, config: {} },
 };
 
-function withLegacyLimitAliases(limits: Record<string, number>): Record<string, number> {
-  const next = { ...limits };
-  if (typeof next.max_file_size_mb === 'number' && typeof next.max_file_mb !== 'number') {
-    next.max_file_mb = next.max_file_size_mb;
-  }
-  if (typeof next.max_documents_total === 'number' && typeof next.max_docs_total !== 'number') {
-    next.max_docs_total = next.max_documents_total;
-  }
-  if (typeof next.max_concurrent_jobs === 'number' && typeof next.max_jobs_concurrent !== 'number') {
-    next.max_jobs_concurrent = next.max_concurrent_jobs;
-  }
-  return next;
-}
-
 async function readCompatFlags(
   supabase: ReturnType<typeof createSupabaseAdminClient> | ReturnType<typeof createSupabaseRlsClient> | null,
 ) {
@@ -65,7 +51,7 @@ function buildGuestPayload(requestId: string, flags: Record<string, { enabled: b
     requestId,
     authenticated: false,
     plan: 'free',
-    limits: withLegacyLimitAliases({ ...DEFAULT_PLAN_LIMITS.free }),
+    limits: { ...DEFAULT_PLAN_LIMITS.free },
     usage: { today: {}, total: {} },
     reset_at: null,
     flags,

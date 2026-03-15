@@ -22,6 +22,7 @@ import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
 import { ConexAccessControl } from '@/components/admin/conex-access-control';
+import { ConexRetentionMonitor } from '@/components/admin/conex-retention-monitor';
 import { ConexUserManagement } from '@/components/admin/conex-user-management';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
@@ -48,23 +49,14 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 const PROMO_CONTENT_FLAG_KEY = 'promo_content';
 const FALLBACK_PLAN_KEYS = ['free', 'pro', 'premium'] as const;
 const LIMIT_FIELD_KEYS = [
-  'max_file_mb',
   'max_file_size_mb',
   'max_uploads_total',
-  'max_docs_total',
-  'max_documents_total',
   'max_chats_total',
-  'max_exams_total',
   'max_tokens_total',
-  'max_storage_mb',
-  'max_jobs_concurrent',
   'max_concurrent_jobs',
-  'tokens_reset_every_days',
-  'chats_reset_every_days',
-  'uploads_reset_every_days',
-  'documents_reset_every_days',
-  'exams_reset_every_days',
-  'storage_reset_every_days',
+  'max_exam_predictions',
+  'max_practice_exams',
+  'max_knowledge_hub',
 ] as const;
 const REDUNDANT_FLAG_KEYS = new Set<string>(['paid_mode_enabled']);
 const PLAN_EDITOR_FLAG_KEYS = [
@@ -73,7 +65,6 @@ const PLAN_EDITOR_FLAG_KEYS = [
   'enable_practice_exam_generation',
   'pro_required_exam_prediction',
   'pro_required_knowledge_hub',
-  'pro_upload_100mb',
 ] as const;
 
 type PlanMetadataDraft = {
@@ -392,7 +383,7 @@ const AdminBilling = ({ token }: { token: string }) => {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_plan_limits' },
+        { event: '*', schema: 'public', table: 'au_plan_limit_rules' },
         scheduleRefresh,
       )
       .on(
@@ -2288,7 +2279,12 @@ const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data
   );
 };
 
-const AdminUsers = () => <ConexUserManagement />;
+const AdminUsers = () => (
+  <div className="space-y-6">
+    <ConexRetentionMonitor />
+    <ConexUserManagement />
+  </div>
+);
 
 const AdminActivity = ({ token }: { token: string }) => {
   const [isLive, setIsLive] = useState(true);
@@ -3348,7 +3344,7 @@ export default function ConexPage() {
               <Card>
                 <CardHeader>
                   <CardTitle>User Management</CardTitle>
-                  <CardDescription>Manage profiles, status, roles, permissions, access, and audit activity.</CardDescription>
+                  <CardDescription>Manage profiles, retention state, status, roles, permissions, access, and audit activity.</CardDescription>
                 </CardHeader>
                 <CardContent>
                   <AdminUsers />

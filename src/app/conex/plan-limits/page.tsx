@@ -1,128 +1,285 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Loader2, RefreshCw, RotateCcw, Save, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, Loader2, RefreshCw, RotateCcw, Save, ShieldCheck } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useToast } from '@/hooks/use-toast';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
-import { formatPlanLabel, orderPlanKeys, sanitizeLimitInput } from '@/lib/conex/plan-management';
+import { sanitizeLimitInput } from '@/lib/conex/plan-management';
+import {
+  APPROVED_LIMIT_KEYS,
+  DEFAULT_PLAN_ORDER,
+  PLAN_LIMIT_SCOPE_KEYS,
+  type ApprovedLimitKey,
+  type EffectivePlanCode,
+  type PlanLimitScopeKey,
+} from '@/lib/limits/plan-limit-model';
 import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 
-const FALLBACK_PLANS = ['free', 'pro', 'premium'] as const;
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CATEGORY_ORDER = ['usage_counter', 'stored_item', 'per_request', 'runtime'] as const;
 
-const CAP_FIELDS = [
-  'max_file_size_mb',
-  'max_uploads_total',
-  'max_documents_total',
-  'max_chats_total',
-  'max_exams_total',
-  'max_tokens_total',
-  'max_storage_mb',
-  'max_concurrent_jobs',
-] as const;
-const RESET_FIELDS = [
-  'tokens_reset_every_days',
-  'chats_reset_every_days',
-  'exams_reset_every_days',
-  'uploads_reset_every_days',
-  'documents_reset_every_days',
-] as const;
-const ALL_FIELDS = [...CAP_FIELDS, ...RESET_FIELDS, 'storage_reset_every_days'] as const;
+type RuleDraft = {
+  inheritsDefault: boolean;
+  value: string;
+  state: 'capped' | 'unlimited' | 'disabled';
+  mode: 'usage' | 'current' | 'per_request' | 'concurrency';
+  reset_policy: 'hourly' | 'daily' | 'weekly' | 'monthly' | 'never' | 'custom';
+  reset_interval_value: string;
+  reset_interval_unit: 'hour' | 'day' | 'week' | 'month';
+};
 
-type FieldKey = (typeof ALL_FIELDS)[number];
-type Row = Record<FieldKey, number>;
-type Draft = Record<FieldKey, string>;
-type PlanMap<T> = Record<string, T>;
+type ScopeDrafts = Record<PlanLimitScopeKey, Record<ApprovedLimitKey, RuleDraft>>;
+type RuleErrors = Partial<Record<ApprovedLimitKey, string[]>>;
+
+type LimitDefinition = {
+  key: ApprovedLimitKey;
+  label: string;
+  description: string;
+  unit_label: string;
+  category: 'usage_counter' | 'stored_item' | 'per_request' | 'runtime';
+  default_mode: RuleDraft['mode'];
+  supported_modes: RuleDraft['mode'][];
+  default_reset_policy: RuleDraft['reset_policy'];
+  supported_reset_policies: RuleDraft['reset_policy'][];
+  enforced_by: string[];
+};
+
+type SerializedRule = {
+  key: ApprovedLimitKey;
+  label: string;
+  description: string;
+  unit_label: string;
+  category: LimitDefinition['category'];
+  value: number | null;
+  mode: RuleDraft['mode'];
+  reset_policy: RuleDraft['reset_policy'];
+  reset_interval_value: number | null;
+  reset_interval_unit: RuleDraft['reset_interval_unit'] | null;
+  is_enabled: boolean;
+  is_unlimited: boolean;
+  state: RuleDraft['state'];
+  inherited?: boolean;
+  source_scope?: PlanLimitScopeKey;
+  updated_at: string | null;
+  enforced_by: string[];
+};
+
+type UsageByLimitEntry = {
+  key: ApprovedLimitKey;
+  used: number;
+  limit: number | null;
+  remaining: number | null;
+  state: RuleDraft['state'];
+  mode: RuleDraft['mode'];
+  label: string;
+  description: string;
+  category: LimitDefinition['category'];
+  reset: {
+    policy: RuleDraft['reset_policy'];
+    intervalValue: number | null;
+    intervalUnit: RuleDraft['reset_interval_unit'] | null;
+    window_start: string;
+    window_end: string | null;
+    label: string;
+  };
+};
+
+type AdminPlanLimitsPayload = {
+  ok?: boolean;
+  source?: string;
+  generatedAt?: string;
+  scopeLabels?: Record<PlanLimitScopeKey, string>;
+  limitDefinitions?: LimitDefinition[];
+  defaultRules?: Record<ApprovedLimitKey, SerializedRule>;
+  storedRulesByScope?: Record<PlanLimitScopeKey, Record<ApprovedLimitKey, SerializedRule | null>>;
+  effectiveRulesByPlan?: Record<EffectivePlanCode, Record<ApprovedLimitKey, SerializedRule>>;
+  validationErrors?: RuleErrors;
+};
 
 type PreviewPayload = {
-  ok: boolean;
-  user_found: boolean;
-  planPolicy?: { label?: string };
-  effectiveLimits?: Record<string, number>;
-  usage?: { total?: Record<string, number>; windows?: Record<string, { label?: string; window_start?: string; window_end?: string | null }> };
-  resetWindows?: Record<string, { label?: string; window_start?: string; window_end?: string | null }>;
-  labels?: Record<string, string>;
+  ok?: boolean;
+  plan?: EffectivePlanCode;
+  user_id?: string | null;
+  user_found?: boolean;
+  planPolicy?: {
+    plan: EffectivePlanCode;
+    label: string;
+    description: string;
+    limits: Record<ApprovedLimitKey, number>;
+    limit_rules: Record<ApprovedLimitKey, SerializedRule>;
+    resetLabels: Record<ApprovedLimitKey, string>;
+  };
+  effectiveLimitRules?: Record<ApprovedLimitKey, SerializedRule>;
+  usage?: {
+    by_limit?: Record<ApprovedLimitKey, UsageByLimitEntry>;
+  };
 };
 
-const ALIASES: Record<FieldKey, string[]> = {
-  max_file_size_mb: ['max_file_size_mb', 'max_file_mb'],
-  max_uploads_total: ['max_uploads_total'],
-  max_documents_total: ['max_documents_total', 'max_docs_total'],
-  max_chats_total: ['max_chats_total'],
-  max_exams_total: ['max_exams_total'],
-  max_tokens_total: ['max_tokens_total'],
-  max_storage_mb: ['max_storage_mb'],
-  max_concurrent_jobs: ['max_concurrent_jobs', 'max_jobs_concurrent'],
-  tokens_reset_every_days: ['tokens_reset_every_days'],
-  chats_reset_every_days: ['chats_reset_every_days'],
-  exams_reset_every_days: ['exams_reset_every_days'],
-  uploads_reset_every_days: ['uploads_reset_every_days'],
-  documents_reset_every_days: ['documents_reset_every_days'],
-  storage_reset_every_days: ['storage_reset_every_days'],
+const CATEGORY_DESCRIPTIONS: Record<(typeof CATEGORY_ORDER)[number], string> = {
+  usage_counter: 'Counts new actions inside a reset window and enforces the cap before the next request is accepted.',
+  stored_item: 'Caps the current stored item count. Deleting stored items frees capacity immediately.',
+  per_request: 'Validates each request independently. These limits do not use scheduled resets.',
+  runtime: 'Caps live concurrent work. These limits are checked against the current system state, not a quota window.',
 };
 
-function n(value: unknown, fallback = 0): number {
-  const v = Number(value);
-  return Number.isFinite(v) && v >= 0 ? Math.floor(v) : fallback;
+const SCOPE_DESCRIPTIONS: Record<PlanLimitScopeKey, string> = {
+  default: 'Global baseline rules stored in the backend. Plans inherit these values unless a plan-specific override exists.',
+  free: 'Optional override for Free only. Turn on inherit to remove the override and use the default rule.',
+  pro: 'Optional override for Pro only. Turn on inherit to remove the override and use the default rule.',
+  premium: 'Optional override for Premium only. Turn on inherit to remove the override and use the default rule.',
+};
+
+function readPayload<T>(response: Response): T {
+  const payload = (response as any)?.data;
+  return (payload && typeof payload === 'object' ? payload : {}) as T;
 }
 
-function normalizeRow(primary: unknown, fallback: unknown): Row {
-  const a = primary && typeof primary === 'object' ? (primary as Record<string, unknown>) : {};
-  const b = fallback && typeof fallback === 'object' ? (fallback as Record<string, unknown>) : {};
-  const row = {} as Row;
-  for (const key of ALL_FIELDS) {
-    const aliases = ALIASES[key];
-    const value =
-      aliases.map((alias) => a[alias]).find((entry) => entry !== null && entry !== undefined && entry !== '') ??
-      aliases.map((alias) => b[alias]).find((entry) => entry !== null && entry !== undefined && entry !== '');
-    row[key] = n(value, 0);
-  }
-  row.storage_reset_every_days = 0;
-  return row;
+function readErrorMessage(response: Response, fallback: string) {
+  const payload = readPayload<any>(response);
+  const message = payload?.message || payload?.error;
+  return typeof message === 'string' && message.trim() ? message.trim() : fallback;
 }
 
-function toDraft(row: Row): Draft {
-  const draft = {} as Draft;
-  for (const key of ALL_FIELDS) draft[key] = String(n(row[key], 0));
-  draft.storage_reset_every_days = '0';
-  return draft;
+function formatScope(scope: string) {
+  return scope.charAt(0).toUpperCase() + scope.slice(1);
 }
 
-function meter(used: number, cap: number): number {
-  if (cap <= 0) return 0;
-  return Math.max(0, Math.min(100, (used / cap) * 100));
+function formatTime(value: string | null | undefined) {
+  if (!value) return 'Not saved yet';
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : 'Not saved yet';
 }
 
-function formatWindow(start?: string, end?: string | null): string {
-  if (!start || !end) return 'No reset (lifetime)';
-  const s = new Date(start);
-  const e = new Date(end);
-  if (!Number.isFinite(s.getTime()) || !Number.isFinite(e.getTime())) return 'No reset (lifetime)';
-  return `${s.toLocaleString()} -> ${e.toLocaleString()}`;
+function formatCap(rule: { state?: string; value?: number | null; unit_label?: string } | null | undefined) {
+  if (!rule) return 'N/A';
+  if (rule.state === 'disabled') return 'Disabled';
+  if (rule.state === 'unlimited') return 'Unlimited';
+  return `${Number(rule.value || 0).toLocaleString()} ${rule.unit_label || ''}`.trim();
 }
 
-function LimitBar({ label, used, cap, resetLabel }: { label: string; used: number; cap: number; resetLabel: string }) {
-  const over = cap > 0 && used >= cap;
+function categoryLabel(category: string) {
+  if (category === 'usage_counter') return 'Usage Counters';
+  if (category === 'stored_item') return 'Current Count Caps';
+  if (category === 'per_request') return 'Per Request';
+  return 'Runtime Caps';
+}
+
+function modeLabel(mode: string) {
+  if (mode === 'current') return 'Current count';
+  if (mode === 'per_request') return 'Per request';
+  if (mode === 'concurrency') return 'Concurrency';
+  return 'Usage-based';
+}
+
+function resetLabel(policy: string) {
+  if (policy === 'hourly') return 'Hourly';
+  if (policy === 'daily') return 'Daily';
+  if (policy === 'weekly') return 'Weekly';
+  if (policy === 'monthly') return 'Monthly';
+  if (policy === 'custom') return 'Custom interval';
+  return 'Never';
+}
+
+function stateLabel(state: RuleDraft['state']) {
+  if (state === 'unlimited') return 'Unlimited';
+  if (state === 'disabled') return 'Disabled';
+  return 'Capped';
+}
+
+function modeHelp(mode: RuleDraft['mode']) {
+  if (mode === 'current') return 'Uses the current stored item count instead of a rolling quota window.';
+  if (mode === 'per_request') return 'Validated independently on each request.';
+  if (mode === 'concurrency') return 'Checked against live concurrent jobs.';
+  return 'Counts new usage events inside the selected reset window.';
+}
+
+function resetHelp(policy: RuleDraft['reset_policy']) {
+  if (policy === 'never') return 'No scheduled reset. The limit only changes when usage drops or the cap is edited.';
+  if (policy === 'custom') return 'Uses the custom interval value and unit below.';
+  return `Resets on a ${resetLabel(policy).toLowerCase()} schedule.`;
+}
+
+function sourceLabel(source: string | undefined) {
+  if (source === 'au_plan_limit_rules') return 'Canonical rules table';
+  if (source === 'legacy_plan_limits') return 'Seeded from legacy plan limits';
+  if (source === 'seed_defaults') return 'Seed defaults';
+  return 'Unknown source';
+}
+
+function serializeDraftForScope(scope: PlanLimitScopeKey, draft: RuleDraft) {
+  return JSON.stringify({
+    inheritsDefault: scope !== 'default' ? draft.inheritsDefault : false,
+    value: draft.value,
+    state: draft.state,
+    mode: draft.mode,
+    reset_policy: draft.reset_policy,
+    reset_interval_value: draft.reset_interval_value,
+    reset_interval_unit: draft.reset_interval_unit,
+  });
+}
+
+function getApplicableResetPolicies(definition: LimitDefinition, draft: RuleDraft) {
+  if (draft.mode !== 'usage') return ['never'] as RuleDraft['reset_policy'][];
+  return definition.supported_reset_policies;
+}
+
+function formatScopeList(plans: EffectivePlanCode[]) {
+  if (plans.length === 0) return 'None';
+  return plans.map((plan) => formatScope(plan)).join(', ');
+}
+
+function buildDrafts(payload: AdminPlanLimitsPayload): ScopeDrafts {
+  return PLAN_LIMIT_SCOPE_KEYS.reduce((scopeAcc, scope) => {
+    scopeAcc[scope] = APPROVED_LIMIT_KEYS.reduce((ruleAcc, key) => {
+      const storedRule = payload?.storedRulesByScope?.[scope]?.[key] || null;
+      const effectiveRule =
+        scope === 'default' ? payload?.defaultRules?.[key] : payload?.effectiveRulesByPlan?.[scope]?.[key];
+      const rule = storedRule || effectiveRule;
+      ruleAcc[key] = {
+        inheritsDefault: scope !== 'default' && !storedRule,
+        value: rule?.value === null || rule?.value === undefined ? '' : String(rule.value),
+        state: rule?.state || 'capped',
+        mode: rule?.mode || 'usage',
+        reset_policy: rule?.reset_policy || 'never',
+        reset_interval_value:
+          rule?.reset_interval_value === null || rule?.reset_interval_value === undefined
+            ? ''
+            : String(rule.reset_interval_value),
+        reset_interval_unit: rule?.reset_interval_unit || 'day',
+      };
+      return ruleAcc;
+    }, {} as Record<ApprovedLimitKey, RuleDraft>);
+    return scopeAcc;
+  }, {} as ScopeDrafts);
+}
+
+function LimitBar({ label, used, limit, reset }: { label: string; used: number; limit: number | null; reset: string }) {
+  const percent = limit && limit > 0 ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0;
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between text-xs">
+    <div className="space-y-1.5 rounded-lg border p-3">
+      <div className="flex items-center justify-between gap-3 text-sm">
         <span className="font-medium">{label}</span>
-        <span className={over ? 'font-mono text-destructive font-semibold' : 'font-mono text-muted-foreground'}>
-          {used} / {cap}
+        <span className="font-mono text-xs text-muted-foreground">
+          {limit === null ? `${used} / Unlimited` : `${used} / ${limit}`}
         </span>
       </div>
-      <div className="h-2.5 rounded-full bg-muted overflow-hidden">
-        <div className={over ? 'h-full bg-destructive' : 'h-full bg-primary'} style={{ width: `${meter(used, cap)}%` }} />
+      <div className="h-2 rounded-full bg-muted">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
       </div>
-      <p className="text-[11px] text-muted-foreground">{resetLabel}</p>
+      <p className="text-[11px] text-muted-foreground">{reset}</p>
     </div>
   );
 }
@@ -132,37 +289,51 @@ export default function ConexPlanLimitsPage() {
   const { toast } = useToast();
   const [user, , isUserLoading] = useSupabaseUser();
   const [checkingAccess, setCheckingAccess] = useState(true);
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
-
-  const [plans, setPlans] = useState<string[]>([...FALLBACK_PLANS]);
-  const [selectedPlan, setSelectedPlan] = useState('free');
-  const [savedRows, setSavedRows] = useState<PlanMap<Row>>({});
-  const [draftRows, setDraftRows] = useState<PlanMap<Draft>>({});
-
+  const [payload, setPayload] = useState<AdminPlanLimitsPayload | null>(null);
+  const [drafts, setDrafts] = useState<ScopeDrafts | null>(null);
+  const [selectedScope, setSelectedScope] = useState<PlanLimitScopeKey>('default');
+  const [previewPlan, setPreviewPlan] = useState<EffectivePlanCode>('free');
   const [preview, setPreview] = useState<PreviewPayload | null>(null);
   const [previewUserInput, setPreviewUserInput] = useState('');
   const [previewUserId, setPreviewUserId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [ruleErrors, setRuleErrors] = useState<RuleErrors>({});
 
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       if (isUserLoading) return;
-      if (!user) return void router.replace('/login?redirectTo=/conex/plan-limits');
+      if (!user) {
+        router.replace('/login?redirectTo=/conex/plan-limits');
+        return;
+      }
       const token = typeof window !== 'undefined' ? localStorage.getItem('conex_admin_token') : null;
       const step = typeof window !== 'undefined' ? localStorage.getItem('conex_auth_step') : null;
-      if (!token || step !== '3' || !UUID_REGEX.test(token)) return void router.replace('/conex');
+      if (!token || step !== '3' || !UUID_REGEX.test(token)) {
+        router.replace('/conex');
+        return;
+      }
       const access = await getSupabaseAccessToken();
-      if (!access) return void router.replace('/login?redirectTo=/conex/plan-limits');
+      if (!access) {
+        router.replace('/login?redirectTo=/conex/plan-limits');
+        return;
+      }
       const res = await fetch('/conex/users?mode=access', {
         method: 'GET',
         headers: { Authorization: `Bearer ${access}` },
         cache: 'no-store',
       }).catch(() => null);
       if (cancelled) return;
-      if (!res?.ok) return void router.replace(res?.status === 403 ? '/403' : '/conex');
+      if (!res?.ok) {
+        router.replace(res?.status === 403 ? '/403' : '/conex');
+        return;
+      }
       setCheckingAccess(false);
     };
     void run();
@@ -171,51 +342,111 @@ export default function ConexPlanLimitsPage() {
     };
   }, [isUserLoading, router, user]);
 
-  const loadRows = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetchAdmin('/api/admin/plan-limits', { method: 'GET' });
-      const payload = ((res as any).data || (res as any)) as any;
-      if (!res.ok || !payload?.ok) {
-        throw new Error(String(payload?.message || payload?.error || `plan-limits failed (${res.status})`));
-      }
-      const limitsByPlan = payload?.limitsByPlan || {};
-      const defaultsByPlan = payload?.defaultLimitsByPlan || {};
-      const planKeys = orderPlanKeys([...FALLBACK_PLANS, ...Object.keys(limitsByPlan), ...Object.keys(defaultsByPlan)])
-        .filter((plan) => FALLBACK_PLANS.includes(plan as (typeof FALLBACK_PLANS)[number]));
+  const definitions = useMemo(() => {
+    const incoming = Array.isArray(payload?.limitDefinitions) ? payload.limitDefinitions : [];
+    return APPROVED_LIMIT_KEYS.map((key) => incoming.find((entry) => entry.key === key)).filter(Boolean) as LimitDefinition[];
+  }, [payload]);
 
-      const nextSaved: PlanMap<Row> = {};
-      const nextDraft: PlanMap<Draft> = {};
-      for (const plan of planKeys) {
-        const row = normalizeRow(limitsByPlan[plan], defaultsByPlan[plan]);
-        nextSaved[plan] = row;
-        nextDraft[plan] = toDraft(row);
+  const definitionsByKey = useMemo(
+    () =>
+      definitions.reduce((acc, definition) => {
+        acc[definition.key] = definition;
+        return acc;
+      }, {} as Record<ApprovedLimitKey, LimitDefinition>),
+    [definitions],
+  );
+
+  const groupedDefinitions = useMemo(
+    () =>
+      CATEGORY_ORDER.map((category) => ({
+        category,
+        items: definitions.filter((definition) => definition.category === category),
+      })).filter((group) => group.items.length > 0),
+    [definitions],
+  );
+
+  const savedDrafts = useMemo(() => (payload ? buildDrafts(payload) : null), [payload]);
+  const selectedDrafts = drafts?.[selectedScope] || null;
+  const selectedSavedDrafts = savedDrafts?.[selectedScope] || null;
+  const selectedScopeLabel = payload?.scopeLabels?.[selectedScope] || formatScope(selectedScope);
+  const selectedStoredRules = payload?.storedRulesByScope?.[selectedScope] || null;
+  const selectedEffectiveRules =
+    selectedScope === 'default' ? payload?.defaultRules || null : payload?.effectiveRulesByPlan?.[selectedScope] || null;
+
+  const hasUnsavedChanges = useMemo(() => {
+    if (!selectedDrafts || !selectedSavedDrafts) return false;
+    return APPROVED_LIMIT_KEYS.some(
+      (key) =>
+        serializeDraftForScope(selectedScope, selectedDrafts[key]) !==
+        serializeDraftForScope(selectedScope, selectedSavedDrafts[key]),
+    );
+  }, [selectedDrafts, selectedSavedDrafts, selectedScope]);
+
+  const previewRules = preview?.effectiveLimitRules || payload?.effectiveRulesByPlan?.[previewPlan] || null;
+  const previewUsageByLimit = (preview?.usage?.by_limit || {}) as Partial<Record<ApprovedLimitKey, UsageByLimitEntry>>;
+
+  const applyToPlans = useCallback(
+    (scope: PlanLimitScopeKey, key: ApprovedLimitKey) => {
+      if (!payload?.effectiveRulesByPlan) return [];
+      if (scope === 'default') {
+        return DEFAULT_PLAN_ORDER.filter((plan) => payload.effectiveRulesByPlan?.[plan]?.[key]?.source_scope === 'default');
       }
-      setPlans(planKeys.length > 0 ? planKeys : [...FALLBACK_PLANS]);
-      setSelectedPlan((current) => (planKeys.includes(current) ? current : planKeys[0] || 'free'));
-      setSavedRows(nextSaved);
-      setDraftRows(nextDraft);
-    } catch (error: any) {
-      toast({ title: 'Failed to load plan limits', description: String(error?.message || error), variant: 'destructive' });
-    } finally {
-      setLoading(false);
-    }
-  }, [toast]);
+      return payload.effectiveRulesByPlan?.[scope]?.[key]?.source_scope === scope ? [scope] : [];
+    },
+    [payload],
+  );
+
+  const loadState = useCallback(
+    async (opts?: { silent?: boolean; showSuccess?: boolean }) => {
+      if (opts?.silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setLoadError(null);
+
+      try {
+        const res = await fetchAdmin('/api/admin/plan-limits', { method: 'GET' });
+        const nextPayload = readPayload<AdminPlanLimitsPayload>(res);
+        if (!res.ok || !nextPayload?.ok) {
+          throw new Error(readErrorMessage(res, `plan-limits failed (${res.status})`));
+        }
+        setPayload(nextPayload);
+        setDrafts(buildDrafts(nextPayload));
+        setRuleErrors({});
+        if (opts?.showSuccess) {
+          setStatusMessage({ tone: 'success', text: 'Plan limits reloaded from the backend source of truth.' });
+        }
+      } catch (error: any) {
+        const message = String(error?.message || error);
+        setLoadError(message);
+        setStatusMessage({ tone: 'error', text: message });
+        toast({ title: 'Failed to load plan limits', description: message, variant: 'destructive' });
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [toast],
+  );
 
   const loadPreview = useCallback(
-    async (plan: string, userId: string | null) => {
+    async (plan: EffectivePlanCode, userId: string | null, opts?: { silent?: boolean }) => {
       setPreviewLoading(true);
       try {
         const params = new URLSearchParams({ plan });
         if (userId) params.set('user_id', userId);
         const res = await fetchAdmin(`/api/admin/limits/preview?${params.toString()}`, { method: 'GET' });
-        const payload = ((res as any).data || (res as any)) as PreviewPayload & { message?: string; error?: string };
-        if (!res.ok || !payload?.ok) {
-          throw new Error(String(payload?.message || payload?.error || `limits-preview failed (${res.status})`));
+        const nextPreview = readPayload<PreviewPayload>(res);
+        if (!res.ok || !nextPreview?.ok) {
+          throw new Error(readErrorMessage(res, `limits-preview failed (${res.status})`));
         }
-        setPreview(payload);
+        setPreview(nextPreview);
       } catch (error: any) {
-        toast({ title: 'Preview unavailable', description: String(error?.message || error), variant: 'destructive' });
+        const message = String(error?.message || error);
+        if (!opts?.silent) {
+          toast({ title: 'Preview unavailable', description: message, variant: 'destructive' });
+        }
       } finally {
         setPreviewLoading(false);
       }
@@ -224,73 +455,420 @@ export default function ConexPlanLimitsPage() {
   );
 
   useEffect(() => {
-    if (!checkingAccess) void loadRows();
-  }, [checkingAccess, loadRows]);
+    if (!checkingAccess) {
+      void loadState();
+    }
+  }, [checkingAccess, loadState]);
 
   useEffect(() => {
-    if (!checkingAccess && !loading) void loadPreview(selectedPlan, previewUserId);
-  }, [checkingAccess, loading, loadPreview, previewUserId, selectedPlan]);
+    if (!checkingAccess && payload) {
+      void loadPreview(previewPlan, previewUserId, { silent: true });
+    }
+  }, [checkingAccess, loadPreview, payload, previewPlan, previewUserId]);
 
-  const selectedDraft = draftRows[selectedPlan];
-  const selectedSaved = savedRows[selectedPlan];
-  const limits = preview?.effectiveLimits || {};
-  const usage = preview?.usage?.total || {};
-  const windows = preview?.resetWindows || preview?.usage?.windows || {};
-  const labels = preview?.labels || {};
-  const planLabel = preview?.planPolicy?.label || formatPlanLabel(selectedPlan);
-  const resetSummary = [windows.tokens?.label, windows.chats?.label].filter(Boolean).join(' | ');
+  useEffect(() => {
+    setRuleErrors({});
+  }, [selectedScope]);
 
-  const save = useCallback(async () => {
-    if (!selectedDraft) return;
-    const row = {} as Row;
-    for (const key of CAP_FIELDS) row[key] = n(selectedDraft[key] === '' ? 0 : selectedDraft[key], 0);
-    for (const key of RESET_FIELDS) row[key] = n(selectedDraft[key] === '' ? 0 : selectedDraft[key], 0);
-    row.storage_reset_every_days = 0;
+  useEffect(() => {
+    if (selectedScope !== 'default') {
+      setPreviewPlan(selectedScope);
+    }
+  }, [selectedScope]);
+
+  const updateDraft = useCallback(
+    (key: ApprovedLimitKey, patch: Partial<RuleDraft>) => {
+      const definition = definitionsByKey[key];
+      if (!definition) return;
+
+      setDrafts((current) => {
+        if (!current) return current;
+        const existing = current[selectedScope][key];
+        const nextRule: RuleDraft = { ...existing, ...patch };
+
+        if (patch.mode && patch.mode !== 'usage') {
+          nextRule.reset_policy = 'never';
+          nextRule.reset_interval_value = '';
+          nextRule.reset_interval_unit = 'day';
+        }
+
+        if (patch.reset_policy && patch.reset_policy !== 'custom') {
+          nextRule.reset_interval_value = '';
+          nextRule.reset_interval_unit = 'day';
+        }
+
+        if (patch.reset_policy === 'custom' && !nextRule.reset_interval_value) {
+          nextRule.reset_interval_value = '1';
+        }
+
+        const allowedResetPolicies = getApplicableResetPolicies(definition, nextRule);
+        if (!allowedResetPolicies.includes(nextRule.reset_policy)) {
+          nextRule.reset_policy = allowedResetPolicies[0] || 'never';
+          if (nextRule.reset_policy !== 'custom') {
+            nextRule.reset_interval_value = '';
+            nextRule.reset_interval_unit = 'day';
+          }
+        }
+
+        return {
+          ...current,
+          [selectedScope]: {
+            ...current[selectedScope],
+            [key]: nextRule,
+          },
+        };
+      });
+
+      setRuleErrors((current) => {
+        if (!current[key]?.length) return current;
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    },
+    [definitionsByKey, selectedScope],
+  );
+
+  const discardScopeChanges = useCallback(() => {
+    if (!selectedSavedDrafts) return;
+    setDrafts((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        [selectedScope]: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+          acc[key] = { ...selectedSavedDrafts[key] };
+          return acc;
+        }, {} as Record<ApprovedLimitKey, RuleDraft>),
+      };
+    });
+    setRuleErrors({});
+    setStatusMessage({ tone: 'success', text: `${selectedScopeLabel} changes discarded.` });
+  }, [selectedSavedDrafts, selectedScope, selectedScopeLabel]);
+
+  const saveScope = useCallback(async () => {
+    if (!selectedDrafts) return;
+
     setSaving(true);
+    setStatusMessage(null);
+    setRuleErrors({});
+
     try {
+      const rule_inputs = APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+        const draft = selectedDrafts[key];
+        acc[key] = {
+          inheritsDefault: selectedScope !== 'default' ? draft.inheritsDefault : false,
+          value: draft.state === 'capped' ? (draft.value === '' ? null : Number(draft.value)) : null,
+          mode: draft.mode,
+          state: draft.state,
+          reset_policy: draft.reset_policy,
+          reset_interval_value: draft.reset_policy === 'custom' ? Number(draft.reset_interval_value || 0) : null,
+          reset_interval_unit: draft.reset_policy === 'custom' ? draft.reset_interval_unit : null,
+        };
+        return acc;
+      }, {} as Record<ApprovedLimitKey, Record<string, unknown>>);
+
       const res = await fetchAdmin('/api/admin/plan-limits', {
         method: 'POST',
-        body: JSON.stringify({ plan: selectedPlan, limits: row }),
+        body: JSON.stringify({
+          scope: selectedScope,
+          action: 'save',
+          rule_inputs,
+        }),
       });
-      const payload = ((res as any).data || (res as any)) as any;
-      if (!res.ok || !payload?.ok) throw new Error(String(payload?.message || payload?.error || `Failed to save ${selectedPlan}`));
-      const next = normalizeRow(payload?.limits, row);
-      setSavedRows((prev) => ({ ...prev, [selectedPlan]: next }));
-      setDraftRows((prev) => ({ ...prev, [selectedPlan]: toDraft(next) }));
-      toast({ title: 'Saved', description: `${formatPlanLabel(selectedPlan)} limits updated.` });
-      void loadPreview(selectedPlan, previewUserId);
+
+      const nextPayload = readPayload<AdminPlanLimitsPayload>(res);
+      if (!res.ok || !nextPayload?.ok) {
+        if (nextPayload?.validationErrors) {
+          setRuleErrors(nextPayload.validationErrors);
+        }
+        throw new Error(readErrorMessage(res, `Failed to save ${selectedScopeLabel}.`));
+      }
+
+      setPayload(nextPayload);
+      setDrafts(buildDrafts(nextPayload));
+      setRuleErrors({});
+      setStatusMessage({ tone: 'success', text: `${selectedScopeLabel} rules saved to the backend source of truth.` });
+      toast({ title: 'Saved', description: `${selectedScopeLabel} rules updated.` });
+      await loadPreview(previewPlan, previewUserId, { silent: true });
     } catch (error: any) {
-      toast({ title: 'Save failed', description: String(error?.message || error), variant: 'destructive' });
+      const message = String(error?.message || error);
+      setStatusMessage({ tone: 'error', text: message });
+      toast({ title: 'Save failed', description: message, variant: 'destructive' });
     } finally {
       setSaving(false);
     }
-  }, [loadPreview, previewUserId, selectedDraft, selectedPlan, toast]);
+  }, [loadPreview, previewPlan, previewUserId, selectedDrafts, selectedScope, selectedScopeLabel, toast]);
 
-  const resetToDefaults = useCallback(async () => {
-    setSaving(true);
+  const resetScope = useCallback(async () => {
+    setResetting(true);
+    setStatusMessage(null);
+    setRuleErrors({});
+
     try {
       const res = await fetchAdmin('/api/admin/plan-limits', {
         method: 'POST',
-        body: JSON.stringify({ action: 'reset_to_defaults', plan: selectedPlan }),
+        body: JSON.stringify({
+          scope: selectedScope,
+          action: 'reset_scope',
+        }),
       });
-      const payload = ((res as any).data || (res as any)) as any;
-      if (!res.ok || !payload?.ok) throw new Error(String(payload?.message || payload?.error || `Failed to reset ${selectedPlan}`));
-      const next = normalizeRow(payload?.limits, payload?.limits);
-      setSavedRows((prev) => ({ ...prev, [selectedPlan]: next }));
-      setDraftRows((prev) => ({ ...prev, [selectedPlan]: toDraft(next) }));
-      toast({ title: 'Reset', description: `${formatPlanLabel(selectedPlan)} limits restored to defaults.` });
-      void loadPreview(selectedPlan, previewUserId);
+      const nextPayload = readPayload<AdminPlanLimitsPayload>(res);
+      if (!res.ok || !nextPayload?.ok) {
+        throw new Error(readErrorMessage(res, `Failed to reset ${selectedScopeLabel}.`));
+      }
+
+      setPayload(nextPayload);
+      setDrafts(buildDrafts(nextPayload));
+      setRuleErrors({});
+      setStatusMessage({
+        tone: 'success',
+        text:
+          selectedScope === 'default'
+            ? 'Default scope restored to the canonical baseline.'
+            : `${selectedScopeLabel} overrides removed. Effective values now inherit from Default where no override remains.`,
+      });
+      toast({ title: 'Scope reset', description: `${selectedScopeLabel} restored.` });
+      await loadPreview(previewPlan, previewUserId, { silent: true });
     } catch (error: any) {
-      toast({ title: 'Reset failed', description: String(error?.message || error), variant: 'destructive' });
+      const message = String(error?.message || error);
+      setStatusMessage({ tone: 'error', text: message });
+      toast({ title: 'Reset failed', description: message, variant: 'destructive' });
     } finally {
-      setSaving(false);
+      setResetting(false);
     }
-  }, [loadPreview, previewUserId, selectedPlan, toast]);
+  }, [loadPreview, previewPlan, previewUserId, selectedScope, selectedScopeLabel, toast]);
+
+  const refreshAll = useCallback(async () => {
+    await loadState({ silent: true, showSuccess: true });
+    await loadPreview(previewPlan, previewUserId, { silent: true });
+  }, [loadPreview, loadState, previewPlan, previewUserId]);
 
   if (isUserLoading || checkingAccess) {
     return (
       <div className="min-h-screen p-4 md:p-8">
-        <Skeleton className="mx-auto h-80 max-w-6xl" />
+        <Skeleton className="mx-auto h-96 max-w-7xl" />
+      </div>
+    );
+  }
+
+  function renderRuleCard(key: ApprovedLimitKey) {
+    const definition = definitionsByKey[key];
+    const draft = selectedDrafts?.[key];
+    const storedRule = selectedStoredRules?.[key] || null;
+    const effectiveRule = selectedEffectiveRules?.[key] || null;
+
+    if (!definition || !draft || !effectiveRule) return null;
+
+    const appliedPlans = applyToPlans(selectedScope, key);
+    const supportedResetPolicies = getApplicableResetPolicies(definition, draft);
+    const disableFields = selectedScope !== 'default' && draft.inheritsDefault;
+
+    return (
+      <div key={key} className="rounded-2xl border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline">{key}</Badge>
+              <Badge variant="secondary">{categoryLabel(definition.category)}</Badge>
+              <Badge variant={draft.state === 'disabled' ? 'destructive' : 'outline'}>{stateLabel(draft.state)}</Badge>
+              {selectedScope === 'default' ? (
+                <Badge variant="secondary">Default Rule</Badge>
+              ) : (
+                <Badge variant={draft.inheritsDefault ? 'secondary' : 'outline'}>
+                  {draft.inheritsDefault ? 'Inherits Default' : 'Plan Override'}
+                </Badge>
+              )}
+            </div>
+            <div>
+              <h3 className="text-base font-semibold">{definition.label}</h3>
+              <p className="text-sm text-muted-foreground">{definition.description}</p>
+            </div>
+          </div>
+
+          <div className="min-w-[220px] rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
+            <p className="font-medium text-foreground">Effective now</p>
+            <p>{formatCap(effectiveRule)}</p>
+            <p>
+              {modeLabel(effectiveRule.mode)} / {resetLabel(effectiveRule.reset_policy)}
+              {effectiveRule.reset_policy === 'custom' && effectiveRule.reset_interval_value
+                ? ` (${effectiveRule.reset_interval_value} ${effectiveRule.reset_interval_unit || 'day'}${effectiveRule.reset_interval_value === 1 ? '' : 's'})`
+                : ''}
+            </p>
+            <p>
+              Source: {formatScope(effectiveRule.source_scope || selectedScope)}
+              {effectiveRule.inherited ? ' (inherited)' : ''}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-2">
+          {selectedScope === 'default' ? (
+            <div className="space-y-2 rounded-xl border border-dashed p-4">
+              <p className="text-sm font-medium">Applies to plans</p>
+              <p className="text-xs text-muted-foreground">
+                Currently effective on: {appliedPlans.length > 0 ? formatScopeList(appliedPlans) : 'No plan currently inherits this default for this key.'}
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2 rounded-xl border border-dashed p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <Label className="text-sm font-medium">Inherit from Default</Label>
+                  <p className="text-xs text-muted-foreground">
+                    When enabled, this plan stores no override for this key and resolves from Default.
+                  </p>
+                </div>
+                <Switch checked={draft.inheritsDefault} onCheckedChange={(checked) => updateDraft(key, { inheritsDefault: checked })} />
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2 rounded-xl border border-dashed p-4">
+            <p className="text-sm font-medium">Enforced by</p>
+            <p className="text-xs text-muted-foreground">{definition.enforced_by.join(', ')}</p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-4">
+          <div className="space-y-2">
+            <Label>Value</Label>
+            <Input
+              type="number"
+              min={0}
+              step={1}
+              inputMode="numeric"
+              disabled={disableFields || draft.state !== 'capped'}
+              value={draft.value}
+              onChange={(event) => updateDraft(key, { value: sanitizeLimitInput(event.target.value) })}
+            />
+            <p className="text-[11px] text-muted-foreground">Whole numbers only. Unit: {definition.unit_label || 'items'}.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Limit State</Label>
+            <Select value={draft.state} onValueChange={(value) => updateDraft(key, { state: value as RuleDraft['state'] })} disabled={disableFields}>
+              <SelectTrigger>
+                <SelectValue placeholder="Select state" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="capped">Capped</SelectItem>
+                <SelectItem value="unlimited">Unlimited</SelectItem>
+                <SelectItem value="disabled">Disabled</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">Choose whether the rule is capped, unlimited, or disabled.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Mode</Label>
+            <Select
+              value={draft.mode}
+              onValueChange={(value) => updateDraft(key, { mode: value as RuleDraft['mode'] })}
+              disabled={disableFields || definition.supported_modes.length === 1}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select mode" />
+              </SelectTrigger>
+              <SelectContent>
+                {definition.supported_modes.map((mode) => (
+                  <SelectItem key={mode} value={mode}>
+                    {modeLabel(mode)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">{modeHelp(draft.mode)}</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Reset Policy</Label>
+            <Select
+              value={draft.reset_policy}
+              onValueChange={(value) => updateDraft(key, { reset_policy: value as RuleDraft['reset_policy'] })}
+              disabled={disableFields || supportedResetPolicies.length === 1}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select reset policy" />
+              </SelectTrigger>
+              <SelectContent>
+                {supportedResetPolicies.map((policy) => (
+                  <SelectItem key={policy} value={policy}>
+                    {resetLabel(policy)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">{resetHelp(draft.reset_policy)}</p>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-4 lg:grid-cols-[160px_minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="space-y-2">
+            <Label>Custom Interval</Label>
+            <Input
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              disabled={disableFields || draft.reset_policy !== 'custom'}
+              value={draft.reset_interval_value}
+              onChange={(event) => updateDraft(key, { reset_interval_value: sanitizeLimitInput(event.target.value) })}
+            />
+            <p className="text-[11px] text-muted-foreground">Required only when reset policy is custom.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Custom Interval Unit</Label>
+            <Select
+              value={draft.reset_interval_unit}
+              onValueChange={(value) => updateDraft(key, { reset_interval_unit: value as RuleDraft['reset_interval_unit'] })}
+              disabled={disableFields || draft.reset_policy !== 'custom'}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select interval unit" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="hour">Hours</SelectItem>
+                <SelectItem value="day">Days</SelectItem>
+                <SelectItem value="week">Weeks</SelectItem>
+                <SelectItem value="month">Months</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">Use this only for a production-safe custom reset window.</p>
+          </div>
+
+          <div className="space-y-2 rounded-xl border bg-muted/20 p-4 text-xs text-muted-foreground">
+            <p>
+              <span className="font-medium text-foreground">Applies to plans:</span>{' '}
+              {selectedScope === 'default'
+                ? appliedPlans.length > 0
+                  ? formatScopeList(appliedPlans)
+                  : 'No plan currently inherits this default for this key.'
+                : draft.inheritsDefault
+                  ? `${formatScope(selectedScope)} inherits Default`
+                  : formatScope(selectedScope)}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Last updated:</span> {formatTime((storedRule || effectiveRule)?.updated_at)}
+            </p>
+            <p>
+              <span className="font-medium text-foreground">Stored value:</span> {storedRule ? formatCap(storedRule) : 'No stored override'}
+            </p>
+          </div>
+        </div>
+
+        {ruleErrors[key]?.length ? (
+          <Alert variant="destructive" className="mt-4">
+            <AlertTitle>{definition.label} has validation errors</AlertTitle>
+            <AlertDescription>
+              <ul className="list-disc space-y-1 pl-5">
+                {ruleErrors[key]?.map((issue) => (
+                  <li key={issue}>{issue}</li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
+        ) : null}
       </div>
     );
   }
@@ -298,230 +876,342 @@ export default function ConexPlanLimitsPage() {
   return (
     <div className="min-h-screen p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Plan Limits</h1>
-            <p className="text-sm text-muted-foreground">Caps & reset policies</p>
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-3xl font-bold tracking-tight">Plan Limits</h1>
+              <Badge variant="outline">{sourceLabel(payload?.source)}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Canonical plan-limit rules with explicit value, mode, reset policy, inheritance, and enforcement metadata.
+            </p>
           </div>
-          <Button variant="outline" onClick={() => router.push('/conex')}>
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Conex
-          </Button>
+
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => router.push('/conex')}>
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Conex
+            </Button>
+            <Button variant="outline" onClick={() => void refreshAll()} disabled={loading || refreshing}>
+              {refreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              Refresh
+            </Button>
+          </div>
         </div>
 
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+        {statusMessage ? (
+          <Alert variant={statusMessage.tone === 'error' ? 'destructive' : 'default'}>
+            {statusMessage.tone === 'success' ? <CheckCircle2 className="h-4 w-4" /> : null}
+            <AlertTitle>{statusMessage.tone === 'success' ? 'Backend state updated' : 'Plan limits error'}</AlertTitle>
+            <AlertDescription>{statusMessage.text}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        {loadError ? (
+          <Alert variant="destructive">
+            <AlertTitle>Failed to load plan-limit state</AlertTitle>
+            <AlertDescription className="space-y-3">
+              <p>{loadError}</p>
+              <Button variant="outline" size="sm" onClick={() => void loadState()}>
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : null}
+
+        <div className="grid gap-4 lg:grid-cols-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Source of Truth</CardTitle>
+              <CardDescription>The page reads live backend rules and writes back to the same canonical table.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>
+                Current source: <span className="font-medium text-foreground">{sourceLabel(payload?.source)}</span>
+              </p>
+              <p>
+                Generated: <span className="font-medium text-foreground">{formatTime(payload?.generatedAt)}</span>
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Scope Model</CardTitle>
+              <CardDescription>Default defines the baseline. Free, Pro, and Premium store overrides only when they differ.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>
+                Selected scope: <span className="font-medium text-foreground">{selectedScopeLabel}</span>
+              </p>
+              <p>{SCOPE_DESCRIPTIONS[selectedScope]}</p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Runtime Preview</CardTitle>
+              <CardDescription>Live preview uses the same backend rule resolution and usage aggregation as production enforcement.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm text-muted-foreground">
+              <p>
+                Preview plan: <span className="font-medium text-foreground">{formatScope(previewPlan)}</span>
+              </p>
+              <p>
+                Preview user: <span className="font-medium text-foreground">{previewUserId || 'Policy only'}</span>
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
           <div className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Plan Selector</CardTitle>
-                <CardDescription>Saved values from `au_plan_limits` are prefilled before editing.</CardDescription>
+                <CardTitle>Scope Editor</CardTitle>
+                <CardDescription>
+                  Edit the real stored rules for each scope. Refresh always reloads backend truth; save writes to the canonical table.
+                </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                <Tabs value={selectedPlan} onValueChange={setSelectedPlan}>
-                  <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${Math.max(plans.length, 1)}, minmax(0, 1fr))` }}>
-                    {plans.map((plan) => (
-                      <TabsTrigger key={plan} value={plan}>
-                        {formatPlanLabel(plan)}
+              <CardContent className="space-y-5">
+                <Tabs value={selectedScope} onValueChange={(value) => setSelectedScope(value as PlanLimitScopeKey)}>
+                  <TabsList className="grid w-full" style={{ gridTemplateColumns: `repeat(${PLAN_LIMIT_SCOPE_KEYS.length}, minmax(0, 1fr))` }}>
+                    {PLAN_LIMIT_SCOPE_KEYS.map((scope) => (
+                      <TabsTrigger key={scope} value={scope}>
+                        {payload?.scopeLabels?.[scope] || formatScope(scope)}
                       </TabsTrigger>
                     ))}
                   </TabsList>
                 </Tabs>
+
+                <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                  <p className="font-medium text-foreground">{selectedScopeLabel}</p>
+                  <p>{SCOPE_DESCRIPTIONS[selectedScope]}</p>
+                </div>
+
                 <div className="flex flex-wrap gap-2">
-                  <Button onClick={() => void save()} disabled={saving || loading || !selectedDraft}>
+                  <Button onClick={() => void saveScope()} disabled={loading || saving || resetting || !selectedDrafts}>
                     {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                    Save
+                    Save Scope
                   </Button>
-                  <Button variant="outline" onClick={() => void resetToDefaults()} disabled={saving || loading}>
-                    <RefreshCw className="mr-2 h-4 w-4" />
-                    Reset to defaults
+                  <Button variant="outline" onClick={() => void resetScope()} disabled={loading || saving || resetting || !payload}>
+                    {resetting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    {selectedScope === 'default' ? 'Restore Baseline' : 'Reset Overrides'}
                   </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => selectedSaved && setDraftRows((prev) => ({ ...prev, [selectedPlan]: toDraft(selectedSaved) }))}
-                    disabled={saving || loading || !selectedSaved}
-                  >
+                  <Button variant="ghost" onClick={discardScopeChanges} disabled={!hasUnsavedChanges || loading || saving || resetting}>
                     <RotateCcw className="mr-2 h-4 w-4" />
-                    Discard changes
+                    Discard
                   </Button>
                 </div>
               </CardContent>
             </Card>
 
-            {loading || !selectedDraft ? (
+            {loading || !payload || !selectedDrafts ? (
               <Card>
                 <CardHeader>
-                  <CardTitle>Loading saved limits...</CardTitle>
+                  <CardTitle>Loading plan rules...</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
-                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
                 </CardContent>
               </Card>
             ) : (
-              <>
-                <Card>
+              groupedDefinitions.map((group) => (
+                <Card key={group.category}>
                   <CardHeader>
-                    <CardTitle>Caps</CardTitle>
-                    <CardDescription>Whole numbers only. `0` blocks this action.</CardDescription>
+                    <CardTitle>{categoryLabel(group.category)}</CardTitle>
+                    <CardDescription>{CATEGORY_DESCRIPTIONS[group.category]}</CardDescription>
                   </CardHeader>
-                  <CardContent className="grid gap-4 md:grid-cols-2">
-                    {CAP_FIELDS.map((key) => (
-                      <div key={key} className="space-y-2 rounded-md border p-3">
-                        <Label>{key}</Label>
-                        <Input
-                          type="number"
-                          min={0}
-                          step={1}
-                          inputMode="numeric"
-                          value={selectedDraft[key]}
-                          onChange={(event) =>
-                            setDraftRows((prev) => ({
-                              ...prev,
-                              [selectedPlan]: { ...prev[selectedPlan], [key]: sanitizeLimitInput(event.target.value) },
-                            }))
-                          }
-                        />
-                        <p className="text-[11px] text-muted-foreground">Whole numbers only. `0` blocks this action.</p>
-                      </div>
-                    ))}
-                  </CardContent>
+                  <CardContent className="space-y-4">{group.items.map((definition) => renderRuleCard(definition.key))}</CardContent>
                 </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Reset Policies</CardTitle>
-                    <CardDescription>Set quota reset windows in days.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {RESET_FIELDS.map((key) => (
-                        <div key={key} className="space-y-2 rounded-md border p-3">
-                          <Label>{key}</Label>
-                          <Input
-                            type="number"
-                            min={0}
-                            step={1}
-                            inputMode="numeric"
-                            value={selectedDraft[key]}
-                            onChange={(event) =>
-                              setDraftRows((prev) => ({
-                                ...prev,
-                                [selectedPlan]: { ...prev[selectedPlan], [key]: sanitizeLimitInput(event.target.value) },
-                              }))
-                            }
-                          />
-                          <p className="text-[11px] text-muted-foreground">Whole numbers only. `0` blocks this action.</p>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="rounded-md border border-dashed p-3 text-sm">
-                      <p className="font-medium">storage_reset_every_days is locked to `0`.</p>
-                      <p className="text-xs text-muted-foreground">Storage is a cap, not a rolling quota.</p>
-                    </div>
-                    <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                      Reset windows stay on saved values. Use <span className="font-medium text-foreground">Reset To Defaults</span> to restore full plan policy.
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
+              ))
             )}
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Effective Plan Matrix</CardTitle>
+                <CardDescription>Default scope plus the effective Free, Pro, and Premium rules after inheritance and overrides resolve.</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Limit</TableHead>
+                      <TableHead>Default</TableHead>
+                      <TableHead>Free</TableHead>
+                      <TableHead>Pro</TableHead>
+                      <TableHead>Premium</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {APPROVED_LIMIT_KEYS.map((key) => {
+                      const defaultRule = payload?.defaultRules?.[key];
+                      return (
+                        <TableRow key={key}>
+                          <TableCell className="align-top">
+                            <div className="space-y-1">
+                              <p className="font-medium">{definitionsByKey[key]?.label || key}</p>
+                              <p className="text-xs text-muted-foreground">{key}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell className="align-top">
+                            {defaultRule ? (
+                              <div className="space-y-1 text-xs">
+                                <p className="font-medium text-foreground">{formatCap(defaultRule)}</p>
+                                <p className="text-muted-foreground">
+                                  {modeLabel(defaultRule.mode)} / {resetLabel(defaultRule.reset_policy)}
+                                </p>
+                              </div>
+                            ) : (
+                              'N/A'
+                            )}
+                          </TableCell>
+                          {DEFAULT_PLAN_ORDER.map((plan) => {
+                            const rule = payload?.effectiveRulesByPlan?.[plan]?.[key];
+                            return (
+                              <TableCell key={`${plan}-${key}`} className="align-top">
+                                {rule ? (
+                                  <div className="space-y-1 text-xs">
+                                    <p className="font-medium text-foreground">{formatCap(rule)}</p>
+                                    <p className="text-muted-foreground">
+                                      {modeLabel(rule.mode)} / {resetLabel(rule.reset_policy)}
+                                    </p>
+                                    <p className="text-muted-foreground">
+                                      {rule.inherited ? `Inherits ${formatScope(rule.source_scope || 'default')}` : `${formatScope(plan)} override`}
+                                    </p>
+                                  </div>
+                                ) : (
+                                  'N/A'
+                                )}
+                              </TableCell>
+                            );
+                          })}
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
           </div>
 
-          <div className="space-y-4">
+          <div className="space-y-6">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <ShieldCheck className="h-4 w-4" />
-                  Policy Preview
+                  Live Preview
                 </CardTitle>
-                <CardDescription>Mirrors the user subscription Limits & Usage card.</CardDescription>
+                <CardDescription>Reads the same effective rule set and usage snapshot used by production enforcement.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                {previewLoading && !preview ? (
+                <div className="grid gap-4">
                   <div className="space-y-2">
-                    <Skeleton className="h-6 w-2/3" />
+                    <Label>Preview plan</Label>
+                    <Select value={previewPlan} onValueChange={(value) => setPreviewPlan(value as EffectivePlanCode)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select plan" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DEFAULT_PLAN_ORDER.map((plan) => (
+                          <SelectItem key={plan} value={plan}>
+                            {formatScope(plan)}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Preview user usage (UUID)</Label>
+                    <div className="flex gap-2">
+                      <Input value={previewUserInput} onChange={(event) => setPreviewUserInput(event.target.value.trim())} placeholder="user_id" />
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          const value = previewUserInput.trim();
+                          if (!value) {
+                            setPreviewUserId(null);
+                            return;
+                          }
+                          if (!UUID_REGEX.test(value)) {
+                            toast({ title: 'Invalid user id', description: 'Enter a valid UUID to load usage.', variant: 'destructive' });
+                            return;
+                          }
+                          setPreviewUserId(value);
+                        }}
+                      >
+                        Load
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => {
+                          setPreviewUserInput('');
+                          setPreviewUserId(null);
+                        }}
+                      >
+                        Clear
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Leave empty to preview policy-only effective values with zero usage.</p>
+                  </div>
+                </div>
+
+                {previewLoading && !preview ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-16 w-full" />
+                    <Skeleton className="h-20 w-full" />
                     <Skeleton className="h-20 w-full" />
                   </div>
                 ) : (
                   <>
-                    <p className="text-xs text-muted-foreground">
-                      Plan: <span className="font-semibold text-foreground">{String(planLabel || '').toUpperCase()}</span>
-                      {resetSummary ? ` | ${resetSummary}` : ''}
-                    </p>
-                    <div className="space-y-3">
-                      <LimitBar label="Chat Messages" used={0} cap={n(limits.max_chats_total, 0)} resetLabel={windows.chats?.label || labels.chats || 'No reset (lifetime)'} />
-                      <LimitBar label="Uploads" used={0} cap={n(limits.max_uploads_total, 0)} resetLabel={windows.uploads?.label || labels.uploads || 'No reset (lifetime)'} />
-                      <LimitBar label="Tokens" used={0} cap={n(limits.max_tokens_total, 0)} resetLabel={windows.tokens?.label || labels.tokens || 'No reset (lifetime)'} />
-                      <LimitBar label="Storage (MB)" used={0} cap={n(limits.max_storage_mb, 0)} resetLabel={windows.storage?.label || labels.storage || 'No reset (lifetime)'} />
+                    <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                      <p>
+                        Plan: <span className="font-medium text-foreground">{preview?.planPolicy?.label || formatScope(previewPlan)}</span>
+                      </p>
+                      <p>
+                        User:{' '}
+                        <span className="font-medium text-foreground">
+                          {previewUserId ? (preview?.user_found ? previewUserId : `${previewUserId} (not found)`) : 'Policy only'}
+                        </span>
+                      </p>
                     </div>
-                    <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
-                      Values come from `au_plan_limits` + reset policies; changes apply immediately.
+
+                    <div className="space-y-3">
+                      {APPROVED_LIMIT_KEYS.map((key) => {
+                        const usageEntry = previewUsageByLimit[key];
+                        const rule = previewRules?.[key];
+                        if (!rule) return null;
+                        return (
+                          <LimitBar
+                            key={key}
+                            label={rule.label}
+                            used={Number(usageEntry?.used || 0)}
+                            limit={typeof usageEntry?.limit === 'number' || usageEntry?.limit === null ? usageEntry.limit : rule.value}
+                            reset={usageEntry?.reset?.label || resetLabel(rule.reset_policy)}
+                          />
+                        );
+                      })}
+                    </div>
+
+                    <div className="rounded-xl border border-dashed p-4 text-xs text-muted-foreground">
+                      <p className="font-medium text-foreground">Effective rule summary</p>
+                      <div className="mt-2 space-y-2">
+                        {APPROVED_LIMIT_KEYS.map((key) => {
+                          const rule = previewRules?.[key];
+                          if (!rule) return null;
+                          return (
+                            <p key={key}>
+                              <span className="font-medium text-foreground">{rule.label}:</span> {formatCap(rule)} / {modeLabel(rule.mode)} / {resetLabel(rule.reset_policy)}
+                            </p>
+                          );
+                        })}
+                      </div>
                     </div>
                   </>
                 )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Usage Preview</CardTitle>
-                <CardDescription>Admin-only read-only used/cap preview for a user.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Preview user usage (UUID)</Label>
-                  <div className="flex gap-2">
-                    <Input placeholder="user_id" value={previewUserInput} onChange={(event) => setPreviewUserInput(event.target.value.trim())} />
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        const value = previewUserInput.trim();
-                        if (!value || !UUID_REGEX.test(value)) {
-                          toast({ title: 'Invalid user id', description: 'Enter a valid UUID to load usage.', variant: 'destructive' });
-                          return;
-                        }
-                        setPreviewUserId(value);
-                      }}
-                    >
-                      Load
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      onClick={() => {
-                        setPreviewUserId(null);
-                        setPreviewUserInput('');
-                      }}
-                    >
-                      Clear
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">If user is missing or has no usage, used values remain 0 with caps/labels visible.</p>
-                </div>
-
-                <p className="text-xs text-muted-foreground">
-                  {previewUserId
-                    ? preview?.user_found
-                      ? `Loaded user: ${previewUserId}`
-                      : `User not found for ${previewUserId}. Showing zero usage.`
-                    : 'No user selected. Showing policy-only preview.'}
-                </p>
-                <div className="space-y-3">
-                  <LimitBar label="Chat Messages" used={n(usage.used_chats ?? usage.messages_count, 0)} cap={n(limits.max_chats_total, 0)} resetLabel={windows.chats?.label || labels.chats || 'No reset (lifetime)'} />
-                  <LimitBar label="Tokens" used={n(usage.used_tokens ?? usage.tokens_used, 0)} cap={n(limits.max_tokens_total, 0)} resetLabel={windows.tokens?.label || labels.tokens || 'No reset (lifetime)'} />
-                  <LimitBar label="Uploads" used={n(usage.used_uploads ?? usage.uploads_count, 0)} cap={n(limits.max_uploads_total, 0)} resetLabel={windows.uploads?.label || labels.uploads || 'No reset (lifetime)'} />
-                  <LimitBar label="Storage (MB)" used={n(usage.used_storage_mb ?? usage.uploaded_mb, 0)} cap={n(limits.max_storage_mb, 0)} resetLabel={windows.storage?.label || labels.storage || 'No reset (lifetime)'} />
-                  <LimitBar label="Exams" used={n(usage.used_exams ?? usage.exams_count, 0)} cap={n(limits.max_exams_total, 0)} resetLabel={windows.exams?.label || labels.exams || 'No reset (lifetime)'} />
-                  <LimitBar label="Concurrent Jobs" used={n(usage.running_jobs ?? usage.active_jobs, 0)} cap={n(limits.max_concurrent_jobs ?? limits.max_jobs_concurrent, 0)} resetLabel={labels.concurrent_jobs || 'No reset (current active jobs)'} />
-                </div>
-                <div className="space-y-2 rounded-md border p-3 text-xs">
-                  <p className="font-medium">Active quota windows</p>
-                  <p className="text-muted-foreground">Chats: {windows.chats?.label?.includes('No reset') ? 'No reset (lifetime)' : formatWindow(windows.chats?.window_start, windows.chats?.window_end)}</p>
-                  <p className="text-muted-foreground">Tokens: {windows.tokens?.label?.includes('No reset') ? 'No reset (lifetime)' : formatWindow(windows.tokens?.window_start, windows.tokens?.window_end)}</p>
-                  <p className="text-muted-foreground">Uploads: {windows.uploads?.label?.includes('No reset') ? 'No reset (lifetime)' : formatWindow(windows.uploads?.window_start, windows.uploads?.window_end)}</p>
-                  <p className="text-muted-foreground">Storage: {windows.storage?.label?.includes('No reset') ? 'No reset (lifetime)' : formatWindow(windows.storage?.window_start, windows.storage?.window_end)}</p>
-                  <p className="text-muted-foreground">Exams: {windows.exams?.label?.includes('No reset') ? 'No reset (lifetime)' : formatWindow(windows.exams?.window_start, windows.exams?.window_end)}</p>
-                </div>
               </CardContent>
             </Card>
           </div>

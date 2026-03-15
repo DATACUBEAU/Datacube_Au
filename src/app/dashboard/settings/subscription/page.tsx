@@ -799,16 +799,16 @@ export default function SubscriptionPage() {
 
   // --- Usage Meter ---
   const LimitBar = ({ label, used, limit }: any) => {
-    const safeLimit = Number.isFinite(limit) ? Math.max(0, Number(limit)) : 0;
+    const safeLimit = limit === null ? null : (Number.isFinite(limit) ? Math.max(0, Number(limit)) : 0);
     const safeUsed = Number.isFinite(used) ? used : 0;
-    const percent = safeLimit > 0 ? Math.min(100, (safeUsed / safeLimit) * 100) : 0;
-    const isLimit = safeLimit > 0 ? safeUsed >= safeLimit : safeUsed > 0;
+    const percent = typeof safeLimit === 'number' && safeLimit > 0 ? Math.min(100, (safeUsed / safeLimit) * 100) : 0;
+    const isLimit = typeof safeLimit === 'number' && safeLimit > 0 ? safeUsed >= safeLimit : false;
     return (
         <div>
             <div className="flex justify-between text-sm mb-1.5">
                 <span className="font-medium text-foreground">{label}</span>
                 <span className={cn("font-mono text-xs", isLimit ? "text-destructive font-bold" : "text-muted-foreground")}>
-                    {`${safeUsed} / ${safeLimit}`}
+                    {safeLimit === null ? `${safeUsed} / Unlimited` : `${safeUsed} / ${safeLimit}`}
                 </span>
             </div>
             <div className="h-2.5 bg-muted rounded-full overflow-hidden">
@@ -826,13 +826,25 @@ export default function SubscriptionPage() {
 
     const planCode = String(limitsUsage.plan || tier || 'free').toLowerCase();
     const isFreePlan = planCode === 'free';
-    const usageTotal = limitsUsage.usageTotal || {};
-    const limits = limitsUsage.limits || {};
-    const usageWindows = limitsUsage.usageWindows || {};
-    const resetSummary = [
-      usageWindows.tokens?.label,
-      usageWindows.chats?.label,
-    ].filter(Boolean);
+    const usageByLimit = limitsUsage.usageByLimit || {};
+    const limitRules = limitsUsage.limitRules || {};
+    const fileSizeCap = Number((limitsUsage.limits || {}).max_file_size_mb || 0);
+    const usageKeys = [
+      'max_chats_total',
+      'max_uploads_total',
+      'max_tokens_total',
+      'max_exam_predictions',
+      'max_practice_exams',
+      'max_knowledge_hub',
+      'max_concurrent_jobs',
+    ];
+    const resetSummary = usageKeys
+      .map((key) => {
+        const entry = usageByLimit[key] as any;
+        return typeof entry?.reset?.label === 'string' ? entry.reset.label : '';
+      })
+      .filter(Boolean)
+      .slice(0, 2);
 
     return (
         <div className="bg-card rounded-3xl shadow-sm p-6 border border-border mb-8 max-w-4xl mx-auto">
@@ -842,41 +854,31 @@ export default function SubscriptionPage() {
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
               Plan: <span className="font-semibold text-foreground">{planCode.toUpperCase()}</span>
-              {resetSummary.length > 0 ? ` • ${resetSummary.join(' • ')}` : ''}
+              {resetSummary.length > 0 ? ` / ${resetSummary.join(' / ')}` : ''}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <LimitBar
-                    label="Chat Messages"
-                    used={Number(usageTotal.used_chats ?? usageTotal.messages_count ?? 0)}
-                    limit={Number(limits.max_chats_total ?? 0)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">{usageWindows.chats?.label || 'No reset policy loaded'}</p>
-                </div>
-                <div className="space-y-2">
-                  <LimitBar
-                    label="Uploads"
-                    used={Number(usageTotal.used_uploads ?? usageTotal.uploads_count ?? 0)}
-                    limit={Number(limits.max_uploads_total ?? 0)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">{usageWindows.uploads?.label || 'No reset policy loaded'}</p>
-                </div>
-                <div className="space-y-2">
-                  <LimitBar
-                    label="Tokens"
-                    used={Number(usageTotal.used_tokens ?? usageTotal.tokens_used ?? 0)}
-                    limit={Number(limits.max_tokens_total ?? 0)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">{usageWindows.tokens?.label || 'No reset policy loaded'}</p>
-                </div>
-                <div className="space-y-2">
-                  <LimitBar
-                    label="Storage (MB)"
-                    used={Math.round(Number(usageTotal.used_storage_mb ?? usageTotal.uploaded_mb ?? 0))}
-                    limit={Number(limits.max_storage_mb ?? 0)}
-                  />
-                  <p className="text-[11px] text-muted-foreground">{usageWindows.storage?.label || 'No reset policy loaded'}</p>
-                </div>
+                {usageKeys.map((key) => {
+                  const rule = (limitRules[key] || {}) as any;
+                  const usageEntry = (usageByLimit[key] || {}) as any;
+                  return (
+                    <div key={key} className="space-y-2">
+                      <LimitBar
+                        label={String(rule.label || key)}
+                        used={Number(usageEntry.used || 0)}
+                        limit={typeof usageEntry.limit === 'number' || usageEntry.limit === null ? usageEntry.limit : null}
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        {typeof usageEntry?.reset?.label === 'string' ? usageEntry.reset.label : 'No reset policy loaded'}
+                      </p>
+                    </div>
+                  );
+                })}
+            </div>
+            <div className="mt-4 rounded-2xl border border-dashed p-4 text-xs text-muted-foreground">
+              <p>
+                Per-file upload size: <span className="font-medium text-foreground">{fileSizeCap.toLocaleString()} MB</span>
+              </p>
+              <p>Checked on every upload request. It does not use a scheduled reset window.</p>
             </div>
             {isFreePlan && billingEnabled ? (
               <p className="mt-4 text-xs text-muted-foreground">

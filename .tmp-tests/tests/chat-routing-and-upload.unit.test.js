@@ -146,7 +146,7 @@ async function main() {
     await run('large-file gate triggers only above 50 MB when the future flag is disabled', () => {
         const result = (0, large_file_gating_js_1.getLargeFileGate)({
             fileSizeBytes: 51 * 1024 * 1024,
-            flags: {},
+            maxFileSizeMb: 50,
         });
         strict_1.default.equal(result.blocked, true);
         strict_1.default.equal(result.message, large_file_gating_js_1.LARGE_FILE_DISABLED_MESSAGE);
@@ -155,27 +155,25 @@ async function main() {
     await run('large-file gate does not trigger for files at or below 50 MB', () => {
         const result = (0, large_file_gating_js_1.getLargeFileGate)({
             fileSizeBytes: 50 * 1024 * 1024,
-            flags: {},
+            maxFileSizeMb: 50,
         });
         strict_1.default.equal(result.blocked, false);
     });
     await run('large-file gate does not trigger when the feature flag is enabled', () => {
         const result = (0, large_file_gating_js_1.getLargeFileGate)({
             fileSizeBytes: 70 * 1024 * 1024,
-            flags: {
-                pro_upload_100mb: { enabled: true },
-            },
+            maxFileSizeMb: 100,
         });
         strict_1.default.equal(result.blocked, false);
     });
     await run('large-file gate is scoped to the current upload input only', () => {
         const blocked = (0, large_file_gating_js_1.getLargeFileGate)({
             fileSizeBytes: 80 * 1024 * 1024,
-            flags: {},
+            maxFileSizeMb: 50,
         });
         const allowed = (0, large_file_gating_js_1.getLargeFileGate)({
             fileSizeBytes: 5 * 1024 * 1024,
-            flags: {},
+            maxFileSizeMb: 50,
         });
         strict_1.default.equal(blocked.blocked, true);
         strict_1.default.equal(allowed.blocked, false);

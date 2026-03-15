@@ -54,18 +54,7 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function getSuggestions(limitKey: string): string[] {
   switch (limitKey) {
-    case 'max_chunks_per_doc':
-      return [
-        'Increase chunk size to reduce total chunk count.',
-        'Lower chunk overlap to avoid duplicate chunks.',
-        'Select fewer pages or sections before ingestion.',
-      ];
-    case 'max_pages_per_doc':
-      return [
-        'Trim non-essential pages before uploading.',
-        'Split the file into multiple smaller documents.',
-      ];
-    case 'max_file_mb':
+    case 'max_file_size_mb':
       return [
         'Compress the PDF before uploading.',
         'Split the file into multiple smaller documents.',
@@ -81,17 +70,18 @@ function getSuggestions(limitKey: string): string[] {
         'Use shorter prompts and concise replies to reduce token usage.',
         'Upgrade your plan for higher or unlimited caps.',
       ];
-    case 'max_exams_total':
+    case 'max_exam_predictions':
+    case 'max_practice_exams':
       return [
-        'Generate exams only after finalizing your study scope.',
-        'Upgrade your plan for higher or unlimited exam caps.',
+        'Generate only the final study outputs you need.',
+        'Upgrade your plan for higher generation caps.',
       ];
-    case 'max_storage_mb':
+    case 'max_knowledge_hub':
       return [
-        'Delete old or duplicate documents to free storage.',
-        'Archive large files you no longer need in AU.',
+        'Clear generated knowledge items you no longer need.',
+        'Upgrade your plan for more stored Knowledge Hub outputs.',
       ];
-    case 'max_jobs_concurrent':
+    case 'max_concurrent_jobs':
       return [
         'Wait for active ingestion jobs to finish first.',
         'Reduce parallel uploads and queue them gradually.',
@@ -99,6 +89,15 @@ function getSuggestions(limitKey: string): string[] {
     default:
       return [];
   }
+}
+
+function readUsage(total: Record<string, number>, ...keys: string[]): number {
+  for (const key of keys) {
+    if (Number.isFinite(Number(total[key]))) {
+      return asNumber(total[key], 0);
+    }
+  }
+  return 0;
 }
 
 function normalizeThresholds(values: number[], fallback: number[]): number[] {
@@ -232,7 +231,7 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
   const ctx = input.context || {};
 
   if (route === 'upload') {
-    const maxFileMb = asNumber(input.limits.max_file_mb, 0);
+    const maxFileMb = asNumber(input.limits.max_file_size_mb, 0);
     const pendingFileMb = asNumber(ctx.pendingFileSizeMb, 0);
     if (maxFileMb > 0 && pendingFileMb > 0) {
       const percent = (pendingFileMb / maxFileMb) * 100;
@@ -240,11 +239,11 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
       if (severity !== 'info' || percent >= warnLevels[0]) {
         alerts.push(
           makeAlert({
-            id: 'upload:max_file_mb',
+            id: 'upload:max_file_size_mb',
             severity,
             title: severity === 'block' ? 'File exceeds upload size limit' : 'File is near upload size limit',
             message: `Selected file size is ${pendingFileMb.toFixed(2)}MB. Plan limit is ${maxFileMb}MB.`,
-            limitName: 'max_file_mb',
+            limitName: 'max_file_size_mb',
             current: pendingFileMb,
             max: maxFileMb,
             threshold: severity === 'block' ? 100 : warnLevels[0],
@@ -258,7 +257,7 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
       id: 'upload:max_uploads_total',
       title: 'Upload cap usage',
       limitKey: 'max_uploads_total',
-      current: asNumber(total.used_uploads, asNumber(total.uploads_count, 0)),
+      current: readUsage(total, 'max_uploads_total', 'used_uploads', 'uploads_count'),
       max: asNumber(input.limits.max_uploads_total, 0),
       warnLevels,
       blockLevels,
@@ -267,11 +266,11 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
     if (uploadsAlert) alerts.push(uploadsAlert);
 
     const jobsAlert = maybeUsageAlert({
-      id: 'upload:max_jobs_concurrent',
+      id: 'upload:max_concurrent_jobs',
       title: 'Concurrent ingestion jobs',
-      limitKey: 'max_jobs_concurrent',
-      current: asNumber(ctx.activeJobsCount, 0),
-      max: asNumber(input.limits.max_jobs_concurrent, 0),
+      limitKey: 'max_concurrent_jobs',
+      current: asNumber(ctx.activeJobsCount, readUsage(total, 'max_concurrent_jobs')),
+      max: asNumber(input.limits.max_concurrent_jobs, 0),
       warnLevels,
       blockLevels,
       upsellEnabled,
@@ -279,38 +278,12 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
     if (jobsAlert) alerts.push(jobsAlert);
   }
 
-  if (route === 'ingestion') {
-    const pagesAlert = maybeUsageAlert({
-      id: 'ingestion:max_pages_per_doc',
-      title: 'Document page limit',
-      limitKey: 'max_pages_per_doc',
-      current: asNumber(ctx.expectedPages, 0),
-      max: asNumber(input.limits.max_pages_per_doc, 0),
-      warnLevels,
-      blockLevels,
-      upsellEnabled,
-    });
-    if (pagesAlert) alerts.push(pagesAlert);
-
-    const chunksAlert = maybeUsageAlert({
-      id: 'ingestion:max_chunks_per_doc',
-      title: 'Document chunk limit',
-      limitKey: 'max_chunks_per_doc',
-      current: asNumber(ctx.expectedChunks, 0),
-      max: asNumber(input.limits.max_chunks_per_doc, 0),
-      warnLevels,
-      blockLevels,
-      upsellEnabled,
-    });
-    if (chunksAlert) alerts.push(chunksAlert);
-  }
-
   if (route === 'chat' || route === 'global-chat') {
     const messagesAlert = maybeUsageAlert({
       id: 'chat:max_chats_total',
       title: 'Chat cap usage',
       limitKey: 'max_chats_total',
-      current: asNumber(total.used_chats, asNumber(total.messages_count, 0)),
+      current: readUsage(total, 'max_chats_total', 'used_chats', 'messages_count'),
       max: asNumber(input.limits.max_chats_total, 0),
       warnLevels,
       blockLevels,
@@ -322,7 +295,7 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
       id: 'chat:max_tokens_total',
       title: 'Token cap usage',
       limitKey: 'max_tokens_total',
-      current: asNumber(total.used_tokens, asNumber(total.tokens_used, 0)),
+      current: readUsage(total, 'max_tokens_total', 'used_tokens', 'tokens_used'),
       max: asNumber(input.limits.max_tokens_total, 0),
       warnLevels,
       blockLevels,
@@ -331,19 +304,42 @@ export function buildLimitationsAlerts(input: LimitationsAgentInput): LimitAlert
     if (tokensAlert) alerts.push(tokensAlert);
   }
 
-  if (route === 'dashboard' || route === 'upload' || route === 'chat' || route === 'ingestion' || route === 'global-chat') {
-    const storageCurrent = asNumber(ctx.totalStorageMb, asNumber(total.uploaded_mb, 0));
-    const storageAlert = maybeUsageAlert({
-      id: 'storage:max_storage_mb',
-      title: 'Storage usage',
-      limitKey: 'max_storage_mb',
-      current: storageCurrent,
-      max: asNumber(input.limits.max_storage_mb, 0),
+  if (route === 'dashboard') {
+    const knowledgeAlert = maybeUsageAlert({
+      id: 'dashboard:max_knowledge_hub',
+      title: 'Knowledge Hub capacity',
+      limitKey: 'max_knowledge_hub',
+      current: readUsage(total, 'max_knowledge_hub'),
+      max: asNumber(input.limits.max_knowledge_hub, 0),
       warnLevels,
       blockLevels,
       upsellEnabled,
     });
-    if (storageAlert) alerts.push(storageAlert);
+    if (knowledgeAlert) alerts.push(knowledgeAlert);
+
+    const predictionAlert = maybeUsageAlert({
+      id: 'dashboard:max_exam_predictions',
+      title: 'Exam Prediction usage',
+      limitKey: 'max_exam_predictions',
+      current: readUsage(total, 'max_exam_predictions'),
+      max: asNumber(input.limits.max_exam_predictions, 0),
+      warnLevels,
+      blockLevels,
+      upsellEnabled,
+    });
+    if (predictionAlert) alerts.push(predictionAlert);
+
+    const practiceAlert = maybeUsageAlert({
+      id: 'dashboard:max_practice_exams',
+      title: 'Practice exam usage',
+      limitKey: 'max_practice_exams',
+      current: readUsage(total, 'max_practice_exams'),
+      max: asNumber(input.limits.max_practice_exams, 0),
+      warnLevels,
+      blockLevels,
+      upsellEnabled,
+    });
+    if (practiceAlert) alerts.push(practiceAlert);
   }
 
   const severityWeight: Record<LimitSeverity, number> = {

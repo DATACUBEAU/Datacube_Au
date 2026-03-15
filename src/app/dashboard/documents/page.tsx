@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { formatDistanceToNowStrict } from "date-fns";
-import { useSupabaseUser, useIsAdmin } from "@/hooks/use-supabase-auth";
+import { useSupabaseUser } from "@/hooks/use-supabase-auth";
 import { useAuDocuments } from "@/hooks/api/use-au-documents";
 import UploadCenter from "@/components/upload/upload-center";
 import { useUploadJobs } from "@/components/upload/upload-jobs-provider";
@@ -60,11 +60,8 @@ interface DocumentData {
   filePath?: string;
 }
 
-const FAILED_AUTO_DELETE_MS = 60 * 60 * 1000; // 1 hour
-
 export default function DocumentsPage() {
   const [user] = useSupabaseUser();
-  const [isAdmin] = useIsAdmin();
   const { isOnline } = useNetworkStatus();
   const { 
     documents: apiDocuments, 
@@ -122,50 +119,10 @@ export default function DocumentsPage() {
 
   const loading = apiLoading;
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(loading);
-  const cleanupInProgress = useMemo(() => new Set<string>(), []);
 
   const getComputedExpiresAt = (doc: DocumentData) => {
     return new Date(new Date(doc.createdAt).getTime() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
   };
-
-  useEffect(() => {
-    const runCleanup = async () => {
-      // Find docs that actually need cleanup
-      const now = Date.now();
-      const docsToClean = documents.filter(doc => {
-        if (cleanupInProgress.has(doc.id)) return false;
-
-        const createdAtMs = new Date(doc.createdAt).getTime();
-        const effectiveExpiresAt = doc.expiresAt || getComputedExpiresAt(doc);
-        const expiresAtMs = new Date(effectiveExpiresAt).getTime();
-
-        const failedAutoDeleteReady =
-          doc.status === "failed" &&
-          now - createdAtMs > FAILED_AUTO_DELETE_MS;
-
-        const expired = now > expiresAtMs;
-
-        return failedAutoDeleteReady || expired;
-      });
-
-      if (docsToClean.length === 0) return;
-      
-
-      docsToClean.forEach(async (doc) => {
-        cleanupInProgress.add(doc.id);
-
-        try {
-          await apiRemove(doc.id);
-        } catch (err) {
-          console.error("[Cleanup] Error deleting document:", err);
-        } finally {
-          cleanupInProgress.delete(doc.id);
-        }
-      });
-    };
-    
-    runCleanup();
-  }, [documents, user, cleanupInProgress, apiRemove]);
 
   // ---- MERGE UPLOAD JOBS INTO UI (VISUAL ONLY) ----
   const mergedDocuments = useMemo(() => {

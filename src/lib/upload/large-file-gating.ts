@@ -2,28 +2,25 @@ export const LARGE_FILE_THRESHOLD_MB = 50;
 export const LARGE_FILE_THRESHOLD_BYTES = LARGE_FILE_THRESHOLD_MB * 1024 * 1024;
 export const LARGE_FILE_DISABLED_MESSAGE = 'Files above 50 MB are not yet enabled.';
 
-type FeatureFlagLike = boolean | { enabled?: boolean | null } | null | undefined;
-
-function isFlagEnabled(value: FeatureFlagLike): boolean {
-  if (typeof value === 'boolean') return value;
-  if (value && typeof value === 'object') return value.enabled === true;
-  return false;
-}
-
-export function isLargeFileUploadEnabled(flags: Record<string, FeatureFlagLike>): boolean {
-  return isFlagEnabled(flags.pro_upload_100mb) || isFlagEnabled(flags.upload_100mb);
+export function getLargeFileLimitMessage(maxFileSizeMb: number, fileSizeMb: number): string {
+  if (maxFileSizeMb <= LARGE_FILE_THRESHOLD_MB && fileSizeMb > LARGE_FILE_THRESHOLD_MB) {
+    return LARGE_FILE_DISABLED_MESSAGE;
+  }
+  return `File exceeds upload size limit (${maxFileSizeMb}MB).`;
 }
 
 export function getLargeFileGate(input: {
   fileSizeBytes: number;
-  flags: Record<string, FeatureFlagLike>;
+  maxFileSizeMb: number;
 }): {
   blocked: boolean;
   message: string | null;
   suppressUpgradePrompt: boolean;
 } {
   const fileSizeBytes = Number(input.fileSizeBytes || 0);
-  if (!Number.isFinite(fileSizeBytes) || fileSizeBytes <= LARGE_FILE_THRESHOLD_BYTES) {
+  const maxFileSizeMb = Math.max(0, Math.floor(Number(input.maxFileSizeMb || 0)));
+
+  if (!Number.isFinite(fileSizeBytes) || fileSizeBytes <= 0 || maxFileSizeMb <= 0) {
     return {
       blocked: false,
       message: null,
@@ -31,7 +28,8 @@ export function getLargeFileGate(input: {
     };
   }
 
-  if (isLargeFileUploadEnabled(input.flags)) {
+  const fileSizeMb = Math.ceil(fileSizeBytes / (1024 * 1024));
+  if (fileSizeMb <= maxFileSizeMb) {
     return {
       blocked: false,
       message: null,
@@ -41,7 +39,7 @@ export function getLargeFileGate(input: {
 
   return {
     blocked: true,
-    message: LARGE_FILE_DISABLED_MESSAGE,
-    suppressUpgradePrompt: true,
+    message: getLargeFileLimitMessage(maxFileSizeMb, fileSizeMb),
+    suppressUpgradePrompt: maxFileSizeMb <= LARGE_FILE_THRESHOLD_MB,
   };
 }

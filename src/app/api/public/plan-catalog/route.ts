@@ -22,7 +22,6 @@ export async function GET() {
         generatedAt: new Date().toISOString(),
         plans,
         flags: {
-          pro_upload_100mb: Boolean(flags.get('pro_upload_100mb')?.enabled || flags.get('upload_100mb')?.enabled),
           enable_exam_prediction: Boolean(flags.get('enable_exam_prediction')?.enabled ?? true),
           enable_knowledge_hub: Boolean(flags.get('enable_knowledge_hub')?.enabled ?? true),
           enable_practice_exam_generation: Boolean(flags.get('enable_practice_exam_generation')?.enabled ?? true),

@@ -25,7 +25,6 @@ import { useLimits } from '@/components/providers/limits-provider';
 import { extractLimitExceededPayload } from '@/lib/limits/limit-errors';
 import { registerAuthBoundAbortController } from '@/lib/auth/session-expiry-events';
 import { isRetryableUploadError } from '@/lib/upload/retry-policy';
-import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { getLargeFileGate, LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 import { isActiveStatus, isTerminalStatus, reconcileJobsWithDocumentRows } from '@/lib/upload/job-status';
 
@@ -181,7 +180,6 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
   const { usage: limitsUsage, reportServerLimitError } = useLimits();
-  const { records: featureFlagRecords } = useFeatureFlags();
 
   const [jobs, setJobs] = useState<UploadJobRow[]>([]);
   const [isThrottled, setIsThrottled] = useState(false);
@@ -212,7 +210,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
   // Derive upload size cap from server-provided effective limits.
   useEffect(() => {
-    const maxFileMb = Number((limitsUsage?.limits || {})?.max_file_mb);
+    const maxFileMb = Number((limitsUsage?.limits || {})?.max_file_size_mb);
     if (!Number.isFinite(maxFileMb)) {
       setMaxUploadSize(50 * 1024 * 1024);
       return;
@@ -618,7 +616,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
         const largeFileGate = getLargeFileGate({
           fileSizeBytes: file.size,
-          flags: featureFlagRecords,
+          maxFileSizeMb: Math.max(1, Math.floor(maxUploadSize / (1024 * 1024))),
         });
         if (largeFileGate.blocked) {
           throw new Error(largeFileGate.message || LARGE_FILE_DISABLED_MESSAGE);
@@ -833,7 +831,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
       }
     },
-    [featureFlagRecords, isAuthLocked, isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
+    [isAuthLocked, isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
   );
 
   useEffect(() => {
@@ -893,7 +891,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
         const largeFileGate = getLargeFileGate({
           fileSizeBytes: file.size,
-          flags: featureFlagRecords,
+          maxFileSizeMb: Math.max(1, Math.floor(maxUploadSize / (1024 * 1024))),
         });
         if (largeFileGate.blocked) {
           errors.push(`${file.name}: ${largeFileGate.message}`);
@@ -948,7 +946,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [featureFlagRecords, isAuthLocked, isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
+    [isAuthLocked, isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
   );
 
   const cancelJob = useCallback(
@@ -1071,7 +1069,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
 
       const largeFileGate = getLargeFileGate({
         fileSizeBytes: file.size,
-        flags: featureFlagRecords,
+        maxFileSizeMb: Math.max(1, Math.floor(maxUploadSize / (1024 * 1024))),
       });
       if (largeFileGate.blocked) {
         throw new Error(largeFileGate.message || LARGE_FILE_DISABLED_MESSAGE);
@@ -1111,7 +1109,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
       applyOwnershipFilter(docUpdateQuery, conditions);
       await docUpdateQuery;
     },
-    [featureFlagRecords, jobs, updateJobLocal, updateJobRow, user]
+    [jobs, maxUploadSize, updateJobLocal, updateJobRow, user]
   );
 
   const activeJobs = useMemo(

@@ -286,7 +286,7 @@ async function enforceConcurrentJobLimitOrThrow(input: {
   throw new TierAccessError(
     429,
     buildLimitReachedPayload({
-      key: 'max_jobs_concurrent',
+      key: 'max_concurrent_jobs',
       message: `Too many active jobs. Your plan allows ${cap} concurrent jobs.`,
       count: activeCount,
       limit: cap,
@@ -673,7 +673,7 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
       }
       if (action === 'complete') {
         await enforceConcurrentJobLimitOrThrow({ supabase, userId, tierContext });
-        appliedGuards.push('limit:max_jobs_concurrent');
+        appliedGuards.push('limit:max_concurrent_jobs');
         // Quota enforcement moved to finalize_document_upload (RPC)
         // await enforceDocumentUploadQuotaOrThrow({
         //   supabase,

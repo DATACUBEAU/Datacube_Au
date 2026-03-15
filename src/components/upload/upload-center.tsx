@@ -26,7 +26,6 @@ import { useStore } from '@/hooks/use-store';
 import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
-import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { getLargeFileGate, LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 
 // Use both MIME types and extensions for better browser compatibility
@@ -91,8 +90,6 @@ export default function UploadCenter() {
   const [isDragging, setIsDragging] = useState(false);
   const [reattachJobId, setReattachJobId] = useState<string | null>(null);
   const [pendingUploadSizeMb, setPendingUploadSizeMb] = useState<number | null>(null);
-  const { records: featureFlagRecords } = useFeatureFlags();
-
   const supportsUploads = Boolean(session?.access_token) && Boolean(user) && isOnline && !upgradeBlocked;
 
   const loadParents = useCallback(async () => {
@@ -162,7 +159,7 @@ export default function UploadCenter() {
       for (const file of files) {
         const largeFileGate = getLargeFileGate({
           fileSizeBytes: file.size,
-          flags: featureFlagRecords,
+          maxFileSizeMb: Math.max(1, Math.floor(maxUploadSize / (1024 * 1024))),
         });
 
         if (largeFileGate.blocked) {
@@ -245,7 +242,7 @@ export default function UploadCenter() {
         if (inputRef.current) inputRef.current.value = '';
       }
     },
-    [supportsUploads, user, session?.access_token, featureFlagRecords, needsParent, parentId, label, docType, enqueueUploads, toast, maxUploadSize]
+    [supportsUploads, user, session?.access_token, needsParent, parentId, label, docType, enqueueUploads, toast, maxUploadSize]
   );
 
   const onFilesChanged = useCallback(

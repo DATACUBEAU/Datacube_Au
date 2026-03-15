@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { APPROVED_LIMIT_KEYS, DEFAULT_PLAN_ORDER, type EffectivePlanCode } from '@/lib/limits/plan-limit-model';
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
 import {
-  DEFAULT_PLAN_ORDER,
   buildUsageSnapshotForUser,
   buildZeroUsageSnapshot,
   loadPublicPlanCatalog,
-  type EffectivePlanCode,
+  serializeEffectivePlanLimitRule,
 } from '@/lib/server/au-limits';
 
 export const runtime = 'nodejs';
@@ -40,6 +40,7 @@ export async function GET(req: NextRequest) {
     const supabase = adminResult.supabase;
     const planCatalog = await loadPublicPlanCatalog(supabase);
     const policy = planCatalog.find((entry) => entry.plan === plan);
+
     if (!policy) {
       return NextResponse.json(
         {
@@ -63,8 +64,8 @@ export async function GET(req: NextRequest) {
     }
 
     const usage = previewUserId
-      ? await buildUsageSnapshotForUser(supabase, previewUserId, policy.canonicalLimits)
-      : buildZeroUsageSnapshot(policy.canonicalLimits);
+      ? await buildUsageSnapshotForUser(supabase, previewUserId, policy.limitRules)
+      : buildZeroUsageSnapshot(policy.limitRules);
 
     return NextResponse.json(
       {
@@ -78,21 +79,23 @@ export async function GET(req: NextRequest) {
           label: policy.metadata.label,
           description: policy.metadata.description,
           limits: policy.limits,
-          canonicalLimits: policy.canonicalLimits,
+          limit_rules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+            acc[key] = serializeEffectivePlanLimitRule(policy.limitRules[key]);
+            return acc;
+          }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
           resetLabels: policy.resetLabels,
         },
         effectiveLimits: policy.limits,
+        effectiveLimitRules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+          acc[key] = serializeEffectivePlanLimitRule(policy.limitRules[key]);
+          return acc;
+        }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
         usage,
         resetWindows: usage.windows,
-        labels: {
-          tokens: usage.windows.tokens?.label || policy.resetLabels.tokens,
-          chats: usage.windows.chats?.label || policy.resetLabels.chats,
-          uploads: usage.windows.uploads?.label || policy.resetLabels.uploads,
-          documents: usage.windows.documents?.label || policy.resetLabels.documents,
-          exams: usage.windows.exams?.label || policy.resetLabels.exams,
-          storage: usage.windows.storage?.label || policy.resetLabels.storage,
-          concurrent_jobs: 'No reset (current active jobs)',
-        },
+        labels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+          acc[key] = usage.windows[key]?.label || policy.resetLabels[key];
+          return acc;
+        }, {} as Record<string, string>),
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );

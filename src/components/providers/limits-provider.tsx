@@ -13,11 +13,20 @@ import { safeFetch } from '@/lib/api/safe-fetch';
 type UsageSnapshot = {
   plan: string;
   limits: Record<string, number>;
+  limitRules: Record<string, Record<string, unknown>>;
+  usageByLimit: Record<string, Record<string, unknown>>;
   usageToday: Record<string, number>;
   usageTotal: Record<string, number>;
   resetAt: string | null;
-  usageWindows: Record<string, { label: string; reset_every_days: number; window_start: string; window_end: string | null }>;
-  resetPolicies: Record<string, number>;
+  usageWindows: Record<string, {
+    label: string;
+    policy: string;
+    interval_value: number | null;
+    interval_unit: string | null;
+    window_start: string;
+    window_end: string | null;
+  }>;
+  resetPolicies: Record<string, string>;
   loading: boolean;
   fetchedAt: number | null;
 };
@@ -42,6 +51,8 @@ const defaultFlags: LimitsFlagsConfig = {
 const defaultUsage: UsageSnapshot = {
   plan: 'free',
   limits: {},
+  limitRules: {},
+  usageByLimit: {},
   usageToday: {},
   usageTotal: {},
   resetAt: null,
@@ -82,18 +93,57 @@ function normalizeNumberMap(value: unknown): Record<string, number> {
 
 function normalizeWindowMap(
   value: unknown,
-): Record<string, { label: string; reset_every_days: number; window_start: string; window_end: string | null }> {
+): Record<string, {
+  label: string;
+  policy: string;
+  interval_value: number | null;
+  interval_unit: string | null;
+  window_start: string;
+  window_end: string | null;
+}> {
   const map = asRecord(value);
   return Object.entries(map).reduce((acc, [key, raw]) => {
     const entry = asRecord(raw);
     acc[key] = {
       label: typeof entry.label === 'string' ? entry.label : '',
-      reset_every_days: asNumber(entry.reset_every_days),
+      policy: typeof entry.policy === 'string' ? entry.policy : '',
+      interval_value: Number.isFinite(Number(entry.intervalValue ?? entry.interval_value))
+        ? Number(entry.intervalValue ?? entry.interval_value)
+        : null,
+      interval_unit:
+        typeof entry.intervalUnit === 'string'
+          ? entry.intervalUnit
+          : (typeof entry.interval_unit === 'string' ? entry.interval_unit : null),
       window_start: typeof entry.window_start === 'string' ? entry.window_start : '',
       window_end: typeof entry.window_end === 'string' ? entry.window_end : null,
     };
     return acc;
-  }, {} as Record<string, { label: string; reset_every_days: number; window_start: string; window_end: string | null }>);
+  }, {} as Record<string, {
+    label: string;
+    policy: string;
+    interval_value: number | null;
+    interval_unit: string | null;
+    window_start: string;
+    window_end: string | null;
+  }>);
+}
+
+function normalizeStringMap(value: unknown): Record<string, string> {
+  const map = asRecord(value);
+  return Object.entries(map).reduce((acc, [key, raw]) => {
+    if (typeof raw === 'string') {
+      acc[key] = raw;
+    }
+    return acc;
+  }, {} as Record<string, string>);
+}
+
+function normalizeObjectMap(value: unknown): Record<string, Record<string, unknown>> {
+  const map = asRecord(value);
+  return Object.entries(map).reduce((acc, [key, raw]) => {
+    acc[key] = asRecord(raw);
+    return acc;
+  }, {} as Record<string, Record<string, unknown>>);
 }
 
 function normalizeThresholdArray(value: unknown, fallback: number[]): number[] {
@@ -172,10 +222,12 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
       setUsage({
         plan: typeof data.plan === 'string' ? data.plan : 'free',
         limits: normalizeNumberMap(data.limits),
+        limitRules: normalizeObjectMap(data.limit_rules),
+        usageByLimit: normalizeObjectMap(usagePayload.by_limit),
         usageToday: normalizeNumberMap(usagePayload.today),
         usageTotal: normalizeNumberMap(usagePayload.total),
         usageWindows: normalizeWindowMap(usagePayload.windows),
-        resetPolicies: normalizeNumberMap(usagePayload.reset_policies),
+        resetPolicies: normalizeStringMap(usagePayload.reset_policies),
         resetAt: typeof data.reset_at === 'string'
           ? data.reset_at
           : (typeof usagePayload.reset_at === 'string' ? usagePayload.reset_at : null),
@@ -269,6 +321,21 @@ export function LimitsProvider({ children }: { children: React.ReactNode }) {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'au_model_usage', filter: `user_id=eq.${user.id}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_messages', filter: `user_id=eq.${user.id}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_feature_outputs', filter: `user_id=eq.${user.id}` },
+        scheduleRefresh,
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'au_plan_limit_rules' },
         scheduleRefresh,
       )
       .subscribe((status) => {

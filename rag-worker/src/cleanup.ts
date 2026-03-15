@@ -362,26 +362,7 @@ async function cleanup() {
       }
   }
 
-  // 3. Retention Purge (Expired Documents)
-  // This triggers the DB 'AFTER DELETE' trigger, which inserts into au_deletion_log.
-  // The RAGWorker (running continuously) will pick up the log and delete vectors from Qdrant.
-  const { data: expiredDocs, error: expireError } = await supabase
-    .from('au_documents')
-    .select('id, file_name')
-    .lt('expires_at', now);
-    
-  if (expireError) {
-      logger.error('Failed to fetch expired documents', expireError);
-  } else if (expiredDocs && expiredDocs.length > 0) {
-      logger.info(`Found ${expiredDocs.length} expired documents to purge`);
-      for (const doc of expiredDocs) {
-          logger.info(`Purging expired document: ${doc.file_name} (${doc.id})`);
-          // Deleting row triggers cleanup workflow
-          await supabase.from('au_documents').delete().eq('id', doc.id);
-      }
-  } else {
-      logger.info('No expired documents found.');
-  }
+  logger.info('Retention purge is handled by the protected /api/cron/retention backend pipeline.');
 
   logger.info('Cleanup complete');
 }

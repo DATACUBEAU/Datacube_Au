@@ -35,6 +35,7 @@ import {
   markFeatureOutputReady,
   normalizeQuestion,
   prepareFeatureOutputGeneration,
+  readFeatureOutput,
   readAnswerCache,
   readIdempotencyRecord,
   recordSyntheticUsage,
@@ -48,8 +49,10 @@ import {
   EffectiveLimitError,
   getEffectiveLimits,
   throwChatLimitIfNeeded,
-  throwExamLimitIfNeeded,
+  throwExamPredictionLimitIfNeeded,
   throwIngestLimitIfNeeded,
+  throwKnowledgeHubLimitIfNeeded,
+  throwPracticeExamLimitIfNeeded,
   throwUploadLimitIfNeeded,
 } from '@/lib/server/au-limits';
 
@@ -785,18 +788,19 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           });
         }
       }
-      if (action === 'complete') {
-        const fileSizeBytes = Number(parsedBody?.fileSize ?? parsedBody?.file_size ?? 0);
-        if (Number.isFinite(fileSizeBytes) && fileSizeBytes > 0) {
-          throwUploadLimitIfNeeded({
+        if (action === 'complete') {
+          const fileSizeBytes = Number(parsedBody?.fileSize ?? parsedBody?.file_size ?? 0);
+          if (Number.isFinite(fileSizeBytes) && fileSizeBytes > 0) {
+            throwUploadLimitIfNeeded({
+              limits: effectiveLimits,
+              fileSizeBytes,
+              correlationId,
+              includeUploadCount: false,
+            });
+          }
+          throwIngestLimitIfNeeded({
             limits: effectiveLimits,
-            fileSizeBytes,
             correlationId,
-          });
-        }
-        throwIngestLimitIfNeeded({
-          limits: effectiveLimits,
-          correlationId,
         });
       }
     }
@@ -816,11 +820,6 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           { status: 400, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
         );
       }
-
-      throwChatLimitIfNeeded({
-        limits: effectiveLimits,
-        correlationId,
-      });
 
       chatNormalizedQuestion = normalizeQuestion(latestUserMessage(canonicalChatPayload));
       chatActiveDocScope = buildDocScope(canonicalChatPayload.activeDocIds);
@@ -940,6 +939,11 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           });
         }
       }
+
+      throwChatLimitIfNeeded({
+        limits: effectiveLimits,
+        correlationId,
+      });
     }
 
     if (effectiveLimits && normalizedCacheFeature && normalizedCacheFeature !== 'chat') {
@@ -981,15 +985,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           );
         }
 
-        if (gateFeature === 'practice_exam_generation') {
-          throwExamLimitIfNeeded({
-            limits: effectiveLimits,
-            correlationId,
-            action: gateFeature,
-          });
-        }
-
         const documentId = extractDocumentIdForFeature(normalizedFunction, parsedBody);
+        let pendingFeatureReservation:
+          | {
+              feature: 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation';
+              docVersionId: string;
+            }
+          | null = null;
+
         if (documentId) {
           const resolvedVersion = await resolveDocumentVersion({
             supabase: adminSupabase,
@@ -1004,38 +1007,39 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             docVersionId: resolvedVersion.versionId,
           };
           if (resolvedVersion.versionId) {
-            const featureOutputState = await prepareFeatureOutputGeneration({
+            const existingFeatureOutput = await readFeatureOutput({
               supabase: adminSupabase,
               userId: auth.userId,
               docVersionId: resolvedVersion.versionId,
               feature: gateFeature,
             });
-            if (featureOutputState.state === 'ready') {
-              const cachedOutput = featureOutputState.record;
+
+            if (existingFeatureOutput?.status === 'ready') {
               await recordSyntheticUsage({
                 supabase: adminSupabase,
                 userId: auth.userId,
                 feature: gateFeature,
-                model: cachedOutput.model || 'feature_output_cache',
+                model: existingFeatureOutput.model || 'feature_output_cache',
                 requestId,
                 correlationId,
                 cacheHit: true,
-                savedTokens: cachedOutput.tokens,
+                savedTokens: existingFeatureOutput.tokens,
                 metadata: { source: 'feature_output_cache' },
               });
               return NextResponse.json({
-                ...(cachedOutput.output || {}),
+                ...(existingFeatureOutput.output || {}),
                 feature: gateFeature,
                 doc_version_id: resolvedVersion.versionId,
                 fromCache: true,
-                generatedAt: cachedOutput.updatedAt || cachedOutput.createdAt,
+                generatedAt: existingFeatureOutput.updatedAt || existingFeatureOutput.createdAt,
                 message: 'Already generated; cached result reused.',
               }, {
                 status: 200,
                 headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
               });
             }
-            if (featureOutputState.state === 'running') {
+
+            if (existingFeatureOutput?.status === 'running') {
               return NextResponse.json(
                 {
                   status: 409,
@@ -1051,7 +1055,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
                 { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
               );
             }
-            if (featureOutputState.state === 'failed') {
+
+            if (existingFeatureOutput?.status === 'failed') {
               return NextResponse.json(
                 {
                   status: 409,
@@ -1063,16 +1068,108 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
                   correlation_id: correlationId,
                   feature: gateFeature,
                   doc_version_id: resolvedVersion.versionId,
-                  details: featureOutputState.record.output,
+                  details: existingFeatureOutput.output,
                 },
                 { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
               );
             }
-            featureOutputReservation = {
+
+            pendingFeatureReservation = {
               feature: gateFeature,
               docVersionId: resolvedVersion.versionId,
             };
           }
+        }
+
+        if (gateFeature === 'knowledge_hub') {
+          throwKnowledgeHubLimitIfNeeded({
+            limits: effectiveLimits,
+            correlationId,
+            action: gateFeature,
+          });
+        } else if (gateFeature === 'exam_prediction') {
+          throwExamPredictionLimitIfNeeded({
+            limits: effectiveLimits,
+            correlationId,
+            action: gateFeature,
+          });
+        } else {
+          throwPracticeExamLimitIfNeeded({
+            limits: effectiveLimits,
+            correlationId,
+            action: gateFeature,
+          });
+        }
+
+        if (pendingFeatureReservation?.docVersionId) {
+          const featureOutputState = await prepareFeatureOutputGeneration({
+            supabase: adminSupabase,
+            userId: auth.userId,
+            docVersionId: pendingFeatureReservation.docVersionId,
+            feature: gateFeature,
+          });
+          if (featureOutputState.state === 'ready' && featureOutputState.record) {
+            const cachedOutput = featureOutputState.record;
+            await recordSyntheticUsage({
+              supabase: adminSupabase,
+              userId: auth.userId,
+              feature: gateFeature,
+              model: cachedOutput.model || 'feature_output_cache',
+              requestId,
+              correlationId,
+              cacheHit: true,
+              savedTokens: cachedOutput.tokens,
+              metadata: { source: 'feature_output_cache' },
+            });
+            return NextResponse.json({
+              ...(cachedOutput.output || {}),
+              feature: gateFeature,
+              doc_version_id: pendingFeatureReservation.docVersionId,
+              fromCache: true,
+              generatedAt: cachedOutput.updatedAt || cachedOutput.createdAt,
+              message: 'Already generated; cached result reused.',
+            }, {
+              status: 200,
+              headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
+            });
+          }
+
+          if (featureOutputState.state === 'running') {
+            return NextResponse.json(
+              {
+                status: 409,
+                code: 'ALREADY_GENERATING',
+                message: 'This feature is already generating for the selected document.',
+                limit: gateFeature,
+                current: 1,
+                action: gateFeature,
+                correlation_id: correlationId,
+                feature: gateFeature,
+                doc_version_id: pendingFeatureReservation.docVersionId,
+              },
+              { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+            );
+          }
+
+          if (featureOutputState.state === 'failed' && featureOutputState.record) {
+            return NextResponse.json(
+              {
+                status: 409,
+                code: 'FEATURE_OUTPUT_FAILED',
+                message: 'Generation previously failed for this document. Ask an admin to clear the cached output before retrying.',
+                limit: gateFeature,
+                current: 1,
+                action: gateFeature,
+                correlation_id: correlationId,
+                feature: gateFeature,
+                doc_version_id: pendingFeatureReservation.docVersionId,
+                details: featureOutputState.record.output,
+              },
+              { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+            );
+          }
+
+          featureOutputReservation = pendingFeatureReservation;
         }
       }
     }

@@ -21,7 +21,6 @@ export async function GET() {
       enable_practice_exam_generation: Boolean(flags.get('enable_practice_exam_generation')?.enabled ?? true),
       pro_required_exam_prediction: Boolean(flags.get('pro_required_exam_prediction')?.enabled ?? true),
       pro_required_knowledge_hub: Boolean(flags.get('pro_required_knowledge_hub')?.enabled ?? true),
-      pro_upload_100mb: Boolean(flags.get('pro_upload_100mb')?.enabled || flags.get('upload_100mb')?.enabled),
     },
   });
 }

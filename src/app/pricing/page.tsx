@@ -96,13 +96,14 @@ export default async function PricingPage({
 
                 <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                   <p>Document expiration: {formatExpirationWindowLabel(Number(plan.metadata.expiration_days || 0))}</p>
-                  <p>{describeLimit('Uploads', Number(plan.limits.max_uploads_total || 0), plan.resetLabels.uploads)}</p>
-                  <p>{describeLimit('Documents', Number(plan.limits.max_docs_total ?? plan.limits.max_documents_total ?? 0), plan.resetLabels.documents)}</p>
-                  <p>{describeLimit('Chats', Number(plan.limits.max_chats_total || 0), plan.resetLabels.chats)}</p>
-                  <p>{describeLimit('Tokens', Number(plan.limits.max_tokens_total || 0), plan.resetLabels.tokens)}</p>
-                  <p>{describeLimit('Exams', Number(plan.limits.max_exams_total || 0), plan.resetLabels.exams)}</p>
-                  <p>Storage cap: {formatCount(Number(plan.limits.max_storage_mb || 0))} MB ({plan.resetLabels.storage})</p>
-                  <p>Upload size cap: {formatCount(Number(plan.limits.max_file_mb ?? plan.limits.max_file_size_mb ?? 0))} MB</p>
+                  <p>{describeLimit('Chats', Number(plan.limits.max_chats_total || 0), plan.resetLabels.max_chats_total)}</p>
+                  <p>{describeLimit('Uploads stored', Number(plan.limits.max_uploads_total || 0), plan.resetLabels.max_uploads_total)}</p>
+                  <p>{describeLimit('Tokens', Number(plan.limits.max_tokens_total || 0), plan.resetLabels.max_tokens_total)}</p>
+                  <p>{describeLimit('Exam predictions', Number(plan.limits.max_exam_predictions || 0), plan.resetLabels.max_exam_predictions)}</p>
+                  <p>{describeLimit('Practice exams', Number(plan.limits.max_practice_exams || 0), plan.resetLabels.max_practice_exams)}</p>
+                  <p>{describeLimit('Knowledge Hub items', Number(plan.limits.max_knowledge_hub || 0), plan.resetLabels.max_knowledge_hub)}</p>
+                  <p>{describeLimit('Concurrent jobs', Number(plan.limits.max_concurrent_jobs || 0), plan.resetLabels.max_concurrent_jobs)}</p>
+                  <p>Per-file upload size: {formatCount(Number(plan.limits.max_file_size_mb || 0))} MB ({plan.resetLabels.max_file_size_mb})</p>
                 </div>
 
                 <Button asChild className="w-full" variant={plan.plan === 'free' ? 'outline' : 'default'}>
