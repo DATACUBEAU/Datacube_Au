@@ -55,6 +55,14 @@ import {
   throwPracticeExamLimitIfNeeded,
   throwUploadLimitIfNeeded,
 } from '@/lib/server/au-limits';
+import {
+  buildChatTrackingPayload,
+  buildFeatureUsageIncrements,
+  buildUploadUsageIncrements,
+  buildUsageEventKey,
+  trackUsageEvent,
+} from '@/lib/server/usage-tracking';
+import { USAGE_TRACKING_HEADER } from '@shared/usage-metrics';
 
 export const runtime = 'nodejs';
 
@@ -671,6 +679,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     let chatActiveDocScope = '';
     let chatSettingsHash = '';
     let chatRuntimeFeature = normalizedFunction === 'global-chat' ? 'global_chat' : 'doc_chat';
+    let chatEstimatedTokens = 0;
+    let usageTrackedForRequest = false;
     let featureOutputContext:
       | {
           feature: 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation';
@@ -836,6 +846,17 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         chatRuntimeFeature,
         canonicalChatPayload.idempotencyKey,
       );
+      chatEstimatedTokens = buildChatTrackingPayload({
+        messages: canonicalChatPayload.messages,
+        auGuide: canonicalChatPayload.auGuide,
+        activeDocIds: canonicalChatPayload.activeDocIds || [],
+        sessionId: canonicalChatPayload.sessionId || null,
+        appContext: parsedBody?.app_context,
+        memoryPack: parsedBody?.memory_pack,
+        documentContext: parsedBody?.document_context,
+        recentSnippet: parsedBody?.recent_snippet,
+        secondarySnippet: parsedBody?.secondary_snippet,
+      }).estimatedTokens;
 
       const idempotent = await readIdempotencyRecord({
         supabase: adminSupabase,
@@ -855,8 +876,48 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         return NextResponse.json(idempotent.response, {
           status: idempotent.statusCode || 200,
           headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
-        });
+          });
       }
+
+      throwChatLimitIfNeeded({
+        limits: effectiveLimits,
+        correlationId,
+        tokenIncrement: chatEstimatedTokens,
+      });
+
+      await trackUsageEvent({
+        supabase: adminSupabase,
+        userId: auth.userId,
+        feature: chatRuntimeFeature,
+        source: 'next_proxy_chat',
+        eventKey: buildUsageEventKey({
+          feature: chatRuntimeFeature,
+          idempotencyKey: canonicalChatPayload.idempotencyKey,
+          requestId,
+          correlationId,
+          fallbackSeed: chatRequestHash,
+        }),
+        increments: buildChatTrackingPayload({
+          messages: canonicalChatPayload.messages,
+          auGuide: canonicalChatPayload.auGuide,
+          activeDocIds: canonicalChatPayload.activeDocIds || [],
+          sessionId: canonicalChatPayload.sessionId || null,
+          appContext: parsedBody?.app_context,
+          memoryPack: parsedBody?.memory_pack,
+          documentContext: parsedBody?.document_context,
+          recentSnippet: parsedBody?.recent_snippet,
+          secondarySnippet: parsedBody?.secondary_snippet,
+        }).increments,
+        requestId,
+        correlationId,
+        context: {
+          function_name: normalizedFunction,
+          mode: normalizedFunction === 'global-chat' ? 'global' : 'doc',
+          session_id: canonicalChatPayload.sessionId || null,
+          estimated_tokens: chatEstimatedTokens,
+        },
+      });
+      usageTrackedForRequest = true;
 
       const templateResponse = classifyTemplateResponse(
         latestUserMessage(canonicalChatPayload),
@@ -940,10 +1001,6 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         }
       }
 
-      throwChatLimitIfNeeded({
-        limits: effectiveLimits,
-        correlationId,
-      });
     }
 
     if (effectiveLimits && normalizedCacheFeature && normalizedCacheFeature !== 'chat') {
@@ -1171,7 +1228,13 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
           featureOutputReservation = pendingFeatureReservation;
         }
+
+        usageTrackedForRequest = true;
       }
+    }
+
+    if (usageTrackedForRequest) {
+      headers.set(USAGE_TRACKING_HEADER, '1');
     }
 
     const isGetModelsAction =
@@ -1414,6 +1477,29 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             }
             const parsedSuccessPayload = !isEventStream ? await parseJsonClone(response) : null;
             if (parsedSuccessPayload && response.ok) {
+              if (featureOutputContext?.feature) {
+                await trackUsageEvent({
+                  supabase: adminSupabase,
+                  userId: auth.userId,
+                  feature: featureOutputContext.feature,
+                  source: 'next_proxy_feature_success',
+                  eventKey: buildUsageEventKey({
+                    feature: featureOutputContext.feature,
+                    requestId,
+                    correlationId,
+                    fallbackSeed: featureOutputContext.docVersionId || featureOutputContext.documentId,
+                  }),
+                  increments: buildFeatureUsageIncrements(featureOutputContext.feature),
+                  requestId,
+                  correlationId,
+                  context: {
+                    function_name: normalizedFunction,
+                    document_id: featureOutputContext.documentId,
+                    doc_version_id: featureOutputContext.docVersionId,
+                  },
+                });
+              }
+
               if (canonicalChatPayload && chatIdempotencyStorageKey) {
                 await writeIdempotencyRecord({
                   supabase: adminSupabase,
@@ -1537,6 +1623,45 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     if (!response.ok && !isEventStream) {
       return failFromResponse(response, null);
+    }
+
+    const parsedSuccessPayload = !isEventStream ? await parseJsonClone(response) : null;
+    if (
+      parsedSuccessPayload &&
+      response.ok &&
+      normalizedFunction === 'document-upload' &&
+      req.method === 'POST' &&
+      String(parsedBody?.action || '').trim().toLowerCase() === 'complete'
+    ) {
+      const fileSizeBytes = Number(parsedBody?.fileSize ?? parsedBody?.file_size ?? 0);
+      const uploadId = String(parsedSuccessPayload?.uploadId || parsedBody?.uploadId || parsedBody?.jobId || '').trim();
+      const documentId = String(parsedSuccessPayload?.documentId || parsedBody?.documentId || '').trim();
+      if (uploadId && Number.isFinite(fileSizeBytes) && fileSizeBytes > 0) {
+        await trackUsageEvent({
+          supabase: adminSupabase,
+          userId: auth.userId,
+          feature: 'document_upload',
+          source: 'next_proxy_upload_complete',
+          eventKey: buildUsageEventKey({
+            feature: 'document_upload',
+            idempotencyKey: uploadId,
+            requestId,
+            correlationId,
+          }),
+          increments: buildUploadUsageIncrements(fileSizeBytes),
+          requestId,
+          correlationId,
+          context: {
+            function_name: normalizedFunction,
+            action: 'complete',
+            document_id: documentId || null,
+            upload_id: uploadId,
+            idempotent: parsedSuccessPayload?.idempotent === true || parsedSuccessPayload?.already_finalized === true,
+            storage_bucket: parsedSuccessPayload?.storage?.bucket || null,
+            storage_object_path: parsedSuccessPayload?.storage?.object_path || null,
+          },
+        });
+      }
     }
 
     const relay = await relaySuccessfulResponse(response, req, requestId, null);

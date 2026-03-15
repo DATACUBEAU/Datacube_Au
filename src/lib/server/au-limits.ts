@@ -35,6 +35,7 @@ import {
 } from '@/lib/plans/subscription-policy';
 import { LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 import { safeSelectDocuments, type DocumentUsageRow } from '@/lib/server/document-usage-query';
+import { loadUsageCounterSnapshots, resolveUsageMetricForRule } from '@/lib/server/usage-tracking';
 
 const ONE_MB_BYTES = 1024 * 1024;
 
@@ -1055,14 +1056,15 @@ export async function buildUsageSnapshotForUser(
   const [
     documentRows,
     runningJobs,
-    chatsCount,
-    tokensUsed,
+    legacyChatsCount,
+    legacyTokensUsed,
     predictionWindowCount,
     predictionCurrentCount,
     practiceWindowCount,
     practiceCurrentCount,
     knowledgeWindowCount,
     knowledgeCurrentCount,
+    trackedSnapshots,
   ] = await Promise.all([
     safeSelectDocuments(supabase, userId),
     safeExactCount(supabase, 'au_worker_jobs', {
@@ -1112,20 +1114,85 @@ export async function buildUsageSnapshotForUser(
       featureValues: ['knowledge_hub'],
       statuses: ['ready', 'running'],
     }),
+    loadUsageCounterSnapshots(supabase, userId).catch(() => ({ today: {}, total: {} })),
   ]);
 
   const currentUploads = countCurrentDocuments(documentRows);
   const windowUploads = countDocumentsWithinWindow(documentRows, uploadWindow);
 
+  const [
+    trackedChats,
+    trackedTokens,
+    trackedUploads,
+    trackedPredictions,
+    trackedPractice,
+    trackedKnowledge,
+  ] = await Promise.all([
+    resolveUsageMetricForRule({
+      supabase,
+      userId,
+      metricKey: 'max_chats_total',
+      rule: limitRules.max_chats_total,
+      fallbackUsed: legacyChatsCount,
+      todayCounters: trackedSnapshots.today,
+      totalCounters: trackedSnapshots.total,
+    }),
+    resolveUsageMetricForRule({
+      supabase,
+      userId,
+      metricKey: 'max_tokens_total',
+      rule: limitRules.max_tokens_total,
+      fallbackUsed: legacyTokensUsed,
+      todayCounters: trackedSnapshots.today,
+      totalCounters: trackedSnapshots.total,
+    }),
+    resolveUsageMetricForRule({
+      supabase,
+      userId,
+      metricKey: 'max_uploads_total',
+      rule: limitRules.max_uploads_total,
+      fallbackUsed: limitRules.max_uploads_total.mode === 'current' ? currentUploads : windowUploads,
+      todayCounters: trackedSnapshots.today,
+      totalCounters: trackedSnapshots.total,
+    }),
+    resolveUsageMetricForRule({
+      supabase,
+      userId,
+      metricKey: 'max_exam_predictions',
+      rule: limitRules.max_exam_predictions,
+      fallbackUsed: limitRules.max_exam_predictions.mode === 'current' ? predictionCurrentCount : predictionWindowCount,
+      todayCounters: trackedSnapshots.today,
+      totalCounters: trackedSnapshots.total,
+    }),
+    resolveUsageMetricForRule({
+      supabase,
+      userId,
+      metricKey: 'max_practice_exams',
+      rule: limitRules.max_practice_exams,
+      fallbackUsed: limitRules.max_practice_exams.mode === 'current' ? practiceCurrentCount : practiceWindowCount,
+      todayCounters: trackedSnapshots.today,
+      totalCounters: trackedSnapshots.total,
+    }),
+    resolveUsageMetricForRule({
+      supabase,
+      userId,
+      metricKey: 'max_knowledge_hub',
+      rule: limitRules.max_knowledge_hub,
+      fallbackUsed: limitRules.max_knowledge_hub.mode === 'current' ? knowledgeCurrentCount : knowledgeWindowCount,
+      todayCounters: trackedSnapshots.today,
+      totalCounters: trackedSnapshots.total,
+    }),
+  ]);
+
   const totals = {
-    max_chats_total: chatsCount,
-    max_uploads_total: limitRules.max_uploads_total.mode === 'current' ? currentUploads : windowUploads,
-    max_tokens_total: tokensUsed,
+    max_chats_total: trackedChats.effectiveUsed,
+    max_uploads_total: trackedUploads.effectiveUsed,
+    max_tokens_total: trackedTokens.effectiveUsed,
     max_file_size_mb: 0,
     max_concurrent_jobs: runningJobs,
-    max_exam_predictions: limitRules.max_exam_predictions.mode === 'current' ? predictionCurrentCount : predictionWindowCount,
-    max_practice_exams: limitRules.max_practice_exams.mode === 'current' ? practiceCurrentCount : practiceWindowCount,
-    max_knowledge_hub: limitRules.max_knowledge_hub.mode === 'current' ? knowledgeCurrentCount : knowledgeWindowCount,
+    max_exam_predictions: trackedPredictions.effectiveUsed,
+    max_practice_exams: trackedPractice.effectiveUsed,
+    max_knowledge_hub: trackedKnowledge.effectiveUsed,
   } satisfies Record<ApprovedLimitKey, number>;
 
   const by_limit = APPROVED_LIMIT_KEYS.reduce((acc, key) => {
@@ -1336,6 +1403,7 @@ export function throwIngestLimitIfNeeded(input: {
 export function throwChatLimitIfNeeded(input: {
   limits: EffectiveLimitsResult;
   correlationId: string;
+  tokenIncrement?: number;
 }): void {
   assertUsageWithinCap({
     rule: input.limits.limitRules.max_chats_total,
@@ -1350,7 +1418,7 @@ export function throwChatLimitIfNeeded(input: {
   assertUsageWithinCap({
     rule: input.limits.limitRules.max_tokens_total,
     used: clampNonNegativeNumber(input.limits.usage.total.max_tokens_total, 0),
-    nextIncrement: 0,
+    nextIncrement: Math.max(0, Math.floor(Number(input.tokenIncrement || 0))),
     action: 'chat',
     correlationId: input.correlationId,
     resetAt: input.limits.usage.by_limit.max_tokens_total.reset.window_end,
