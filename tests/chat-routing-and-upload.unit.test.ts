@@ -61,6 +61,7 @@ async function main() {
 
   await run('document intent classifier identifies summary-style follow-ups', () => {
     assert.equal(classifyDocumentIntent('give me an overview of this document'), 'document_overview');
+    assert.equal(classifyDocumentIntent('Extract the key topics from this document.'), 'document_key_points');
     assert.equal(hasDocumentScopedReference('what is this document about'), true);
   });
 

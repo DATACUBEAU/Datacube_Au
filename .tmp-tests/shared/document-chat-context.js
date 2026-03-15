@@ -47,7 +47,10 @@ function classifyDocumentIntent(message) {
     if (/\b(metadata|file name|filename|document details?|about the file)\b/.test(normalized)) {
         return 'document_metadata';
     }
-    if (/\b(key points?|main points?|takeaways?|highlights?)\b/.test(normalized)) {
+    if (/\b(key points?|main points?|takeaways?|highlights?)\b/.test(normalized) ||
+        /\b(key topics?|main topics?|core topics?|important topics?)\b/.test(normalized) ||
+        /\bextract (the )?(key|main|core|important) topics?\b/.test(normalized) ||
+        /\bwhat topics? (are|is) (in|covered in)\b/.test(normalized)) {
         return 'document_key_points';
     }
     if (/\b(contents?|table of contents?|what is in this document|what is in this file)\b/.test(normalized)) {

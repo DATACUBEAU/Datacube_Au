@@ -43,6 +43,7 @@ async function main() {
     });
     await run('document intent classifier identifies summary-style follow-ups', () => {
         strict_1.default.equal((0, document_chat_context_js_1.classifyDocumentIntent)('give me an overview of this document'), 'document_overview');
+        strict_1.default.equal((0, document_chat_context_js_1.classifyDocumentIntent)('Extract the key topics from this document.'), 'document_key_points');
         strict_1.default.equal((0, document_chat_context_js_1.hasDocumentScopedReference)('what is this document about'), true);
     });
     await run('document resolver prefers the active document for this-document follow-ups', () => {

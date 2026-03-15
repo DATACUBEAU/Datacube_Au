@@ -3,6 +3,37 @@ import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { guardRequest } from './request-guard';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
+const adminResponsePayloadCache = new WeakMap<Response, unknown>();
+
+export function readCachedAdminResponsePayload<T = Record<string, unknown>>(response: Response): T {
+  const cached = adminResponsePayloadCache.get(response);
+  if (cached && typeof cached === 'object') {
+    return cached as T;
+  }
+
+  const payload = (response as any)?.data;
+  return (payload && typeof payload === 'object' ? payload : {}) as T;
+}
+
+export async function readAdminResponsePayload<T = Record<string, unknown>>(response: Response): Promise<T> {
+  const cached = readCachedAdminResponsePayload<T>(response);
+  if (cached && typeof cached === 'object' && Object.keys(cached as Record<string, unknown>).length > 0) {
+    return cached;
+  }
+
+  try {
+    const json = await response.clone().json();
+    if (json && typeof json === 'object') {
+      adminResponsePayloadCache.set(response, json);
+      (response as any).data = json;
+      return json as T;
+    }
+  } catch {
+  }
+
+  return {} as T;
+}
+
 /**
  * Centralized utility for all admin-related API requests.
  * Automatically injects required Supabase and Admin authentication headers.
@@ -148,6 +179,7 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     if (ct.includes('application/json')) {
       const json = await res.clone().json().catch(() => null);
       if (json && typeof json === 'object') {
+        adminResponsePayloadCache.set(res, json);
         Object.assign(res as any, json);
         (res as any).data = json;
       }

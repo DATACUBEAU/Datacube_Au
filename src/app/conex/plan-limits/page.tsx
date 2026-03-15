@@ -147,8 +147,22 @@ function readPayload<T>(response: Response): T {
   return (payload && typeof payload === 'object' ? payload : {}) as T;
 }
 
-function readErrorMessage(response: Response, fallback: string) {
-  const payload = readPayload<any>(response);
+async function readResponsePayload<T>(response: Response): Promise<T> {
+  const direct = readPayload<T>(response);
+  if (direct && typeof direct === 'object' && Object.keys(direct as Record<string, unknown>).length > 0) {
+    return direct;
+  }
+
+  try {
+    const clone = response.clone();
+    const json = await clone.json();
+    return (json && typeof json === 'object' ? json : {}) as T;
+  } catch {
+    return {} as T;
+  }
+}
+
+function readErrorMessage(payload: any, fallback: string) {
   const message = payload?.message || payload?.error;
   return typeof message === 'string' && message.trim() ? message.trim() : fallback;
 }
@@ -407,9 +421,9 @@ export default function ConexPlanLimitsPage() {
 
       try {
         const res = await fetchAdmin('/api/admin/plan-limits', { method: 'GET' });
-        const nextPayload = readPayload<AdminPlanLimitsPayload>(res);
+        const nextPayload = await readResponsePayload<AdminPlanLimitsPayload>(res);
         if (!res.ok || !nextPayload?.ok) {
-          throw new Error(readErrorMessage(res, `plan-limits failed (${res.status})`));
+          throw new Error(readErrorMessage(nextPayload, `plan-limits failed (${res.status})`));
         }
         setPayload(nextPayload);
         setDrafts(buildDrafts(nextPayload));
@@ -437,9 +451,9 @@ export default function ConexPlanLimitsPage() {
         const params = new URLSearchParams({ plan });
         if (userId) params.set('user_id', userId);
         const res = await fetchAdmin(`/api/admin/limits/preview?${params.toString()}`, { method: 'GET' });
-        const nextPreview = readPayload<PreviewPayload>(res);
+        const nextPreview = await readResponsePayload<PreviewPayload>(res);
         if (!res.ok || !nextPreview?.ok) {
-          throw new Error(readErrorMessage(res, `limits-preview failed (${res.status})`));
+          throw new Error(readErrorMessage(nextPreview, `limits-preview failed (${res.status})`));
         }
         setPreview(nextPreview);
       } catch (error: any) {
@@ -576,12 +590,12 @@ export default function ConexPlanLimitsPage() {
         }),
       });
 
-      const nextPayload = readPayload<AdminPlanLimitsPayload>(res);
+      const nextPayload = await readResponsePayload<AdminPlanLimitsPayload>(res);
       if (!res.ok || !nextPayload?.ok) {
         if (nextPayload?.validationErrors) {
           setRuleErrors(nextPayload.validationErrors);
         }
-        throw new Error(readErrorMessage(res, `Failed to save ${selectedScopeLabel}.`));
+        throw new Error(readErrorMessage(nextPayload, `Failed to save ${selectedScopeLabel}.`));
       }
 
       setPayload(nextPayload);
@@ -612,9 +626,9 @@ export default function ConexPlanLimitsPage() {
           action: 'reset_scope',
         }),
       });
-      const nextPayload = readPayload<AdminPlanLimitsPayload>(res);
+      const nextPayload = await readResponsePayload<AdminPlanLimitsPayload>(res);
       if (!res.ok || !nextPayload?.ok) {
-        throw new Error(readErrorMessage(res, `Failed to reset ${selectedScopeLabel}.`));
+        throw new Error(readErrorMessage(nextPayload, `Failed to reset ${selectedScopeLabel}.`));
       }
 
       setPayload(nextPayload);

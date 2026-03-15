@@ -17,7 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { fetchAdmin } from '@/lib/api/admin-fetch';
+import { fetchAdmin, readCachedAdminResponsePayload } from '@/lib/api/admin-fetch';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { AdminAnalytics } from '@/components/admin/admin-analytics';
@@ -173,8 +173,7 @@ function normalizePlanMetadataDraft(plan: string, raw: any): PlanMetadataDraft {
 }
 
 function readAdminPayload<T = Record<string, unknown>>(response: Response): T {
-  const payload = (response as any)?.data;
-  return (payload && typeof payload === 'object' ? payload : {}) as T;
+  return readCachedAdminResponsePayload<T>(response);
 }
 
 function readAdminError(response: Response, fallback: string): string {
