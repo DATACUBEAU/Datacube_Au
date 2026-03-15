@@ -1,10 +1,16 @@
 
-import { supabase, invokeEdgeFunction, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
+import {
+  supabase,
+  invokeEdgeFunction,
+  getEffectiveOwnershipConditions,
+  applyOwnershipFilter,
+  getSupabaseAccessToken,
+} from '@/lib/supabase-client/client';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
 import { clearDocWorkingMemory } from '@/lib/memory/working-memory';
-import { deleteMemorySummary } from '@/lib/api/memory-summaries';
 import { normalizeAuDocumentRow, resolveDocumentRetentionDays } from '@/lib/au/document-normalization';
+import { safeFetch } from '@/lib/api/safe-fetch';
 
 export type { AuDocumentRow, AuDocumentType };
 
@@ -224,33 +230,72 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
 
 /**
  * Deletes a document and its associated data.
- * Calls the document-management Edge Function which handles RLS-safe deletion.
+ * Calls the first-party API route, which performs server-side cleanup.
  */
 export async function deleteDocument(user: User | null, documentId: string): Promise<{ ok: boolean }> {
-  // 1. Clear Local Memory & Server Memory Summary
+  // 1. Clear local browser working memory. Server-side summary cleanup happens in the API route.
   if (user?.id) {
     try {
       await clearDocWorkingMemory(user.id, documentId);
-      await deleteMemorySummary({ scope: 'doc', docId: documentId });
     } catch (e) {
       console.warn('[deleteDocument] Memory cleanup warning:', e);
     }
   }
 
-  const { data, error } = await invokeEdgeFunction('document-management', {
-    method: 'POST',
-    requireAuth: true,
-    body: {
-      action: 'delete',
-      documentId
-    }
-  });
+  let accessToken = await getSupabaseAccessToken();
 
-  if (error) {
-    throw new Error(error.message);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const headers = new Headers({ Accept: 'application/json' });
+    if (accessToken) {
+      headers.set('Authorization', `Bearer ${accessToken}`);
+    }
+
+    const response = await safeFetch(`/api/au/documents/${documentId}`, {
+      method: 'DELETE',
+      headers,
+      credentials: 'include',
+      timeout: 30000,
+      silent: true,
+      suppressAuthError: true,
+    });
+
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const payload = contentType.includes('application/json')
+      ? await response.json().catch(() => null)
+      : await response.text().catch(() => null);
+
+    if (response.ok) {
+      return (payload as { ok: boolean }) || { ok: true };
+    }
+
+    if ((response.status === 401 || response.status === 403) && attempt === 0) {
+      try {
+        await supabase.auth.refreshSession();
+        accessToken = await getSupabaseAccessToken();
+        continue;
+      } catch {
+      }
+    }
+
+    const message =
+      (payload && typeof payload === 'object'
+        ? (payload as any).message || (payload as any).error
+        : null) ||
+      response.statusText ||
+      'Delete failed';
+    const error: any = new Error(String(message));
+    error.status = response.status;
+    error.details = payload;
+    error.body = payload;
+
+    if (response.status === 404) {
+      return { ok: true };
+    }
+
+    throw error;
   }
 
-  return data;
+  return { ok: true };
 }
 
 /**

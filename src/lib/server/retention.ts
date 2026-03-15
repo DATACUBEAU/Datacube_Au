@@ -204,6 +204,23 @@ export type RetentionRunResult = RetentionOverview & {
   };
 };
 
+export type ImmediateDocumentDeleteResult =
+  | {
+      ok: true;
+      documentId: string;
+      ownerId: string;
+      fileName: string | null;
+      sourceCleanupResult: 'deleted' | 'missing' | 'already_deleted' | 'no_source';
+      vectorCleanup: 'deleted_directly' | 'deferred_to_worker';
+      artifactResults: Array<{ table: string; status: 'deleted' | 'skipped' | 'failed'; message?: string }>;
+    }
+  | {
+      ok: false;
+      status: number;
+      message: string;
+      details?: Record<string, unknown>;
+    };
+
 type RunRetentionOptions = {
   dryRun: boolean;
   triggerSource: string;
@@ -410,6 +427,26 @@ async function listAllDocuments(supabase: SupabaseAdmin): Promise<DocumentRow[]>
   }
 
   return rows;
+}
+
+async function fetchDocumentById(
+  supabase: SupabaseAdmin,
+  documentId: string,
+): Promise<DocumentRow | null> {
+  const { data, error } = await supabase
+    .from('au_documents')
+    .select('*')
+    .eq('id', documentId)
+    .maybeSingle();
+
+  if (error) {
+    if (isMissingRelationError(error)) {
+      return null;
+    }
+    throw error;
+  }
+
+  return (data || null) as DocumentRow | null;
 }
 
 async function fetchRecentActions(supabase: SupabaseAdmin, limit = 100): Promise<RetentionActionRow[]> {
@@ -1687,6 +1724,127 @@ async function processUserDeletion(
     firstDetectedAt: existingAction?.first_detected_at || null,
   });
   return 'processed';
+}
+
+export async function deleteOwnedDocumentNow(input: {
+  userId: string;
+  documentId: string;
+  supabase?: SupabaseAdmin;
+}): Promise<ImmediateDocumentDeleteResult> {
+  const userId = String(input.userId || '').trim();
+  const documentId = String(input.documentId || '').trim();
+  if (!userId || !documentId) {
+    return {
+      ok: false,
+      status: 400,
+      message: 'invalid_document_delete_request',
+    };
+  }
+
+  const supabase = input.supabase || createSupabaseAdminClient();
+  const row = await fetchDocumentById(supabase, documentId);
+  const ownerId = row ? resolveOwnerId(row) : null;
+
+  if (!row || !ownerId || ownerId !== userId) {
+    return {
+      ok: false,
+      status: 404,
+      message: 'document_not_found',
+    };
+  }
+
+  const storageResult = await deleteStorageObject(supabase, row);
+  if (!storageResult.ok) {
+    return {
+      ok: false,
+      status: 500,
+      message: 'storage_delete_failed',
+      details: {
+        documentId,
+        filePath: row.file_path || null,
+        error: storageResult.error || null,
+      },
+    };
+  }
+
+  const artifactCleanup = await cleanupDocumentArtifacts(supabase, documentId);
+  const failedArtifacts = artifactCleanup.results.filter((entry) => entry.status === 'failed');
+  if (failedArtifacts.length > 0 || artifactCleanup.verification.length > 0) {
+    return {
+      ok: false,
+      status: 500,
+      message: 'artifact_cleanup_failed',
+      details: {
+        documentId,
+        failedArtifacts,
+        verification: artifactCleanup.verification,
+      },
+    };
+  }
+
+  let vectorCleanup: 'deleted_directly' | 'deferred_to_worker' = 'deferred_to_worker';
+  try {
+    const deleted = await deleteVectorsDirect(documentId, ownerId);
+    if (deleted) {
+      vectorCleanup = 'deleted_directly';
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 500,
+      message: 'vector_delete_failed',
+      details: {
+        documentId,
+        ownerId,
+        error: String((error as any)?.message || error || ''),
+      },
+    };
+  }
+
+  const { error: deleteError } = await supabase.from('au_documents').delete().eq('id', documentId);
+  if (deleteError) {
+    const code = String((deleteError as any)?.code || '').trim();
+    return {
+      ok: false,
+      status: code === '23503' ? 409 : 500,
+      message: code === '23503' ? 'document_has_dependents' : 'document_delete_failed',
+      details: {
+        documentId,
+        code: code || null,
+        error: deleteError.message,
+      },
+    };
+  }
+
+  if (vectorCleanup === 'deleted_directly') {
+    await markDeletionLogsProcessed(supabase, documentId);
+  }
+
+  try {
+    await supabase.from('au_events').insert({
+      event_type: 'document_deleted',
+      entity_id: documentId,
+      user_id: userId,
+      metadata: {
+        file_name: row.file_name || null,
+        file_path: row.file_path || null,
+        source_cleanup_result: storageResult.result,
+        vector_cleanup: vectorCleanup,
+      },
+    });
+  } catch {
+    // Event logging is best-effort and should not block deletion success.
+  }
+
+  return {
+    ok: true,
+    documentId,
+    ownerId,
+    fileName: row.file_name || null,
+    sourceCleanupResult: storageResult.result,
+    vectorCleanup,
+    artifactResults: artifactCleanup.results,
+  };
 }
 
 export async function getRetentionOverview(
