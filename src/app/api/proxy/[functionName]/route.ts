@@ -1656,30 +1656,42 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       const uploadId = String(parsedSuccessPayload?.uploadId || parsedBody?.uploadId || parsedBody?.jobId || '').trim();
       const documentId = String(parsedSuccessPayload?.documentId || parsedBody?.documentId || '').trim();
       if (uploadId && Number.isFinite(fileSizeBytes) && fileSizeBytes > 0) {
-        await trackUsageEvent({
-          supabase: adminSupabase,
-          userId: auth.userId,
-          feature: 'document_upload',
-          source: 'next_proxy_upload_complete',
-          eventKey: buildUsageEventKey({
+        try {
+          await trackUsageEvent({
+            supabase: adminSupabase,
+            userId: auth.userId,
             feature: 'document_upload',
-            idempotencyKey: uploadId,
+            source: 'next_proxy_upload_complete',
+            eventKey: buildUsageEventKey({
+              feature: 'document_upload',
+              idempotencyKey: uploadId,
+              requestId,
+              correlationId,
+            }),
+            increments: buildUploadUsageIncrements(fileSizeBytes),
             requestId,
             correlationId,
-          }),
-          increments: buildUploadUsageIncrements(fileSizeBytes),
-          requestId,
-          correlationId,
-          context: {
-            function_name: normalizedFunction,
-            action: 'complete',
-            document_id: documentId || null,
-            upload_id: uploadId,
-            idempotent: parsedSuccessPayload?.idempotent === true || parsedSuccessPayload?.already_finalized === true,
-            storage_bucket: parsedSuccessPayload?.storage?.bucket || null,
-            storage_object_path: parsedSuccessPayload?.storage?.object_path || null,
-          },
-        });
+            context: {
+              function_name: normalizedFunction,
+              action: 'complete',
+              document_id: documentId || null,
+              upload_id: uploadId,
+              idempotent: parsedSuccessPayload?.idempotent === true || parsedSuccessPayload?.already_finalized === true,
+              storage_bucket: parsedSuccessPayload?.storage?.bucket || null,
+              storage_object_path: parsedSuccessPayload?.storage?.object_path || null,
+            },
+          });
+        } catch (usageTrackingError: any) {
+          console.warn('[proxy] upload usage tracking failed after successful finalize', {
+            requestId,
+            correlationId,
+            functionName: normalizedFunction,
+            userId: auth.userId,
+            uploadId,
+            documentId: documentId || null,
+            message: String(usageTrackingError?.message || usageTrackingError || 'unknown_error'),
+          });
+        }
       }
     }
 
