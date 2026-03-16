@@ -65,6 +65,7 @@ import {
 import { USAGE_TRACKING_HEADER } from '@shared/usage-metrics';
 
 export const runtime = 'nodejs';
+export const maxDuration = 180;
 
 const BLOCKED_UPSTREAM_RESPONSE_HEADERS = new Set<string>([
   'content-encoding',
@@ -129,6 +130,24 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw ?? '');
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return Math.floor(parsed);
+}
+
+function upstreamTimeoutMsForFunction(functionName: string): number {
+  const defaultTimeoutMs = parsePositiveInt(process.env.PROXY_UPSTREAM_TIMEOUT_MS, 30000);
+  const longAiTimeoutMs = parsePositiveInt(process.env.PROXY_LONG_AI_TIMEOUT_MS, 120000);
+  const normalized = String(functionName || '').trim().toLowerCase();
+
+  if (
+    normalized === 'generate-knowledge' ||
+    normalized === 'exam-generator' ||
+    normalized === 'generate-practice-exam' ||
+    normalized === 'prediction-engine' ||
+    normalized === 'generate-exam-predictions'
+  ) {
+    return Math.max(defaultTimeoutMs, longAiTimeoutMs);
+  }
+
+  return defaultTimeoutMs;
 }
 
 function correlationIdFromBody(body: any): string | null {
@@ -560,7 +579,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   const requestPath = req.nextUrl.pathname;
   const requestMethod = req.method;
   const startedAt = Date.now();
-  const upstreamTimeoutMs = parsePositiveInt(process.env.PROXY_UPSTREAM_TIMEOUT_MS, 30000);
+  const upstreamTimeoutMs = upstreamTimeoutMsForFunction(functionName);
   let reservationUserId = '';
   let reservationSupabase: ReturnType<typeof createSupabaseAdminClient> | null = null;
   let featureOutputReservation:

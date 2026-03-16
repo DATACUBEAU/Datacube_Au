@@ -58,7 +58,6 @@ import { useRouter } from 'next/navigation';
 import { Input } from '@/components/ui/input';
 import { logOnce } from '@/lib/log/dedupe';
 import type { RagBasedQuestionAnsweringOutput } from '@/app/actions';
-import InteractiveConceptMap from '@/components/interactive-concept-map';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
@@ -81,42 +80,17 @@ import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
 
 import { type ChatMessage } from '@/lib/api/chat';
-
-// Add TypingAnimation component
-type TypingAnimationProps = { content: string; shouldAnimate?: boolean };
-
-function TypingAnimation({ content, shouldAnimate = true }: TypingAnimationProps) {
-  const [displayedContent, setDisplayedContent] = useState(shouldAnimate ? '' : content);
-  const [isTyping, setIsTyping] = useState(shouldAnimate);
-
-  useEffect(() => {
-    if (!shouldAnimate) {
-        setDisplayedContent(content);
-        setIsTyping(false);
-        return;
-    }
-
-    let i = 0;
-    const interval = setInterval(() => {
-      setDisplayedContent(content.slice(0, i + 1));
-      i++;
-      if (i >= content.length) {
-        clearInterval(interval);
-        setIsTyping(false);
-      }
-    }, 10);
-    return () => clearInterval(interval);
-  }, [content, shouldAnimate]);
-
-  return (
-    <div className="relative">
-      <InteractiveConceptMap content={displayedContent} />
-      {isTyping && (
-        <span className="inline-block w-1.5 h-3.5 bg-primary ml-1 animate-pulse align-middle" />
-      )}
-    </div>
-  );
-}
+import { AssistantResponseBody } from '@/components/chat/assistant-response-body';
+import { FollowUpSuggestions } from '@/components/chat/follow-up-suggestions';
+import { useAuDocuments } from '@/hooks/api/use-au-documents';
+import { useAuChat } from '@/hooks/api/use-au-chat';
+import { getDocumentText } from '@/lib/api/documents';
+import {
+  buildFollowUpSuggestions,
+  formatAssistantResponseText,
+  formatAssistantThought,
+  normalizeAssistantCitations,
+} from '@/lib/chat/assistant-response';
 
 interface StoredChatHistory {
   timestamp: number;
@@ -136,33 +110,14 @@ const QUICK_ACTION_PROMPTS = [
   'Analyze past question relevance for this textbook and linked past questions.',
 ] as const;
 
-function sanitizeAnswer(text: any) {
-  const raw = typeof text === 'string' ? text : (Array.isArray(text) ? text.join('\n') : String(text ?? ''));
-  // Remove [Thinking], [Retrieving] but keep citations like [1], [2]
-  const withoutTags = raw.replace(/\[(?![\d, ]+\])[^\]]+\]/g, ''); 
-  // Remove *** separators if they are standalone lines
-  const withoutSeparators = withoutTags.replace(/^\s*\*\*\*\s*$/gm, '');
-  
-  const withoutSourceLines = withoutSeparators
-    .split('\n')
-    .filter((line) => !/^\s*source:\s*web\s*lookup\b/i.test(line))
-    .join('\n');
-  return withoutSourceLines.trim();
+function findPreviousUserPrompt(history: ChatMessage[], assistantIndex: number): string {
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    if (history[index]?.role === 'user') {
+      return String(history[index]?.content || '');
+    }
+  }
+  return '';
 }
-
-function sanitizeThought(text?: string) {
-  const raw = text ?? '';
-  const withoutInternalWords = raw.replace(
-    /\b(exploratory|retrieving|retrieval|syncing|chunk(?:s)?|pipeline|lookup|document(?:s)?)\b/gi,
-    ''
-  );
-  const normalized = withoutInternalWords.replace(/\s+/g, ' ').trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-import { useAuDocuments } from '@/hooks/api/use-au-documents';
-import { useAuChat } from '@/hooks/api/use-au-chat';
-import { getDocumentText } from '@/lib/api/documents';
 
 export default function ChatPage() {
   const { toast } = useToast();
@@ -1067,8 +1022,15 @@ export default function ChatPage() {
                         <ThinkingProcess isThinking={true} />
                       ) : (
                         (() => {
-                            const sanitizedAnswer = sanitizeAnswer(message.content);
-                            const sanitizedThought = sanitizeThought(message.thought);
+                            const sanitizedAnswer = formatAssistantResponseText(message.content);
+                            const sanitizedThought = formatAssistantThought(message.thought);
+                            const normalizedCitations = normalizeAssistantCitations(message.citations);
+                            const followUpPrompts = buildFollowUpSuggestions({
+                              answer: sanitizedAnswer,
+                              userQuestion: findPreviousUserPrompt(currentChatHistory, idx),
+                              documentName: selectedDocName ?? null,
+                              isGlobal: false,
+                            });
                             return (
                                 <div className="space-y-4">
                                   {/* AU Thought Process */}
@@ -1076,21 +1038,33 @@ export default function ChatPage() {
                                     <ThinkingProcess isThinking={false} thought={sanitizedThought} />
                                   )}
 
-                                  <TypingAnimation 
+                                  <AssistantResponseBody 
                                     content={sanitizedAnswer} 
                                     shouldAnimate={idx === currentChatHistory.length - 1 && isResponding}
                                   />
                                   
-                                  {message.citations && message.citations.length > 0 && (
-                                    <div>
-                                      <p className="mb-1 text-xs font-bold text-muted-foreground">SOURCE</p>
-                                      {message.citations.map((citation: any, i) => (
-                                        <Badge key={i} variant="secondary" className="mb-1 mr-1">
-                                          {typeof citation === 'string' ? citation : citation.fileName || 'Unknown Source'}
-                                        </Badge>
-                                      ))}
+                                  {normalizedCitations.length > 0 && (
+                                    <div className="space-y-2">
+                                      <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                                        Source
+                                      </p>
+                                      <div className="flex flex-wrap gap-2">
+                                        {normalizedCitations.map((citation) => (
+                                          <Badge key={citation} variant="secondary" className="rounded-full px-2.5 py-1 text-xs">
+                                            {citation}
+                                          </Badge>
+                                        ))}
+                                      </div>
                                     </div>
                                   )}
+
+                                  <FollowUpSuggestions
+                                    prompts={followUpPrompts}
+                                    disabled={isResponding}
+                                    onSelect={(prompt) => {
+                                      void handleSendMessage({ preventDefault: () => {} } as React.FormEvent, prompt);
+                                    }}
+                                  />
 
                                   {/* Message Actions for AU - Below content, ChatGPT style */}
                                   <div className="flex items-center gap-1 mt-2 opacity-50 hover:opacity-100 transition-opacity">
@@ -1098,7 +1072,7 @@ export default function ChatPage() {
                                       variant="ghost" 
                                       size="icon" 
                                       className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md" 
-                                      onClick={() => handleReply(message.id, message.content, 'assistant')} 
+                                      onClick={() => handleReply(message.id, sanitizedAnswer, 'assistant')} 
                                       aria-label="Reply"
                                     >
                                       <Quote className="h-3.5 w-3.5" />
@@ -1107,7 +1081,7 @@ export default function ChatPage() {
                                       variant="ghost" 
                                       size="icon" 
                                       className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md" 
-                                      onClick={() => handleCopy(message.id, message.content)}
+                                      onClick={() => handleCopy(message.id, sanitizedAnswer)}
                                       aria-label="Copy response"
                                     >
                                       {copiedMessageId === message.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}

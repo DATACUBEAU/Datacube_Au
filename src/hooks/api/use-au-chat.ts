@@ -16,6 +16,11 @@ import { guardRequest } from '@/lib/api/request-guard';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { mergeDocumentContext, normalizeDocumentContext, type ChatDocumentContext } from '@shared/document-chat-context';
+import {
+  formatAssistantResponseText,
+  formatAssistantThought,
+  normalizeAssistantCitations,
+} from '@/lib/chat/assistant-response';
 
 const CHAT_EVENT_STARTED = 'au-chat:started';
 const CHAT_EVENT_COMPLETED = 'au-chat:completed';
@@ -471,10 +476,15 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       if (cachedResult) {
           // Simulate brief network delay for UX smoothness
           await new Promise(resolve => setTimeout(resolve, 220));
-          result = cachedResult;
+          result = {
+            ...cachedResult,
+            answer: formatAssistantResponseText((cachedResult as any)?.answer),
+            thought: formatAssistantThought((cachedResult as any)?.thought),
+            citations: normalizeAssistantCitations((cachedResult as any)?.citations),
+          };
           assistantTurnResult = await appendTurn(
             memoryKey,
-            { id: loadingId, ts: Date.now(), role: 'assistant', text: String((cachedResult as any)?.answer || '') },
+            { id: loadingId, ts: Date.now(), role: 'assistant', text: String((result as any)?.answer || '') },
             scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
           );
       } else {
@@ -523,16 +533,16 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           );
 
           result = {
-            answer: done.answer,
-            citations: (done as any).citations,
-            thought: (done as any).thought,
+            answer: formatAssistantResponseText(done.answer),
+            citations: normalizeAssistantCitations((done as any).citations),
+            thought: formatAssistantThought((done as any).thought),
             navAction: (done as any).navAction,
             documentContext: (done as any).documentContext,
           } as any;
 
           assistantTurnResult = await appendTurn(
             memoryKey,
-            { id: loadingId, ts: Date.now(), role: 'assistant', text: done.answer },
+            { id: loadingId, ts: Date.now(), role: 'assistant', text: String(result.answer || '') },
             scope === 'global' ? { scope: 'global' } : { scope: 'doc', userId: user.id, docId: selectedDocId }
           );
           const assistantTurnPayload = assistantTurnResult.payload;
@@ -786,11 +796,13 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
         // Replace loading message with greeting
         setHistory(prev => {
             const filtered = prev.filter(m => m.id !== loadingId);
+            const answer = formatAssistantResponseText(result.answer);
             return [...filtered, {
                 id: nanoid(),
                 role: 'assistant',
-                content: result.answer,
-                thought: result.thought
+                content: answer,
+                thought: formatAssistantThought(result.thought),
+                citations: normalizeAssistantCitations((result as any).citations),
             }];
         });
     } catch (err: any) {

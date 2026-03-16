@@ -48,7 +48,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Icons } from '@/components/icons';
 import { Input } from '@/components/ui/input';
-import InteractiveConceptMap from '@/components/interactive-concept-map';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { validateQuery } from '@/lib/upload/file-types';
@@ -66,67 +65,25 @@ import { OfflineGuard } from '@/components/offline-guard';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { GlobalChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { GLOBAL_CHAT_TITLE, GLOBAL_CHAT_WELCOME_COPY } from '@shared/global-chat-routing';
-
-// Typing Animation Component
-const TypingAnimation = ({ content, shouldAnimate = true }: { content: string, shouldAnimate?: boolean }) => {
-  const [displayedContent, setDisplayedContent] = useState(shouldAnimate ? '' : content);
-  const [isTyping, setIsTyping] = useState(shouldAnimate);
-
-  useEffect(() => {
-    if (!shouldAnimate) {
-        setDisplayedContent(content);
-        setIsTyping(false);
-        return;
-    }
-
-    let i = 0;
-    const interval = setInterval(() => {
-      setDisplayedContent(content.slice(0, i + 1));
-      i++;
-      if (i >= content.length) {
-        clearInterval(interval);
-        setIsTyping(false);
-      }
-    }, 10);
-    return () => clearInterval(interval);
-  }, [content, shouldAnimate]);
-
-  return (
-    <div className="relative">
-      <InteractiveConceptMap content={displayedContent} />
-      {isTyping && (
-        <span className="inline-block w-1.5 h-3.5 bg-primary ml-1 animate-pulse align-middle" />
-      )}
-    </div>
-  );
-};
+import { AssistantResponseBody } from '@/components/chat/assistant-response-body';
+import { FollowUpSuggestions } from '@/components/chat/follow-up-suggestions';
+import {
+  buildFollowUpSuggestions,
+  formatAssistantResponseText,
+  formatAssistantThought,
+  normalizeAssistantCitations,
+} from '@/lib/chat/assistant-response';
 
 const defaultGuideText = "Use this AU Guide to tell the assistant how you like to interact. For example, ask for short explanations, creative ideas, or code snippets.";
 const GLOBAL_CHAT_ID = 'global';
 
-function sanitizeAnswer(text: any) {
-  const raw = typeof text === 'string' ? text : (Array.isArray(text) ? text.join('\n') : String(text ?? ''));
-  // Remove [Thinking], [Retrieving] but keep citations like [1], [2]
-  const withoutTags = raw.replace(/\[(?![\d, ]+\])[^\]]+\]/g, ''); 
-  // Remove *** separators if they are standalone lines
-  const withoutSeparators = withoutTags.replace(/^\s*\*\*\*\s*$/gm, '');
-  const withoutEmptyBold = withoutSeparators.replace(/\*{4,}/g, '');
-  
-  const withoutSourceLines = withoutEmptyBold
-    .split('\n')
-    .filter((line) => !/^\s*source:\s*web\s*lookup\b/i.test(line))
-    .join('\n');
-  return withoutSourceLines.trim();
-}
-
-function sanitizeThought(text?: string) {
-  const raw = text ?? '';
-  const withoutInternalWords = raw.replace(
-    /\b(exploratory|retrieving|retrieval|syncing|chunk(?:s)?|pipeline|lookup|document(?:s)?)\b/gi,
-    ''
-  );
-  const normalized = withoutInternalWords.replace(/\s+/g, ' ').trim();
-  return normalized.length > 0 ? normalized : undefined;
+function findPreviousUserPrompt(history: { role: 'user' | 'assistant'; content: string }[], assistantIndex: number): string {
+  for (let index = assistantIndex - 1; index >= 0; index -= 1) {
+    if (history[index]?.role === 'user') {
+      return String(history[index]?.content || '');
+    }
+  }
+  return '';
 }
 
 export default function GlobalChatPage() {
@@ -407,8 +364,15 @@ export default function GlobalChatPage() {
                     </div>
                   ) : (
                     (() => {
-                      const sanitizedAnswer = sanitizeAnswer(message.content);
-                      const sanitizedThought = sanitizeThought(message.thought);
+                      const sanitizedAnswer = formatAssistantResponseText(message.content);
+                      const sanitizedThought = formatAssistantThought(message.thought);
+                      const normalizedCitations = normalizeAssistantCitations(message.citations);
+                      const followUpPrompts = buildFollowUpSuggestions({
+                        answer: sanitizedAnswer,
+                        userQuestion: findPreviousUserPrompt(currentChatHistory, idx),
+                        documentName: selectedDocName,
+                        isGlobal: true,
+                      });
                       return (
                     <div className="flex items-start gap-4">
                       <Avatar className="h-9 w-9 flex items-center justify-center bg-primary flex-shrink-0 shadow-sm">
@@ -422,16 +386,20 @@ export default function GlobalChatPage() {
                             {sanitizedThought && (
                               <ThinkingProcess isThinking={false} thought={sanitizedThought} />
                             )}
-                            <TypingAnimation content={sanitizedAnswer} shouldAnimate={idx === currentChatHistory.length - 1 && isResponding} />
-                            
-                            {message.citations && message.citations.length > 0 && (
-                              <div>
-                                <p className="mb-1 text-xs font-bold text-muted-foreground">SOURCE</p>
-                                {message.citations.map((citation: any, i) => (
-                                  <Badge key={i} variant="secondary" className="mb-1 mr-1">
-                                    {typeof citation === 'string' ? citation : citation.fileName || 'Unknown Source'}
-                                  </Badge>
-                                ))}
+                            <AssistantResponseBody content={sanitizedAnswer} shouldAnimate={idx === currentChatHistory.length - 1 && isResponding} />
+                             
+                            {normalizedCitations.length > 0 && (
+                              <div className="space-y-2">
+                                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                                  Source
+                                </p>
+                                <div className="flex flex-wrap gap-2">
+                                  {normalizedCitations.map((citation) => (
+                                    <Badge key={citation} variant="secondary" className="rounded-full px-2.5 py-1 text-xs">
+                                      {citation}
+                                    </Badge>
+                                  ))}
+                                </div>
                               </div>
                             )}
 
@@ -447,8 +415,16 @@ export default function GlobalChatPage() {
                               </div>
                             ) : null}
 
+                            <FollowUpSuggestions
+                              prompts={followUpPrompts}
+                              disabled={isResponding}
+                              onSelect={(prompt) => {
+                                void handleSendMessage({ preventDefault: () => {} } as React.FormEvent, prompt);
+                              }}
+                            />
+
                             <div className="flex items-center gap-1 mt-2 opacity-50 hover:opacity-100 transition-opacity">
-                              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md" onClick={() => handleCopy(message.id, message.content)}>
+                              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-primary rounded-md" onClick={() => handleCopy(message.id, sanitizedAnswer)}>
                                 {copiedMessageId === message.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                               </Button>
                               {idx === currentChatHistory.length - 1 && (

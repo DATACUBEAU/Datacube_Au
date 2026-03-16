@@ -325,7 +325,12 @@ export async function buildUsageHealthReport(input: {
         resetWindowEnd = String((input.usageByLimit[limitKey] as any)?.reset?.window_end || '') || null;
         if (useTrackedForLimit && resetWindowStart === todayWindowStart) {
           trackedUsed = readUsageMetricValue(today, aliases, 0);
-        } else if (useTrackedForLimit && !resetWindowEnd && resetWindowStart.startsWith('1970-01-01T00:00:00')) {
+        } else if (
+          useTrackedForLimit &&
+          !resetWindowEnd &&
+          resetWindowStart &&
+          resetWindowStart.startsWith('1970-01-01T00:00:00')
+        ) {
           trackedUsed = readUsageMetricValue(total, aliases, 0);
         }
       } else if (definition.reset_policy === 'daily') {

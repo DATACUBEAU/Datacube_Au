@@ -10,6 +10,7 @@ import {
 } from '@shared/chat-payload';
 import type { ChatDocumentContext } from '@shared/document-chat-context';
 import type { GlobalChatNavAction } from '@shared/global-chat-routing';
+import { normalizeAssistantCitations } from '@/lib/chat/assistant-response';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -289,7 +290,7 @@ async function invokeLegacyAuChatFallback(
   return {
     answer: String(data.answer || ''),
     thought: typeof data.thought === 'string' ? data.thought : undefined,
-    citations: Array.isArray(data.citations) ? data.citations : [],
+    citations: normalizeAssistantCitations(data.citations),
   } as ChatResponse;
 }
 
@@ -297,7 +298,7 @@ function normalizeChatResponse(data: any): ChatResponse {
   return {
     answer: String(data?.answer || ''),
     thought: typeof data?.thought === 'string' ? data.thought : undefined,
-    citations: Array.isArray(data?.citations) ? data.citations : [],
+    citations: normalizeAssistantCitations(data?.citations),
     navAction:
       data?.nav_action && typeof data.nav_action === 'object'
         ? (data.nav_action as GlobalChatNavAction)
