@@ -13,6 +13,7 @@ import React, {
 import { usePathname } from 'next/navigation';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { fetchAdmin } from '@/lib/api/admin-fetch';
+import { safeFetch } from '@/lib/api/safe-fetch';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
@@ -117,17 +118,6 @@ function normalizeFlagRow(row: any): FeatureFlagRecord | null {
   };
 }
 
-function isSchemaDriftError(error: any): boolean {
-  const code = String(error?.code || '').trim();
-  const message = String(error?.message || '').toLowerCase();
-  return (
-    code === '42P01' ||
-    code === '42703' ||
-    message.includes('relation') && message.includes('does not exist') ||
-    message.includes('column') && message.includes('does not exist')
-  );
-}
-
 function rowsToState(rows: FeatureFlagRecord[]): { flags: FeatureFlagsMap; records: FeatureFlagsRecordMap } {
   const records: FeatureFlagsRecordMap = {};
   const flags: FeatureFlagsMap = { ...DEFAULT_FLAGS };
@@ -209,31 +199,40 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const { data, error } = await supabase
-        .from('feature_flags')
-        .select('id,key,enabled,category,description,scope,org_id,user_id,config,updated_at')
-        .order('updated_at', { ascending: false });
-
-      let sourceRows = data || [];
-
-      if (error) {
-        if (!isSchemaDriftError(error)) throw error;
-
-        const { data: legacyData, error: legacyError } = await supabase
-          .from('au_feature_flags')
-          .select('*')
-          .order('updated_at', { ascending: false });
-
-        if (legacyError) {
-          throw legacyError;
-        }
-
-        sourceRows = legacyData || [];
+      const headers = new Headers();
+      const accessToken = await getSupabaseAccessToken();
+      if (accessToken) {
+        headers.set('Authorization', `Bearer ${accessToken}`);
       }
 
-      const normalized = (sourceRows || [])
-        .map((row) => normalizeFlagRow(row))
-        .filter((row): row is FeatureFlagRecord => row !== null);
+      const res = await safeFetch('/api/feature-flags', {
+        method: 'GET',
+        headers,
+        credentials: 'include',
+        timeout: 15000,
+        silent: true,
+      });
+
+      const payload = await res.json().catch(() => null);
+      if (!res.ok) {
+        const requestId =
+          payload?.requestId ||
+          payload?.request_id ||
+          payload?.details?.requestId ||
+          null;
+        const reason =
+          payload?.message ||
+          payload?.error ||
+          payload?.code ||
+          `feature flag fetch failed (${res.status})`;
+        throw new Error(requestId ? `${String(reason)} [requestId=${String(requestId)}]` : String(reason));
+      }
+
+      const sourceRows = Array.isArray(payload?.rows) ? payload.rows : [];
+
+      const normalized = sourceRows
+        .map((row: unknown) => normalizeFlagRow(row))
+        .filter((row: FeatureFlagRecord | null): row is FeatureFlagRecord => row !== null);
 
       setRows(normalized);
       void writeCachedRows(normalized);

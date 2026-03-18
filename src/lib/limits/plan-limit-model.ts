@@ -76,6 +76,14 @@ export type ResetWindowSnapshot = {
   windowEnd: string | null;
 };
 
+export type PlanLimitPresentation = {
+  capLabel: string;
+  modeLabel: string;
+  resetLabel: string;
+  resetDescription: string;
+  summary: string;
+};
+
 type RuleSeed = Omit<StoredPlanLimitRule, 'key' | 'updatedAt'>;
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -551,6 +559,81 @@ export function describeResetPolicy(rule: Pick<StoredPlanLimitRule, 'resetPolicy
     default:
       return 'No reset';
   }
+}
+
+export function describePlanLimitMode(mode: PlanLimitMode): string {
+  if (mode === 'current') return 'Current count';
+  if (mode === 'per_request') return 'Per request';
+  if (mode === 'concurrency') return 'Concurrency';
+  return 'Usage-based';
+}
+
+export function describePlanLimitResetLabel(
+  rule: Pick<StoredPlanLimitRule, 'resetPolicy' | 'resetIntervalValue' | 'resetIntervalUnit'>,
+): string {
+  switch (rule.resetPolicy) {
+    case 'hourly':
+      return 'Hourly';
+    case 'daily':
+      return 'Daily';
+    case 'weekly':
+      return 'Weekly';
+    case 'monthly':
+      return 'Monthly';
+    case 'custom': {
+      const value = Math.max(1, asInt(rule.resetIntervalValue, 1) || 1);
+      const unit = rule.resetIntervalUnit || 'day';
+      return `Every ${value} ${unit}${value === 1 ? '' : 's'}`;
+    }
+    default:
+      return 'No reset';
+  }
+}
+
+export function formatPlanLimitCap(
+  rule: Pick<StoredPlanLimitRule, 'value' | 'isEnabled' | 'isUnlimited'> & { unitLabel?: string | null },
+): string {
+  if (!rule.isEnabled) return 'Disabled';
+  if (rule.isUnlimited) return 'Unlimited';
+  return `${Math.max(0, Math.floor(Number(rule.value || 0))).toLocaleString()} ${String(rule.unitLabel || '').trim()}`.trim();
+}
+
+export function describePlanLimitResetBehavior(
+  rule: Pick<StoredPlanLimitRule, 'mode' | 'resetPolicy' | 'resetIntervalValue' | 'resetIntervalUnit'> & {
+    category?: PlanLimitDefinition['category'];
+  },
+): string {
+  if (rule.mode === 'per_request') {
+    return 'Checked on every request. It does not use a scheduled reset window.';
+  }
+  if (rule.mode === 'concurrency') {
+    return 'Checked against live concurrent work. It does not use a scheduled reset window.';
+  }
+  if (rule.mode === 'current') {
+    return 'Checked against the current stored count. Capacity returns as items are removed.';
+  }
+  if (rule.resetPolicy === 'never') {
+    return 'No scheduled reset. The cap only changes when usage drops or the rule is edited.';
+  }
+  return `${describeResetPolicy(rule)}.`;
+}
+
+export function buildPlanLimitPresentation(
+  rule: Pick<StoredPlanLimitRule, 'value' | 'isEnabled' | 'isUnlimited' | 'mode' | 'resetPolicy' | 'resetIntervalValue' | 'resetIntervalUnit'> & {
+    unitLabel?: string | null;
+    category?: PlanLimitDefinition['category'];
+  },
+): PlanLimitPresentation {
+  const capLabel = formatPlanLimitCap(rule);
+  const modeLabel = describePlanLimitMode(rule.mode);
+  const resetLabel = describePlanLimitResetLabel(rule);
+  return {
+    capLabel,
+    modeLabel,
+    resetLabel,
+    resetDescription: describePlanLimitResetBehavior(rule),
+    summary: `${capLabel} / ${modeLabel} / ${resetLabel}`,
+  };
 }
 
 export function computeResetWindow(

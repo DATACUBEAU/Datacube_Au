@@ -10,6 +10,7 @@ import {
   trackUsageEvent,
   type UsageMetricDefinitionRow,
 } from '../src/lib/server/usage-tracking.js';
+import { buildPlanLimitPresentation } from '../src/lib/limits/plan-limit-model.js';
 import { readUsageMetricValue } from '../shared/usage-metrics.js';
 
 let failed = 0;
@@ -202,6 +203,56 @@ async function main() {
     assert.equal(upload.uploads_count, 1);
     assert.equal(upload.uploaded_bytes, 5 * 1024 * 1024);
     assert.ok(Number(upload.uploaded_mb) >= 5);
+  });
+
+  await run('plan limit presentation summaries update from the saved rule metadata', () => {
+    const summary = buildPlanLimitPresentation({
+      value: 42000,
+      isEnabled: true,
+      isUnlimited: false,
+      mode: 'usage',
+      resetPolicy: 'weekly',
+      resetIntervalValue: null,
+      resetIntervalUnit: null,
+      unitLabel: 'messages',
+      category: 'usage_counter',
+    });
+
+    assert.equal(summary.capLabel, '42,000 messages');
+    assert.equal(summary.modeLabel, 'Usage-based');
+    assert.equal(summary.resetLabel, 'Weekly');
+    assert.equal(summary.summary, '42,000 messages / Usage-based / Weekly');
+    assert.equal(summary.resetDescription, 'Resets weekly.');
+  });
+
+  await run('plan limit presentation explains per-request and current-count rules without hardcoded page text', () => {
+    const perRequest = buildPlanLimitPresentation({
+      value: 75,
+      isEnabled: true,
+      isUnlimited: false,
+      mode: 'per_request',
+      resetPolicy: 'never',
+      resetIntervalValue: null,
+      resetIntervalUnit: null,
+      unitLabel: 'MB',
+      category: 'per_request',
+    });
+    assert.equal(perRequest.summary, '75 MB / Per request / No reset');
+    assert.equal(perRequest.resetDescription, 'Checked on every request. It does not use a scheduled reset window.');
+
+    const currentCount = buildPlanLimitPresentation({
+      value: 250,
+      isEnabled: true,
+      isUnlimited: false,
+      mode: 'current',
+      resetPolicy: 'never',
+      resetIntervalValue: null,
+      resetIntervalUnit: null,
+      unitLabel: 'files',
+      category: 'stored_item',
+    });
+    assert.equal(currentCount.summary, '250 files / Current count / No reset');
+    assert.equal(currentCount.resetDescription, 'Checked against the current stored count. Capacity returns as items are removed.');
   });
 
   await run('trackUsageEvent writes one atomic event and returns the snapshot', async () => {

@@ -2,9 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { APPROVED_LIMIT_KEYS, DEFAULT_PLAN_ORDER, type EffectivePlanCode } from '@/lib/limits/plan-limit-model';
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
 import {
-  buildUsageSnapshotForUser,
-  buildZeroUsageSnapshot,
-  loadPublicPlanCatalog,
+  loadPlanMetadata,
+  resolveEffectivePlanLimitSnapshot,
   serializeEffectivePlanLimitRule,
 } from '@/lib/server/au-limits';
 
@@ -38,21 +37,6 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = adminResult.supabase;
-    const planCatalog = await loadPublicPlanCatalog(supabase);
-    const policy = planCatalog.find((entry) => entry.plan === plan);
-
-    if (!policy) {
-      return NextResponse.json(
-        {
-          ok: false,
-          requestId,
-          code: 'plan_policy_missing',
-          message: `No plan policy found for ${plan}.`,
-        },
-        { status: 404, headers: { 'Cache-Control': 'no-store' } },
-      );
-    }
-
     let previewUserId: string | null = null;
     let userFound = false;
     if (rawUserId && UUID_REGEX.test(rawUserId)) {
@@ -63,9 +47,22 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const usage = previewUserId
-      ? await buildUsageSnapshotForUser(supabase, previewUserId, policy.limitRules)
-      : buildZeroUsageSnapshot(policy.limitRules);
+    const [metadata, snapshot] = await Promise.all([
+      loadPlanMetadata(supabase, plan),
+      resolveEffectivePlanLimitSnapshot({
+        supabase,
+        plan,
+        userId: previewUserId,
+      }),
+    ]);
+
+    console.info('[limits-preview] resolved canonical snapshot', {
+      requestId,
+      plan,
+      userId: previewUserId,
+      userFound,
+      limits: snapshot.limits,
+    });
 
     return NextResponse.json(
       {
@@ -75,25 +72,28 @@ export async function GET(req: NextRequest) {
         user_id: previewUserId,
         user_found: userFound,
         planPolicy: {
-          plan: policy.plan,
-          label: policy.metadata.label,
-          description: policy.metadata.description,
-          limits: policy.limits,
+          plan: snapshot.plan,
+          label: metadata.label,
+          description: metadata.description,
+          limits: snapshot.limits,
           limit_rules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-            acc[key] = serializeEffectivePlanLimitRule(policy.limitRules[key]);
+            acc[key] = serializeEffectivePlanLimitRule(snapshot.limitRules[key]);
             return acc;
           }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
-          resetLabels: policy.resetLabels,
+          resetLabels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+            acc[key] = snapshot.usage.windows[key]?.label || 'No reset';
+            return acc;
+          }, {} as Record<string, string>),
         },
-        effectiveLimits: policy.limits,
+        effectiveLimits: snapshot.limits,
         effectiveLimitRules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = serializeEffectivePlanLimitRule(policy.limitRules[key]);
+          acc[key] = serializeEffectivePlanLimitRule(snapshot.limitRules[key]);
           return acc;
         }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
-        usage,
-        resetWindows: usage.windows,
+        usage: snapshot.usage,
+        resetWindows: snapshot.usage.windows,
         labels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = usage.windows[key]?.label || policy.resetLabels[key];
+          acc[key] = snapshot.usage.windows[key]?.label || 'No reset';
           return acc;
         }, {} as Record<string, string>),
       },

@@ -805,7 +805,7 @@ export default function SubscriptionPage() {
     const isLimit = typeof safeLimit === 'number' && safeLimit > 0 ? safeUsed >= safeLimit : false;
     return (
         <div>
-            <div className="flex justify-between text-sm mb-1.5">
+            <div className="mb-1.5 flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <span className="font-medium text-foreground">{label}</span>
                 <span className={cn("font-mono text-xs", isLimit ? "text-destructive font-bold" : "text-muted-foreground")}>
                     {safeLimit === null ? `${safeUsed} / Unlimited` : `${safeUsed} / ${safeLimit}`}
@@ -828,7 +828,13 @@ export default function SubscriptionPage() {
     const isFreePlan = planCode === 'free';
     const usageByLimit = limitsUsage.usageByLimit || {};
     const limitRules = limitsUsage.limitRules || {};
-    const fileSizeCap = Number((limitsUsage.limits || {}).max_file_size_mb || 0);
+    const fileSizeRule = (limitRules.max_file_size_mb || {}) as any;
+    const fileSizeCapLabel =
+      String(fileSizeRule?.presentation?.cap_label || '').trim() ||
+      `${Number((limitsUsage.limits || {}).max_file_size_mb || 0).toLocaleString()} MB`;
+    const fileSizeResetDescription =
+      String(fileSizeRule?.presentation?.reset_description || '').trim() ||
+      'Checked on every request. It does not use a scheduled reset window.';
     const usageKeys = [
       'max_chats_total',
       'max_uploads_total',
@@ -847,7 +853,7 @@ export default function SubscriptionPage() {
       .slice(0, 2);
 
     return (
-        <div className="bg-card rounded-3xl shadow-sm p-6 border border-border mb-8 max-w-4xl mx-auto">
+        <div className="mx-auto mb-8 max-w-4xl rounded-3xl border border-border bg-card p-5 shadow-sm sm:p-6">
             <div className="flex items-center gap-2 mb-4">
                 <ShieldCheck className="h-5 w-5 text-primary" />
                 <h2 className="text-lg font-bold text-foreground">Limits & Usage</h2>
@@ -856,7 +862,7 @@ export default function SubscriptionPage() {
               Plan: <span className="font-semibold text-foreground">{planCode.toUpperCase()}</span>
               {resetSummary.length > 0 ? ` / ${resetSummary.join(' / ')}` : ''}
             </p>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
                 {usageKeys.map((key) => {
                   const rule = (limitRules[key] || {}) as any;
                   const usageEntry = (usageByLimit[key] || {}) as any;
@@ -868,7 +874,9 @@ export default function SubscriptionPage() {
                         limit={typeof usageEntry.limit === 'number' || usageEntry.limit === null ? usageEntry.limit : null}
                       />
                       <p className="text-[11px] text-muted-foreground">
-                        {typeof usageEntry?.reset?.label === 'string' ? usageEntry.reset.label : 'No reset policy loaded'}
+                        {typeof usageEntry?.reset?.label === 'string' && usageEntry.reset.label
+                          ? usageEntry.reset.label
+                          : String(rule?.presentation?.reset_description || rule?.presentation?.reset_label || 'No reset')}
                       </p>
                     </div>
                   );
@@ -876,9 +884,9 @@ export default function SubscriptionPage() {
             </div>
             <div className="mt-4 rounded-2xl border border-dashed p-4 text-xs text-muted-foreground">
               <p>
-                Per-file upload size: <span className="font-medium text-foreground">{fileSizeCap.toLocaleString()} MB</span>
+                Per-file upload size: <span className="font-medium text-foreground">{fileSizeCapLabel}</span>
               </p>
-              <p>Checked on every upload request. It does not use a scheduled reset window.</p>
+              <p>{fileSizeResetDescription}</p>
             </div>
             {isFreePlan && billingEnabled ? (
               <p className="mt-4 text-xs text-muted-foreground">
@@ -909,13 +917,13 @@ export default function SubscriptionPage() {
     ctaLabel,
   }: any) => (
     <div className={cn(
-        "relative flex flex-col bg-card rounded-3xl shadow-sm overflow-hidden transition-all duration-300",
-        highlighted ? "border-2 border-primary z-10 scale-105 shadow-xl shadow-primary/10" : "border border-border hover:scale-[1.02]",
+        "relative flex flex-col overflow-hidden rounded-3xl bg-card shadow-sm transition-all duration-300",
+        highlighted ? "z-10 border-2 border-primary shadow-xl shadow-primary/10 md:scale-[1.03]" : "border border-border md:hover:scale-[1.02]",
         disabled && "opacity-80"
     )}>
       {/* Header with Curve */}
       <div className={cn(
-          "pt-10 pb-16 px-6 text-center relative",
+          "relative px-5 pb-14 pt-8 text-center sm:px-6 sm:pb-16 sm:pt-10",
           highlighted ? "bg-primary text-primary-foreground" : "bg-muted/40 text-foreground"
       )}>
          {/* Curve Overlay */}
@@ -935,29 +943,29 @@ export default function SubscriptionPage() {
                      {originalPrice}
                  </div>
              )}
-            <div className="flex items-baseline gap-1">
-                <span className="text-4xl font-extrabold">{price}</span>
+            <div className="flex flex-wrap items-baseline justify-center gap-1">
+                <span className="break-words text-3xl font-extrabold leading-none sm:text-4xl">{price}</span>
             </div>
             <span className={cn("text-xs font-medium uppercase mt-2", highlighted ? "text-primary-foreground/80" : "text-muted-foreground")}>
                 /{period}
             </span>
          </div>
 
-         {savedLabel && (
-             <span className={cn(
-                 "absolute top-4 right-4 text-[10px] font-bold px-3 py-1 rounded-full shadow-sm",
-                 highlighted ? "bg-background text-primary" : "bg-primary/10 text-primary"
-             )}>
-                 {savedLabel}
-             </span>
-         )}
+          {savedLabel && (
+              <span className={cn(
+                  "absolute right-3 top-3 max-w-[calc(100%-1.5rem)] rounded-full px-3 py-1 text-[10px] font-bold shadow-sm sm:right-4 sm:top-4",
+                  highlighted ? "bg-background text-primary" : "bg-primary/10 text-primary"
+              )}>
+                  {savedLabel}
+              </span>
+          )}
       </div>
 
       {/* Content */}
-      <div className="p-8 pt-6 flex-1 flex flex-col items-center z-10 bg-card">
+      <div className="z-10 flex flex-1 flex-col items-center bg-card p-6 pt-6 sm:p-8 sm:pt-6">
           <ul className="space-y-4 text-sm text-muted-foreground mb-8 w-full">
               {features.map((f: string, i: number) => (
-                  <li key={i} className="flex items-center gap-3 text-left">
+                  <li key={i} className="flex items-start gap-3 text-left">
                       <Check className={cn("h-5 w-5 shrink-0", highlighted ? "text-primary" : "text-muted-foreground")} />
                       <span className="leading-tight">{f}</span>
                   </li>
@@ -1053,8 +1061,8 @@ export default function SubscriptionPage() {
 
   const activeBillingSummary = (hasPaidProAccess || hasPremiumAccess) ? (
       <div className="mb-8 max-w-4xl mx-auto space-y-8">
-          <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
-              <div className="flex items-center justify-between mb-8">
+          <div className="rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8">
+              <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                       <h2 className="text-2xl font-bold text-foreground">{currentPlan.currentPlanLabel} Active</h2>
                       <p className="text-muted-foreground mt-1">
@@ -1068,7 +1076,7 @@ export default function SubscriptionPage() {
                   </div>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+              <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
                   <div className="space-y-4">
                       {(currentPaidPlanCatalog?.metadata?.feature_bullets?.length ? currentPaidPlanCatalog.metadata.feature_bullets : [
                           'Premium model access',
@@ -1081,7 +1089,7 @@ export default function SubscriptionPage() {
                           </div>
                       ))}
                   </div>
-                  <div className="bg-muted/40 rounded-2xl p-6">
+                  <div className="rounded-2xl bg-muted/40 p-5 sm:p-6">
                       <div className="text-sm text-muted-foreground mb-1">
                           {subscription?.status === 'active' ? 'Renews on' : 'Expires on'}
                       </div>
@@ -1149,41 +1157,70 @@ export default function SubscriptionPage() {
               </div>
           </div>
 
-          <div className="bg-card rounded-3xl shadow-sm p-8 border border-border">
+          <div className="rounded-3xl border border-border bg-card p-6 shadow-sm sm:p-8">
               <div className="flex items-center gap-2 mb-6">
                   <Clock className="h-5 w-5 text-muted-foreground" />
                   <h2 className="text-xl font-bold text-foreground">Payment History</h2>
               </div>
 
               {payments.length > 0 ? (
-                  <div className="overflow-x-auto">
-                      <Table>
-                          <TableHeader>
-                              <TableRow>
-                                  <TableHead>Date</TableHead>
-                                  <TableHead>Description</TableHead>
-                                  <TableHead>Amount</TableHead>
-                                  <TableHead>Status</TableHead>
-                                  <TableHead className="text-right">Reference</TableHead>
-                              </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                              {payments.map((p) => (
-                                  <TableRow key={p.reference}>
-                                      <TableCell className="font-medium">{formatDate(p.created_at)}</TableCell>
-                                      <TableCell className="capitalize">{p.plan} Plan</TableCell>
-                                      <TableCell>NGN {p.amount_ngn.toLocaleString()}</TableCell>
-                                      <TableCell>
+                  <>
+                      <div className="space-y-3 md:hidden">
+                          {payments.map((p) => (
+                              <div key={p.reference} className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                                  <div className="flex flex-col gap-3">
+                                      <div className="flex items-start justify-between gap-3">
+                                          <div className="min-w-0">
+                                              <p className="font-medium text-foreground">{formatDate(p.created_at)}</p>
+                                              <p className="capitalize text-sm text-muted-foreground">{p.plan} Plan</p>
+                                          </div>
                                           <Badge variant={p.status === 'success' ? 'default' : 'secondary'} className={p.status === 'success' ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
                                               {p.status}
                                           </Badge>
-                                      </TableCell>
-                                      <TableCell className="text-right font-mono text-xs text-muted-foreground">{p.reference.substring(0, 8)}...</TableCell>
+                                      </div>
+                                      <div className="grid grid-cols-1 gap-2 text-sm">
+                                          <div>
+                                              <span className="text-muted-foreground">Amount:</span>{' '}
+                                              <span className="font-medium text-foreground">NGN {p.amount_ngn.toLocaleString()}</span>
+                                          </div>
+                                          <div className="min-w-0">
+                                              <span className="text-muted-foreground">Reference:</span>{' '}
+                                              <span className="break-all font-mono text-xs text-muted-foreground">{p.reference}</span>
+                                          </div>
+                                      </div>
+                                  </div>
+                              </div>
+                          ))}
+                      </div>
+                      <div className="hidden md:block">
+                          <Table>
+                              <TableHeader>
+                                  <TableRow>
+                                      <TableHead>Date</TableHead>
+                                      <TableHead>Description</TableHead>
+                                      <TableHead>Amount</TableHead>
+                                      <TableHead>Status</TableHead>
+                                      <TableHead className="text-right">Reference</TableHead>
                                   </TableRow>
-                              ))}
-                          </TableBody>
-                      </Table>
-                  </div>
+                              </TableHeader>
+                              <TableBody>
+                                  {payments.map((p) => (
+                                      <TableRow key={p.reference}>
+                                          <TableCell className="font-medium">{formatDate(p.created_at)}</TableCell>
+                                          <TableCell className="capitalize">{p.plan} Plan</TableCell>
+                                          <TableCell>NGN {p.amount_ngn.toLocaleString()}</TableCell>
+                                          <TableCell>
+                                              <Badge variant={p.status === 'success' ? 'default' : 'secondary'} className={p.status === 'success' ? 'bg-green-100 text-green-700 hover:bg-green-100' : ''}>
+                                                  {p.status}
+                                              </Badge>
+                                          </TableCell>
+                                          <TableCell className="text-right font-mono text-xs text-muted-foreground">{p.reference.substring(0, 8)}...</TableCell>
+                                      </TableRow>
+                                  ))}
+                              </TableBody>
+                          </Table>
+                      </div>
+                  </>
               ) : (
                   <div className="text-center py-8 text-muted-foreground bg-muted/30 rounded-xl">
                       No payment history found.
@@ -1224,7 +1261,7 @@ export default function SubscriptionPage() {
               </div>
           ) : null}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3 xl:gap-8 items-start">
               <PricingCard
                   title={freePlanCatalog?.metadata?.label || 'Free'}
                   price={freePlanCatalog?.metadata?.price_display || 'Loading...'}
@@ -1287,10 +1324,11 @@ export default function SubscriptionPage() {
               </OfflineGuard>
           </div>
 
-          <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+          <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
               <OfflineGuard asChild>
                   <Button
                       variant="outline"
+                      className="w-full sm:w-auto"
                       onClick={() => openManualBankTransfer('monthly')}
                       disabled={!canStartCheckoutForPlan({
                           planKey: 'pro_monthly',
@@ -1310,6 +1348,7 @@ export default function SubscriptionPage() {
               <OfflineGuard asChild>
                   <Button
                       variant="outline"
+                      className="w-full sm:w-auto"
                       onClick={() => openManualBankTransfer('weekly')}
                       disabled={!canStartCheckoutForPlan({
                           planKey: 'pro_weekly',
@@ -1333,7 +1372,7 @@ export default function SubscriptionPage() {
     // --- Main Render ---
 
   return (
-    <div className="min-h-screen bg-transparent pb-16 relative">
+    <div className="relative min-h-screen overflow-x-clip bg-transparent pb-16">
         {showSlowNotice && isBootLoading ? <SlowNetworkNotice onRetry={() => void fetchBillingStatus()} /> : null}
         {isUsingCachedData && !isOnline ? (
             <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100 md:mx-8">
@@ -1348,7 +1387,7 @@ export default function SubscriptionPage() {
                 <Badge variant="outline" className="mb-2 rounded-full px-4 py-1.5">
                     Upgrade your experience
                 </Badge>
-                <h1 className="text-4xl md:text-5xl font-bold tracking-tight">Simple, Transparent Pricing</h1>
+                <h1 className="text-3xl font-bold tracking-tight sm:text-4xl md:text-5xl">Simple, Transparent Pricing</h1>
                 <p className="text-muted-foreground text-lg max-w-xl mx-auto leading-relaxed">
                     Unlock the full power of AU with flexible plans. Cancel anytime, no hidden fees.
                 </p>
@@ -1374,13 +1413,13 @@ export default function SubscriptionPage() {
         </section>
 
         {/* Pricing Cards Grid */}
-        <div className="container max-w-6xl mx-auto px-4 pt-10 relative z-20">
+        <div className="container relative z-20 mx-auto max-w-6xl px-4 pt-10 sm:px-6">
             <UsageMeter />
             {activeBillingSummary}
             {pricingOptions}
 
             <div className="mt-12 text-center">
-                 <div className="inline-flex items-center gap-2 text-xs text-muted-foreground bg-card/50 px-4 py-2 rounded-full border border-border shadow-sm">
+                 <div className="inline-flex max-w-full flex-wrap items-center justify-center gap-2 rounded-full border border-border bg-card/50 px-4 py-2 text-center text-xs text-muted-foreground shadow-sm">
                     <Lock className="h-3 w-3" />
                     <span>Secure payment processing. Encrypted and safe.</span>
                  </div>

@@ -1,11 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getFeatureFlagBoolean } from '@/lib/server/feature-flags';
 import { getProEntitlementStatus } from '@/lib/server/entitlements';
-import { countTrulyActiveWorkerJobs } from '@/lib/server/worker-job-concurrency';
-import { LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 import {
-  DEFAULT_MAX_UPLOAD_MB,
-  FLAGGED_MAX_UPLOAD_MB,
   TIER_TUNING_POLICY,
   featureUpgradeHref,
   getFeaturePolicy,
@@ -238,139 +233,6 @@ async function consumeQuotaOrThrow(input: {
       resetAt: typeof data?.period_end === 'string' ? data.period_end : null,
     })
   );
-}
-
-async function resolveUploadMaxMb(supabase: SupabaseClient): Promise<number> {
-  const enabled = await getFeatureFlagBoolean(supabase, 'upload_100mb', false);
-  return enabled ? FLAGGED_MAX_UPLOAD_MB : DEFAULT_MAX_UPLOAD_MB;
-}
-
-async function enforceUploadSizeOrThrow(input: {
-  supabase: SupabaseClient;
-  body: any;
-}) {
-  const raw = Number(input.body?.fileSize ?? input.body?.file_size ?? 0);
-  if (!Number.isFinite(raw) || raw <= 0) return;
-  const sizeMb = raw / (1024 * 1024);
-  const maxMb = await resolveUploadMaxMb(input.supabase);
-  if (sizeMb <= maxMb) return;
-  const message = maxMb <= 50 && sizeMb > 50
-    ? LARGE_FILE_DISABLED_MESSAGE
-    : `File exceeds upload size limit (${maxMb}MB).`;
-  throw new TierAccessError(
-    429,
-    buildLimitReachedPayload({
-      key: 'max_upload_size_mb',
-      message,
-      count: Math.ceil(sizeMb),
-      limit: maxMb,
-      resetAt: null,
-    })
-  );
-}
-
-async function enforceConcurrentJobLimitOrThrow(input: {
-  supabase: SupabaseClient;
-  userId: string;
-  tierContext: TierContext;
-}) {
-  const cap = isProLikeTier(input.tierContext.tier)
-    ? TIER_TUNING_POLICY.concurrentJobs.pro
-    : TIER_TUNING_POLICY.concurrentJobs.free;
-  const { count: activeCount, error } = await countTrulyActiveWorkerJobs({
-    supabase: input.supabase,
-    ownerId: input.userId,
-  });
-  if (error) return;
-  if (activeCount < cap) return;
-  throw new TierAccessError(
-    429,
-    buildLimitReachedPayload({
-      key: 'max_concurrent_jobs',
-      message: `Too many active jobs. Your plan allows ${cap} concurrent jobs.`,
-      count: activeCount,
-      limit: cap,
-      resetAt: null,
-    })
-  );
-}
-
-async function enforceDocumentUploadQuotaOrThrow(input: {
-  supabase: SupabaseClient;
-  userId: string;
-  tierContext: TierContext;
-  documentId: string;
-  route: string;
-}) {
-  const documentId = String(input.documentId || '').trim();
-  if (!documentId) return;
-
-  try {
-    const rpcResult = await input.supabase.rpc('consume_document_upload_quota', {
-      p_user_id: input.userId,
-      p_document_id: documentId,
-      p_tier: quotaTierForRpc(input.tierContext.runtimeTier),
-    });
-    if (rpcResult.error) throw rpcResult.error;
-    const data = (rpcResult.data || {}) as QuotaConsumeResponse & { consumed?: boolean };
-    if (data.allowed !== false) return;
-
-    await logLimitEvent({
-      supabase: input.supabase,
-      userId: input.userId,
-      key: 'max_documents_uploaded_total',
-      route: input.route,
-      tier: input.tierContext.runtimeTier,
-      metadata: {
-        documentId,
-        count: data.count ?? null,
-        limit: data.limit ?? null,
-        period_end: data.period_end ?? null,
-      },
-    });
-
-    throw new TierAccessError(
-      429,
-      buildLimitReachedPayload({
-        key: 'max_documents_uploaded_total',
-        message: limitMessage('max_documents_uploaded_total'),
-        count: typeof data.count === 'number' ? data.count : undefined,
-        limit: typeof data.limit === 'number' ? data.limit : null,
-        resetAt: typeof data.period_end === 'string' ? data.period_end : null,
-      })
-    );
-  } catch (error: any) {
-    if (isUndefinedFunctionError(error)) {
-      console.warn('[tier-access] Missing upload-quota RPC, falling back to consume_quota_counter.', {
-        code: error?.code || null,
-        message: error?.message || null,
-      });
-      await consumeQuotaOrThrow({
-        supabase: input.supabase,
-        userId: input.userId,
-        tierContext: input.tierContext,
-        quotaKey: 'max_documents_uploaded_total',
-        route: input.route,
-        increment: 1,
-        metadata: { documentId, fallback: true },
-      });
-      return;
-    }
-    if (error instanceof TierAccessError) throw error;
-    if (isUndefinedColumnError(error)) {
-      await consumeQuotaOrThrow({
-        supabase: input.supabase,
-        userId: input.userId,
-        tierContext: input.tierContext,
-        quotaKey: 'max_documents_uploaded_total',
-        route: input.route,
-        increment: 1,
-        metadata: { documentId, fallback: true },
-      });
-      return;
-    }
-    throw error;
-  }
 }
 
 function clampChatPayloadByTier(tierContext: TierContext, body: any): any {
@@ -668,21 +530,10 @@ export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promis
     if (featureKey === 'document_upload' && !shouldBypassLegacyQuota(featureKey)) {
       const action = String(body?.action || '').toLowerCase();
       if (action === 'initiate' || action === 'complete') {
-        await enforceUploadSizeOrThrow({ supabase, body });
-        appliedGuards.push('limit:max_upload_size_mb');
-      }
-      if (action === 'complete') {
-        await enforceConcurrentJobLimitOrThrow({ supabase, userId, tierContext });
-        appliedGuards.push('limit:max_concurrent_jobs');
-        // Quota enforcement moved to finalize_document_upload (RPC)
-        // await enforceDocumentUploadQuotaOrThrow({
-        //   supabase,
-        //   userId,
-        //   tierContext,
-        //   documentId: String(body?.documentId || ''),
-        //   route: requestPath,
-        // });
-        // appliedGuards.push('quota:max_documents_uploaded_total');
+        // Canonical document-upload limits are enforced later in the proxy request
+        // via getEffectiveLimits() + throwUploadLimitIfNeeded()/throwIngestLimitIfNeeded().
+        // Leaving a second hardcoded gate here causes admin-saved plan rules to drift.
+        appliedGuards.push('limit:document_upload_canonical_proxy');
       }
     }
   }

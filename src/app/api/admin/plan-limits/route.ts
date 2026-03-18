@@ -309,6 +309,14 @@ export async function POST(req: NextRequest) {
     }
 
     const nextState = await loadAdminPlanLimitState(supabase);
+    const responsePayload = buildResponsePayload(nextState);
+    console.info('[plan-limits] saved canonical scope rules', {
+      requestId,
+      scope,
+      action,
+      source: nextState.source,
+      limitsByPlan: responsePayload.limitsByPlan,
+    });
     return NextResponse.json(
       {
         ok: true,
@@ -316,7 +324,7 @@ export async function POST(req: NextRequest) {
         scope,
         plan: isPlan(scope) ? scope : null,
         action,
-        ...buildResponsePayload(nextState),
+        ...responsePayload,
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );

@@ -22,6 +22,9 @@ import {
   APPROVED_LIMIT_KEYS,
   DEFAULT_PLAN_ORDER,
   PLAN_LIMIT_SCOPE_KEYS,
+  describePlanLimitMode,
+  describePlanLimitResetLabel,
+  formatPlanLimitCap,
   type ApprovedLimitKey,
   type EffectivePlanCode,
   type PlanLimitScopeKey,
@@ -75,6 +78,13 @@ type SerializedRule = {
   source_scope?: PlanLimitScopeKey;
   updated_at: string | null;
   enforced_by: string[];
+  presentation?: {
+    cap_label?: string;
+    mode_label?: string;
+    reset_label?: string;
+    reset_description?: string;
+    summary?: string;
+  };
 };
 
 type UsageByLimitEntry = {
@@ -179,9 +189,12 @@ function formatTime(value: string | null | undefined) {
 
 function formatCap(rule: { state?: string; value?: number | null; unit_label?: string } | null | undefined) {
   if (!rule) return 'N/A';
-  if (rule.state === 'disabled') return 'Disabled';
-  if (rule.state === 'unlimited') return 'Unlimited';
-  return `${Number(rule.value || 0).toLocaleString()} ${rule.unit_label || ''}`.trim();
+  return formatPlanLimitCap({
+    value: rule.value ?? null,
+    isEnabled: rule.state !== 'disabled',
+    isUnlimited: rule.state === 'unlimited',
+    unitLabel: rule.unit_label || '',
+  });
 }
 
 function categoryLabel(category: string) {
@@ -192,19 +205,16 @@ function categoryLabel(category: string) {
 }
 
 function modeLabel(mode: string) {
-  if (mode === 'current') return 'Current count';
-  if (mode === 'per_request') return 'Per request';
-  if (mode === 'concurrency') return 'Concurrency';
-  return 'Usage-based';
+  return describePlanLimitMode(mode as RuleDraft['mode']);
 }
 
 function resetLabel(policy: string) {
-  if (policy === 'hourly') return 'Hourly';
-  if (policy === 'daily') return 'Daily';
-  if (policy === 'weekly') return 'Weekly';
-  if (policy === 'monthly') return 'Monthly';
   if (policy === 'custom') return 'Custom interval';
-  return 'Never';
+  return describePlanLimitResetLabel({
+    resetPolicy: policy as RuleDraft['reset_policy'],
+    resetIntervalValue: null,
+    resetIntervalUnit: null,
+  });
 }
 
 function stateLabel(state: RuleDraft['state']) {
@@ -701,13 +711,8 @@ export default function ConexPlanLimitsPage() {
 
           <div className="min-w-[220px] rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">Effective now</p>
-            <p>{formatCap(effectiveRule)}</p>
-            <p>
-              {modeLabel(effectiveRule.mode)} / {resetLabel(effectiveRule.reset_policy)}
-              {effectiveRule.reset_policy === 'custom' && effectiveRule.reset_interval_value
-                ? ` (${effectiveRule.reset_interval_value} ${effectiveRule.reset_interval_unit || 'day'}${effectiveRule.reset_interval_value === 1 ? '' : 's'})`
-                : ''}
-            </p>
+            <p>{effectiveRule.presentation?.cap_label || formatCap(effectiveRule)}</p>
+            <p>{effectiveRule.presentation?.summary || `${modeLabel(effectiveRule.mode)} / ${resetLabel(effectiveRule.reset_policy)}`}</p>
             <p>
               Source: {formatScope(effectiveRule.source_scope || selectedScope)}
               {effectiveRule.inherited ? ' (inherited)' : ''}
@@ -866,7 +871,8 @@ export default function ConexPlanLimitsPage() {
               <span className="font-medium text-foreground">Last updated:</span> {formatTime((storedRule || effectiveRule)?.updated_at)}
             </p>
             <p>
-              <span className="font-medium text-foreground">Stored value:</span> {storedRule ? formatCap(storedRule) : 'No stored override'}
+              <span className="font-medium text-foreground">Stored value:</span>{' '}
+              {storedRule ? (storedRule.presentation?.cap_label || formatCap(storedRule)) : 'No stored override'}
             </p>
           </div>
         </div>
@@ -1073,9 +1079,9 @@ export default function ConexPlanLimitsPage() {
                           <TableCell className="align-top">
                             {defaultRule ? (
                               <div className="space-y-1 text-xs">
-                                <p className="font-medium text-foreground">{formatCap(defaultRule)}</p>
+                                <p className="font-medium text-foreground">{defaultRule.presentation?.cap_label || formatCap(defaultRule)}</p>
                                 <p className="text-muted-foreground">
-                                  {modeLabel(defaultRule.mode)} / {resetLabel(defaultRule.reset_policy)}
+                                  {defaultRule.presentation?.summary || `${modeLabel(defaultRule.mode)} / ${resetLabel(defaultRule.reset_policy)}`}
                                 </p>
                               </div>
                             ) : (
@@ -1088,9 +1094,9 @@ export default function ConexPlanLimitsPage() {
                               <TableCell key={`${plan}-${key}`} className="align-top">
                                 {rule ? (
                                   <div className="space-y-1 text-xs">
-                                    <p className="font-medium text-foreground">{formatCap(rule)}</p>
+                                    <p className="font-medium text-foreground">{rule.presentation?.cap_label || formatCap(rule)}</p>
                                     <p className="text-muted-foreground">
-                                      {modeLabel(rule.mode)} / {resetLabel(rule.reset_policy)}
+                                      {rule.presentation?.summary || `${modeLabel(rule.mode)} / ${resetLabel(rule.reset_policy)}`}
                                     </p>
                                     <p className="text-muted-foreground">
                                       {rule.inherited ? `Inherits ${formatScope(rule.source_scope || 'default')}` : `${formatScope(plan)} override`}
@@ -1204,7 +1210,7 @@ export default function ConexPlanLimitsPage() {
                             label={rule.label}
                             used={Number(usageEntry?.used || 0)}
                             limit={typeof usageEntry?.limit === 'number' || usageEntry?.limit === null ? usageEntry.limit : rule.value}
-                            reset={usageEntry?.reset?.label || resetLabel(rule.reset_policy)}
+                            reset={usageEntry?.reset?.label || rule.presentation?.reset_description || resetLabel(rule.reset_policy)}
                           />
                         );
                       })}
@@ -1218,7 +1224,8 @@ export default function ConexPlanLimitsPage() {
                           if (!rule) return null;
                           return (
                             <p key={key}>
-                              <span className="font-medium text-foreground">{rule.label}:</span> {formatCap(rule)} / {modeLabel(rule.mode)} / {resetLabel(rule.reset_policy)}
+                              <span className="font-medium text-foreground">{rule.label}:</span>{' '}
+                              {rule.presentation?.summary || `${formatCap(rule)} / ${modeLabel(rule.mode)} / ${resetLabel(rule.reset_policy)}`}
                             </p>
                           );
                         })}

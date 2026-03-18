@@ -546,6 +546,57 @@ async function relaySuccessfulResponse(
   };
 }
 
+async function tryLegacyChatFallback(input: {
+  req: NextRequest;
+  requestId: string;
+  correlationId: string;
+  accessToken: string | null;
+  anonKey: string | null;
+  functionsUrl: string | null;
+  question: string;
+  timeoutMs: number;
+}): Promise<{ response: Response; bodyMode: BodyRelayMode; forwardedHeaders: Headers } | null> {
+  const question = String(input.question || '').trim();
+  if (!input.accessToken || !input.anonKey || !input.functionsUrl || !question) {
+    return null;
+  }
+
+  const headers = new Headers();
+  headers.set('Authorization', `Bearer ${input.accessToken}`);
+  headers.set('apikey', input.anonKey);
+  headers.set('Content-Type', 'application/json');
+  headers.set('Accept', input.req.headers.get('accept') || 'application/json');
+  headers.set('x-correlation-id', input.correlationId);
+  headers.set('x-au-fallback', 'legacy-chat');
+
+  const fallbackUrl = `${input.functionsUrl.replace(/\/$/, '')}/chat`;
+
+  try {
+    const response = await forwardWithTimeout(
+      fallbackUrl,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ question }),
+      },
+      input.timeoutMs,
+    );
+
+    if (!response.ok) {
+      return null;
+    }
+
+    return await relaySuccessfulResponse(response, input.req, input.requestId, null);
+  } catch (error: any) {
+    console.error('[proxy] legacy chat fallback failed', {
+      requestId: input.requestId,
+      correlationId: input.correlationId,
+      message: String(error?.message || error || 'unknown_error'),
+    });
+    return null;
+  }
+}
+
 async function writeRoutingAudit(
   userId: string,
   plan: string,
@@ -588,10 +639,17 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         docVersionId: string;
       }
     | null = null;
+  let fallbackFunctionsUrl: string | null = null;
+  let fallbackAnonKey: string | null = null;
+  let fallbackAccessToken: string | null = null;
+  let fallbackChatQuestion = '';
+  let fallbackChatAction = '';
 
   try {
     const baseUrl = functionsBaseUrl();
     const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+    fallbackFunctionsUrl = baseUrl;
+    fallbackAnonKey = anonKey;
     if (!baseUrl || !anonKey) {
       return NextResponse.json(
         {
@@ -629,6 +687,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       );
     }
     reservationUserId = auth.userId;
+    fallbackAccessToken = auth.accessToken;
 
     const adminSupabase = createSupabaseAdminClient();
     reservationSupabase = adminSupabase;
@@ -785,6 +844,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     const bodyCorrelationId = correlationIdFromBody(parsedBody);
     if (bodyCorrelationId) correlationId = bodyCorrelationId;
+    fallbackChatAction = String(parsedBody?.action || '').trim().toLowerCase();
+    fallbackChatQuestion =
+      latestUserMessage(canonicalChatPayload) ||
+      String(parsedBody?.question || parsedBody?.user_input || '').trim();
     headers.set('x-correlation-id', correlationId);
 
     const normalizedCacheFeature = cacheFeatureForFunction(functionName);
@@ -1772,6 +1835,45 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }
 
     const message = String(error?.message || 'Unknown error');
+    const normalizedFunction = String(functionName || '').trim().toLowerCase();
+    const shouldFallbackToLegacyChat =
+      normalizedFunction === 'au-chat' &&
+      requestMethod === 'POST' &&
+      fallbackChatAction !== 'get_models' &&
+      fallbackChatAction !== 'scan_and_greet' &&
+      fallbackChatQuestion.length > 0;
+
+    if (shouldFallbackToLegacyChat) {
+      console.warn('[proxy] unexpected AU chat error, attempting legacy fallback', {
+        requestId,
+        correlationId,
+        functionName,
+        message,
+      });
+
+      const fallbackRelay = await tryLegacyChatFallback({
+        req,
+        requestId,
+        correlationId,
+        accessToken: fallbackAccessToken,
+        anonKey: fallbackAnonKey,
+        functionsUrl: fallbackFunctionsUrl,
+        question: fallbackChatQuestion,
+        timeoutMs: upstreamTimeoutMs,
+      });
+
+      if (fallbackRelay) {
+        console.info('[proxy] legacy chat fallback succeeded', {
+          requestId,
+          correlationId,
+          functionName,
+          bodyMode: fallbackRelay.bodyMode,
+          elapsedMs: Date.now() - startedAt,
+        });
+        return fallbackRelay.response;
+      }
+    }
+
     console.error('[proxy] unexpected error', {
       requestId,
       correlationId,

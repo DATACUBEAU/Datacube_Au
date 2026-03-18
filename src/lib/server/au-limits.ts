@@ -7,12 +7,14 @@ import {
   PLAN_LIMIT_SCOPE_KEYS,
   PLAN_LIMIT_DEFINITIONS,
   arePlanLimitRulesEqual,
+  buildPlanLimitPresentation,
   buildDefaultPlanLimitRule,
   buildDefaultRuleSet,
   buildSeedPlanRuleSet,
   buildSeedScopeRules,
   computeResetWindow,
   describeResetPolicy,
+  type PlanLimitPresentation,
   formatScopeLabel,
   getLimitCap,
   mergePlanLimitRuleSets,
@@ -184,6 +186,21 @@ export type EffectiveUsage = {
 export type EffectiveLimitsResult = {
   plan: EffectivePlanCode;
   effectivePlan: EffectivePlan;
+  limits: CanonicalPlanLimits;
+  limitRules: Record<ApprovedLimitKey, EffectivePlanLimitRule>;
+  usage: EffectiveUsage;
+};
+
+export type SerializedPlanLimitPresentation = {
+  cap_label: string;
+  mode_label: string;
+  reset_label: string;
+  reset_description: string;
+  summary: string;
+};
+
+export type EffectivePlanLimitSnapshot = {
+  plan: EffectivePlanCode;
   limits: CanonicalPlanLimits;
   limitRules: Record<ApprovedLimitKey, EffectivePlanLimitRule>;
   usage: EffectiveUsage;
@@ -789,6 +806,33 @@ export async function loadPlanLimits(
   return ruleSetToNumericLimits(rules);
 }
 
+function serializePlanLimitPresentation(display: PlanLimitPresentation): SerializedPlanLimitPresentation {
+  return {
+    cap_label: display.capLabel,
+    mode_label: display.modeLabel,
+    reset_label: display.resetLabel,
+    reset_description: display.resetDescription,
+    summary: display.summary,
+  };
+}
+
+export async function resolveEffectivePlanLimitSnapshot(input: {
+  supabase: SupabaseClient;
+  plan: EffectivePlanCode;
+  userId?: string | null;
+}): Promise<EffectivePlanLimitSnapshot> {
+  const limitRules = await loadPlanLimitRules(input.supabase, input.plan);
+  const usage = input.userId
+    ? await buildUsageSnapshotForUser(input.supabase, input.userId, limitRules)
+    : buildZeroUsageSnapshot(limitRules);
+  return {
+    plan: input.plan,
+    limits: ruleSetToNumericLimits(limitRules),
+    limitRules,
+    usage,
+  };
+}
+
 export async function loadPlanMetadata(
   supabase: SupabaseClient,
   plan: EffectivePlanCode,
@@ -843,10 +887,9 @@ async function loadBillingPricingRows(supabase: SupabaseClient): Promise<Billing
 }
 
 export async function loadPublicPlanCatalog(supabase: SupabaseClient): Promise<PublicPlanCatalogEntry[]> {
-  const [plansRes, pricingRows, limitCatalog] = await Promise.all([
+  const [plansRes, pricingRows] = await Promise.all([
     supabase.from('au_plans').select('plan,is_default'),
     loadBillingPricingRows(supabase).catch(() => ({} as BillingPricingRows)),
-    loadPlanLimitCatalog(supabase),
   ]);
 
   const planRows = !plansRes.error && plansRes.data?.length
@@ -856,8 +899,9 @@ export async function loadPublicPlanCatalog(supabase: SupabaseClient): Promise<P
   const entries = await Promise.all(
     DEFAULT_PLAN_ORDER.map(async (plan) => {
       const metadata = await loadPlanMetadata(supabase, plan);
-      const limitRules = limitCatalog.effectiveRulesByPlan[plan];
-      const limits = ruleSetToNumericLimits(limitRules);
+      const snapshot = await resolveEffectivePlanLimitSnapshot({ supabase, plan });
+      const limitRules = snapshot.limitRules;
+      const limits = snapshot.limits;
       const pricing: PublicPlanPricing = {
         monthly: plan === 'pro'
           ? toPricingPoint(
@@ -891,7 +935,7 @@ export async function loadPublicPlanCatalog(supabase: SupabaseClient): Promise<P
         limits,
         limitRules,
         resetLabels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = describeResetPolicy(limitRules[key]);
+          acc[key] = snapshot.usage.windows[key]?.label || describeResetPolicy(limitRules[key]);
           return acc;
         }, {} as Record<ApprovedLimitKey, string>),
       } satisfies PublicPlanCatalogEntry;
@@ -1247,14 +1291,17 @@ export async function getEffectiveLimits(
   userId: string,
 ): Promise<EffectiveLimitsResult> {
   const effectivePlan = await resolveEffectivePlan(supabase, userId);
-  const limitRules = await loadPlanLimitRules(supabase, effectivePlan.plan);
-  const usage = await buildUsageSnapshotForUser(supabase, userId, limitRules);
+  const snapshot = await resolveEffectivePlanLimitSnapshot({
+    supabase,
+    plan: effectivePlan.plan,
+    userId,
+  });
   return {
     plan: effectivePlan.plan,
     effectivePlan,
-    limits: ruleSetToNumericLimits(limitRules),
-    limitRules,
-    usage,
+    limits: snapshot.limits,
+    limitRules: snapshot.limitRules,
+    usage: snapshot.usage,
   };
 }
 
@@ -1573,6 +1620,17 @@ export function toStoredPlanRuleSetForScope(input: {
 }
 
 export function serializeEffectivePlanLimitRule(rule: EffectivePlanLimitRule) {
+  const presentation = buildPlanLimitPresentation({
+    value: rule.value,
+    isEnabled: rule.isEnabled,
+    isUnlimited: rule.isUnlimited,
+    mode: rule.mode,
+    resetPolicy: rule.resetPolicy,
+    resetIntervalValue: rule.resetIntervalValue,
+    resetIntervalUnit: rule.resetIntervalUnit,
+    unitLabel: rule.unitLabel,
+    category: rule.category,
+  });
   return {
     key: rule.key,
     label: rule.label,
@@ -1591,12 +1649,24 @@ export function serializeEffectivePlanLimitRule(rule: EffectivePlanLimitRule) {
     source_scope: rule.sourceScope,
     updated_at: rule.updatedAt,
     enforced_by: [...rule.enforcedBy],
+    presentation: serializePlanLimitPresentation(presentation),
   };
 }
 
 export function serializeStoredPlanLimitRule(rule: StoredPlanLimitRule | null) {
   if (!rule) return null;
   const definition = PLAN_LIMIT_DEFINITIONS[rule.key];
+  const presentation = buildPlanLimitPresentation({
+    value: rule.value,
+    isEnabled: rule.isEnabled,
+    isUnlimited: rule.isUnlimited,
+    mode: rule.mode,
+    resetPolicy: rule.resetPolicy,
+    resetIntervalValue: rule.resetIntervalValue,
+    resetIntervalUnit: rule.resetIntervalUnit,
+    unitLabel: definition.unitLabel,
+    category: definition.category,
+  });
   return {
     key: rule.key,
     label: definition.label,
@@ -1613,6 +1683,7 @@ export function serializeStoredPlanLimitRule(rule: StoredPlanLimitRule | null) {
     state: rule.isEnabled ? (rule.isUnlimited ? 'unlimited' : 'capped') : 'disabled',
     updated_at: rule.updatedAt,
     enforced_by: [...definition.enforcedBy],
+    presentation: serializePlanLimitPresentation(presentation),
   };
 }
 
