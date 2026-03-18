@@ -11,6 +11,7 @@ import {
 import {
   EffectiveLimitError,
   loadAdminPlanLimitState,
+  resolveEffectivePlanFromInputs,
   resolveEffectivePlanLimitSnapshot,
   savePlanLimitScopeRules,
   serializeEffectivePlanLimitRule,
@@ -214,6 +215,46 @@ function toEffectiveLimitsResult(snapshot: Awaited<ReturnType<typeof resolveEffe
 }
 
 async function main() {
+  await run('promo-only entitlements keep users on free limits while paid Pro still resolves to Pro', async () => {
+    const promoPlan = resolveEffectivePlanFromInputs({
+      profileTier: 'free',
+      mirroredPlan: 'free',
+      mirroredSource: 'none',
+      mirroredExpiresAt: null,
+      entitlementPlan: 'promo_pro',
+      entitlementSource: 'promo',
+      entitlementEndsAt: '2026-04-01T23:00:00.000Z',
+    });
+    assert.equal(promoPlan.plan, 'free');
+    assert.equal(promoPlan.entitlementSource, 'none');
+
+    const promoFallbackPlan = resolveEffectivePlanFromInputs({
+      profileTier: null,
+      mirroredPlan: null,
+      mirroredSource: null,
+      mirroredExpiresAt: null,
+      entitlementPlan: 'promo_pro',
+      entitlementSource: 'promo',
+      entitlementEndsAt: '2026-04-01T23:00:00.000Z',
+    });
+    assert.equal(promoFallbackPlan.plan, 'free');
+    assert.equal(promoFallbackPlan.source, 'billing');
+    assert.equal(promoFallbackPlan.entitlementSource, 'promo');
+
+    const paidPlan = resolveEffectivePlanFromInputs({
+      profileTier: 'free',
+      mirroredPlan: null,
+      mirroredSource: 'none',
+      mirroredExpiresAt: null,
+      entitlementPlan: 'pro',
+      entitlementSource: 'paid',
+      entitlementEndsAt: '2026-04-18T00:00:00.000Z',
+    });
+    assert.equal(paidPlan.plan, 'pro');
+    assert.equal(paidPlan.source, 'billing');
+    assert.equal(paidPlan.entitlementSource, 'paid');
+  });
+
   await run('saving plan limits updates the canonical effective snapshot used by preview and user reads', async () => {
     const supabase = createSupabaseStub();
     const before = await resolveEffectivePlanLimitSnapshot({ supabase, plan: 'pro' });

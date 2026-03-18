@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getProEntitlementStatus } from '@/lib/server/entitlements';
+import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
 import {
   APPROVED_LIMIT_KEYS,
   DEFAULT_PLAN_LIMITS,
@@ -152,6 +152,16 @@ export type EffectivePlan = {
   source: 'au_user_entitlements' | 'profile' | 'billing' | 'default';
   entitlementSource: 'paid' | 'promo' | 'none';
   expiresAt: string | null;
+};
+
+type EffectivePlanResolutionInput = {
+  profileTier?: unknown;
+  mirroredPlan?: unknown;
+  mirroredSource?: unknown;
+  mirroredExpiresAt?: string | null;
+  entitlementPlan?: unknown;
+  entitlementSource?: unknown;
+  entitlementEndsAt?: string | null;
 };
 
 export type LimitUsageSnapshot = {
@@ -703,16 +713,46 @@ export async function resolveEffectivePlan(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<EffectivePlan> {
-  const [entitlementRes, profileRes, billingEntitlement] = await Promise.all([
+  const [entitlementRes, profileRes, entitlements] = await Promise.all([
     supabase.from('au_user_entitlements').select('plan,source,expires_at').eq('user_id', userId).maybeSingle(),
     supabase.from('au_user_profiles').select('tier').eq('user_id', userId).maybeSingle(),
-    getProEntitlementStatus(supabase, userId).catch(() => null),
+    getEffectiveEntitlementsSnapshot(supabase, userId).catch(() => null),
   ]);
 
-  const profileInfo = normalizeProfileTier(profileRes.data?.tier);
-  const mirroredPlan = !entitlementRes.error && entitlementRes.data?.plan ? normalizePlan((entitlementRes.data as any).plan) : null;
-  const mirroredSource = normalizeEntitlementSource((entitlementRes.data as any)?.source);
-  const mirroredExpiresAt = typeof (entitlementRes.data as any)?.expires_at === 'string' ? String((entitlementRes.data as any).expires_at) : null;
+  return resolveEffectivePlanFromInputs({
+    profileTier: profileRes.data?.tier,
+    mirroredPlan: !entitlementRes.error ? (entitlementRes.data as any)?.plan : null,
+    mirroredSource: (entitlementRes.data as any)?.source,
+    mirroredExpiresAt: typeof (entitlementRes.data as any)?.expires_at === 'string'
+      ? String((entitlementRes.data as any).expires_at)
+      : null,
+    entitlementPlan: entitlements?.plan ?? null,
+    entitlementSource: entitlements?.entitlementSource ?? null,
+    entitlementEndsAt: entitlements?.entitlementEndsAt ?? null,
+  });
+}
+
+export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInput): EffectivePlan {
+  const profileTierRaw = String(input.profileTier || '').trim().toLowerCase();
+  const profileInfo = normalizeProfileTier(input.profileTier);
+  const mirroredPlanRaw = String(input.mirroredPlan || '').trim().toLowerCase();
+  const mirroredPlan = mirroredPlanRaw && mirroredPlanRaw !== 'promo_pro' ? normalizePlan(mirroredPlanRaw) : null;
+  const mirroredSource = normalizeEntitlementSource(
+    typeof input.mirroredSource === 'string' ? input.mirroredSource : null,
+  );
+  const mirroredExpiresAt = typeof input.mirroredExpiresAt === 'string' ? input.mirroredExpiresAt : null;
+  const entitlementPlanRaw = String(input.entitlementPlan || '').trim().toLowerCase();
+  const entitlementPlan = entitlementPlanRaw && entitlementPlanRaw !== 'promo_pro' ? normalizePlan(entitlementPlanRaw) : null;
+  const entitlementSource = normalizeEntitlementSource(
+    typeof input.entitlementSource === 'string' ? input.entitlementSource : null,
+  );
+  const entitlementEndsAt = typeof input.entitlementEndsAt === 'string' ? input.entitlementEndsAt : null;
+  const hasPaidBillingPlan = entitlementSource === 'paid' && entitlementPlan === 'pro';
+  const hasPromoOnlyAccess =
+    entitlementSource === 'promo' ||
+    entitlementPlanRaw === 'promo_pro' ||
+    mirroredPlanRaw === 'promo_pro' ||
+    profileTierRaw === 'promo_pro';
 
   if (profileInfo.isAdmin) {
     return {
@@ -747,14 +787,14 @@ export async function resolveEffectivePlan(
     };
   }
 
-  if (billingEntitlement?.hasPro) {
+  if (hasPaidBillingPlan) {
     return {
-      plan: 'pro',
+      plan: entitlementPlan || 'pro',
       isAdmin: false,
       hasPro: true,
       source: 'billing',
-      entitlementSource: normalizeEntitlementSource(billingEntitlement.source),
-      expiresAt: billingEntitlement.endsAt,
+      entitlementSource,
+      expiresAt: entitlementEndsAt,
     };
   }
 
@@ -777,6 +817,17 @@ export async function resolveEffectivePlan(
       source: 'profile',
       entitlementSource: profileInfo.plan === 'free' ? 'none' : 'paid',
       expiresAt: null,
+    };
+  }
+
+  if (hasPromoOnlyAccess) {
+    return {
+      plan: 'free',
+      isAdmin: false,
+      hasPro: false,
+      source: 'billing',
+      entitlementSource: 'promo',
+      expiresAt: entitlementEndsAt,
     };
   }
 

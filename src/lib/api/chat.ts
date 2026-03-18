@@ -159,6 +159,25 @@ function isProviderSchemaOutage(error: EdgeErrorLike | null | undefined): boolea
   );
 }
 
+function shouldFallbackToLegacyAuChat(error: EdgeErrorLike | null | undefined): boolean {
+  const status = Number(error?.status || 0);
+  const message = String(error?.message || '').toLowerCase();
+  const details =
+    typeof error?.details === 'string'
+      ? error.details.toLowerCase()
+      : JSON.stringify(error?.details || {}).toLowerCase();
+
+  return (
+    status === 404 ||
+    status === 408 ||
+    status >= 500 ||
+    message.includes('internal_server_error') ||
+    details.includes('internal_server_error') ||
+    message.includes('upstream_timeout') ||
+    details.includes('upstream_timeout')
+  );
+}
+
 function markAuChatSchemaOutage(): void {
   auChatSchemaOutageUntil = Date.now() + AU_CHAT_SCHEMA_OUTAGE_TTL_MS;
 }
@@ -357,6 +376,13 @@ export async function sendChatMessage(
       console.warn('[chat] AU chat routing schema mismatch detected; falling back to legacy chat endpoint.');
       return invokeLegacyAuChatFallback(request);
     }
+    if (!isGlobal && shouldFallbackToLegacyAuChat(error)) {
+      console.warn('[chat] AU chat request failed; falling back to legacy chat endpoint.', {
+        status: error?.status ?? null,
+        message: error?.message ?? null,
+      });
+      return invokeLegacyAuChatFallback(request);
+    }
     throw error;
   }
   if (!isGlobal && endpoint === 'au-chat') {
@@ -471,6 +497,22 @@ export async function sendChatMessageStream(
     if (!isGlobal && endpoint === 'au-chat' && isProviderSchemaOutage({ status: res.status, message, details })) {
       markAuChatSchemaOutage();
       console.warn('[chat-stream] AU chat routing schema mismatch detected; falling back to non-stream legacy chat endpoint.');
+      const fallback = await invokeLegacyAuChatFallback(request);
+      const doneEvent: ChatStreamDoneEvent = {
+        type: 'done',
+        answer: String((fallback as any)?.answer || ''),
+        thought: typeof (fallback as any)?.thought === 'string' ? (fallback as any).thought : undefined,
+        citations: Array.isArray((fallback as any)?.citations) ? (fallback as any).citations : [],
+      };
+      handlers.onEvent(doneEvent);
+      return doneEvent;
+    }
+
+    if (!isGlobal && endpoint === 'au-chat' && shouldFallbackToLegacyAuChat({ status: res.status, message, details })) {
+      console.warn('[chat-stream] AU chat stream failed; falling back to non-stream legacy chat endpoint.', {
+        status: res.status,
+        message,
+      });
       const fallback = await invokeLegacyAuChatFallback(request);
       const doneEvent: ChatStreamDoneEvent = {
         type: 'done',

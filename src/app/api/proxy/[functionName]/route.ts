@@ -644,6 +644,52 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   let fallbackAccessToken: string | null = null;
   let fallbackChatQuestion = '';
   let fallbackChatAction = '';
+  const tryLegacyChatFallbackIfEligible = async (source: 'unexpected_error' | 'upstream_error_response') => {
+    const normalizedFunction = String(functionName || '').trim().toLowerCase();
+    const shouldFallbackToLegacyChat =
+      normalizedFunction === 'au-chat' &&
+      requestMethod === 'POST' &&
+      fallbackChatAction !== 'get_models' &&
+      fallbackChatAction !== 'scan_and_greet' &&
+      fallbackChatQuestion.length > 0;
+
+    if (!shouldFallbackToLegacyChat) {
+      return null;
+    }
+
+    console.warn('[proxy] attempting legacy chat fallback', {
+      requestId,
+      correlationId,
+      functionName,
+      source,
+    });
+
+    const fallbackRelay = await tryLegacyChatFallback({
+      req,
+      requestId,
+      correlationId,
+      accessToken: fallbackAccessToken,
+      anonKey: fallbackAnonKey,
+      functionsUrl: fallbackFunctionsUrl,
+      question: fallbackChatQuestion,
+      timeoutMs: upstreamTimeoutMs,
+    });
+
+    if (!fallbackRelay) {
+      return null;
+    }
+
+    console.info('[proxy] legacy chat fallback succeeded', {
+      requestId,
+      correlationId,
+      functionName,
+      source,
+      bodyMode: fallbackRelay.bodyMode,
+      elapsedMs: Date.now() - startedAt,
+    });
+
+    return fallbackRelay.response;
+  };
 
   try {
     const baseUrl = functionsBaseUrl();
@@ -1460,6 +1506,13 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         return NextResponse.json(structured, { status: response.status, headers: outHeaders });
       }
 
+      if (response.status === 404 || response.status === 408 || response.status >= 500) {
+        const fallbackResponse = await tryLegacyChatFallbackIfEligible('upstream_error_response');
+        if (fallbackResponse) {
+          return fallbackResponse;
+        }
+      }
+
       return NextResponse.json(
         {
           message,
@@ -1835,43 +1888,9 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }
 
     const message = String(error?.message || 'Unknown error');
-    const normalizedFunction = String(functionName || '').trim().toLowerCase();
-    const shouldFallbackToLegacyChat =
-      normalizedFunction === 'au-chat' &&
-      requestMethod === 'POST' &&
-      fallbackChatAction !== 'get_models' &&
-      fallbackChatAction !== 'scan_and_greet' &&
-      fallbackChatQuestion.length > 0;
-
-    if (shouldFallbackToLegacyChat) {
-      console.warn('[proxy] unexpected AU chat error, attempting legacy fallback', {
-        requestId,
-        correlationId,
-        functionName,
-        message,
-      });
-
-      const fallbackRelay = await tryLegacyChatFallback({
-        req,
-        requestId,
-        correlationId,
-        accessToken: fallbackAccessToken,
-        anonKey: fallbackAnonKey,
-        functionsUrl: fallbackFunctionsUrl,
-        question: fallbackChatQuestion,
-        timeoutMs: upstreamTimeoutMs,
-      });
-
-      if (fallbackRelay) {
-        console.info('[proxy] legacy chat fallback succeeded', {
-          requestId,
-          correlationId,
-          functionName,
-          bodyMode: fallbackRelay.bodyMode,
-          elapsedMs: Date.now() - startedAt,
-        });
-        return fallbackRelay.response;
-      }
+    const fallbackResponse = await tryLegacyChatFallbackIfEligible('unexpected_error');
+    if (fallbackResponse) {
+      return fallbackResponse;
     }
 
     console.error('[proxy] unexpected error', {

@@ -828,21 +828,15 @@ export default function SubscriptionPage() {
     const isFreePlan = planCode === 'free';
     const usageByLimit = limitsUsage.usageByLimit || {};
     const limitRules = limitsUsage.limitRules || {};
-    const fileSizeRule = (limitRules.max_file_size_mb || {}) as any;
-    const fileSizeCapLabel =
-      String(fileSizeRule?.presentation?.cap_label || '').trim() ||
-      `${Number((limitsUsage.limits || {}).max_file_size_mb || 0).toLocaleString()} MB`;
-    const fileSizeResetDescription =
-      String(fileSizeRule?.presentation?.reset_description || '').trim() ||
-      'Checked on every request. It does not use a scheduled reset window.';
     const usageKeys = [
       'max_chats_total',
       'max_uploads_total',
       'max_tokens_total',
+      'max_file_size_mb',
+      'max_concurrent_jobs',
       'max_exam_predictions',
       'max_practice_exams',
       'max_knowledge_hub',
-      'max_concurrent_jobs',
     ];
     const resetSummary = usageKeys
       .map((key) => {
@@ -881,12 +875,6 @@ export default function SubscriptionPage() {
                     </div>
                   );
                 })}
-            </div>
-            <div className="mt-4 rounded-2xl border border-dashed p-4 text-xs text-muted-foreground">
-              <p>
-                Per-file upload size: <span className="font-medium text-foreground">{fileSizeCapLabel}</span>
-              </p>
-              <p>{fileSizeResetDescription}</p>
             </div>
             {isFreePlan && billingEnabled ? (
               <p className="mt-4 text-xs text-muted-foreground">
