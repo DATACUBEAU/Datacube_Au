@@ -422,13 +422,14 @@ function PredictionsPageContent() {
                   <SelectContent>
                     {pastQuestionsDocs.map((doc) => (
                       <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <TruncatedText
                             text={doc.file_name}
-                            maxWidthClass="max-w-[180px]"
+                            preserveExtension
+                            maxWidthClass="max-w-full"
                           />
                           {doc.status !== 'completed' && (
-                            <Badge variant="outline" className="text-[10px] h-4 px-1 animate-pulse">
+                            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                               {doc.status}...
                             </Badge>
                           )}
@@ -446,13 +447,14 @@ function PredictionsPageContent() {
                   <SelectContent>
                     {textbookDocs.map((doc) => (
                       <SelectItem key={doc.id} value={doc.id}>
-                        <div className="flex items-center gap-2">
+                        <div className="flex min-w-0 items-center gap-2">
                           <TruncatedText
                             text={doc.file_name}
-                            maxWidthClass="max-w-[180px]"
+                            preserveExtension
+                            maxWidthClass="max-w-full"
                           />
                           {doc.status !== 'completed' && (
-                            <Badge variant="outline" className="text-[10px] h-4 px-1 animate-pulse">
+                            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                               {doc.status}...
                             </Badge>
                           )}

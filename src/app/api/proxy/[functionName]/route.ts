@@ -799,9 +799,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   try {
     const baseUrl = functionsBaseUrl();
     const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
+    const serviceRoleKey = firstEnv('SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY');
     fallbackFunctionsUrl = baseUrl;
     fallbackAnonKey = anonKey;
-    if (!baseUrl || !anonKey) {
+    if (!baseUrl || !anonKey || !serviceRoleKey) {
       const body = usesStructuredChatContract
         ? buildApiErrorBody({
             status: 503,
@@ -811,6 +812,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               missing: [
                 !baseUrl ? 'SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL' : null,
                 !anonKey ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY' : null,
+                !serviceRoleKey ? 'SUPABASE_SERVICE_ROLE_KEY or SERVICE_ROLE_KEY' : null,
               ].filter(Boolean),
             },
             retryable: false,
@@ -826,6 +828,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               missing: [
                 !baseUrl ? 'SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL' : null,
                 !anonKey ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY' : null,
+                !serviceRoleKey ? 'SUPABASE_SERVICE_ROLE_KEY or SERVICE_ROLE_KEY' : null,
               ].filter(Boolean),
             },
           };

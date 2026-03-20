@@ -30,6 +30,15 @@ import {
   isPromoModeActive,
 } from '@/lib/server/promo-entitlements';
 import {
+  DEFAULT_BILLING_PLAN_CATALOG,
+  type BillingPlanCatalogEntry,
+} from '@/lib/server/billing-plan-catalog';
+import {
+  buildRenewalRetryState,
+  buildRenewalSuccessMetadata,
+  classifyRenewalFailure,
+} from '@/lib/server/billing-renewal';
+import {
   disablePaystackSubscription,
   enablePaystackSubscription,
 } from '@/lib/server/paystack';
@@ -52,38 +61,9 @@ type BillingPlanRow = {
   is_active: boolean;
 };
 
-const PLAN_CATALOG: Array<{
-  planKey: string;
-  interval: BillingInterval;
-  amountKobo: number;
-  envCodes: string[];
-  fallbackPaystackPlanCode: string;
-}> = [
-  {
-    planKey: 'pro_monthly',
-    interval: 'monthly',
-    amountKobo: 450000,
-    envCodes: [
-      'PAYSTACK_PLAN_MONTHLY_CODE',
-      'PAYSTACK_PRO_MONTHLY_PLAN_CODE',
-      'DATACUBE_PRO_MONTHLY_PLAN_CODE',
-    ],
-    fallbackPaystackPlanCode: 'PLN_axsdw7s4zniurzr',
-  },
-  {
-    planKey: 'pro_weekly',
-    interval: 'weekly',
-    amountKobo: 150000,
-    envCodes: [
-      'PAYSTACK_PLAN_WEEKLY_CODE',
-      'PAYSTACK_PRO_WEEKLY_PLAN_CODE',
-      'DATACUBE_PRO_WEEKLY_PLAN_CODE',
-    ],
-    fallbackPaystackPlanCode: 'PLN_bc7vhwfff2mqc57',
-  },
-];
+const PLAN_CATALOG: BillingPlanCatalogEntry[] = DEFAULT_BILLING_PLAN_CATALOG;
 
-function resolvePlanCodeFromEnv(plan: (typeof PLAN_CATALOG)[number]): string | null {
+function resolvePlanCodeFromEnv(plan: BillingPlanCatalogEntry): string | null {
   return firstEnv(...plan.envCodes);
 }
 
@@ -554,6 +534,384 @@ async function markTransaction(input: {
     },
     { onConflict: 'reference' }
   );
+}
+
+function isMissingRpcError(error: unknown): boolean {
+  const code = String((error as any)?.code || '').trim();
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (
+    code === '42883' ||
+    (message.includes('function') && message.includes('does not exist')) ||
+    (message.includes('schema cache') && message.includes('function'))
+  );
+}
+
+function isSchemaDriftError(error: unknown): boolean {
+  const code = String((error as any)?.code || '').trim();
+  const message = String((error as any)?.message || '').toLowerCase();
+  const details = String((error as any)?.details || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === '42703' ||
+    message.includes('does not exist') ||
+    details.includes('does not exist')
+  );
+}
+
+async function recordRenewalAttemptFallback(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  planKey: string;
+  gateway: PaymentGatewayId;
+  reference: string | null;
+  subscriptionCode: string | null;
+  attemptNumber: number;
+  failureKind: string;
+  status: string;
+  nextRetryAt: string | null;
+  finalFailure: boolean;
+  responseJson: Record<string, unknown>;
+}) {
+  const { error } = await input.supabase.from('billing_renewal_attempts').insert({
+    user_id: input.userId,
+    plan_key: input.planKey,
+    gateway: input.gateway,
+    reference: input.reference,
+    subscription_code: input.subscriptionCode,
+    attempt_number: input.attemptNumber,
+    failure_kind: input.failureKind,
+    status: input.status,
+    next_retry_at: input.nextRetryAt,
+    final_failure: input.finalFailure,
+    response_json: input.responseJson,
+  });
+
+  if (error && !isSchemaDriftError(error)) {
+    throw error;
+  }
+}
+
+async function applyVerifiedPaymentEffects(input: {
+  supabase: SupabaseClient;
+  gateway: PaymentGatewayId;
+  verified: PaymentVerifyResult;
+  payload: any;
+  idempotencyKey: string;
+  traceId: string;
+  reference: string;
+  planKey: string;
+  userId: string | null;
+  customerEmail: string;
+  transactionId: string;
+  transactionMetadata: Record<string, unknown>;
+}) {
+  const {
+    supabase,
+    gateway,
+    verified,
+    payload,
+    idempotencyKey,
+    traceId,
+    reference,
+    planKey,
+    userId,
+    customerEmail,
+    transactionId,
+    transactionMetadata,
+  } = input;
+
+  await markTransaction({
+    supabase,
+    userId,
+    reference,
+    amountKobo: Number(verified.amountKobo || 0),
+    channel: String(verified.channel || payload?.data?.channel || 'unknown'),
+    status: verified.success ? 'success' : String(verified.status || 'pending'),
+    paidAt: verified.paidAt || null,
+    rawEventJson: payload,
+    idempotencyKey,
+    metadata: transactionMetadata,
+  });
+
+  if (!verified.success || !userId || !planKey) {
+    return;
+  }
+
+  const plan = await loadBillingPlan(supabase, planKey);
+  if (!plan) return;
+
+  const metadata = (verified.metadata || payload?.data?.metadata || {}) as Record<string, unknown>;
+  const chargeMethod = normalizePaymentMethod(metadata.payment_method) || 'subscription';
+  const subscriptionMetadata = {
+    latest_reference: reference,
+    gateway,
+    transaction_id: transactionId,
+    ...buildRenewalSuccessMetadata({
+      reference,
+      paidAt: verified.paidAt || null,
+      gateway,
+      gatewayResponse: verified.raw ?? payload,
+    }),
+  };
+
+  try {
+    const { error } = await supabase.rpc('apply_verified_billing_payment', {
+      p_user_id: userId,
+      p_reference: reference,
+      p_amount_kobo: Number(verified.amountKobo || 0),
+      p_channel: String(verified.channel || payload?.data?.channel || 'unknown'),
+      p_status: verified.success ? 'success' : String(verified.status || 'pending'),
+      p_paid_at: verified.paidAt || null,
+      p_raw_event_json: payload,
+      p_idempotency_key: idempotencyKey,
+      p_metadata: {
+        ...transactionMetadata,
+        subscription_metadata: subscriptionMetadata,
+      },
+      p_gateway: gateway,
+      p_plan_key: plan.plan_key,
+      p_interval: plan.interval,
+      p_charge_method: chargeMethod,
+      p_transaction_id: transactionId,
+      p_customer_email: customerEmail || null,
+      p_customer_code: verified.customerCode || null,
+      p_authorization_code: verified.authorizationCode || null,
+      p_subscription_code: verified.subscriptionCode || null,
+      p_subscription_email_token: verified.subscriptionEmailToken || null,
+      p_trace_id: traceId,
+      p_transition_kind: chargeMethod === 'transfer' ? 'upgrade' : 'renewal',
+    });
+    if (!error) {
+      return;
+    }
+    if (!isMissingRpcError(error)) {
+      throw error;
+    }
+  } catch (error) {
+    if (!isMissingRpcError(error)) {
+      throw error;
+    }
+  }
+
+  await supabase.from('billing_customers').upsert(
+    {
+      user_id: userId,
+      email: customerEmail || null,
+      paystack_customer_code: gateway === 'paystack' ? (verified.customerCode || null) : null,
+      metadata:
+        gateway === 'paystack'
+          ? {
+              latest_authorization_code: verified.authorizationCode || null,
+            }
+          : {
+              gateway,
+              latest_transaction_id: transactionId,
+            },
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'user_id' }
+  );
+
+  const grant = await grantProEntitlement({
+    supabase,
+    userId,
+    interval: plan.interval,
+    source: `${gateway}:${chargeMethod}`,
+    reason: `charge.success:${reference}`,
+    traceId,
+    metadata: {
+      reference,
+      plan_key: planKey,
+      gateway,
+      transaction_id: transactionId,
+    },
+  });
+
+  try {
+    await applyPlanTransition(supabase, {
+      userId,
+      targetPlan: 'pro',
+      entitlementSource: 'paid',
+      entitlementEndsAt: grant.endsAt,
+      transitionKind: chargeMethod === 'transfer' ? 'upgrade' : 'renewal',
+      source: `${gateway}:${chargeMethod}`,
+      reason: `charge.success:${reference}`,
+      traceId,
+      metadata: {
+        reference,
+        plan_key: planKey,
+        gateway,
+        transaction_id: transactionId,
+      },
+      subscription: chargeMethod === 'subscription'
+        ? {
+            planKey: plan.plan_key,
+            status: 'active',
+            paystackSubscriptionCode: gateway === 'paystack' ? (verified.subscriptionCode || null) : null,
+            paystackEmailToken: gateway === 'paystack' ? (verified.subscriptionEmailToken || null) : null,
+            startsAt: grant.startsAt,
+            endsAt: grant.endsAt,
+            cancelAtPeriodEnd: false,
+            metadata: subscriptionMetadata,
+          }
+        : null,
+    });
+  } catch (error) {
+    if (grant.grantId) {
+      await supabase.from('entitlement_grants').delete().eq('id', grant.grantId);
+    }
+    throw error;
+  }
+
+  await upsertSubscriptionMirror({
+    supabase,
+    userId,
+    status: 'active',
+    plan: plan.plan_key,
+    gateway,
+    transactionId,
+    createdAt: verified.paidAt || new Date().toISOString(),
+  });
+}
+
+async function applyRenewalFailureEffects(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  gateway: PaymentGatewayId;
+  planKey: string;
+  subscriptionCode: string | null;
+  reference: string | null;
+  amountKobo: number;
+  channel: string;
+  retryState: ReturnType<typeof buildRenewalRetryState>;
+  responseJson: Record<string, unknown>;
+  traceId: string;
+  currentMetadata: Record<string, unknown>;
+  currentEndsAt: string | null;
+}) {
+  const nowIso = new Date().toISOString();
+  const nextMetadata = {
+    ...input.currentMetadata,
+    renewal_attempt_count: input.retryState.attemptNumber,
+    renewal_failure_kind: input.retryState.failureKind,
+    renewal_last_failed_at: nowIso,
+    renewal_next_retry_at: input.retryState.nextRetryAt,
+    renewal_final_failure: input.retryState.finalFailure,
+    renewal_status: input.retryState.status,
+    renewal_last_gateway_response: input.responseJson,
+  };
+
+  try {
+    const { error } = await input.supabase.rpc('apply_billing_renewal_failure', {
+      p_user_id: input.userId,
+      p_reference: input.reference,
+      p_gateway: input.gateway,
+      p_plan_key: input.planKey,
+      p_subscription_code: input.subscriptionCode,
+      p_attempt_number: input.retryState.attemptNumber,
+      p_failure_kind: input.retryState.failureKind,
+      p_next_retry_at: input.retryState.nextRetryAt,
+      p_final_failure: input.retryState.finalFailure,
+      p_response_json: input.responseJson,
+      p_amount_kobo: input.amountKobo,
+      p_channel: input.channel,
+      p_trace_id: input.traceId,
+    });
+    if (!error) {
+      return;
+    }
+    if (!isMissingRpcError(error)) {
+      throw error;
+    }
+  } catch (error) {
+    if (!isMissingRpcError(error)) {
+      throw error;
+    }
+  }
+
+  if (input.reference) {
+    await markTransaction({
+      supabase: input.supabase,
+      userId: input.userId,
+      reference: input.reference,
+      amountKobo: input.amountKobo,
+      channel: input.channel,
+      status: 'failed',
+      rawEventJson: input.responseJson,
+      idempotencyKey: `renewal-failed:${input.reference}:${input.retryState.attemptNumber}`,
+      metadata: {
+        gateway: input.gateway,
+        plan_key: input.planKey,
+        subscription_code: input.subscriptionCode,
+      },
+    });
+  }
+
+  await recordRenewalAttemptFallback({
+    supabase: input.supabase,
+    userId: input.userId,
+    planKey: input.planKey,
+    gateway: input.gateway,
+    reference: input.reference,
+    subscriptionCode: input.subscriptionCode,
+    attemptNumber: input.retryState.attemptNumber,
+    failureKind: input.retryState.failureKind,
+    status: input.retryState.status,
+    nextRetryAt: input.retryState.nextRetryAt,
+    finalFailure: input.retryState.finalFailure,
+    responseJson: input.responseJson,
+  });
+
+  await input.supabase.from('billing_subscriptions').upsert(
+    {
+      user_id: input.userId,
+      plan_key: input.planKey,
+      status: input.retryState.finalFailure ? 'expired' : 'retrying',
+      paystack_subscription_code: input.subscriptionCode || null,
+      ends_at: input.retryState.finalFailure ? nowIso : (input.currentEndsAt || null),
+      cancel_at_period_end: input.retryState.finalFailure,
+      metadata: nextMetadata,
+      updated_at: nowIso,
+    },
+    { onConflict: 'user_id' }
+  );
+
+  if (!input.retryState.finalFailure) {
+    return;
+  }
+
+  await input.supabase
+    .from('entitlement_grants')
+    .update({ status: 'expired', ends_at: nowIso })
+    .eq('user_id', input.userId)
+    .eq('entitlement', 'pro')
+    .eq('status', 'active')
+    .gt('ends_at', nowIso);
+
+  await applyPlanTransition(input.supabase, {
+    userId: input.userId,
+    targetPlan: 'free',
+    entitlementSource: 'none',
+    entitlementEndsAt: null,
+    transitionKind: 'downgrade',
+    source: 'billing_renewal',
+    reason: 'final_renewal_failure',
+    traceId: input.traceId,
+    metadata: {
+      gateway: input.gateway,
+      plan_key: input.planKey,
+      reference: input.reference,
+      failure_kind: input.retryState.failureKind,
+    },
+    subscription: {
+      planKey: input.planKey,
+      status: 'expired',
+      paystackSubscriptionCode: input.subscriptionCode || null,
+      endsAt: nowIso,
+      cancelAtPeriodEnd: true,
+      metadata: nextMetadata,
+    },
+  });
 }
 
 export async function createCheckout(input: {

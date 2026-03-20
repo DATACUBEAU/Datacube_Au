@@ -335,6 +335,7 @@ export default function DocumentsPage() {
               <div className="flex min-w-0 items-center gap-2">
                 <TruncatedText
                   text={doc.fileName}
+                  preserveExtension
                   maxWidthClass="max-w-full"
                   className={`min-w-0 flex-1 font-medium transition-colors ${isDeleting ? "text-muted-foreground" : "group-hover:text-primary"}`}
                 />

@@ -287,8 +287,9 @@ export default function DashboardPage() {
                           <FileTextIcon className="h-4 w-4 text-primary opacity-70 group-hover:opacity-100 transition-opacity" />
                           <TruncatedText
                             text={doc.file_name}
+                            preserveExtension
                             className="group-hover:text-primary transition-colors"
-                            maxWidthClass="max-w-[140px] sm:max-w-[220px]"
+                            maxWidthClass="max-w-full"
                           />
                         </div>
                       </TableCell>

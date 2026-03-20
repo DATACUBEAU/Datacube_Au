@@ -793,15 +793,17 @@ export default function ChatPage() {
     } catch (error: any) {
       const normalizedError = toApiRequestError(error, 'Unexpected chat error');
       const errorDescription = chatErrorDescription(normalizedError);
-      console.error('[ChatPage] Message error:', {
-        code: normalizedError.code,
-        status: normalizedError.status,
-        message: errorDescription,
-        retryable: normalizedError.retryable,
-        requestId: normalizedError.requestId,
-        correlationId: normalizedError.correlationId,
-        details: normalizedError.details,
-      });
+      console.error(
+        `[ChatPage] Message error: ${JSON.stringify({
+          code: normalizedError.code,
+          status: normalizedError.status,
+          message: errorDescription,
+          retryable: normalizedError.retryable,
+          requestId: normalizedError.requestId,
+          correlationId: normalizedError.correlationId,
+          details: normalizedError.details,
+        })}`,
+      );
       reportChatLimitError(normalizedError);
       
       if (normalizedError.isThrottled) {
@@ -887,12 +889,14 @@ export default function ChatPage() {
                       <div className="flex min-w-0 items-center gap-2">
                         <TruncatedText
                           text={doc.fileName}
-                          maxWidthClass="max-w-[180px] sm:max-w-[260px]"
+                          preserveExtension
+                          maxWidthClass="max-w-full"
                         />
                         {doc.status !== 'completed' && (
                           <Badge 
                             variant="outline" 
                             className={cn(
+                              "shrink-0",
                               "h-4 px-1 text-[10px] border-yellow-500 bg-yellow-50 text-yellow-600",
                               doc.status === 'processing' && "animate-pulse"
                             )}
@@ -1326,8 +1330,9 @@ export default function ChatPage() {
                   <span className="shrink-0">Chatting with:</span>
                   <TruncatedText
                     text={selectedDocName}
-                    className="min-w-0 font-medium text-foreground"
-                    maxWidthClass="max-w-full sm:max-w-[22rem] lg:max-w-[34rem]"
+                    preserveExtension
+                    className="min-w-0 flex-1 font-medium text-foreground"
+                    maxWidthClass="max-w-full"
                   />
                   {selectedDocExpiryLabel ? (
                     <span className="shrink-0">

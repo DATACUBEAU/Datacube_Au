@@ -473,7 +473,8 @@ export default function UploadCenter() {
                     <SelectItem key={p.id} value={p.id}>
                       <TruncatedText
                         text={p.file_name}
-                        maxWidthClass="max-w-[180px]"
+                        preserveExtension
+                        maxWidthClass="max-w-full"
                       />
                     </SelectItem>
                   ))
@@ -527,17 +528,18 @@ export default function UploadCenter() {
                 <div key={job.id} className="rounded-lg border p-3 transition-all hover:bg-muted/30 hover:shadow-sm group">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
                         <div className="transition-transform group-hover:scale-110">
                           {icon}
                         </div>
                         <TruncatedText
                           text={job.file_name}
+                          preserveExtension
                           className="font-medium group-hover:text-primary transition-colors"
-                          maxWidthClass="max-w-[160px] sm:max-w-[260px]"
+                          maxWidthClass="max-w-full"
                         />
-                        <Badge variant={badge.variant}>{badge.text}</Badge>
-                        {job.label ? <Badge variant="outline">{job.label}</Badge> : null}
+                        <Badge variant={badge.variant} className="shrink-0">{badge.text}</Badge>
+                        {job.label ? <Badge variant="outline" className="shrink-0">{job.label}</Badge> : null}
                       </div>
                       {(job.status === 'failed' || job.status === 'stale_timeout') && (
                         <Alert variant="destructive" className="mt-2 py-2 px-3">

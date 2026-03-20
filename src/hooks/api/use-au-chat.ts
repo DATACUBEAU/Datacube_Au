@@ -685,15 +685,17 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           reason: 'chat_unauthorized',
         });
       } else {
-        console.error('[useAuChat] Message error:', {
-          code: normalizedError.code,
-          status,
-          message: normalizedError.message,
-          retryable: normalizedError.retryable,
-          requestId: normalizedError.requestId,
-          correlationId: normalizedError.correlationId,
-          details: normalizedError.details,
-        });
+        console.error(
+          `[useAuChat] Message error: ${JSON.stringify({
+            code: normalizedError.code,
+            status,
+            message: normalizedError.message,
+            retryable: normalizedError.retryable,
+            requestId: normalizedError.requestId,
+            correlationId: normalizedError.correlationId,
+            details: normalizedError.details,
+          })}`,
+        );
       }
       if (!shouldDedupe(`event:chat:send:error:${status ?? 'unknown'}`)) {
         logEvent('au_chat_error', {
