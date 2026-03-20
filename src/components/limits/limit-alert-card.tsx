@@ -21,20 +21,20 @@ export function LimitAlertCard({ alert, onDismiss }: LimitAlertCardProps) {
   return (
     <Card className={alert.severity === 'block' ? 'border-destructive/50' : ''}>
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm">
+        <CardTitle className="flex min-w-0 items-center gap-2 text-sm">
           {iconForSeverity(alert.severity)}
-          <span>{alert.title}</span>
+          <span className="min-w-0 break-words [overflow-wrap:anywhere]">{alert.title}</span>
         </CardTitle>
-        <CardDescription>{alert.message}</CardDescription>
+        <CardDescription className="break-words [overflow-wrap:anywhere]">{alert.message}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
         {alert.suggestions.length > 0 ? (
-          <div className="text-xs text-muted-foreground">
+          <div className="text-xs text-muted-foreground break-words [overflow-wrap:anywhere]">
             {alert.suggestions[0]}
           </div>
         ) : null}
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {alert.cta ? (
             <Button size="sm" asChild>
               <Link href={alert.cta.href}>{alert.cta.label}</Link>

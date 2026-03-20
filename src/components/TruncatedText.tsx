@@ -15,7 +15,7 @@ type TruncatedTextProps = {
 export function TruncatedText({
   text,
   className,
-  maxWidthClass = 'max-w-[140px] sm:max-w-[220px]',
+  maxWidthClass = 'max-w-full',
 }: TruncatedTextProps) {
   return (
     <span

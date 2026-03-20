@@ -41,7 +41,7 @@ export function AssistantResponseBody({
   const blocks = useMemo(() => parseAssistantResponseBlocks(displayedContent), [displayedContent]);
 
   return (
-    <div className="space-y-4 text-sm leading-7 text-foreground">
+    <div className="min-w-0 space-y-4 text-sm leading-7 text-foreground break-words [overflow-wrap:anywhere]">
       {blocks.map((block, index) => {
         if (block.type === 'heading') {
           return (
@@ -76,7 +76,7 @@ export function AssistantResponseBody({
         }
 
         return (
-          <div key={`paragraph-${index}`} className="whitespace-normal">
+          <div key={`paragraph-${index}`} className="whitespace-normal break-words [overflow-wrap:anywhere]">
             <InteractiveConceptMap content={block.content} />
           </div>
         );

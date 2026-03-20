@@ -1,5 +1,12 @@
 
 import { safeFetch } from '@/lib/api/safe-fetch';
+import {
+  extractApiError,
+  extractApiErrorMessage,
+  toApiRequestError,
+  unwrapApiSuccess,
+  type ApiErrorShape,
+} from '@/lib/api/api-contract';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
 import { getSupabaseAccessToken, invokeEdgeFunction, supabase } from '@/lib/supabase-client/client';
 import {
@@ -241,14 +248,16 @@ function buildCanonicalPayload(
 
   const validated = validateAndNormalizeChatPayload(rawPayload);
   if (!validated.success) {
-    throw {
+    throw toApiRequestError({
       status: 400,
-      message: 'Invalid Payload',
+      code: 'INVALID_REQUEST_PAYLOAD',
+      message: 'Invalid request payload.',
       details: {
         issues: validated.issues,
         correlation_id: correlationId,
       },
-    };
+      retryable: false,
+    });
   }
 
   const extras: Record<string, unknown> = {
@@ -287,10 +296,12 @@ async function invokeLegacyAuChatFallback(
 ): Promise<ChatResponse> {
   const question = extractLatestUserInput(request);
   if (!question) {
-    throw {
+    throw toApiRequestError({
+      code: 'INVALID_REQUEST_PAYLOAD',
       message: 'Missing user input for fallback chat request.',
       status: 400,
-    };
+      retryable: false,
+    });
   }
 
   const { data, error } = await invokeEdgeFunction<any>('chat', {
@@ -304,7 +315,14 @@ async function invokeLegacyAuChatFallback(
   });
 
   if (error) throw error;
-  if (!data) throw { message: 'Fallback chat request failed', status: 500 };
+  if (!data) {
+    throw toApiRequestError({
+      code: 'FALLBACK_CHAT_FAILED',
+      message: 'Fallback chat request failed.',
+      status: 500,
+      retryable: true,
+    });
+  }
 
   return {
     answer: String(data.answer || ''),
@@ -314,23 +332,28 @@ async function invokeLegacyAuChatFallback(
 }
 
 function normalizeChatResponse(data: any): ChatResponse {
+  const payload = unwrapApiSuccess(data);
   return {
-    answer: String(data?.answer || ''),
-    thought: typeof data?.thought === 'string' ? data.thought : undefined,
-    citations: normalizeAssistantCitations(data?.citations),
+    answer: String(payload?.answer || ''),
+    thought: typeof payload?.thought === 'string' ? payload.thought : undefined,
+    citations: normalizeAssistantCitations(payload?.citations),
     navAction:
-      data?.nav_action && typeof data.nav_action === 'object'
-        ? (data.nav_action as GlobalChatNavAction)
-        : data?.navAction && typeof data.navAction === 'object'
-          ? (data.navAction as GlobalChatNavAction)
+      payload?.nav_action && typeof payload.nav_action === 'object'
+        ? (payload.nav_action as GlobalChatNavAction)
+        : payload?.navAction && typeof payload.navAction === 'object'
+          ? (payload.navAction as GlobalChatNavAction)
           : null,
     documentContext:
-      data?.document_context && typeof data.document_context === 'object'
-        ? (data.document_context as ChatDocumentContext)
-        : data?.documentContext && typeof data.documentContext === 'object'
-          ? (data.documentContext as ChatDocumentContext)
+      payload?.document_context && typeof payload.document_context === 'object'
+        ? (payload.document_context as ChatDocumentContext)
+        : payload?.documentContext && typeof payload.documentContext === 'object'
+          ? (payload.documentContext as ChatDocumentContext)
           : null,
   };
+}
+
+function normalizeThrownChatError(error: unknown, fallbackMessage = 'Chat request failed'): ApiErrorShape {
+  return extractApiError(error, fallbackMessage);
 }
 
 /**
@@ -388,7 +411,14 @@ export async function sendChatMessage(
   if (!isGlobal && endpoint === 'au-chat') {
     clearAuChatSchemaOutage();
   }
-  if (!data) throw { message: 'Chat request failed', status: 500 };
+  if (!data) {
+    throw toApiRequestError({
+      code: 'CHAT_REQUEST_FAILED',
+      message: 'Chat request failed.',
+      status: 500,
+      retryable: true,
+    });
+  }
   return normalizeChatResponse(data);
 }
 
@@ -402,7 +432,7 @@ export type ChatStreamDoneEvent = {
   navAction?: GlobalChatNavAction | null;
   documentContext?: ChatDocumentContext | null;
 };
-export type ChatStreamErrorEvent = { type: 'error'; error: string; details?: any; isThrottled?: boolean; requestId?: string };
+export type ChatStreamErrorEvent = { type: 'error'; error: unknown; details?: any; isThrottled?: boolean; requestId?: string };
 export type ChatStreamEvent = ChatStreamDeltaEvent | ChatStreamDoneEvent | ChatStreamErrorEvent;
 
 export async function sendChatMessageStream(
@@ -487,12 +517,13 @@ export async function sendChatMessageStream(
       // keep raw text
     }
 
-    const message =
-      (details && typeof details === 'object'
-        ? (details as any).message || (details as any).error
-        : null) ||
-      res.statusText ||
-      'Chat stream failed';
+    const normalizedError = normalizeThrownChatError(
+      details && typeof details === 'object'
+        ? { ...(details as Record<string, unknown>), status: res.status, retryAfter }
+        : { message: text || res.statusText || 'Chat stream failed', status: res.status, retryAfter, details },
+      res.statusText || 'Chat stream failed',
+    );
+    const message = normalizedError.message;
 
     if (!isGlobal && endpoint === 'au-chat' && isProviderSchemaOutage({ status: res.status, message, details })) {
       markAuChatSchemaOutage();
@@ -524,19 +555,27 @@ export async function sendChatMessageStream(
       return doneEvent;
     }
 
-    throw {
+    throw toApiRequestError(
+      {
+        ...normalizedError,
+        status: res.status,
+        details,
+        retryAfter,
+      },
       message,
-      status: res.status,
-      details,
-      retryAfter,
-    };
+    );
   }
 
   const responseContentType = String(res.headers.get('content-type') || '').toLowerCase();
   if (!responseContentType.includes('text/event-stream')) {
     const json = await res.json().catch(() => null);
     if (!json) {
-      throw new Error('Chat stream returned an unexpected non-stream response.');
+      throw toApiRequestError({
+        code: 'INVALID_CHAT_RESPONSE',
+        message: 'Chat stream returned an unexpected non-stream response.',
+        status: res.status,
+        retryable: false,
+      });
     }
     const normalized = normalizeChatResponse(json);
     const doneEvent: ChatStreamDoneEvent = {
@@ -551,7 +590,14 @@ export async function sendChatMessageStream(
     return doneEvent;
   }
 
-  if (!res.body) throw new Error('Missing response body');
+  if (!res.body) {
+    throw toApiRequestError({
+      code: 'MISSING_RESPONSE_BODY',
+      message: 'Chat stream response body was empty.',
+      status: res.status,
+      retryable: true,
+    });
+  }
   if (!isGlobal && endpoint === 'au-chat') {
     clearAuChatSchemaOutage();
   }
@@ -597,7 +643,16 @@ export async function sendChatMessageStream(
       handlers.onEvent(evt);
 
       if (evt.type === 'error') {
-        throw new Error(evt.error || 'Chat stream error');
+        throw toApiRequestError(
+          {
+            ...(typeof evt === 'object' && evt ? (evt as Record<string, unknown>) : {}),
+            message: extractApiErrorMessage(evt, 'Chat stream error'),
+            details: (evt as ChatStreamErrorEvent).details,
+            isThrottled: (evt as ChatStreamErrorEvent).isThrottled,
+            requestId: (evt as ChatStreamErrorEvent).requestId,
+          },
+          'Chat stream error',
+        );
       }
 
       if (evt.type === 'done') {
@@ -607,7 +662,11 @@ export async function sendChatMessageStream(
   }
 
   if (!finalDone) {
-    throw new Error('Stream ended without done event');
+    throw toApiRequestError({
+      code: 'CHAT_STREAM_INCOMPLETE',
+      message: 'Chat stream ended before a completion event was received.',
+      retryable: true,
+    });
   }
 
   return finalDone;

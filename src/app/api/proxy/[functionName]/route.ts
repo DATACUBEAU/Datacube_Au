@@ -63,6 +63,7 @@ import {
   trackUsageEvent,
 } from '@/lib/server/usage-tracking';
 import { USAGE_TRACKING_HEADER } from '@shared/usage-metrics';
+import { buildApiErrorBody, buildApiSuccessBody, extractApiError, normalizeApiErrorCode } from '@/lib/api/api-contract';
 
 export const runtime = 'nodejs';
 export const maxDuration = 180;
@@ -364,6 +365,74 @@ function latestUserMessage(payload: CanonicalChatPayload | null): string {
   return '';
 }
 
+function isStructuredChatFunction(functionName: string): boolean {
+  const normalized = String(functionName || '').trim().toLowerCase();
+  return normalized === 'chat' || normalized === 'au-chat' || normalized === 'global-chat';
+}
+
+function structuredChatMessage(input: {
+  code?: string | null;
+  status?: number | null;
+  fallbackMessage?: string | null;
+}): string {
+  const code = normalizeApiErrorCode(input.code || input.fallbackMessage || 'UNEXPECTED_ERROR', 'UNEXPECTED_ERROR');
+  const status = Number(input.status || 0);
+  const fallback = String(input.fallbackMessage || '').trim();
+  const lower = fallback.toLowerCase();
+
+  if (status === 401 || code === 'UNAUTHORIZED' || code === 'AUTHENTICATION_FAILED') {
+    return 'Authentication failed.';
+  }
+
+  if (status === 400 || code === 'INVALID_REQUEST_PAYLOAD' || code === 'IDEMPOTENCY_KEY_REQUIRED') {
+    return 'Invalid request payload.';
+  }
+
+  if (
+    status === 402 ||
+    status === 429 ||
+    code === 'LIMIT_REACHED' ||
+    code === 'LIMIT_EXCEEDED' ||
+    code === 'PRO_REQUIRED'
+  ) {
+    return fallback || 'Usage limit reached.';
+  }
+
+  if (
+    status === 503 ||
+    status === 504 ||
+    code === 'MODEL_SERVICE_UNAVAILABLE' ||
+    code === 'NO_ACTIVE_PROVIDER_KEYS' ||
+    code === 'PROVIDER_KEY_FETCH_FAILED' ||
+    code === 'MODEL_REGISTRY_FETCH_FAILED' ||
+    code === 'ROUTING_FAILED' ||
+    code === 'UPSTREAM_TIMEOUT' ||
+    lower.includes('all ai models are currently unavailable') ||
+    lower.includes('no_active_provider_keys')
+  ) {
+    return 'Model service unavailable.';
+  }
+
+  if (status >= 500) {
+    return fallback && fallback !== 'internal_server_error' ? fallback : 'Unexpected server error.';
+  }
+
+  return fallback || 'Unexpected server error.';
+}
+
+function summarizeChatPayloadForLog(body: any, payload: CanonicalChatPayload | null) {
+  return {
+    action: String(body?.action || '').trim().toLowerCase() || 'chat',
+    feature: payload?.feature || null,
+    stream: body?.stream === true,
+    messageCount: Array.isArray(payload?.messages) ? payload!.messages.length : 0,
+    latestMessageLength: latestUserMessage(payload).length,
+    activeDocIds: payload?.activeDocIds?.length || 0,
+    hasGuide: Boolean(payload?.auGuide),
+    hasDocumentContext: Boolean(body?.document_context),
+  };
+}
+
 function extractDocumentIdForFeature(functionName: string, body: any): string | null {
   const normalized = String(functionName || '').trim().toLowerCase();
   if (normalized === 'generate-knowledge' || normalized === 'exam-generator' || normalized === 'generate-practice-exam') {
@@ -452,6 +521,7 @@ async function relaySuccessfulResponse(
   req: NextRequest,
   requestId: string,
   candidate: RoutingCandidate | null,
+  wrapJsonEnvelope = false,
 ): Promise<{ response: Response; bodyMode: BodyRelayMode; forwardedHeaders: Headers }> {
   const outHeaders = withDebugHeaders(applyResponseHeaders(response.headers, requestId), candidate, req);
   const contentType = response.headers.get('content-type');
@@ -500,7 +570,7 @@ async function relaySuccessfulResponse(
     if (parsed !== null) {
       outHeaders.set('Content-Type', 'application/json; charset=utf-8');
       return {
-        response: NextResponse.json(parsed, {
+        response: NextResponse.json(wrapJsonEnvelope ? buildApiSuccessBody(parsed) : parsed, {
           status: response.status,
           headers: outHeaders,
         }),
@@ -555,6 +625,7 @@ async function tryLegacyChatFallback(input: {
   functionsUrl: string | null;
   question: string;
   timeoutMs: number;
+  wrapJsonEnvelope?: boolean;
 }): Promise<{ response: Response; bodyMode: BodyRelayMode; forwardedHeaders: Headers } | null> {
   const question = String(input.question || '').trim();
   if (!input.accessToken || !input.anonKey || !input.functionsUrl || !question) {
@@ -586,7 +657,7 @@ async function tryLegacyChatFallback(input: {
       return null;
     }
 
-    return await relaySuccessfulResponse(response, input.req, input.requestId, null);
+    return await relaySuccessfulResponse(response, input.req, input.requestId, null, input.wrapJsonEnvelope === true);
   } catch (error: any) {
     console.error('[proxy] legacy chat fallback failed', {
       requestId: input.requestId,
@@ -624,6 +695,8 @@ async function writeRoutingAudit(
 
 async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ functionName: string }> }) {
   const { functionName } = await params;
+  const normalizedFunction = String(functionName || '').trim().toLowerCase();
+  const usesStructuredChatContract = isStructuredChatFunction(normalizedFunction);
   const requestId = crypto.randomUUID();
   let correlationId = req.headers.get('x-correlation-id')?.trim() || requestId;
   const proxyDebugEnabled = isProxyDebugEnabled();
@@ -644,6 +717,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   let fallbackAccessToken: string | null = null;
   let fallbackChatQuestion = '';
   let fallbackChatAction = '';
+  let chatPlanForLog = 'unknown';
   const tryLegacyChatFallbackIfEligible = async (source: 'unexpected_error' | 'upstream_error_response') => {
     const normalizedFunction = String(functionName || '').trim().toLowerCase();
     const shouldFallbackToLegacyChat =
@@ -673,6 +747,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       functionsUrl: fallbackFunctionsUrl,
       question: fallbackChatQuestion,
       timeoutMs: upstreamTimeoutMs,
+      wrapJsonEnvelope: usesStructuredChatContract,
     });
 
     if (!fallbackRelay) {
@@ -691,25 +766,71 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     return fallbackRelay.response;
   };
 
+  const successPayload = (data: unknown) =>
+    usesStructuredChatContract ? buildApiSuccessBody(data) : data;
+
+  const chatErrorPayload = (input: {
+    status: number;
+    code?: string | null;
+    message?: string | null;
+    details?: unknown;
+    retryable?: boolean;
+    retryAfter?: string | null;
+    isThrottled?: boolean;
+    extra?: Record<string, unknown>;
+  }) =>
+    buildApiErrorBody({
+      status: input.status,
+      code: input.code || input.message || 'INTERNAL_SERVER_ERROR',
+      message: structuredChatMessage({
+        code: input.code,
+        status: input.status,
+        fallbackMessage: input.message,
+      }),
+      details: input.details,
+      retryable: input.retryable,
+      requestId,
+      correlationId,
+      retryAfter: input.retryAfter,
+      isThrottled: input.isThrottled,
+      extra: input.extra,
+    });
+
   try {
     const baseUrl = functionsBaseUrl();
     const anonKey = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
     fallbackFunctionsUrl = baseUrl;
     fallbackAnonKey = anonKey;
     if (!baseUrl || !anonKey) {
+      const body = usesStructuredChatContract
+        ? buildApiErrorBody({
+            status: 503,
+            code: 'SERVER_MISCONFIGURED',
+            message: 'Model service unavailable.',
+            details: {
+              missing: [
+                !baseUrl ? 'SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL' : null,
+                !anonKey ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY' : null,
+              ].filter(Boolean),
+            },
+            retryable: false,
+            requestId,
+            correlationId,
+          })
+        : {
+            message: 'server_misconfigured',
+            error: 'server_misconfigured',
+            status: 503,
+            requestId,
+            details: {
+              missing: [
+                !baseUrl ? 'SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL' : null,
+                !anonKey ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY' : null,
+              ].filter(Boolean),
+            },
+          };
       return NextResponse.json(
-        {
-          message: 'server_misconfigured',
-          error: 'server_misconfigured',
-          status: 503,
-          requestId,
-          details: {
-            missing: [
-              !baseUrl ? 'SUPABASE_URL or NEXT_PUBLIC_SUPABASE_URL' : null,
-              !anonKey ? 'NEXT_PUBLIC_SUPABASE_ANON_KEY or SUPABASE_ANON_KEY' : null,
-            ].filter(Boolean),
-          },
-        },
+        body,
         { status: 503, headers: corsHeaders(requestId) },
       );
     }
@@ -721,19 +842,36 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         functionName,
         reason: auth.reason,
       });
+      const body = usesStructuredChatContract
+        ? buildApiErrorBody({
+            status: 401,
+            code: 'UNAUTHORIZED',
+            message: 'Authentication failed.',
+            details: { reason: auth.reason },
+            retryable: false,
+            requestId,
+            correlationId,
+          })
+        : {
+            message: 'unauthorized',
+            error: 'unauthorized',
+            status: 401,
+            requestId,
+            details: { reason: auth.reason },
+          };
       return NextResponse.json(
-        {
-          message: 'unauthorized',
-          error: 'unauthorized',
-          status: 401,
-          requestId,
-          details: { reason: auth.reason },
-        },
+        body,
         { status: 401, headers: corsHeaders(requestId) },
       );
     }
     reservationUserId = auth.userId;
     fallbackAccessToken = auth.accessToken;
+    console.info('[proxy] authenticated request', {
+      requestId,
+      correlationId,
+      functionName,
+      userId: auth.userId,
+    });
 
     const adminSupabase = createSupabaseAdminClient();
     reservationSupabase = adminSupabase;
@@ -786,6 +924,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     let rawBody: ArrayBuffer | null = null;
     let rawBodyText = '';
+    let rawBodyParseFailed = false;
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       rawBody = await req.arrayBuffer();
       if (rawBody.byteLength > 0 && isJsonContentType(contentType)) {
@@ -793,7 +932,6 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
     }
 
-    const normalizedFunction = String(functionName || '').trim().toLowerCase();
     let parsedBody: any = {};
     let canonicalChatPayload: CanonicalChatPayload | null = null;
     let chatIdempotencyStorageKey: string | null = null;
@@ -816,6 +954,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       try {
         parsedBody = JSON.parse(rawBodyText);
       } catch {
+        rawBodyParseFailed = true;
         parsedBody = {};
       }
     }
@@ -825,6 +964,21 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       isJsonContentType(contentType) &&
       (normalizedFunction === 'global-chat' || normalizedFunction === 'au-chat' || normalizedFunction === 'chat');
     const isModelsAction = String(parsedBody?.action || '').trim().toLowerCase() === 'get_models';
+
+    if (shouldNormalizeChatPayload && rawBodyText.trim() && rawBodyParseFailed) {
+      return NextResponse.json(
+        buildApiErrorBody({
+          status: 400,
+          code: 'INVALID_REQUEST_PAYLOAD',
+          message: 'Invalid request payload.',
+          details: { reason: 'malformed_json' },
+          retryable: false,
+          requestId,
+          correlationId,
+        }),
+        { status: 400, headers: corsHeaders(requestId) },
+      );
+    }
 
     if (shouldNormalizeChatPayload && !isModelsAction) {
       const validation = validateAndNormalizeChatPayload(parsedBody);
@@ -844,16 +998,17 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           issues: validation.issues,
         });
         return NextResponse.json(
-          {
-            message: 'Invalid Payload',
-            error: 'Invalid Payload',
+          buildApiErrorBody({
             status: 400,
-            requestId,
-            correlation_id: correlationId,
+            code: 'INVALID_REQUEST_PAYLOAD',
+            message: 'Invalid request payload.',
             details: {
               issues: validation.issues,
             },
-          },
+            retryable: false,
+            requestId,
+            correlationId,
+          }),
           { status: 400, headers: corsHeaders(requestId) },
         );
       }
@@ -902,6 +1057,17 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       String(parsedBody?.question || parsedBody?.user_input || '').trim();
     headers.set('x-correlation-id', correlationId);
 
+    if (canonicalChatPayload) {
+      console.info('[proxy] chat request summary', {
+        requestId,
+        correlationId,
+        functionName,
+        userId: auth.userId,
+        plan: chatPlanForLog,
+        ...summarizeChatPayloadForLog(parsedBody, canonicalChatPayload),
+      });
+    }
+
     const normalizedCacheFeature = cacheFeatureForFunction(functionName);
     const needsEffectiveLimits =
       req.method === 'POST' &&
@@ -919,6 +1085,9 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     const effectiveLimits = needsEffectiveLimits
       ? await getEffectiveLimits(adminSupabase, auth.userId)
       : null;
+    if (effectiveLimits) {
+      chatPlanForLog = effectiveLimits.effectivePlan?.plan || 'free';
+    }
 
     if (effectiveLimits && normalizedFunction === 'document-upload' && req.method === 'POST') {
       const action = String(parsedBody?.action || '').trim().toLowerCase();
@@ -950,17 +1119,38 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }
 
     if (effectiveLimits && canonicalChatPayload) {
+      const totalUsage = (effectiveLimits.usage?.total || {}) as Record<string, number>;
+      console.info('[proxy] chat limits resolved', {
+        requestId,
+        correlationId,
+        functionName,
+        userId: auth.userId,
+        plan: chatPlanForLog,
+        remainingChats:
+          Number.isFinite(Number(effectiveLimits.limits?.max_chats_total)) && Number.isFinite(Number(totalUsage.messages_count))
+            ? Number(effectiveLimits.limits.max_chats_total) - Number(totalUsage.messages_count || 0)
+            : null,
+        remainingTokens:
+          Number.isFinite(Number(effectiveLimits.limits?.max_tokens_total)) && Number.isFinite(Number(totalUsage.used_tokens))
+            ? Number(effectiveLimits.limits.max_tokens_total) - Number(totalUsage.used_tokens || 0)
+            : null,
+      });
       if (!canonicalChatPayload.idempotencyKey) {
         return NextResponse.json(
-          {
+          buildApiErrorBody({
             status: 400,
             code: 'IDEMPOTENCY_KEY_REQUIRED',
-            message: 'idempotencyKey is required for chat requests.',
+            message: 'Invalid request payload.',
+            details: { reason: 'idempotency_key_required' },
+            retryable: false,
+            requestId,
+            correlationId,
             limit: 'idempotencyKey',
             current: 0,
-            action: 'chat',
-            correlation_id: correlationId,
-          },
+            extra: {
+              action: 'chat',
+            },
+          }),
           { status: 400, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
         );
       }
@@ -1007,7 +1197,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           cacheHit: true,
           metadata: { source: 'idempotency' },
         });
-        return NextResponse.json(idempotent.response, {
+        return NextResponse.json(usesStructuredChatContract ? buildApiSuccessBody(idempotent.response) : idempotent.response, {
           status: idempotent.statusCode || 200,
           headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
           });
@@ -1087,7 +1277,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           cacheHit: true,
           metadata: { source: 'template_router' },
         });
-        return NextResponse.json(payload, {
+        return NextResponse.json(usesStructuredChatContract ? buildApiSuccessBody(payload) : payload, {
           status: 200,
           headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
         });
@@ -1128,10 +1318,13 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             savedTokens: cachedAnswer.tokens,
             metadata: { source: 'answer_cache' },
           });
-          return NextResponse.json(cachedAnswer.response, {
+          return NextResponse.json(
+            usesStructuredChatContract ? buildApiSuccessBody(cachedAnswer.response) : cachedAnswer.response,
+            {
             status: 200,
             headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
-          });
+            },
+          );
         }
       }
 
@@ -1395,7 +1588,18 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     } catch (error: any) {
       if (error instanceof TierAccessError) {
         const payload = error.payload || { error: 'tier_access_denied', message: error.message };
-        return NextResponse.json(payload, { status: error.status, headers: corsHeaders(requestId) });
+        return NextResponse.json(
+          usesStructuredChatContract
+            ? chatErrorPayload({
+                status: error.status,
+                code: String((payload as any)?.code || (payload as any)?.error || 'TIER_ACCESS_DENIED'),
+                message: String((payload as any)?.message || error.message || 'Access denied.'),
+                details: payload,
+                retryable: false,
+              })
+            : payload,
+          { status: error.status, headers: corsHeaders(requestId) },
+        );
       }
       throw error;
     }
@@ -1409,6 +1613,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       plan: tierContext?.planForRouting || 'free',
       guards: appliedGuards,
     }));
+    chatPlanForLog = tierContext?.planForRouting || chatPlanForLog;
 
     if (isGetModelsAction) {
       const modelSupabase = supabase || createSupabaseAdminClient();
@@ -1418,24 +1623,32 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           getDefaultPaidModel(modelSupabase, 'openrouter'),
         ]);
         return NextResponse.json(
-          {
+          successPayload({
             models,
             default_model: defaultModel,
             provider: 'openrouter',
             source: 'au_api_keys',
-          },
+          }),
           { status: 200, headers: corsHeaders(requestId) }
         );
       } catch (error: any) {
         if (error instanceof ModelRoutingError) {
           return NextResponse.json(
-            {
-              message: error.message,
-              error: error.code,
-              status: error.status,
-              requestId,
-              details: error.details || {},
-            },
+            usesStructuredChatContract
+              ? chatErrorPayload({
+                  status: error.status,
+                  code: error.code,
+                  message: error.message,
+                  details: error.details || {},
+                  retryable: error.status >= 500,
+                })
+              : {
+                  message: error.message,
+                  error: error.code,
+                  status: error.status,
+                  requestId,
+                  details: error.details || {},
+                },
             { status: error.status, headers: corsHeaders(requestId) },
           );
         }
@@ -1453,7 +1666,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     const failFromResponse = async (response: Response, candidate: RoutingCandidate | null) => {
       const { details, raw } = await parseErrorPayload(response);
-      const message = messageFromFailure(response.status, details, response.statusText);
+      const parsedError = extractApiError(details, messageFromFailure(response.status, details, response.statusText));
+      const message = parsedError.message;
       if (featureOutputReservation?.docVersionId) {
         await markFeatureOutputFailed({
           supabase: adminSupabase,
@@ -1474,6 +1688,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         functionName,
         userId: auth.userId,
         status: response.status,
+        errorCode: parsedError.code,
         message,
         errorBody: truncateForLog(raw || details),
         routedModel: candidate?.model || null,
@@ -1509,7 +1724,21 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
       const structured = toStructuredTierPayload(details);
       if (structured && (response.status === 402 || response.status === 429)) {
-        return NextResponse.json(structured, { status: response.status, headers: outHeaders });
+        return NextResponse.json(
+          usesStructuredChatContract
+            ? chatErrorPayload({
+                status: response.status,
+                code: String((structured as any)?.code || (structured as any)?.error || 'LIMIT_REACHED'),
+                message: String((structured as any)?.message || message || 'Usage limit reached.'),
+                details,
+                retryable: response.status === 429,
+                retryAfter,
+                isThrottled: response.status === 429,
+                extra: structured,
+              })
+            : structured,
+          { status: response.status, headers: outHeaders },
+        );
       }
 
       if (response.status === 404 || response.status === 408 || response.status >= 500) {
@@ -1520,14 +1749,24 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
 
       return NextResponse.json(
-        {
-          message,
-          error: message,
-          status: response.status,
-          requestId,
-          correlation_id: correlationId,
-          details,
-        },
+          usesStructuredChatContract
+            ? chatErrorPayload({
+              status: response.status,
+              code: parsedError.code,
+              message,
+              details,
+              retryable: response.status === 408 || response.status === 429 || response.status >= 500,
+              retryAfter,
+              isThrottled: response.status === 429,
+            })
+          : {
+              message,
+              error: message,
+              status: response.status,
+              requestId,
+              correlation_id: correlationId,
+              details,
+            },
         { status: response.status, headers: outHeaders },
       );
     };
@@ -1554,13 +1793,21 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       } catch (error: any) {
         if (error instanceof ModelRoutingError) {
           return NextResponse.json(
-            {
-              message: error.message,
-              error: error.code,
-              status: error.status,
-              requestId,
-              details: error.details || {},
-            },
+            usesStructuredChatContract
+              ? chatErrorPayload({
+                  status: error.status,
+                  code: error.code,
+                  message: error.message,
+                  details: error.details || {},
+                  retryable: error.status >= 500,
+                })
+              : {
+                  message: error.message,
+                  error: error.code,
+                  status: error.status,
+                  requestId,
+                  details: error.details || {},
+                },
             { status: error.status, headers: corsHeaders(requestId) },
           );
         }
@@ -1582,7 +1829,18 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           });
         } catch (error: any) {
           if (error instanceof TierAccessError) {
-            return NextResponse.json(error.payload, { status: error.status, headers: corsHeaders(requestId) });
+            return NextResponse.json(
+              usesStructuredChatContract
+                ? chatErrorPayload({
+                    status: error.status,
+                    code: String((error.payload as any)?.code || (error.payload as any)?.error || 'TIER_ACCESS_DENIED'),
+                    message: String((error.payload as any)?.message || error.message || 'Access denied.'),
+                    details: error.payload,
+                    retryable: false,
+                  })
+                : error.payload,
+              { status: error.status, headers: corsHeaders(requestId) },
+            );
           }
           throw error;
         }
@@ -1608,6 +1866,17 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         await writeRoutingAudit(auth.userId, plan, requestType!, candidate);
 
         for (let localAttempt = 0; localAttempt < maxLocalAttempts; localAttempt += 1) {
+          console.info('[proxy] upstream request start', {
+            requestId,
+            correlationId,
+            functionName,
+            userId: auth.userId,
+            plan,
+            model: candidate.model,
+            service: candidate.service,
+            action: fallbackChatAction || null,
+            stream: payload.stream === true,
+          });
           const response = await forwardOnce(attemptHeaders, attemptBody);
           const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
           const isEventStream = contentTypeResponse.includes('text/event-stream');
@@ -1680,7 +1949,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
                 featureOutputReservation = null;
               }
             }
-            const relay = await relaySuccessfulResponse(response, req, requestId, candidate);
+            const relay = await relaySuccessfulResponse(response, req, requestId, candidate, usesStructuredChatContract);
             if (proxyDebugEnabled) {
               console.info('[proxy] upstream success', {
                 requestId,
@@ -1739,14 +2008,22 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
 
       return NextResponse.json(
-        {
-          message: 'routing_failed',
-          error: 'routing_failed',
-          status: 503,
-          requestId,
-          correlation_id: correlationId,
-          details: { reason: 'No candidate succeeded.' },
-        },
+        usesStructuredChatContract
+          ? chatErrorPayload({
+              status: 503,
+              code: 'ROUTING_FAILED',
+              message: 'routing_failed',
+              details: { reason: 'No candidate succeeded.' },
+              retryable: true,
+            })
+          : {
+              message: 'routing_failed',
+              error: 'routing_failed',
+              status: 503,
+              requestId,
+              correlation_id: correlationId,
+              details: { reason: 'No candidate succeeded.' },
+            },
         { status: 503, headers: corsHeaders(requestId) },
       );
     }
@@ -1758,6 +2035,15 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       );
     }
 
+    console.info('[proxy] upstream request start', {
+      requestId,
+      correlationId,
+      functionName,
+      userId: auth.userId,
+      plan: chatPlanForLog,
+      action: fallbackChatAction || null,
+      stream: parsedBody?.stream === true,
+    });
     const response = await forwardOnce(headers, forwardBody);
     const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
     const isEventStream = contentTypeResponse.includes('text/event-stream');
@@ -1817,7 +2103,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }
     }
 
-    const relay = await relaySuccessfulResponse(response, req, requestId, null);
+    const relay = await relaySuccessfulResponse(response, req, requestId, null, usesStructuredChatContract);
     if (proxyDebugEnabled) {
       console.info('[proxy] upstream success', {
         requestId,
@@ -1857,7 +2143,17 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       featureOutputReservation = null;
     }
     if (error instanceof EffectiveLimitError) {
-      return NextResponse.json(error.payload, {
+      return NextResponse.json(usesStructuredChatContract
+        ? chatErrorPayload({
+            status: error.status,
+            code: String((error.payload as any)?.code || (error.payload as any)?.error || 'LIMIT_REACHED'),
+            message: String((error.payload as any)?.message || error.message || 'Usage limit reached.'),
+            details: error.payload,
+            retryable: error.status === 429,
+            isThrottled: error.status === 429,
+            extra: error.payload,
+          })
+        : error.payload, {
         status: error.status,
         headers: {
           ...corsHeaders(requestId),
@@ -1878,17 +2174,28 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         elapsedMs: Date.now() - startedAt,
       });
       return NextResponse.json(
-        {
-          message: 'upstream_timeout',
-          error: 'upstream_timeout',
-          status: 504,
-          requestId,
-          correlation_id: correlationId,
-          details: {
-            timeoutMs: error.timeoutMs,
-            upstreamUrl: error.upstreamUrl,
-          },
-        },
+        usesStructuredChatContract
+          ? chatErrorPayload({
+              status: 504,
+              code: 'UPSTREAM_TIMEOUT',
+              message: 'upstream_timeout',
+              details: {
+                timeoutMs: error.timeoutMs,
+                upstreamUrl: error.upstreamUrl,
+              },
+              retryable: true,
+            })
+          : {
+              message: 'upstream_timeout',
+              error: 'upstream_timeout',
+              status: 504,
+              requestId,
+              correlation_id: correlationId,
+              details: {
+                timeoutMs: error.timeoutMs,
+                upstreamUrl: error.upstreamUrl,
+              },
+            },
         { status: 504, headers: corsHeaders(requestId) },
       );
     }
@@ -1910,14 +2217,22 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       elapsedMs: Date.now() - startedAt,
     });
     return NextResponse.json(
-      {
-        message: 'internal_server_error',
-        error: 'internal_server_error',
-        status: 500,
-        requestId,
-        correlation_id: correlationId,
-        details: truncateForLog(message),
-      },
+      usesStructuredChatContract
+        ? chatErrorPayload({
+            status: 500,
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'internal_server_error',
+            details: truncateForLog(message),
+            retryable: true,
+          })
+        : {
+            message: 'internal_server_error',
+            error: 'internal_server_error',
+            status: 500,
+            requestId,
+            correlation_id: correlationId,
+            details: truncateForLog(message),
+          },
       { status: 500, headers: corsHeaders(requestId) },
     );
   }

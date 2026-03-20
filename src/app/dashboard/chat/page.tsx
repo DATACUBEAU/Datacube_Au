@@ -51,6 +51,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { Icons } from '@/components/icons';
@@ -78,6 +79,7 @@ import { ChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page
 import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
+import { toApiRequestError, type ApiRequestError } from '@/lib/api/api-contract';
 
 import { type ChatMessage } from '@/lib/api/chat';
 import { AssistantResponseBody } from '@/components/chat/assistant-response-body';
@@ -117,6 +119,46 @@ function findPreviousUserPrompt(history: ChatMessage[], assistantIndex: number):
     }
   }
   return '';
+}
+
+function chatErrorTitle(error: ApiRequestError | null): string {
+  if (!error) return 'Chat issue';
+  if (error.status === 401 || error.code === 'UNAUTHORIZED' || error.code === 'AUTHENTICATION_FAILED') {
+    return 'Authentication failed';
+  }
+  if (
+    error.status === 429 ||
+    error.code === 'LIMIT_REACHED' ||
+    error.code === 'LIMIT_EXCEEDED' ||
+    error.code === 'PRO_REQUIRED'
+  ) {
+    return 'Usage limit reached';
+  }
+  if (
+    error.code === 'MODEL_SERVICE_UNAVAILABLE' ||
+    error.code === 'UPSTREAM_TIMEOUT' ||
+    error.code === 'ROUTING_FAILED' ||
+    error.status === 503 ||
+    error.status === 504
+  ) {
+    return 'Model service unavailable';
+  }
+  if (error.status === 400 || error.code === 'INVALID_REQUEST_PAYLOAD') {
+    return 'Invalid request payload';
+  }
+  return 'Unexpected server error';
+}
+
+function chatErrorDescription(error: ApiRequestError): string {
+  if (error.code === 'OFFLINE' || error.message.includes('Failed to fetch')) {
+    return "I can't reach the server right now. Please check your internet connection and try again.";
+  }
+
+  if (error.status === 401) {
+    return 'Authentication failed. Please refresh the page and sign in again.';
+  }
+
+  return error.message;
 }
 
 export default function ChatPage() {
@@ -181,6 +223,14 @@ export default function ChatPage() {
 
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lastRetryPayloadRef = useRef<{
+    message: string;
+    options: {
+      guide?: string;
+      summaryMode?: 'short' | 'mid' | 'detailed' | null;
+      browsingMode?: boolean;
+    };
+  } | null>(null);
 
   const [summaryMode, setSummaryMode] = useState<'short' | 'mid' | 'detailed' | null>(null);
   const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; role: 'user' | 'assistant' } | null>(null);
@@ -334,7 +384,9 @@ export default function ChatPage() {
     stopGeneration,
     fetchPrompts,
     isInitialized,
-    clearChat // Destructure clearChat here
+    clearChat,
+    lastError: chatRequestError,
+    clearLastError,
   } = useAuChat(selectedDocId, {
     activeDocumentName: selectedDocName ?? null,
     lastUploadedDocumentId: lastUploadedDocument?.id ?? null,
@@ -723,45 +775,83 @@ export default function ChatPage() {
       setReplyingTo(null);
     }
 
+    const requestOptions = {
+      guide: guideText !== defaultGuideText ? guideText : undefined,
+      summaryMode: overrideMode || summaryMode,
+      browsingMode,
+    };
+    lastRetryPayloadRef.current = {
+      message: finalMessage,
+      options: requestOptions,
+    };
+
     try {
-      await sendMessage(finalMessage, {
-        guide: guideText !== defaultGuideText ? guideText : undefined,
-        summaryMode: overrideMode || summaryMode,
-        browsingMode
-      });
+      await sendMessage(finalMessage, requestOptions);
       clearChatLimitError();
+      clearLastError();
       setGeneratedPrompts([]);
     } catch (error: any) {
-      console.error("[ChatPage] Message error:", error);
-      reportChatLimitError(error);
+      const normalizedError = toApiRequestError(error, 'Unexpected chat error');
+      const errorDescription = chatErrorDescription(normalizedError);
+      console.error('[ChatPage] Message error:', {
+        code: normalizedError.code,
+        status: normalizedError.status,
+        message: errorDescription,
+        retryable: normalizedError.retryable,
+        requestId: normalizedError.requestId,
+        correlationId: normalizedError.correlationId,
+        details: normalizedError.details,
+      });
+      reportChatLimitError(normalizedError);
       
-      if (error.isThrottled) {
+      if (normalizedError.isThrottled) {
         setShowThrottlingDialog(true);
         return;
       }
 
       let errorMsg = "I'm sorry, I encountered an unexpected hitch while processing your request. My analytical circuits might be a bit overloaded—could you try asking that again in a moment?";
       
-      if (error.status === 401) {
+      errorMsg = errorDescription;
+      if (normalizedError.status === 401) {
         errorMsg = "It looks like your session has timed out for security. Please try refreshing the page or logging back in so we can continue our analysis.";
-      } else if (error.errorType === 'rate_limit' || error.status === 429) {
+      } else if (normalizedError.status === 429) {
         errorMsg = "The AU provider is rate-limiting requests right now. Please wait a moment and try again.";
-      } else if (error.errorType === 'payment_required' || error.status === 402) {
+      } else if (normalizedError.status === 402) {
         errorMsg = "The selected AU model is temporarily unavailable for this account. AU will retry using a fallback automatically.";
-      } else if (error.errorType === 'model_not_found' || error.status === 404) {
+      } else if (normalizedError.status === 404) {
         errorMsg = "That AU model endpoint is unavailable. AU will retry using a fallback automatically.";
-      } else if (error.errorType === 'bad_request' || error.status === 400) {
+      } else if (normalizedError.status === 400) {
         errorMsg = "The AU provider rejected the request payload. AU will retry using a fallback automatically.";
-      } else if (error.message?.includes("API key")) {
+      } else if (normalizedError.message.includes("API key")) {
         errorMsg = "I'm having trouble connecting to my language center (API Key missing). Please check the backend configuration.";
-      } else if (error.message?.includes("Failed to fetch")) {
+      } else if (normalizedError.message.includes("Failed to fetch")) {
         errorMsg = "I can't reach the server right now. Please check your internet connection or try again in a few seconds.";
+      }
+
+      if (![400, 401, 402, 404, 429].includes(normalizedError.status ?? -1)) {
+        errorMsg = normalizedError.message;
       }
       
       toast({
         variant: 'destructive',
-        title: 'AU Chat Issue',
+        title: chatErrorTitle(normalizedError),
         description: errorMsg,
+        action:
+          normalizedError.retryable && lastRetryPayloadRef.current
+            ? (
+              <ToastAction
+                altText="Retry chat message"
+                onClick={() => {
+                  const pendingRetry = lastRetryPayloadRef.current;
+                  if (!pendingRetry) return;
+                  clearLastError();
+                  void sendMessage(pendingRetry.message, pendingRetry.options);
+                }}
+              >
+                Retry
+              </ToastAction>
+            )
+            : undefined,
       });
     }
   };
@@ -901,9 +991,11 @@ export default function ChatPage() {
                     className="sticky top-0 z-10 mb-2 overflow-hidden"
                   >
                     <div className="flex items-center justify-between gap-2 rounded-lg border border-primary/20 bg-primary/10 px-4 py-2 text-xs font-medium text-primary shadow-sm backdrop-blur-md">
-                      <div className="flex items-center gap-2 overflow-hidden">
+                      <div className="flex min-w-0 items-center gap-2 overflow-hidden">
                         <Quote className="h-3 w-3 shrink-0" aria-hidden="true" />
-                        <span className="truncate">Replying to <strong>{replyingTo.role === 'user' ? 'User' : 'AU'}</strong>: "{replyingTo.content.substring(0, 50)}..."</span>
+                        <span className="truncate">
+                          Replying to <strong>{replyingTo.role === 'user' ? 'User' : 'AU'}</strong>: "{replyingTo.content}"
+                        </span>
                       </div>
                       <button 
                         onClick={() => setReplyingTo(null)}
@@ -950,8 +1042,8 @@ export default function ChatPage() {
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                       {QUICK_ACTION_PROMPTS.map((prompt, i) => (
                         <OfflineGuard key={i}>
-                          <button onClick={(e) => handleSendMessage(e as unknown as React.FormEvent, prompt)} className="group w-full flex items-start justify-between rounded-lg bg-muted p-4 text-left text-sm transition-all hover:-translate-y-1 hover:bg-secondary">
-                            <p>{prompt}</p>
+                          <button onClick={(e) => handleSendMessage(e as unknown as React.FormEvent, prompt)} className="group flex w-full min-w-0 items-start justify-between gap-3 rounded-lg bg-muted p-4 text-left text-sm transition-all hover:-translate-y-1 hover:bg-secondary">
+                            <p className="min-w-0 break-words [overflow-wrap:anywhere]">{prompt}</p>
                             <ArrowRight className="ml-2 h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-1 group-hover:text-primary" aria-hidden="true" />
                           </button>
                         </OfflineGuard>
@@ -975,8 +1067,8 @@ export default function ChatPage() {
                   ) : message.role === 'user' ? (
                     <div className="flex items-start gap-4 justify-end">
                       <div className="flex flex-col items-end gap-1 w-full max-w-[85%]">
-                        <div className={`relative w-fit rounded-2xl px-4 py-2.5 text-sm bg-primary text-primary-foreground shadow-sm group-hover/message:shadow-md transition-all`}>
-                          <p className="whitespace-pre-wrap">{message.content}</p>
+                        <div className={`relative w-fit max-w-full rounded-2xl bg-primary px-4 py-2.5 text-sm text-primary-foreground shadow-sm transition-all group-hover/message:shadow-md`}>
+                          <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.content}</p>
                         </div>
                         
                         {/* Message Actions for User - Below bubble, ChatGPT style */}
@@ -1178,6 +1270,37 @@ export default function ChatPage() {
       <div className="border-t bg-background px-4 pb-4 pt-2">
         <div className="relative mx-auto max-w-4xl">
           <LimitToast alert={chatLimitToast} onShown={markChatLimitToastShown} />
+          {chatRequestError ? (
+            <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 space-y-1">
+                  <p className="text-sm font-medium text-destructive">{chatErrorTitle(chatRequestError)}</p>
+                  <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">
+                    {chatRequestError.message}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  {chatRequestError.retryable && lastRetryPayloadRef.current ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        const pendingRetry = lastRetryPayloadRef.current;
+                        if (!pendingRetry) return;
+                        clearLastError();
+                        void sendMessage(pendingRetry.message, pendingRetry.options);
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  ) : null}
+                  <Button type="button" size="sm" variant="outline" onClick={clearLastError}>
+                    Dismiss
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
           {chatLimitAlert ? (
             <div className="mb-3">
               <LimitAlertCard
@@ -1235,8 +1358,8 @@ export default function ChatPage() {
             </Tooltip>
           </div>
 
-          <form onSubmit={(e) => handleSendMessage(e)} className="flex w-full items-end space-x-2">
-            <div className="relative flex-1">
+          <form onSubmit={(e) => handleSendMessage(e)} className="flex w-full min-w-0 items-end space-x-2">
+            <div className="relative min-w-0 flex-1">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button

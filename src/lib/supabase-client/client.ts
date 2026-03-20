@@ -1,5 +1,6 @@
 import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
+import { toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
 import { guardRequest } from '@/lib/api/request-guard';
 import { areAuthActionsDisabled, dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 
@@ -321,10 +322,12 @@ export async function invokeEdgeFunction<T = any>(
       }
       return {
         data: null as T | null,
-        error: {
+        error: toApiRequestError({
           message: gate.message,
           status: gate.reason === 'offline' ? 0 : 401,
-        },
+          code: gate.reason === 'offline' ? 'OFFLINE' : 'UNAUTHORIZED',
+          retryable: gate.reason === 'offline',
+        }),
       };
     }
 
@@ -350,25 +353,34 @@ export async function invokeEdgeFunction<T = any>(
       });
     } catch (e: any) {
       if (e instanceof OfflineError) {
-        return { data: null as T | null, error: { message: 'Offline', status: 0 } };
+        return {
+          data: null as T | null,
+          error: toApiRequestError({ message: 'Offline', status: 0, code: 'OFFLINE', retryable: true }),
+        };
       }
-      return { data: null as T | null, error: { message: e?.message || 'Network error', status: 0 } };
+      return {
+        data: null as T | null,
+        error: toApiRequestError(e, e?.message || 'Network error'),
+      };
     }
 
     const contentType = res.headers.get('content-type') || '';
     const isJson = contentType.includes('application/json');
     const payload = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null);
 
-    if (res.ok) return { data: payload as T, error: null };
+    if (res.ok) {
+      return { data: unwrapApiSuccess(payload as T) as T, error: null };
+    }
 
-    const message =
-      (payload && typeof payload === 'object'
-        ? (payload as any).message || (payload as any).error
-        : null) ||
-      res.statusText ||
-      'Request failed';
-
-    return { data: null as T | null, error: { message, status: res.status, details: payload } };
+    return {
+      data: null as T | null,
+      error: toApiRequestError(
+        payload && typeof payload === 'object'
+          ? { ...(payload as Record<string, unknown>), status: res.status }
+          : { message: payload || res.statusText || 'Request failed', status: res.status },
+        res.statusText || 'Request failed',
+      ),
+    };
   };
 
   const accessToken = await getSupabaseAccessToken();

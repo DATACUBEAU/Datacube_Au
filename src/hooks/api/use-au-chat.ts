@@ -1,5 +1,6 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { toApiRequestError, type ApiRequestError } from '@/lib/api/api-contract';
 import { sendChatMessage, sendChatMessageStream, generatePromptStarters, getAvailableModels, type ChatMessage } from '@/lib/api/chat';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -129,6 +130,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
   const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [isInitialized, setIsInitialized] = useState(false);
   const [documentContext, setDocumentContext] = useState<ChatDocumentContext | null>(null);
+  const [lastError, setLastError] = useState<ApiRequestError | null>(null);
   const documentContextRef = useRef<ChatDocumentContext | null>(null);
 
   const updateDocumentContext = useCallback((updates: Partial<ChatDocumentContext> | null) => {
@@ -390,6 +392,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       selectedDocId,
       prompt: content.slice(0, 180),
     });
+    setLastError(null);
 
     const userMessage: ChatMessage = { id: nanoid(), role: 'user', content };
     const loadingId = nanoid();
@@ -627,13 +630,19 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           route,
           selectedDocId,
         });
+        setLastError(null);
         return;
       }
-      const msg = String(err?.message || '');
-      const status = typeof err?.status === 'number' ? err.status : null;
-      const aiUnavailable = msg.toLowerCase().includes('all ai models are currently unavailable');
+      const normalizedError = toApiRequestError(err, 'Unexpected chat error');
+      const msg = normalizedError.message;
+      const status = normalizedError.status;
+      const aiUnavailable =
+        normalizedError.code === 'MODEL_SERVICE_UNAVAILABLE' ||
+        msg.toLowerCase().includes('all ai models are currently unavailable') ||
+        msg.toLowerCase().includes('model service unavailable');
+      setLastError(normalizedError);
       if (status === 429) {
-        const retryAfterRaw = Number(err?.retryAfter || err?.details?.retry_after || 8);
+        const retryAfterRaw = Number(normalizedError.retryAfter || (normalizedError.details as any)?.retry_after || 8);
         const retryAfterSeconds = Number.isFinite(retryAfterRaw) && retryAfterRaw > 0
           ? Math.ceil(retryAfterRaw)
           : 8;
@@ -664,18 +673,32 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
         });
       }
       if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
-        logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', err);
+        logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', {
+          status,
+          code: normalizedError.code,
+          message: normalizedError.message,
+          requestId: normalizedError.requestId,
+        });
         dispatchSessionExpired({
           status: 401,
           source: 'useAuChat.sendMessage',
           reason: 'chat_unauthorized',
         });
       } else {
-        console.error('[useAuChat] Message error:', err);
+        console.error('[useAuChat] Message error:', {
+          code: normalizedError.code,
+          status,
+          message: normalizedError.message,
+          retryable: normalizedError.retryable,
+          requestId: normalizedError.requestId,
+          correlationId: normalizedError.correlationId,
+          details: normalizedError.details,
+        });
       }
       if (!shouldDedupe(`event:chat:send:error:${status ?? 'unknown'}`)) {
         logEvent('au_chat_error', {
           status,
+          code: normalizedError.code,
           message: msg.slice(0, 400),
           route: activeRequestRef.current?.route ?? null,
           selectedDocId,
@@ -697,7 +720,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
         selectedDocId,
         error: msg.slice(0, 220),
       });
-      throw err;
+      throw normalizedError;
     } finally {
       setIsResponding(false);
       abortControllerRef.current = null;
@@ -900,6 +923,8 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     setSelectedModel,
     isInitialized,
     clearChat,
+    lastError,
+    clearLastError: () => setLastError(null),
     expiresAt
   };
 }

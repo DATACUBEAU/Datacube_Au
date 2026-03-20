@@ -28,7 +28,7 @@ export function FollowUpSuggestions({
             variant="outline"
             size="sm"
             disabled={disabled}
-            className="h-auto rounded-full border-border/70 px-3 py-1.5 text-left text-xs leading-5 whitespace-normal"
+            className="h-auto max-w-full min-w-0 rounded-full border-border/70 px-3 py-1.5 text-left text-xs leading-5 whitespace-normal break-words [overflow-wrap:anywhere]"
             onClick={() => onSelect(prompt)}
           >
             {prompt}
