@@ -1,8 +1,16 @@
 import { createHash } from 'crypto';
-import type { SupabaseClient } from '@supabase/supabase-js';
-import type { NextRequest } from 'next/server';
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{8,120}$/;
+
+type SupabaseClientLike = {
+  from: (table: string) => any;
+};
+
+type NextRequestLike = {
+  headers: {
+    get: (name: string) => string | null;
+  };
+};
 
 type RateLimitBucket = {
   count: number;
@@ -53,7 +61,7 @@ export function normalizeBillingIdempotencyKey(raw: unknown): string {
   return value;
 }
 
-export function resolveBillingRequestIp(req: NextRequest): string {
+export function resolveBillingRequestIp(req: NextRequestLike): string {
   const forwardedFor = req.headers.get('x-forwarded-for');
   if (forwardedFor) {
     return forwardedFor.split(',')[0]?.trim() || 'unknown';
@@ -92,7 +100,7 @@ export function consumeBillingRateLimit(input: {
 }
 
 export async function readBillingRequestIdempotency(input: {
-  supabase: SupabaseClient;
+  supabase: SupabaseClientLike;
   userId: string;
   feature: string;
   idempotencyKey: string;
@@ -115,7 +123,7 @@ export async function readBillingRequestIdempotency(input: {
 }
 
 export async function writeBillingRequestIdempotency(input: {
-  supabase: SupabaseClient;
+  supabase: SupabaseClientLike;
   userId: string;
   feature: string;
   idempotencyKey: string;

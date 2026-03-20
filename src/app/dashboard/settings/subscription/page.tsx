@@ -42,6 +42,10 @@ import {
   formatExpirationWindowLabel,
   resolvePlanExpirationDays,
 } from '@/lib/plans/subscription-policy';
+import {
+  resolveDisplayedPlanCode,
+  shouldApplyBillingStatusResponse,
+} from '@/lib/billing/plan-refresh-state';
 
 const EMPTY_PRICING = {
   weekly: { amount: 0, compare_at: 0, label: '' },
@@ -60,6 +64,16 @@ const BILLING_ROUTE = '/dashboard/settings/subscription';
 const BILLING_STATUS_SOURCE = 'billing-status';
 const BILLING_CACHE_SCHEMA = 1;
 const BILLING_CACHE_TTL_MS = 1000 * 60 * 30;
+
+function makeBillingIdempotencyKey(prefix: string, seed?: string): string {
+  const rawSeed =
+    (seed && seed.trim()) ||
+    (typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  const cleaned = rawSeed.replace(/[^A-Za-z0-9._:-]/g, '-').slice(0, 96);
+  return `${prefix}:${cleaned}`;
+}
 
 function withLeadingFeature(feature: string, features: string[]): string[] {
   return Array.from(new Set([feature, ...features.filter(Boolean)]));
@@ -120,6 +134,10 @@ export default function SubscriptionPage() {
   const [isUsingCachedData, setIsUsingCachedData] = useState(false);
   const [cachedAt, setCachedAt] = useState<number | null>(null);
   const [planCatalog, setPlanCatalog] = useState<PlanCatalogEntry[]>([]);
+  const [planSnapshot, setPlanSnapshot] = useState<{ checksum?: string; issuedAt?: string; managedPlan?: string } | null>(null);
+  const billingRequestTokenRef = useRef<string | null>(null);
+  const statusRequestIdRef = useRef(0);
+  const latestAppliedStatusIssuedAtRef = useRef<string | null>(null);
 
   const [pricing, setPricing] = useState<{
     weekly: { amount: number; compare_at: number; label: string };
@@ -197,10 +215,19 @@ export default function SubscriptionPage() {
     [canAccessBilling, checkoutCapability, currentPlan],
   );
 
-  const billingRequest = useCallback(async <T,>(path: string, init?: RequestInit): Promise<{ data: T; retryAfter: string | null }> => {
+  const billingRequest = useCallback(async <T,>(
+      path: string,
+      init?: RequestInit,
+  ): Promise<{ data: T; retryAfter: string | null; requestToken: string | null; planChecksum: string | null }> => {
       const headers = new Headers(init?.headers || {});
       if (session?.access_token) {
           headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
+      if (billingRequestTokenRef.current) {
+          headers.set('x-billing-request-token', billingRequestTokenRef.current);
+      }
+      if (planSnapshot?.checksum) {
+          headers.set('x-billing-plan-checksum', planSnapshot.checksum);
       }
       if (!headers.has('Content-Type') && init?.body) {
           headers.set('Content-Type', 'application/json');
@@ -215,9 +242,11 @@ export default function SubscriptionPage() {
           silent: true,
       });
 
-      const retryAfter = res.headers.get('retry-after');
-      const raw = await res.text();
-      let parsed: any = null;
+       const retryAfter = res.headers.get('retry-after');
+       const requestToken = res.headers.get('x-billing-request-token');
+       const planChecksum = res.headers.get('x-billing-plan-checksum');
+       const raw = await res.text();
+       let parsed: any = null;
       try {
           parsed = raw ? JSON.parse(raw) : {};
       } catch {
@@ -236,18 +265,28 @@ export default function SubscriptionPage() {
           throw err;
       }
 
-      return { data: parsed as T, retryAfter };
-  }, [session?.access_token]);
+       return { data: parsed as T, retryAfter, requestToken, planChecksum };
+  }, [planSnapshot?.checksum, session?.access_token]);
 
   const initializePaymentRequest = useCallback(async (payload: {
       plan_key: string;
       payment_method: 'subscription' | 'transfer';
   }): Promise<{ authorization_url: string; reference: string }> => {
       const headers = new Headers();
-      if (session?.access_token) {
-          headers.set('Authorization', `Bearer ${session.access_token}`);
-      }
-      headers.set('Content-Type', 'application/json');
+       if (session?.access_token) {
+           headers.set('Authorization', `Bearer ${session.access_token}`);
+       }
+       headers.set('Content-Type', 'application/json');
+       if (billingRequestTokenRef.current) {
+           headers.set('x-billing-request-token', billingRequestTokenRef.current);
+       }
+       if (planSnapshot?.checksum) {
+           headers.set('x-billing-plan-checksum', planSnapshot.checksum);
+       }
+       headers.set(
+           'x-idempotency-key',
+           makeBillingIdempotencyKey('billing-checkout', `${payload.plan_key}:${payload.payment_method}`),
+       );
 
       const res = await safeFetch('/api/payments/initialize', {
           method: 'POST',
@@ -279,7 +318,7 @@ export default function SubscriptionPage() {
       }
 
       return parsed as { authorization_url: string; reference: string };
-  }, [session?.access_token]);
+  }, [planSnapshot?.checksum, session?.access_token]);
 
   const applyBillingStatus = useCallback((data: any, options?: { fromCache?: boolean }) => {
       if (!data) return;
@@ -340,12 +379,18 @@ export default function SubscriptionPage() {
               },
           });
       }
-      if (Array.isArray(data.planCatalog)) {
-          setPlanCatalog(data.planCatalog);
-      }
-      if (Boolean(data?.canAccessBilling) && subscriptionRow?.status === 'active') {
-          setIsAutoRenew(true);
-      }
+       if (Array.isArray(data.planCatalog)) {
+           setPlanCatalog(data.planCatalog);
+       }
+       if (data?.planSnapshot && typeof data.planSnapshot === 'object') {
+           setPlanSnapshot(data.planSnapshot);
+           if (typeof data.planSnapshot.issuedAt === 'string') {
+               latestAppliedStatusIssuedAtRef.current = data.planSnapshot.issuedAt;
+           }
+       }
+       if (Boolean(data?.canAccessBilling) && subscriptionRow?.status === 'active') {
+           setIsAutoRenew(true);
+       }
       if (options?.fromCache) {
           setIsUsingCachedData(true);
       }
@@ -384,17 +429,31 @@ export default function SubscriptionPage() {
               applyBillingStatus(cached.data, { fromCache: true });
               setCachedAt(cached.cachedAt);
           }
-          return cached.data;
-      }
-      try {
-          const res = await billingRequest<any>('status', { method: 'GET' });
-          if (res.data) {
-              applyBillingStatus(res.data);
-              setIsUsingCachedData(false);
-              setCachedAt(Date.now());
-              void writeCachedBillingStatus(res.data);
-              return res.data;
-          }
+           return cached.data;
+       }
+       const requestId = ++statusRequestIdRef.current;
+       try {
+           const res = await billingRequest<any>('status', { method: 'GET' });
+           if (res.data) {
+               const nextIssuedAt =
+                   typeof res.data?.planSnapshot?.issuedAt === 'string' ? res.data.planSnapshot.issuedAt : null;
+               if (!shouldApplyBillingStatusResponse({
+                   requestId,
+                   activeRequestId: statusRequestIdRef.current,
+                   currentIssuedAt: latestAppliedStatusIssuedAtRef.current,
+                   nextIssuedAt,
+               })) {
+                   return res.data;
+               }
+               if (res.requestToken) {
+                   billingRequestTokenRef.current = res.requestToken;
+               }
+               applyBillingStatus(res.data);
+               setIsUsingCachedData(false);
+               setCachedAt(Date.now());
+               void writeCachedBillingStatus(res.data);
+               return res.data;
+           }
       } catch (e) {
           console.error("Failed to fetch billing status", e);
           const cached = await readCachedBillingStatus();
@@ -506,14 +565,24 @@ export default function SubscriptionPage() {
       if (!session?.access_token) return;
       try {
           const verificationTarget = paymentReturn?.verificationTarget || paymentReturn?.reference || null;
-          if (verificationTarget) {
-              const headers = new Headers({
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${session.access_token}`,
-              });
-              const verifyRes = await safeFetch('/api/payments/verify', {
-                  method: 'POST',
-                  body: JSON.stringify({
+           if (verificationTarget) {
+               const headers = new Headers({
+                   'Content-Type': 'application/json',
+                   Authorization: `Bearer ${session.access_token}`,
+               });
+               if (billingRequestTokenRef.current) {
+                   headers.set('x-billing-request-token', billingRequestTokenRef.current);
+               }
+               if (planSnapshot?.checksum) {
+                   headers.set('x-billing-plan-checksum', planSnapshot.checksum);
+               }
+               headers.set(
+                   'x-idempotency-key',
+                   makeBillingIdempotencyKey('billing-verify', `${verificationTarget}:${paymentReturn?.transactionId || 'none'}`),
+               );
+               const verifyRes = await safeFetch('/api/payments/verify', {
+                   method: 'POST',
+                   body: JSON.stringify({
                       reference: paymentReturn?.reference || null,
                       verification_target: verificationTarget,
                       transaction_id: paymentReturn?.transactionId || null,
@@ -553,7 +622,7 @@ export default function SubscriptionPage() {
           }
       }
       startPolling();
-  }, [fetchBillingStatus, isOnline, session?.access_token, startPolling]);
+  }, [fetchBillingStatus, isOnline, planSnapshot?.checksum, session?.access_token, startPolling]);
 
   // Initial Load & URL Check
   useEffect(() => {
@@ -663,6 +732,9 @@ export default function SubscriptionPage() {
           toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
           return;
       }
+      if (!billingRequestTokenRef.current) {
+          await fetchBillingStatus();
+      }
       setLoadingPlan(planType);
       
       try {
@@ -726,6 +798,9 @@ export default function SubscriptionPage() {
           toast({ variant: 'destructive', title: 'Reason too short', description: 'Please provide a reason (min 10 chars).' });
           return;
       }
+      if (!billingRequestTokenRef.current) {
+          await fetchBillingStatus();
+      }
 
       setIsCancelling(true);
       try {
@@ -758,6 +833,9 @@ export default function SubscriptionPage() {
       if (!session?.access_token) {
           toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to manage billing.' });
           return;
+      }
+      if (!billingRequestTokenRef.current) {
+          await fetchBillingStatus();
       }
 
       setIsResubscribing(true);
@@ -824,7 +902,12 @@ export default function SubscriptionPage() {
   const UsageMeter = () => {
     if (limitsUsage.loading) return null;
 
-    const planCode = String(limitsUsage.plan || tier || 'free').toLowerCase();
+    const planCode = resolveDisplayedPlanCode({
+      snapshot: planSnapshot,
+      currentPlanManagedPlan: currentPlan.managedPlan,
+      tier,
+      limitsUsagePlan: typeof limitsUsage.plan === 'string' ? limitsUsage.plan : null,
+    });
     const isFreePlan = planCode === 'free';
     const usageByLimit = limitsUsage.usageByLimit || {};
     const limitRules = limitsUsage.limitRules || {};

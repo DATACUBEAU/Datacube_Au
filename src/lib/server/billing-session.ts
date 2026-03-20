@@ -1,6 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
-import type { NextRequest, NextResponse } from 'next/server';
-import { firstEnv } from '@/lib/server/env';
+import { firstEnv } from './env';
 
 export const BILLING_PLAN_SESSION_COOKIE = 'dcau-billing-plan';
 export const BILLING_ACTION_TOKEN_HEADER = 'x-billing-request-token';
@@ -8,6 +7,21 @@ export const BILLING_PLAN_CHECKSUM_HEADER = 'x-billing-plan-checksum';
 
 const BILLING_ACTION_TOKEN_MAX_AGE_MS = 15 * 60 * 1000;
 const BILLING_PLAN_SESSION_MAX_AGE_SECONDS = 5 * 60;
+
+type NextRequestLike = {
+  headers: {
+    get: (name: string) => string | null;
+  };
+};
+
+type NextResponseLike = {
+  cookies: {
+    set: (name: string, value: string, options: Record<string, unknown>) => void;
+  };
+  headers: {
+    set: (name: string, value: string) => void;
+  };
+};
 
 export type BillingPlanSnapshot = {
   userId: string;
@@ -121,7 +135,7 @@ function issueSignedToken(kind: SignedBillingTokenPayload['kind'], snapshot: Bil
 }
 
 export function attachBillingSessionArtifacts(
-  response: NextResponse,
+  response: NextResponseLike,
   snapshot: BillingPlanSnapshot,
 ): { requestToken: string } {
   const planToken = issueSignedToken('billing-plan', snapshot);
@@ -129,7 +143,7 @@ export function attachBillingSessionArtifacts(
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     maxAge: BILLING_PLAN_SESSION_MAX_AGE_SECONDS,
   });
   response.headers.set(BILLING_PLAN_CHECKSUM_HEADER, snapshot.checksum);
@@ -139,7 +153,7 @@ export function attachBillingSessionArtifacts(
 }
 
 export function readBillingActionSignature(input: {
-  req: NextRequest;
+  req: NextRequestLike;
   userId: string;
 }): { valid: boolean; checksum: string | null } {
   const token = input.req.headers.get(BILLING_ACTION_TOKEN_HEADER);

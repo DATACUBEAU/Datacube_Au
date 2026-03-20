@@ -1,4 +1,4 @@
-import { createHmac } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { firstEnv } from '@/lib/server/env';
 import {
   assertBillingGatewayCapability,
@@ -35,7 +35,11 @@ export function getPaystackSecretKey(action: BillingConfigAction = 'checkout_ini
 export function verifyPaystackWebhookSignature(rawBody: string, signature: string | null): boolean {
   if (!signature) return false;
   const expected = createHmac('sha512', getPaystackSecretKey('webhook')).update(rawBody).digest('hex');
-  return expected === signature;
+  const normalizedSignature = signature.trim().toLowerCase();
+  const expectedBuffer = Buffer.from(expected, 'utf8');
+  const providedBuffer = Buffer.from(normalizedSignature, 'utf8');
+  if (expectedBuffer.length !== providedBuffer.length) return false;
+  return timingSafeEqual(expectedBuffer, providedBuffer);
 }
 
 async function paystackRequest<T>(

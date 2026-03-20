@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { cancelUserSubscription } from '@/lib/server/billing';
 import { serializeBillingApiError } from '@/lib/server/billing-config';
+import {
+  consumeBillingRateLimit,
+  resolveBillingRequestIp,
+} from '@/lib/server/billing-request-guard';
+import { readBillingActionSignature } from '@/lib/server/billing-session';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 
 export const runtime = 'nodejs';
+
+const CANCEL_RATE_LIMIT_WINDOW_MS = 60_000;
+const CANCEL_RATE_LIMIT_MAX_HITS = 3;
 
 export async function POST(req: NextRequest) {
   const requestId = crypto.randomUUID();
@@ -12,6 +20,34 @@ export async function POST(req: NextRequest) {
     const auth = await requireUserFromRequest(req);
     if (!auth.ok) {
       return NextResponse.json({ error: 'unauthorized', requestId }, { status: 401 });
+    }
+
+    const signature = readBillingActionSignature({
+      req,
+      userId: auth.userId,
+    });
+    if (!signature.valid) {
+      return NextResponse.json(
+        {
+          error: 'invalid_billing_signature',
+          message: 'Refresh billing status before updating auto-renew.',
+          requestId,
+        },
+        { status: 403 },
+      );
+    }
+
+    const rateLimit = consumeBillingRateLimit({
+      scope: 'billing-cancel',
+      key: `${auth.userId}:${resolveBillingRequestIp(req)}`,
+      maxHits: CANCEL_RATE_LIMIT_MAX_HITS,
+      windowMs: CANCEL_RATE_LIMIT_WINDOW_MS,
+    });
+    if (rateLimit.limited) {
+      return NextResponse.json(
+        { error: 'rate_limited', message: 'Too many cancellation requests. Retry shortly.' },
+        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
+      );
     }
 
     const body = await req.json().catch(() => ({}));

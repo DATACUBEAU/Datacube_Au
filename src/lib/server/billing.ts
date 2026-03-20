@@ -885,8 +885,7 @@ async function applyRenewalFailureEffects(input: {
     .update({ status: 'expired', ends_at: nowIso })
     .eq('user_id', input.userId)
     .eq('entitlement', 'pro')
-    .eq('status', 'active')
-    .gt('ends_at', nowIso);
+    .eq('status', 'active');
 
   await applyPlanTransition(input.supabase, {
     userId: input.userId,
@@ -1731,108 +1730,19 @@ async function handleSuccessfulPayment(input: {
     subscription_email_token: verified.subscriptionEmailToken || null,
   };
 
-  await markTransaction({
+  await applyVerifiedPaymentEffects({
     supabase,
-    userId,
-    reference,
-    amountKobo: Number(verified.amountKobo || 0),
-    channel: String(verified.channel || payload?.data?.channel || 'unknown'),
-    status: verified.success ? 'success' : String(verified.status || 'pending'),
-    paidAt: verified.paidAt || null,
-    rawEventJson: payload,
-    idempotencyKey,
-    metadata: transactionMetadata,
-  });
-
-  if (!verified.success || !userId || !planKey) {
-    return;
-  }
-
-  await supabase.from('billing_customers').upsert(
-    {
-      user_id: userId,
-      email: customerEmail || null,
-      paystack_customer_code: gateway === 'paystack' ? (verified.customerCode || null) : null,
-      metadata:
-        gateway === 'paystack'
-          ? {
-              latest_authorization_code: verified.authorizationCode || null,
-            }
-          : {
-              gateway,
-              latest_transaction_id: transactionId,
-            },
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'user_id' }
-  );
-
-  const plan = await loadBillingPlan(supabase, planKey);
-  if (!plan) return;
-
-  const chargeMethod = normalizePaymentMethod(metadata.payment_method) || 'subscription';
-  const grant = await grantProEntitlement({
-    supabase,
-    userId,
-    interval: plan.interval,
-    source: `${gateway}:${chargeMethod}`,
-    reason: `charge.success:${reference}`,
-    traceId,
-    metadata: {
-      reference,
-      plan_key: planKey,
-      gateway,
-      transaction_id: transactionId,
-    },
-  });
-
-  try {
-    await applyPlanTransition(supabase, {
-      userId,
-      targetPlan: 'pro',
-      entitlementSource: 'paid',
-      entitlementEndsAt: grant.endsAt,
-      source: `${gateway}:${chargeMethod}`,
-      reason: `charge.success:${reference}`,
-      traceId,
-      metadata: {
-        reference,
-        plan_key: planKey,
-        gateway,
-        transaction_id: transactionId,
-      },
-      subscription: chargeMethod === 'subscription'
-        ? {
-            planKey: plan.plan_key,
-            status: 'active',
-            paystackSubscriptionCode: gateway === 'paystack' ? (verified.subscriptionCode || null) : null,
-            paystackEmailToken: gateway === 'paystack' ? (verified.subscriptionEmailToken || null) : null,
-            startsAt: grant.startsAt,
-            endsAt: grant.endsAt,
-            cancelAtPeriodEnd: false,
-            metadata: {
-              latest_reference: reference,
-              gateway,
-              transaction_id: transactionId,
-            },
-          }
-        : null,
-    });
-  } catch (error) {
-    if (grant.grantId) {
-      await supabase.from('entitlement_grants').delete().eq('id', grant.grantId);
-    }
-    throw error;
-  }
-
-  await upsertSubscriptionMirror({
-    supabase,
-    userId,
-    status: 'active',
-    plan: plan.plan_key,
     gateway,
+    verified,
+    payload,
+    idempotencyKey,
+    traceId,
+    reference,
+    planKey,
+    userId,
+    customerEmail,
     transactionId,
-    createdAt: verified.paidAt || new Date().toISOString(),
+    transactionMetadata,
   });
 }
 
@@ -1904,16 +1814,61 @@ async function processSubscriptionEvent(input: {
   const userId = (await resolveUserIdFromEmail(supabase, customerEmail)) || String(data?.metadata?.user_id || '').trim();
   if (!userId) return;
 
+  const { data: existingSubscription, error: existingSubscriptionError } = await supabase
+    .from('billing_subscriptions')
+    .select('plan_key,metadata,ends_at,paystack_subscription_code,paystack_email_token')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (existingSubscriptionError) throw existingSubscriptionError;
+
+  const existingMetadata = (((existingSubscription as any)?.metadata || {}) as Record<string, unknown>) || {};
   const subscriptionCode = String(data?.subscription_code || data?.code || '').trim();
   const emailToken = String(data?.email_token || '').trim();
-  const planKey = normalizePlanKey(data?.plan?.name || data?.metadata?.plan_key || '');
+  const planKey =
+    normalizePlanKey(data?.plan?.name || data?.metadata?.plan_key || '') ||
+    normalizePlanKey((existingSubscription as any)?.plan_key || '') ||
+    'pro_monthly';
+
+  if (eventType === 'invoice.payment_failed') {
+    const retryState = buildRenewalRetryState({
+      existingAttemptCount: Number((existingMetadata as any)?.renewal_attempt_count || 0),
+      failureKind: classifyRenewalFailure({
+        gatewayResponse: data?.gateway_response,
+        message: data?.message,
+        status: data?.status,
+      }),
+    });
+
+    await applyRenewalFailureEffects({
+      supabase,
+      userId,
+      gateway: 'paystack',
+      planKey,
+      subscriptionCode: subscriptionCode || String((existingSubscription as any)?.paystack_subscription_code || '').trim() || null,
+      reference: String(data?.reference || '').trim() || null,
+      amountKobo: Number(data?.amount || 0),
+      channel: String(data?.channel || 'subscription'),
+      retryState,
+      responseJson: {
+        event: eventType,
+        data,
+      },
+      traceId,
+      currentMetadata: existingMetadata,
+      currentEndsAt:
+        typeof (existingSubscription as any)?.ends_at === 'string'
+          ? String((existingSubscription as any).ends_at)
+          : null,
+    });
+    return;
+  }
 
   let status = 'active';
   let cancelAtPeriodEnd = false;
   if (eventType === 'subscription.disable') {
     status = 'canceled';
     cancelAtPeriodEnd = true;
-  } else if (eventType === 'subscription.not_renew' || eventType === 'invoice.payment_failed') {
+  } else if (eventType === 'subscription.not_renew') {
     status = 'non_renewing';
     cancelAtPeriodEnd = true;
   }
@@ -1921,12 +1876,13 @@ async function processSubscriptionEvent(input: {
   await supabase.from('billing_subscriptions').upsert(
     {
       user_id: userId,
-      plan_key: planKey || 'pro_monthly',
+      plan_key: planKey,
       status,
       paystack_subscription_code: subscriptionCode || null,
       paystack_email_token: emailToken || null,
       cancel_at_period_end: cancelAtPeriodEnd,
       metadata: {
+        ...existingMetadata,
         ...data,
         gateway: 'paystack',
       },

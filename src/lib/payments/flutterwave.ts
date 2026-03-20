@@ -1,4 +1,5 @@
 import { firstEnv } from '@/lib/server/env';
+import { timingSafeEqual } from 'crypto';
 import {
   assertBillingGatewayCapability,
   BillingConfigurationError,
@@ -52,7 +53,10 @@ export function getFlutterwaveWebhookHash(): string {
 
 export function verifyFlutterwaveWebhookSignature(signature: string | null): boolean {
   if (!signature) return false;
-  return signature.trim() === getFlutterwaveWebhookHash();
+  const expected = Buffer.from(getFlutterwaveWebhookHash().trim(), 'utf8');
+  const provided = Buffer.from(signature.trim(), 'utf8');
+  if (expected.length !== provided.length) return false;
+  return timingSafeEqual(expected, provided);
 }
 
 async function flutterwaveRequest<T>(path: string, init?: RequestInit): Promise<T> {

@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { getBillingStatus } from '@/lib/server/billing';
 import { serializeBillingApiError } from '@/lib/server/billing-config';
+import {
+  BILLING_ACTION_TOKEN_HEADER,
+  attachBillingSessionArtifacts,
+  buildBillingPlanSnapshot,
+} from '@/lib/server/billing-session';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 
 export const runtime = 'nodejs';
@@ -16,7 +21,20 @@ export async function GET(req: NextRequest) {
 
     const supabase = createSupabaseAdminClient();
     const status = await getBillingStatus(supabase, auth.userId);
-    return NextResponse.json(status, { status: 200 });
+    const planSnapshot = buildBillingPlanSnapshot({
+      userId: auth.userId,
+      status,
+    });
+    const response = NextResponse.json(
+      {
+        ...status,
+        planSnapshot,
+      },
+      { status: 200 },
+    );
+    const { requestToken } = attachBillingSessionArtifacts(response, planSnapshot);
+    response.headers.set(BILLING_ACTION_TOKEN_HEADER, requestToken);
+    return response;
   } catch (error: any) {
     const failure = serializeBillingApiError(error, {
       status: 500,
