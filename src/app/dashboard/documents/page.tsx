@@ -279,7 +279,7 @@ export default function DocumentsPage() {
     return (
       <div key={doc.id} className="flex flex-col relative overflow-hidden">
         <div
-          className={`relative px-4 py-3 flex justify-between items-center group transition-all duration-200 border-l-2 border-transparent ${
+          className={`relative flex min-w-0 items-center justify-between gap-3 px-4 py-3 group transition-all duration-200 border-l-2 border-transparent ${
             isFolder ? "cursor-pointer" : ""
           } ${
             isDeleting 
@@ -332,8 +332,12 @@ export default function DocumentsPage() {
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <TruncatedText text={doc.fileName} className={`font-medium transition-colors ${isDeleting ? "text-muted-foreground" : "group-hover:text-primary"}`} />
+              <div className="flex min-w-0 items-center gap-2">
+                <TruncatedText
+                  text={doc.fileName}
+                  maxWidthClass="max-w-full"
+                  className={`min-w-0 flex-1 font-medium transition-colors ${isDeleting ? "text-muted-foreground" : "group-hover:text-primary"}`}
+                />
                 {isDeleting ? (
                   <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-destructive/10 border border-destructive/20">
                     <Loader2 className="h-3 w-3 animate-spin text-destructive" aria-hidden="true" />
@@ -350,10 +354,10 @@ export default function DocumentsPage() {
                   </>
                 )}
                 {isFolder && (
-                  <ChevronRight className={`h-4 w-4 text-muted-foreground transition-transform duration-300 ${isExpanded ? "rotate-90" : "group-hover:translate-x-0.5"}`} aria-hidden="true" />
+                  <ChevronRight className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ${isExpanded ? "rotate-90" : "group-hover:translate-x-0.5"}`} aria-hidden="true" />
                 )}
               </div>
-              <div className="flex items-center gap-2 mt-0.5">
+              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-[11px] uppercase tracking-wider text-muted-foreground font-bold">
                   {(doc.documentType || "main_textbook").replace("_", " ")}
                 </span>
@@ -380,7 +384,7 @@ export default function DocumentsPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 ml-4">
+          <div className="ml-4 flex shrink-0 items-center gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
                 <Button 

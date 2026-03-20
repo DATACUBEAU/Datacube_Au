@@ -20,7 +20,7 @@ export function TruncatedText({
   return (
     <span
       className={cn(
-        'truncate text-ellipsis overflow-hidden whitespace-nowrap',
+        'block min-w-0 truncate text-ellipsis overflow-hidden whitespace-nowrap',
         maxWidthClass,
         className,
       )}

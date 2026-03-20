@@ -647,7 +647,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   const tryLegacyChatFallbackIfEligible = async (source: 'unexpected_error' | 'upstream_error_response') => {
     const normalizedFunction = String(functionName || '').trim().toLowerCase();
     const shouldFallbackToLegacyChat =
-      normalizedFunction === 'au-chat' &&
+      (normalizedFunction === 'au-chat' || normalizedFunction === 'chat') &&
       requestMethod === 'POST' &&
       fallbackChatAction !== 'get_models' &&
       fallbackChatAction !== 'scan_and_greet' &&
@@ -879,6 +879,12 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       };
 
       parsedBody = toLegacyEdgePayload(validation.data, mode, extras);
+      if (normalizedFunction === 'chat') {
+        const question = latestUserMessage(validation.data);
+        if (question) {
+          parsedBody.question = question;
+        }
+      }
 
       console.info('[proxy] normalized chat payload', {
         requestId,
