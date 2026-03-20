@@ -164,6 +164,12 @@ type EffectivePlanResolutionInput = {
   entitlementEndsAt?: string | null;
 };
 
+export type ResolveCanonicalEffectiveLimitsInput = {
+  supabase: SupabaseClient;
+  userId?: string | null;
+  planOverride?: EffectivePlanCode | null;
+};
+
 export type LimitUsageSnapshot = {
   key: ApprovedLimitKey;
   used: number;
@@ -841,6 +847,22 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
   };
 }
 
+function normalizeOptionalUserId(value: unknown): string | null {
+  const normalized = String(value ?? '').trim();
+  return normalized || null;
+}
+
+function buildPlanOverrideEffectivePlan(plan: EffectivePlanCode): EffectivePlan {
+  return {
+    plan,
+    isAdmin: false,
+    hasPro: plan !== 'free',
+    source: 'default',
+    entitlementSource: plan === 'free' ? 'none' : 'paid',
+    expiresAt: null,
+  };
+}
+
 export async function loadPlanLimitRules(
   supabase: SupabaseClient,
   plan: EffectivePlanCode,
@@ -1341,12 +1363,33 @@ export async function getEffectiveLimits(
   supabase: SupabaseClient,
   userId: string,
 ): Promise<EffectiveLimitsResult> {
-  const effectivePlan = await resolveEffectivePlan(supabase, userId);
-  const snapshot = await resolveEffectivePlanLimitSnapshot({
+  return resolveCanonicalEffectiveLimits({
     supabase,
+    userId,
+  });
+}
+
+export async function resolveCanonicalEffectiveLimits(
+  input: ResolveCanonicalEffectiveLimitsInput,
+): Promise<EffectiveLimitsResult> {
+  const userId = normalizeOptionalUserId(input.userId);
+  const effectivePlan =
+    input.planOverride
+      ? buildPlanOverrideEffectivePlan(input.planOverride)
+      : userId
+        ? await resolveEffectivePlan(input.supabase, userId)
+        : null;
+
+  if (!effectivePlan) {
+    throw new Error('resolveCanonicalEffectiveLimits requires either a userId or planOverride.');
+  }
+
+  const snapshot = await resolveEffectivePlanLimitSnapshot({
+    supabase: input.supabase,
     plan: effectivePlan.plan,
     userId,
   });
+
   return {
     plan: effectivePlan.plan,
     effectivePlan,

@@ -26,10 +26,10 @@ export function resolveDisplayedPlanCode(input: {
   limitsUsagePlan?: string | null;
 }): string {
   return String(
-    input.snapshot?.managedPlan ||
+    input.limitsUsagePlan ||
+      input.snapshot?.managedPlan ||
       input.currentPlanManagedPlan ||
       input.tier ||
-      input.limitsUsagePlan ||
       'free',
   )
     .trim()

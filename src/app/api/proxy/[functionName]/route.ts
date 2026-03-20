@@ -47,7 +47,7 @@ import {
 } from '@/lib/server/ai-governance';
 import {
   EffectiveLimitError,
-  getEffectiveLimits,
+  resolveCanonicalEffectiveLimits,
   throwChatLimitIfNeeded,
   throwExamPredictionLimitIfNeeded,
   throwIngestLimitIfNeeded,
@@ -1086,7 +1086,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         'generate-practice-exam',
       ].includes(normalizedFunction);
     const effectiveLimits = needsEffectiveLimits
-      ? await getEffectiveLimits(adminSupabase, auth.userId)
+      ? await resolveCanonicalEffectiveLimits({
+          supabase: adminSupabase,
+          userId: auth.userId,
+        })
       : null;
     if (effectiveLimits) {
       chatPlanForLog = effectiveLimits.effectivePlan?.plan || 'free';

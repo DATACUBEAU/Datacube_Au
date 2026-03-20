@@ -3,7 +3,7 @@ import { APPROVED_LIMIT_KEYS, DEFAULT_PLAN_ORDER, type EffectivePlanCode } from 
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
 import {
   loadPlanMetadata,
-  resolveEffectivePlanLimitSnapshot,
+  resolveCanonicalEffectiveLimits,
   serializeEffectivePlanLimitRule,
 } from '@/lib/server/au-limits';
 
@@ -47,11 +47,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const [metadata, snapshot] = await Promise.all([
+    const [metadata, resolved] = await Promise.all([
       loadPlanMetadata(supabase, plan),
-      resolveEffectivePlanLimitSnapshot({
+      resolveCanonicalEffectiveLimits({
         supabase,
-        plan,
+        planOverride: plan,
         userId: previewUserId,
       }),
     ]);
@@ -61,7 +61,7 @@ export async function GET(req: NextRequest) {
       plan,
       userId: previewUserId,
       userFound,
-      limits: snapshot.limits,
+      limits: resolved.limits,
     });
 
     return NextResponse.json(
@@ -72,28 +72,28 @@ export async function GET(req: NextRequest) {
         user_id: previewUserId,
         user_found: userFound,
         planPolicy: {
-          plan: snapshot.plan,
+          plan: resolved.plan,
           label: metadata.label,
           description: metadata.description,
-          limits: snapshot.limits,
+          limits: resolved.limits,
           limit_rules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-            acc[key] = serializeEffectivePlanLimitRule(snapshot.limitRules[key]);
+            acc[key] = serializeEffectivePlanLimitRule(resolved.limitRules[key]);
             return acc;
           }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
           resetLabels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-            acc[key] = snapshot.usage.windows[key]?.label || 'No reset';
+            acc[key] = resolved.usage.windows[key]?.label || 'No reset';
             return acc;
           }, {} as Record<string, string>),
         },
-        effectiveLimits: snapshot.limits,
+        effectiveLimits: resolved.limits,
         effectiveLimitRules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = serializeEffectivePlanLimitRule(snapshot.limitRules[key]);
+          acc[key] = serializeEffectivePlanLimitRule(resolved.limitRules[key]);
           return acc;
         }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
-        usage: snapshot.usage,
-        resetWindows: snapshot.usage.windows,
+        usage: resolved.usage,
+        resetWindows: resolved.usage.windows,
         labels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = snapshot.usage.windows[key]?.label || 'No reset';
+          acc[key] = resolved.usage.windows[key]?.label || 'No reset';
           return acc;
         }, {} as Record<string, string>),
       },

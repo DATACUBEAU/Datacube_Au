@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { DEFAULT_PLAN_LIMITS, getEffectiveLimits } from '@/lib/server/au-limits';
+import { DEFAULT_PLAN_LIMITS, resolveCanonicalEffectiveLimits } from '@/lib/server/au-limits';
 import { getFeatureFlagsSnapshot } from '@/lib/server/feature-flags';
 import { createSupabaseAdminClient, createSupabaseRlsClient, firstEnv } from '@/lib/server/supabase-admin';
 
@@ -73,7 +73,10 @@ async function handleUsageStatus(req: NextRequest) {
   }
 
   try {
-    const result = await getEffectiveLimits(supabase, auth.userId);
+    const result = await resolveCanonicalEffectiveLimits({
+      supabase,
+      userId: auth.userId,
+    });
     return NextResponse.json(
       {
         ok: true,

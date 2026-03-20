@@ -9,8 +9,10 @@ import {
   type StoredPlanLimitRule,
 } from '../src/lib/limits/plan-limit-model.js';
 import {
+  type EffectiveLimitsResult,
   EffectiveLimitError,
   loadAdminPlanLimitState,
+  resolveCanonicalEffectiveLimits,
   resolveEffectivePlanFromInputs,
   resolveEffectivePlanLimitSnapshot,
   savePlanLimitScopeRules,
@@ -197,14 +199,16 @@ function createRuleMap(
   }, {} as Record<ApprovedLimitKey, StoredPlanLimitRule | null>);
 }
 
-function toEffectiveLimitsResult(snapshot: Awaited<ReturnType<typeof resolveEffectivePlanLimitSnapshot>>) {
+function toEffectiveLimitsResult(
+  snapshot: Awaited<ReturnType<typeof resolveEffectivePlanLimitSnapshot>>,
+): EffectiveLimitsResult {
   return {
     plan: snapshot.plan,
     effectivePlan: {
       plan: snapshot.plan,
       isAdmin: false,
       hasPro: snapshot.plan !== 'free',
-      source: 'test',
+      source: 'default',
       entitlementSource: snapshot.plan === 'free' ? 'none' : 'paid',
       expiresAt: null,
     },
@@ -304,6 +308,54 @@ async function main() {
     assert.equal(chatsRule.presentation?.summary, '42,000 messages / Usage-based / Weekly');
     assert.equal(fileRule.presentation?.summary, '75 MB / Per request / No reset');
     assert.equal(fileRule.presentation?.reset_description, 'Checked on every request. It does not use a scheduled reset window.');
+  });
+
+  await run('canonical effective limits resolver powers admin preview plan overrides from the same stored rules', async () => {
+    const supabase = createSupabaseStub();
+    const state = await loadAdminPlanLimitState(supabase);
+    const nextRules = createRuleMap('pro', state);
+    nextRules.max_chats_total = {
+      ...(nextRules.max_chats_total as StoredPlanLimitRule),
+      value: 42000,
+      mode: 'usage',
+      resetPolicy: 'weekly',
+      resetIntervalValue: null,
+      resetIntervalUnit: null,
+      isEnabled: true,
+      isUnlimited: false,
+      updatedAt: '2026-03-18T12:40:00.000Z',
+    };
+    nextRules.max_file_size_mb = {
+      ...(nextRules.max_file_size_mb as StoredPlanLimitRule),
+      value: 75,
+      mode: 'per_request',
+      resetPolicy: 'never',
+      resetIntervalValue: null,
+      resetIntervalUnit: null,
+      isEnabled: true,
+      isUnlimited: false,
+      updatedAt: '2026-03-18T12:40:00.000Z',
+    };
+
+    await savePlanLimitScopeRules({
+      supabase,
+      scope: 'pro',
+      rules: nextRules,
+    });
+
+    const resolved = await resolveCanonicalEffectiveLimits({
+      supabase,
+      planOverride: 'pro',
+    });
+
+    assert.equal(resolved.plan, 'pro');
+    assert.equal(resolved.effectivePlan.plan, 'pro');
+    assert.equal(resolved.effectivePlan.source, 'default');
+    assert.equal(resolved.limits.max_chats_total, 42000);
+    assert.equal(resolved.limits.max_file_size_mb, 75);
+    assert.equal(resolved.limitRules.max_chats_total.resetPolicy, 'weekly');
+    assert.equal(resolved.usage.by_limit.max_chats_total.used, 0);
+    assert.equal(resolved.usage.by_limit.max_file_size_mb.limit, 75);
   });
 
   await run('upload enforcement reads the same persisted canonical file-size rule', async () => {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { APPROVED_LIMIT_KEYS } from '@/lib/limits/plan-limit-model';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
-import { getEffectiveLimits, serializeEffectivePlanLimitRule } from '@/lib/server/au-limits';
+import { resolveCanonicalEffectiveLimits, serializeEffectivePlanLimitRule } from '@/lib/server/au-limits';
 
 export const runtime = 'nodejs';
 
@@ -28,7 +28,10 @@ export async function GET(req: NextRequest) {
 
   try {
     const supabase = createSupabaseAdminClient();
-    const result = await getEffectiveLimits(supabase, auth.userId);
+    const result = await resolveCanonicalEffectiveLimits({
+      supabase,
+      userId: auth.userId,
+    });
     return NextResponse.json(
       {
         ok: true,

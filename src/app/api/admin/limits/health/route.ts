@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
-import { getEffectiveLimits } from '@/lib/server/au-limits';
+import { resolveCanonicalEffectiveLimits } from '@/lib/server/au-limits';
 import { buildUsageHealthReport, loadUsageMetricDefinitions } from '@/lib/server/usage-tracking';
 
 export const runtime = 'nodejs';
@@ -42,7 +42,10 @@ export async function GET(req: NextRequest) {
 
     let userHealth: Record<string, unknown> | null = null;
     if (userId) {
-      const effective = await getEffectiveLimits(supabase, userId);
+      const effective = await resolveCanonicalEffectiveLimits({
+        supabase,
+        userId,
+      });
       const metrics = await buildUsageHealthReport({
         supabase,
         userId,

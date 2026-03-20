@@ -222,13 +222,22 @@ async function main() {
     );
   });
 
-  await run('displayed plan code prefers the authoritative billing snapshot over other client hints', () => {
+  await run('displayed plan code prefers the canonical limits snapshot over billing-side hints', () => {
+    assert.equal(
+      resolveDisplayedPlanCode({
+        snapshot: { managedPlan: 'pro', checksum: 'abc', issuedAt: '2026-03-20T10:05:00.000Z' },
+        currentPlanManagedPlan: 'pro',
+        tier: 'pro',
+        limitsUsagePlan: 'free',
+      }),
+      'free',
+    );
     assert.equal(
       resolveDisplayedPlanCode({
         snapshot: { managedPlan: 'pro', checksum: 'abc', issuedAt: '2026-03-20T10:05:00.000Z' },
         currentPlanManagedPlan: 'free',
         tier: 'free',
-        limitsUsagePlan: 'free',
+        limitsUsagePlan: null,
       }),
       'pro',
     );
