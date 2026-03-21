@@ -250,6 +250,15 @@ async function main() {
       }),
       'monthly',
     );
+    assert.equal(
+      resolveDisplayedPlanCode({
+        snapshot: null,
+        currentPlanManagedPlan: null,
+        tier: null,
+        limitsUsagePlan: null,
+      }),
+      null,
+    );
   });
 
   if (failed > 0) {

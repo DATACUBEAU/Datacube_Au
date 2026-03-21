@@ -31,6 +31,11 @@ import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/p
 import { useLimits } from '@/components/providers/limits-provider';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { supabase } from '@/lib/supabase-client/client';
+import { useAccountSnapshot } from '@/components/providers/account-snapshot-provider';
+import type {
+  AccountPlanSnapshot,
+  PersistedCanonicalAccountSnapshot,
+} from '@/lib/account/account-snapshot-cache';
 import {
   buildPromoCopy,
   formatPromoEndsAtLabel,
@@ -96,6 +101,84 @@ type PlanCatalogEntry = {
   resetLabels: Record<string, string>;
 };
 
+type BillingPageSubscriptionSummary = {
+  plan_key: string | null;
+  status: string | null;
+  starts_at: string | null;
+  ends_at: string | null;
+  cancel_at_period_end: boolean;
+  updated_at: string | null;
+} | null;
+
+type BillingPageSnapshotSeed = {
+  hasSnapshot: boolean;
+  tier: string | null;
+  expiry: string | null;
+  subscription: BillingPageSubscriptionSummary;
+  billingEnabled: boolean;
+  canAccessBilling: boolean;
+  entitlementSource: 'paid' | 'promo' | 'none';
+  promoActive: boolean;
+  promoEndsAtLabel: string;
+  currentPlan: NormalizedSubscriptionState;
+  planSnapshot: Pick<AccountPlanSnapshot, 'checksum' | 'issuedAt' | 'managedPlan'> | null;
+};
+
+function formatLagosDateLabel(value: string | null | undefined): string {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  return new Date(value).toLocaleString('en-US', {
+    timeZone: 'Africa/Lagos',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+function buildBillingPageSnapshotSeed(
+  snapshot: PersistedCanonicalAccountSnapshot | null,
+): BillingPageSnapshotSeed {
+  if (!snapshot) {
+    return {
+      hasSnapshot: false,
+      tier: null,
+      expiry: null,
+      subscription: null,
+      billingEnabled: false,
+      canAccessBilling: false,
+      entitlementSource: 'none',
+      promoActive: false,
+      promoEndsAtLabel: '',
+      currentPlan: EMPTY_CURRENT_PLAN,
+      planSnapshot: null,
+    };
+  }
+
+  return {
+    hasSnapshot: true,
+    tier: snapshot.currentPlan.managedPlan || snapshot.plan || null,
+    expiry: snapshot.entitlements.entitlementEndsAt ?? null,
+    subscription: snapshot.subscription
+      ? {
+          plan_key: snapshot.subscription.planKey,
+          status: snapshot.subscription.status,
+          starts_at: snapshot.subscription.startsAt,
+          ends_at: snapshot.subscription.endsAt,
+          cancel_at_period_end: snapshot.subscription.cancelAtPeriodEnd,
+          updated_at: snapshot.subscription.updatedAt,
+        }
+      : null,
+    billingEnabled: snapshot.entitlements.billingEnabled,
+    canAccessBilling: snapshot.entitlements.canAccessBilling,
+    entitlementSource: snapshot.entitlements.entitlementSource,
+    promoActive: snapshot.entitlements.promoActive,
+    promoEndsAtLabel: formatLagosDateLabel(snapshot.entitlements.promoEndsAtLagos),
+    currentPlan: snapshot.currentPlan,
+    planSnapshot: snapshot.planSnapshot,
+  };
+}
+
 export default function SubscriptionPage() {
   const [user, session, isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
@@ -104,10 +187,19 @@ export default function SubscriptionPage() {
   const { isOnline } = useNetworkStatus();
   const { usage: limitsUsage } = useLimits();
   const { records: featureFlagRecords } = useFeatureFlags();
+  const {
+    snapshot: accountSnapshot,
+    isUsingCachedData: isUsingCachedAccountSnapshot,
+    cachedAt: accountSnapshotCachedAt,
+  } = useAccountSnapshot();
+  const initialSnapshotSeed = useMemo(
+    () => buildBillingPageSnapshotSeed(accountSnapshot),
+    [accountSnapshot],
+  );
   
-  const [tier, setTier] = useState<string>('free');
-  const [expiry, setExpiry] = useState<string | null>(null);
-  const [subscription, setSubscription] = useState<any>(null);
+  const [tier, setTier] = useState<string | null>(initialSnapshotSeed.tier);
+  const [expiry, setExpiry] = useState<string | null>(initialSnapshotSeed.expiry);
+  const [subscription, setSubscription] = useState<any>(initialSnapshotSeed.subscription);
   const [payments, setPayments] = useState<any[]>([]);
   
   // Toggle: true = Auto-renew (Card), false = Manual (Bank Transfer)
@@ -119,22 +211,22 @@ export default function SubscriptionPage() {
   const [isResubscribing, setIsResubscribing] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [isCancelDialogOpen, setIsCancelDialogOpen] = useState(false);
-  const [billingEnabled, setBillingEnabled] = useState(false);
-  const [canAccessBilling, setCanAccessBilling] = useState(false);
+  const [billingEnabled, setBillingEnabled] = useState(initialSnapshotSeed.billingEnabled);
+  const [canAccessBilling, setCanAccessBilling] = useState(initialSnapshotSeed.canAccessBilling);
   const [showBankTransfer, setShowBankTransfer] = useState(false);
   const [manualPlan, setManualPlan] = useState<'weekly' | 'monthly'>('monthly');
-  const [promoActive, setPromoActive] = useState(false);
-  const [promoEndsAtLabel, setPromoEndsAtLabel] = useState('');
-  const [entitlementSource, setEntitlementSource] = useState<'paid' | 'promo' | 'none'>('none');
+  const [promoActive, setPromoActive] = useState(initialSnapshotSeed.promoActive);
+  const [promoEndsAtLabel, setPromoEndsAtLabel] = useState(initialSnapshotSeed.promoEndsAtLabel);
+  const [entitlementSource, setEntitlementSource] = useState<'paid' | 'promo' | 'none'>(initialSnapshotSeed.entitlementSource);
   
   const [paymentState, setPaymentState] = useState<'idle' | 'redirecting' | 'confirming' | 'success' | 'pending' | 'error'>('idle');
   const [pollCount, setPollCount] = useState(0);
   const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const [isInitialLoading, setIsInitialLoading] = useState(true);
-  const [isUsingCachedData, setIsUsingCachedData] = useState(false);
-  const [cachedAt, setCachedAt] = useState<number | null>(null);
+  const [isInitialLoading, setIsInitialLoading] = useState(!initialSnapshotSeed.hasSnapshot);
+  const [isUsingCachedData, setIsUsingCachedData] = useState(Boolean(initialSnapshotSeed.hasSnapshot && isUsingCachedAccountSnapshot));
+  const [cachedAt, setCachedAt] = useState<number | null>(initialSnapshotSeed.hasSnapshot ? accountSnapshotCachedAt : null);
   const [planCatalog, setPlanCatalog] = useState<PlanCatalogEntry[]>([]);
-  const [planSnapshot, setPlanSnapshot] = useState<{ checksum?: string; issuedAt?: string; managedPlan?: string } | null>(null);
+  const [planSnapshot, setPlanSnapshot] = useState<BillingPageSnapshotSeed['planSnapshot']>(initialSnapshotSeed.planSnapshot);
   const billingRequestTokenRef = useRef<string | null>(null);
   const statusRequestIdRef = useRef(0);
   const latestAppliedStatusIssuedAtRef = useRef<string | null>(null);
@@ -143,8 +235,11 @@ export default function SubscriptionPage() {
     weekly: { amount: number; compare_at: number; label: string };
     monthly: { amount: number; compare_at: number; label: string };
   }>(EMPTY_PRICING);
-  const [currentPlan, setCurrentPlan] = useState<NormalizedSubscriptionState>(EMPTY_CURRENT_PLAN);
-  const [checkoutCapability, setCheckoutCapability] = useState<BillingCheckoutCapability>(EMPTY_CHECKOUT);
+  const [currentPlan, setCurrentPlan] = useState<NormalizedSubscriptionState>(initialSnapshotSeed.currentPlan);
+  const [checkoutCapability, setCheckoutCapability] = useState<BillingCheckoutCapability>({
+    ...EMPTY_CHECKOUT,
+    enabled: initialSnapshotSeed.canAccessBilling,
+  });
   const isPromoUnlocked = promoActive;
   const hasPaidProAccess = currentPlan.managedPlan === 'pro' && currentPlan.hasPaidEntitlement;
   const hasPremiumAccess = currentPlan.managedPlan === 'premium' && currentPlan.hasPaidEntitlement;
@@ -336,7 +431,7 @@ export default function SubscriptionPage() {
           legacyTier: data?.currentPlan?.activePlanKey || data?.currentPlan?.managedPlan || data.tier,
       });
 
-      setTier(data.tier || normalizedCurrentPlan.managedPlan || 'free');
+      setTier(data.tier || normalizedCurrentPlan.managedPlan || null);
       setExpiry(data.tier_expires_at ?? null);
       setSubscription(subscriptionRow);
       setPayments(paymentsList);
@@ -391,10 +486,38 @@ export default function SubscriptionPage() {
        if (Boolean(data?.canAccessBilling) && subscriptionRow?.status === 'active') {
            setIsAutoRenew(true);
        }
+       if (options?.fromCache) {
+           setIsUsingCachedData(true);
+       }
+  }, []);
+
+  const applyAccountSnapshotSeed = useCallback((snapshot: NonNullable<typeof accountSnapshot>, options?: {
+      fromCache?: boolean;
+      cachedAt?: number | null;
+  }) => {
+      const seed = buildBillingPageSnapshotSeed(snapshot);
+      setTier(seed.tier);
+      setExpiry(seed.expiry);
+      setSubscription(seed.subscription);
+      setBillingEnabled(seed.billingEnabled);
+      setCanAccessBilling(seed.canAccessBilling);
+      setEntitlementSource(seed.entitlementSource);
+      setPromoActive(seed.promoActive);
+      setCurrentPlan(seed.currentPlan);
+      setPlanSnapshot(seed.planSnapshot);
+      if (typeof seed.planSnapshot?.issuedAt === 'string') {
+          latestAppliedStatusIssuedAtRef.current = seed.planSnapshot.issuedAt;
+      }
+      setCheckoutCapability((current) => ({
+        ...current,
+        enabled: seed.canAccessBilling,
+      }));
+      setPromoEndsAtLabel(seed.promoEndsAtLabel);
       if (options?.fromCache) {
           setIsUsingCachedData(true);
+          setCachedAt(options.cachedAt ?? null);
       }
-  }, []);
+  }, [accountSnapshot]);
 
   const readCachedBillingStatus = useCallback(async () => {
       if (!user?.id) return { data: null as any, cachedAt: null as number | null };
@@ -428,8 +551,13 @@ export default function SubscriptionPage() {
           if (cached.data) {
               applyBillingStatus(cached.data, { fromCache: true });
               setCachedAt(cached.cachedAt);
+          } else if (accountSnapshot) {
+              applyAccountSnapshotSeed(accountSnapshot, {
+                  fromCache: isUsingCachedAccountSnapshot,
+                  cachedAt: accountSnapshotCachedAt,
+              });
           }
-           return cached.data;
+            return cached.data;
        }
        const requestId = ++statusRequestIdRef.current;
        try {
@@ -454,17 +582,35 @@ export default function SubscriptionPage() {
                void writeCachedBillingStatus(res.data);
                return res.data;
            }
-      } catch (e) {
-          console.error("Failed to fetch billing status", e);
-          const cached = await readCachedBillingStatus();
-          if (cached.data) {
-              applyBillingStatus(cached.data, { fromCache: true });
-              setCachedAt(cached.cachedAt);
-              return cached.data;
-          }
-      }
-      return null;
-  }, [applyBillingStatus, billingRequest, isOnline, readCachedBillingStatus, session?.access_token, user?.id, writeCachedBillingStatus]);
+       } catch (e) {
+           console.error("Failed to fetch billing status", e);
+           const cached = await readCachedBillingStatus();
+           if (cached.data) {
+               applyBillingStatus(cached.data, { fromCache: true });
+               setCachedAt(cached.cachedAt);
+               return cached.data;
+           }
+           if (accountSnapshot) {
+               applyAccountSnapshotSeed(accountSnapshot, {
+                   fromCache: isUsingCachedAccountSnapshot,
+                   cachedAt: accountSnapshotCachedAt,
+               });
+           }
+       }
+       return null;
+  }, [
+      accountSnapshot,
+      accountSnapshotCachedAt,
+      applyAccountSnapshotSeed,
+      applyBillingStatus,
+      billingRequest,
+      isOnline,
+      isUsingCachedAccountSnapshot,
+      readCachedBillingStatus,
+      session?.access_token,
+      user?.id,
+      writeCachedBillingStatus,
+  ]);
 
   const resolvePlanCardKey = useCallback((planType: 'weekly' | 'monthly'): SubscriptionCardKey => {
       return planType === 'weekly' ? 'pro_weekly' : 'pro_monthly';
@@ -625,6 +771,49 @@ export default function SubscriptionPage() {
   }, [fetchBillingStatus, isOnline, planSnapshot?.checksum, session?.access_token, startPolling]);
 
   // Initial Load & URL Check
+  useEffect(() => {
+      if (!accountSnapshot) return;
+      const snapshotIssuedAt =
+          (typeof accountSnapshot.planSnapshot?.issuedAt === 'string' && accountSnapshot.planSnapshot.issuedAt) ||
+          (typeof accountSnapshot.validatedAt === 'string' && accountSnapshot.validatedAt) ||
+          null;
+      const snapshotIsNewer =
+          Boolean(
+              snapshotIssuedAt &&
+              (
+                  !latestAppliedStatusIssuedAtRef.current ||
+                  new Date(snapshotIssuedAt).getTime() > new Date(latestAppliedStatusIssuedAtRef.current).getTime()
+              ),
+          );
+      const hasBillingStatusState = Boolean(
+          tier ||
+          planSnapshot?.checksum ||
+          subscription ||
+          payments.length > 0 ||
+          planCatalog.length > 0 ||
+          pricing.weekly.amount ||
+          pricing.monthly.amount,
+      );
+      if (hasBillingStatusState && !snapshotIsNewer) return;
+      applyAccountSnapshotSeed(accountSnapshot, {
+          fromCache: isUsingCachedAccountSnapshot,
+          cachedAt: accountSnapshotCachedAt,
+      });
+      setIsInitialLoading(false);
+  }, [
+      accountSnapshot,
+      accountSnapshotCachedAt,
+      applyAccountSnapshotSeed,
+      isUsingCachedAccountSnapshot,
+      payments.length,
+      planCatalog.length,
+      planSnapshot?.checksum,
+      pricing.monthly.amount,
+      pricing.weekly.amount,
+      subscription,
+      tier,
+  ]);
+
   useEffect(() => {
     if (!user) {
         setIsInitialLoading(false);
@@ -904,10 +1093,11 @@ export default function SubscriptionPage() {
 
     const planCode = resolveDisplayedPlanCode({
       snapshot: planSnapshot,
-      currentPlanManagedPlan: currentPlan.managedPlan,
+      currentPlanManagedPlan: tier ? currentPlan.managedPlan : null,
       tier,
       limitsUsagePlan: typeof limitsUsage.plan === 'string' ? limitsUsage.plan : null,
     });
+    if (!planCode) return null;
     const isFreePlan = planCode === 'free';
     const usageByLimit = limitsUsage.usageByLimit || {};
     const limitRules = limitsUsage.limitRules || {};
@@ -1064,6 +1254,14 @@ export default function SubscriptionPage() {
 
   // --- Payment States ---
   const isBootLoading = isUserLoading || isInitialLoading;
+  const hasAuthoritativeSubscriptionState = Boolean(
+      accountSnapshot ||
+      planSnapshot?.checksum ||
+      tier ||
+      subscription ||
+      payments.length > 0 ||
+      isUsingCachedData,
+  );
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(isBootLoading);
 
   if (isBootLoading && showSkeleton && paymentState === 'idle') {
@@ -1122,6 +1320,31 @@ export default function SubscriptionPage() {
               <p className="text-muted-foreground">No charge was made. You can try again anytime.</p>
               <div className="flex justify-center gap-4">
                   <Button onClick={() => setPaymentState('idle')}>Try Again</Button>
+              </div>
+          </div>
+      );
+  }
+
+  if (!isBootLoading && !hasAuthoritativeSubscriptionState) {
+      return (
+          <div className="container max-w-2xl py-20 text-center space-y-6">
+              <div className="flex justify-center">
+                  <div className="h-20 w-20 bg-muted text-muted-foreground rounded-full flex items-center justify-center">
+                      <Clock className="h-10 w-10" />
+                  </div>
+              </div>
+              <h2 className="text-2xl font-bold">
+                  {isOnline ? 'Syncing your subscription...' : 'Subscription snapshot unavailable offline'}
+              </h2>
+              <p className="text-muted-foreground">
+                  {isOnline
+                      ? 'We are still validating your current plan with the server.'
+                      : 'Reconnect once to refresh your subscription snapshot on this device.'}
+              </p>
+              <div className="flex justify-center gap-4">
+                  <Button onClick={() => void fetchBillingStatus()} disabled={!isOnline}>
+                      Retry sync
+                  </Button>
               </div>
           </div>
       );

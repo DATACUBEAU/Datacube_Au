@@ -19,7 +19,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 import { UploadCloud, X, RefreshCw, CheckCircle2, AlertTriangle, Loader2, Info } from 'lucide-react';
-import { TruncatedText } from '@/components/TruncatedText';
+import { FileNameText } from '@/components/FileNameText';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useStore } from '@/hooks/use-store';
@@ -91,6 +91,10 @@ export default function UploadCenter() {
   const [reattachJobId, setReattachJobId] = useState<string | null>(null);
   const [pendingUploadSizeMb, setPendingUploadSizeMb] = useState<number | null>(null);
   const supportsUploads = Boolean(session?.access_token) && Boolean(user) && isOnline && !upgradeBlocked;
+  const selectedParentName = useMemo(
+    () => parents.find((parent) => parent.id === parentId)?.file_name ?? null,
+    [parentId, parents],
+  );
 
   const loadParents = useCallback(async () => {
     if (!user) return;
@@ -462,7 +466,7 @@ export default function UploadCenter() {
               }}
               disabled={!needsParent || parentsLoading}
             >
-              <SelectTrigger>
+              <SelectTrigger className="w-full min-w-0" title={selectedParentName || undefined}>
                 <SelectValue placeholder={!needsParent ? 'Not required' : parentsLoading ? 'Loading…' : 'Select textbook'} />
               </SelectTrigger>
               <SelectContent>
@@ -471,11 +475,7 @@ export default function UploadCenter() {
                 ) : (
                   parents.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
-                      <TruncatedText
-                        text={p.file_name}
-                        preserveExtension
-                        maxWidthClass="max-w-full"
-                      />
+                      <FileNameText text={p.file_name} />
                     </SelectItem>
                   ))
                 )}
@@ -528,15 +528,13 @@ export default function UploadCenter() {
                 <div key={job.id} className="rounded-lg border p-3 transition-all hover:bg-muted/30 hover:shadow-sm group">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         <div className="transition-transform group-hover:scale-110">
                           {icon}
                         </div>
-                        <TruncatedText
+                        <FileNameText
                           text={job.file_name}
-                          preserveExtension
                           className="font-medium group-hover:text-primary transition-colors"
-                          maxWidthClass="max-w-full"
                         />
                         <Badge variant={badge.variant} className="shrink-0">{badge.text}</Badge>
                         {job.label ? <Badge variant="outline" className="shrink-0">{job.label}</Badge> : null}

@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { getProEntitlementStatus } from '@/lib/server/entitlements';
+import { resolveCanonicalEffectiveLimits } from '@/lib/server/au-limits';
 import {
   TIER_TUNING_POLICY,
   featureUpgradeHref,
@@ -339,57 +339,20 @@ export async function resolveUserTierContext(
   supabase: SupabaseClient,
   userId: string
 ): Promise<TierContext> {
-  let entitlement: {
-    hasPro: boolean;
-    source: 'paid' | 'promo' | 'none';
-    endsAt: string | null;
-  } = {
-    hasPro: false,
-    source: 'none',
-    endsAt: null as string | null,
-  };
-
-  try {
-    const resolved = await getProEntitlementStatus(supabase, userId);
-    entitlement = {
-      hasPro: resolved.hasPro,
-      source: resolved.source,
-      endsAt: resolved.endsAt,
-    };
-  } catch (error: any) {
-    const code = String(error?.code || '').trim();
-    const message = String(error?.message || '').toLowerCase();
-    const schemaDrift =
-      code === '42P01' ||
-      code === '42703' ||
-      (message.includes('relation') && message.includes('does not exist')) ||
-      (message.includes('column') && message.includes('does not exist'));
-    if (!schemaDrift) throw error;
-  }
-
-  let tier: TierId = 'FREE';
-  if (entitlement.hasPro) {
-    tier = entitlement.source === 'promo' ? 'PROMO_PRO' : 'PRO';
-  }
-
-  if (!entitlement.hasPro) {
-    const { data } = await supabase
-      .from('au_user_profiles')
-      .select('tier')
-      .eq('user_id', userId)
-      .maybeSingle();
-    const profileTier = String((data as any)?.tier || '').toLowerCase();
-    if (profileTier === 'admin' || profileTier === 'pro' || profileTier === 'premium' || profileTier === 'weekly' || profileTier === 'monthly') {
-      tier = 'PRO';
-    }
-  }
+  const resolved = await resolveCanonicalEffectiveLimits({
+    supabase,
+    userId,
+  });
+  const tier: TierId = resolved.effectivePlan.hasPro
+    ? (resolved.effectivePlan.entitlementSource === 'promo' ? 'PROMO_PRO' : 'PRO')
+    : 'FREE';
 
   return {
     tier,
     runtimeTier: toTierRuntime(tier),
     planForRouting: isProLikeTier(tier) ? 'pro' : 'free',
-    entitlementSource: entitlement.source,
-    expiresAt: entitlement.endsAt,
+    entitlementSource: resolved.effectivePlan.entitlementSource,
+    expiresAt: resolved.effectivePlan.expiresAt,
   };
 }
 

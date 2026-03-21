@@ -1,5 +1,6 @@
 'use client';
 
+import { splitFileName } from '@/lib/ui/filename-display';
 import { cn } from '@/lib/utils';
 
 type TruncatedTextProps = {
@@ -12,19 +13,6 @@ type TruncatedTextProps = {
   maxWidthClass?: string;
   preserveExtension?: boolean;
 };
-
-function splitFileName(text: string): { stem: string; extension: string | null } {
-  const trimmed = String(text || '');
-  const lastDotIndex = trimmed.lastIndexOf('.');
-  if (lastDotIndex <= 0 || lastDotIndex === trimmed.length - 1) {
-    return { stem: trimmed, extension: null };
-  }
-
-  return {
-    stem: trimmed.slice(0, lastDotIndex),
-    extension: trimmed.slice(lastDotIndex),
-  };
-}
 
 export function TruncatedText({
   text,

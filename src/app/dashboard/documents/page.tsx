@@ -6,7 +6,7 @@ import { useSupabaseUser } from "@/hooks/use-supabase-auth";
 import { useAuDocuments } from "@/hooks/api/use-au-documents";
 import UploadCenter from "@/components/upload/upload-center";
 import { useUploadJobs } from "@/components/upload/upload-jobs-provider";
-import { TruncatedText } from "@/components/TruncatedText";
+import { FileNameText } from "@/components/FileNameText";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -332,25 +332,23 @@ export default function DocumentsPage() {
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <TruncatedText
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <FileNameText
                   text={doc.fileName}
-                  preserveExtension
-                  maxWidthClass="max-w-full"
-                  className={`min-w-0 flex-1 font-medium transition-colors ${isDeleting ? "text-muted-foreground" : "group-hover:text-primary"}`}
+                  className={`font-medium transition-colors ${isDeleting ? "text-muted-foreground" : "group-hover:text-primary"}`}
                 />
                 {isDeleting ? (
-                  <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-destructive/10 border border-destructive/20">
+                  <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-0.5">
                     <Loader2 className="h-3 w-3 animate-spin text-destructive" aria-hidden="true" />
                     <span className="text-[10px] text-destructive font-bold uppercase tracking-tighter">Deleting</span>
                   </div>
                 ) : (
                   <>
                     {(doc.status === "uploading" || doc.status === "processing") && (
-                      <Loader2 className="h-3 w-3 animate-spin text-primary" aria-hidden="true" />
+                      <Loader2 className="h-3 w-3 shrink-0 animate-spin text-primary" aria-hidden="true" />
                     )}
                     {doc.status === "failed" && (
-                      <Badge variant="destructive" className="text-[10px] px-1 h-4">Failed</Badge>
+                      <Badge variant="destructive" className="h-4 shrink-0 px-1 text-[10px]">Failed</Badge>
                     )}
                   </>
                 )}

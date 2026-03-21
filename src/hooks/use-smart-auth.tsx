@@ -41,40 +41,65 @@ interface SmartAuthContextType {
 const SmartAuthContext = createContext<SmartAuthContextType | undefined>(undefined);
 const SESSION_EXPIRY_SKEW_MS = 5_000;
 
+function sessionToBootstrapUser(nextSession: Session | null): SmartUser | null {
+  if (!nextSession?.user) return null;
+  return {
+    id: nextSession.user.id,
+    email: nextSession.user.email,
+    full_name: nextSession.user.user_metadata?.full_name || nextSession.user.user_metadata?.name,
+    avatar_url: nextSession.user.user_metadata?.avatar_url,
+    provider: 'supabase',
+  };
+}
+
+function normalizeBootstrapSession(candidate: Session | null): Session | null {
+  if (!candidate?.user?.id || !candidate?.access_token) return null;
+  const expiresAt = typeof candidate.expires_at === 'number' ? candidate.expires_at : null;
+  if (expiresAt !== null && expiresAt * 1000 <= Date.now() + SESSION_EXPIRY_SKEW_MS) {
+    return null;
+  }
+  return candidate;
+}
+
+function signatureFromBootstrapSession(nextSession: Session | null): string | null {
+  if (!nextSession?.user?.id || !nextSession?.access_token) return null;
+  const tokenTail = nextSession.access_token.slice(-12);
+  const expires = typeof nextSession.expires_at === 'number' ? nextSession.expires_at : 0;
+  return `${nextSession.user.id}:${tokenTail}:${expires}`;
+}
+
 export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<SmartUser | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
-  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
-  const [isOfflineSession, setIsOfflineSession] = useState(false);
+  const bootstrapSession = useMemo(
+    () =>
+      normalizeBootstrapSession(
+        typeof window !== 'undefined' ? readPersistedSupabaseSession() : null,
+      ),
+    [],
+  );
+  const [user, setUser] = useState<SmartUser | null>(() => sessionToBootstrapUser(bootstrapSession));
+  const [session, setSession] = useState<Session | null>(() => bootstrapSession);
+  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>(
+    () => (bootstrapSession?.user ? 'authenticated' : 'loading'),
+  );
+  const [isOfflineSession, setIsOfflineSession] = useState(
+    () => Boolean(bootstrapSession?.user && typeof window !== 'undefined' && window.navigator.onLine === false),
+  );
   const [runtimeAuthState, setRuntimeAuthState] = useState<AuthRuntimeState>('AUTHENTICATED');
-  const sessionSignatureRef = useRef<string | null>(null);
-  const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const sessionSignatureRef = useRef<string | null>(signatureFromBootstrapSession(bootstrapSession));
+  const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>(
+    bootstrapSession?.user ? 'authenticated' : 'loading',
+  );
 
   const sessionToUser = useCallback((nextSession: Session | null): SmartUser | null => {
-    if (!nextSession?.user) return null;
-    return {
-      id: nextSession.user.id,
-      email: nextSession.user.email,
-      full_name: nextSession.user.user_metadata?.full_name || nextSession.user.user_metadata?.name,
-      avatar_url: nextSession.user.user_metadata?.avatar_url,
-      provider: 'supabase',
-    };
+    return sessionToBootstrapUser(nextSession);
   }, []);
 
   const signatureFromSession = useCallback((nextSession: Session | null) => {
-    if (!nextSession?.user?.id || !nextSession?.access_token) return null;
-    const tokenTail = nextSession.access_token.slice(-12);
-    const expires = typeof nextSession.expires_at === 'number' ? nextSession.expires_at : 0;
-    return `${nextSession.user.id}:${tokenTail}:${expires}`;
+    return signatureFromBootstrapSession(nextSession);
   }, []);
 
   const normalizeSession = useCallback((candidate: Session | null): Session | null => {
-    if (!candidate?.user?.id || !candidate?.access_token) return null;
-    const expiresAt = typeof candidate.expires_at === 'number' ? candidate.expires_at : null;
-    if (expiresAt !== null && expiresAt * 1000 <= Date.now() + SESSION_EXPIRY_SKEW_MS) {
-      return null;
-    }
-    return candidate;
+    return normalizeBootstrapSession(candidate);
   }, []);
 
   const applySessionState = useCallback(

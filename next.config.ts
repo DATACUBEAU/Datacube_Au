@@ -112,12 +112,8 @@ const withPWA = withPWAInit({
           (() => {
             const match = url.pathname.match(/^\/_next\/data\/[^/]+(\/.+)\.json$/i);
             const routePath = match?.[1] || '';
-            const protectedPath =
-              routePath === '/dashboard' ||
-              routePath.startsWith('/dashboard/') ||
-              routePath === '/conex' ||
-              routePath.startsWith('/conex/');
-            return !protectedPath;
+            const adminPath = routePath === '/conex' || routePath.startsWith('/conex/');
+            return !adminPath;
           })(),
         handler: 'StaleWhileRevalidate',
         options: {
@@ -129,19 +125,14 @@ const withPWA = withPWAInit({
         },
       },
       {
-        // App Router prefetch payloads should fail over to cache quickly when offline.
+        // Cache dashboard route payload shells so previously visited pages can reopen offline.
         urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
           request.method === 'GET' &&
           request.headers.get('RSC') === '1' &&
           request.headers.get('Next-Router-Prefetch') === '1' &&
           sameOrigin &&
           !pathname.startsWith('/api/') &&
-          !(
-            pathname === '/dashboard' ||
-            pathname.startsWith('/dashboard/') ||
-            pathname === '/conex' ||
-            pathname.startsWith('/conex/')
-          ),
+          !(pathname === '/conex' || pathname.startsWith('/conex/')),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages-rsc-prefetch',
@@ -159,12 +150,7 @@ const withPWA = withPWAInit({
           request.headers.get('RSC') === '1' &&
           sameOrigin &&
           !pathname.startsWith('/api/') &&
-          !(
-            pathname === '/dashboard' ||
-            pathname.startsWith('/dashboard/') ||
-            pathname === '/conex' ||
-            pathname.startsWith('/conex/')
-          ),
+          !(pathname === '/conex' || pathname.startsWith('/conex/')),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages-rsc',
@@ -182,12 +168,7 @@ const withPWA = withPWAInit({
           request.mode === 'navigate' &&
           sameOrigin &&
           !pathname.startsWith('/api/') &&
-          !(
-            pathname === '/dashboard' ||
-            pathname.startsWith('/dashboard/') ||
-            pathname === '/conex' ||
-            pathname.startsWith('/conex/')
-          ),
+          !(pathname === '/conex' || pathname.startsWith('/conex/')),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages',

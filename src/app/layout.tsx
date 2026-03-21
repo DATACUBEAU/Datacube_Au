@@ -7,6 +7,7 @@ import { GlobalListeners } from '@/components/global-listeners';
 import { SmartAuthProvider } from '@/hooks/use-smart-auth';
 import { NetworkStatusProvider } from '@/components/providers/network-status-provider';
 import { FeatureFlagProvider } from '@/components/feature-flag-provider';
+import { AccountSnapshotProvider } from '@/components/providers/account-snapshot-provider';
 import { LimitsProvider } from '@/components/providers/limits-provider';
 import { AuthLockOverlay } from '@/components/auth-lock-overlay';
 import { SessionDebugPanel } from '@/components/session-debug-panel';
@@ -75,21 +76,23 @@ export default function RootLayout({
         >
           <NetworkStatusProvider>
             <SmartAuthProvider>
-              <FeatureFlagProvider>
-                <LimitsProvider>
-                  <div className="relative isolate" id="app-shell">
-                    <BackgroundController />
-                    <div className="relative z-10">
-                      <UploadJobsProvider>{children}</UploadJobsProvider>
-                      <GlobalListeners />
-                      <AuthLockOverlay />
-                      <SessionDebugPanel />
-                      <ServiceWorkerUpdater />
-                      <Toaster />
+              <AccountSnapshotProvider>
+                <FeatureFlagProvider>
+                  <LimitsProvider>
+                    <div className="relative isolate" id="app-shell">
+                      <BackgroundController />
+                      <div className="relative z-10">
+                        <UploadJobsProvider>{children}</UploadJobsProvider>
+                        <GlobalListeners />
+                        <AuthLockOverlay />
+                        <SessionDebugPanel />
+                        <ServiceWorkerUpdater />
+                        <Toaster />
+                      </div>
                     </div>
-                  </div>
-                </LimitsProvider>
-              </FeatureFlagProvider>
+                  </LimitsProvider>
+                </FeatureFlagProvider>
+              </AccountSnapshotProvider>
             </SmartAuthProvider>
           </NetworkStatusProvider>
         </ThemeProvider>

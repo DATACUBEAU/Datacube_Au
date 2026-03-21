@@ -337,31 +337,38 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const userEmail = user?.email || '';
   const userInitial =
     userDisplayName?.charAt(0).toUpperCase() || userEmail?.charAt(0).toUpperCase() || 'G';
+  const hasResolvedPlanState = useMemo(
+    () => Boolean(entitlements.asOf || isUsingCachedEntitlements || !isPlanStatusLoading),
+    [entitlements.asOf, isPlanStatusLoading, isUsingCachedEntitlements],
+  );
 
   const planStatusLabel = useMemo(() => {
+    if (!hasResolvedPlanState) return 'Syncing...';
     if (entitlements.plan === 'admin') return 'Admin';
     if (entitlements.plan === 'premium') return 'Premium';
     if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo Pro';
     if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) return 'Pro';
     return 'Free';
-  }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive]);
+  }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive, hasResolvedPlanState]);
 
   const planStatusBadge = useMemo(() => {
+    if (!hasResolvedPlanState) return 'Syncing';
     if (entitlements.plan === 'admin') return 'Admin';
     if (entitlements.plan === 'premium') return 'Premium';
     if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo';
     if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) return 'Active';
     return 'Free';
-  }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive]);
+  }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive, hasResolvedPlanState]);
 
   const isProUnlocked = useMemo(() => {
+    if (!hasResolvedPlanState) return true;
     return (
       entitlements.plan === 'admin' ||
       entitlements.entitlementSource === 'paid' ||
       entitlements.entitlementSource === 'promo' ||
       entitlements.promoActive
     );
-  }, [entitlements.entitlementSource, entitlements.plan, entitlements.promoActive]);
+  }, [entitlements.entitlementSource, entitlements.plan, entitlements.promoActive, hasResolvedPlanState]);
 
   const globalChatAccess = useMemo(
     () => getDashboardFeatureAccess('global_chat', entitlements, featureFlagRecords),
@@ -381,6 +388,9 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   );
 
   const planStatusMeta = useMemo(() => {
+    if (!hasResolvedPlanState) {
+      return 'Restoring your last validated subscription state...';
+    }
     if (entitlements.promoActive || entitlements.entitlementSource === 'promo') {
       if (entitlements.promoEndsAtLagos) {
         const promoEnd = new Date(entitlements.promoEndsAtLagos);
@@ -427,6 +437,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     entitlements.promoActive,
     entitlements.promoEndsAtLagos,
     entitlementsCachedAt,
+    hasResolvedPlanState,
     isOnline,
     isUsingCachedEntitlements,
   ]);

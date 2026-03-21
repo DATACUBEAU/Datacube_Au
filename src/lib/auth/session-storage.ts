@@ -1,4 +1,5 @@
 import type { Session } from '@supabase/supabase-js';
+import { clearPersistedAccountSnapshotSync } from '@/lib/account/account-snapshot-cache';
 import { clearUserCache } from '@/lib/cache/user-cache';
 import { clearUserLocalWorkingMemory } from '@/lib/memory/working-memory';
 
@@ -92,6 +93,7 @@ export function readPersistedSupabaseSession(): Session | null {
 
 export async function clearUserScopedClientCaches(userId: string | null | undefined): Promise<void> {
   if (!userId) return;
+  clearPersistedAccountSnapshotSync(userId);
   await Promise.allSettled([
     clearUserCache(userId),
     clearUserLocalWorkingMemory(userId),

@@ -32,7 +32,7 @@ import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { getAuDocumentChunksText } from '@/lib/au/documents';
-import { TruncatedText } from '@/components/TruncatedText';
+import { FileNameText } from '@/components/FileNameText';
 import { Badge } from '@/components/ui/badge';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
@@ -632,7 +632,7 @@ function KnowledgePageContent() {
   return (
     <>
       <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10">
             <BrainCircuit className="h-6 w-6 text-primary" aria-hidden="true" />
@@ -643,23 +643,27 @@ function KnowledgePageContent() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto">
+        <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto">
           {docsLoading ? (
              <div className="flex items-center gap-2 text-sm text-muted-foreground">
                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                Loading documents...
              </div>
           ) : (
-            <div className="flex flex-col gap-1 w-full sm:w-auto">
+            <div className="flex min-w-0 w-full flex-col gap-1 sm:w-auto">
               <Select value={selectedDocId || undefined} onValueChange={handleDocSelectionChange}>
-                <SelectTrigger className="w-full sm:w-[250px]" aria-label="Select document">
+                <SelectTrigger
+                  className="w-full min-w-0 sm:w-[250px]"
+                  aria-label="Select document"
+                  title={selectedDoc?.file_name || undefined}
+                >
                   <SelectValue placeholder="Select a textbook" />
                 </SelectTrigger>
                 <SelectContent>
                   {documents.map((doc) => (
                     <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
                       <div className="flex min-w-0 items-center gap-2">
-                        <TruncatedText text={doc.file_name} preserveExtension maxWidthClass="max-w-full" />
+                        <FileNameText text={doc.file_name} />
                         {doc.status !== 'completed' && (
                           <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                             {doc.status}...
@@ -672,7 +676,7 @@ function KnowledgePageContent() {
               </Select>
 
               {selectedDocId && selectedDocExpiresAt && (
-                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
                   <span className="uppercase tracking-wider font-bold">main textbook</span>
                   <span>•</span>
                   <span>{attachedFileCount} {attachedFileCount === 1 ? 'file' : 'files'}</span>

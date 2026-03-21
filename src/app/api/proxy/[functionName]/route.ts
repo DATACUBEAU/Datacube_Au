@@ -64,6 +64,7 @@ import {
 } from '@/lib/server/usage-tracking';
 import { USAGE_TRACKING_HEADER } from '@shared/usage-metrics';
 import { buildApiErrorBody, buildApiSuccessBody, extractApiError, normalizeApiErrorCode } from '@/lib/api/api-contract';
+import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
 
 export const runtime = 'nodejs';
 export const maxDuration = 180;
@@ -382,6 +383,16 @@ function structuredChatMessage(input: {
 
   if (status === 401 || code === 'UNAUTHORIZED' || code === 'AUTHENTICATION_FAILED') {
     return 'Authentication failed.';
+  }
+
+  if (
+    status === 403 ||
+    code === 'FORBIDDEN' ||
+    code === 'PERMISSION_DENIED' ||
+    code === 'ACCESS_DENIED' ||
+    code === 'TIER_ACCESS_DENIED'
+  ) {
+    return fallback || 'Forbidden.';
   }
 
   if (status === 400 || code === 'INVALID_REQUEST_PAYLOAD' || code === 'IDEMPOTENCY_KEY_REQUIRED') {
@@ -2148,6 +2159,43 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       }).catch(() => {});
       featureOutputReservation = null;
     }
+
+    const authFailure = classifyAuthFailure(error);
+    if (authFailure) {
+      console.warn('[proxy] auth failure surfaced via catch', {
+        requestId,
+        correlationId,
+        functionName,
+        method: requestMethod,
+        path: requestPath,
+        status: authFailure.status,
+        code: authFailure.code,
+        reason: authFailure.reason,
+        originalCode: authFailure.originalCode,
+        message: String(error?.message || ''),
+        elapsedMs: Date.now() - startedAt,
+      });
+      return NextResponse.json(
+        usesStructuredChatContract
+          ? chatErrorPayload({
+              status: authFailure.status,
+              code: authFailure.code,
+              message: authFailure.message,
+              details: { reason: authFailure.reason },
+              retryable: false,
+            })
+          : {
+              message: authFailure.status === 401 ? 'unauthorized' : 'forbidden',
+              error: authFailure.status === 401 ? 'unauthorized' : 'forbidden',
+              status: authFailure.status,
+              requestId,
+              correlation_id: correlationId,
+              details: { reason: authFailure.reason },
+            },
+        { status: authFailure.status, headers: corsHeaders(requestId) },
+      );
+    }
+
     if (error instanceof EffectiveLimitError) {
       return NextResponse.json(usesStructuredChatContract
         ? chatErrorPayload({

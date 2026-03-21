@@ -29,7 +29,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { useMemo } from 'react';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { TruncatedText } from '@/components/TruncatedText';
+import { FileNameText } from '@/components/FileNameText';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useUploadJobs } from '@/components/upload/upload-jobs-provider';
@@ -178,16 +178,16 @@ export default function DashboardPage() {
     switch (status) {
       case 'completed':
         return (
-          <Badge className="bg-green-600 hover:bg-green-700">Completed</Badge>
+          <Badge className="shrink-0 bg-green-600 hover:bg-green-700">Completed</Badge>
         );
       case 'processing':
-        return <Badge variant="secondary">Processing</Badge>;
+        return <Badge variant="secondary" className="shrink-0">Processing</Badge>;
       case 'failed':
-        return <Badge variant="destructive">Error</Badge>;
+        return <Badge variant="destructive" className="shrink-0">Error</Badge>;
       case 'uploading':
-        return <Badge variant="outline">Uploading</Badge>;
+        return <Badge variant="outline" className="shrink-0">Uploading</Badge>;
       default:
-        return <Badge variant="outline">{status}</Badge>;
+        return <Badge variant="outline" className="shrink-0">{status}</Badge>;
     }
   }
 
@@ -261,49 +261,71 @@ export default function DashboardPage() {
             </Link>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>File Name</TableHead>
-                  <TableHead className="hidden md:table-cell">Date</TableHead>
-                  <TableHead className="text-right">Status</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {documentsLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={3} className="h-24 text-center">
-                      <div className="inline-flex items-center gap-2">
-                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                        Loading...
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ) : recentDocuments.length > 0 ? (
-                  recentDocuments.map((doc) => (
-                    <TableRow key={doc.id} className="group cursor-default">
-                      <TableCell className="font-medium">
-                        <div className="flex items-center gap-2">
-                          <FileTextIcon className="h-4 w-4 text-primary opacity-70 group-hover:opacity-100 transition-opacity" />
-                          <TruncatedText
-                            text={doc.file_name}
-                            preserveExtension
-                            className="group-hover:text-primary transition-colors"
-                            maxWidthClass="max-w-full"
-                          />
+            {documentsLoading ? (
+              <div className="flex h-24 items-center justify-center">
+                <div className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  Loading...
+                </div>
+              </div>
+            ) : recentDocuments.length > 0 ? (
+              <>
+                <div className="space-y-3 md:hidden">
+                  {recentDocuments.map((doc) => {
+                    const statusBadge = statusToBadge(doc.status);
+                    return (
+                      <div key={doc.id} className="rounded-xl border border-border/70 bg-muted/20 p-4">
+                        <div className="flex min-w-0 items-start gap-3">
+                          <FileTextIcon className="mt-0.5 h-4 w-4 shrink-0 text-primary opacity-80" aria-hidden="true" />
+                          <div className="min-w-0 flex-1 space-y-2">
+                            <FileNameText text={doc.file_name} className="font-medium text-foreground" />
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                              <span className="whitespace-nowrap">
+                                {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'N/A'}
+                              </span>
+                              {statusBadge}
+                            </div>
+                          </div>
                         </div>
-                      </TableCell>
-                      <TableCell className="hidden md:table-cell text-muted-foreground group-hover:text-foreground transition-colors">
-                        {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'N/A'}
-                      </TableCell>
-                      <TableCell className="text-right">{statusToBadge(doc.status)}</TableCell>
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow><TableCell colSpan={3} className="h-24 text-center">No recent documents.</TableCell></TableRow>
-                )}
-              </TableBody>
-            </Table>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="hidden md:block">
+                  <Table className="table-fixed">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-full min-w-0">File Name</TableHead>
+                        <TableHead className="w-[120px] whitespace-nowrap">Date</TableHead>
+                        <TableHead className="w-[108px] whitespace-nowrap text-right">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {recentDocuments.map((doc) => (
+                        <TableRow key={doc.id} className="group cursor-default">
+                          <TableCell className="min-w-0 font-medium">
+                            <div className="flex min-w-0 items-center gap-2">
+                              <FileTextIcon className="h-4 w-4 shrink-0 text-primary opacity-70 transition-opacity group-hover:opacity-100" />
+                              <FileNameText
+                                text={doc.file_name}
+                                className="group-hover:text-primary transition-colors"
+                              />
+                            </div>
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-muted-foreground transition-colors group-hover:text-foreground">
+                            {doc.created_at ? new Date(doc.created_at).toLocaleDateString() : 'N/A'}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-right">{statusToBadge(doc.status)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            ) : (
+              <div className="flex h-24 items-center justify-center text-center">No recent documents.</div>
+            )}
           </CardContent>
         </Card>
       </div>

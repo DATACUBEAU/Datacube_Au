@@ -17,7 +17,6 @@ import {
   assertBillingGatewayCapability,
   getBillingGatewayCapability,
 } from '@/lib/server/billing-config';
-import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
 import { firstEnv } from '@/lib/server/env';
 import type { PaymentGatewayId, PaymentVerifyResult } from '@/lib/payments/payment-gateway';
 import {
@@ -43,6 +42,12 @@ import {
   enablePaystackSubscription,
 } from '@/lib/server/paystack';
 import { loadPublicPlanCatalog } from '@/lib/server/au-limits';
+import {
+  buildCanonicalSubscriptionState,
+  resolveCanonicalAccountPlanAuthority,
+  serializeCanonicalPlanSummary,
+} from '@/lib/server/account-plan-authority';
+import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
 import { applyPlanTransition } from '@/lib/server/plan-sync';
 
 export type BillingInterval = 'weekly' | 'monthly';
@@ -1295,7 +1300,11 @@ export async function getBillingStatus(
 ): Promise<Record<string, unknown>> {
   await ensurePlanCatalog(supabase);
 
-  const effectiveEntitlements = await getEffectiveEntitlementsSnapshot(supabase, userId);
+  const authority = await resolveCanonicalAccountPlanAuthority({
+    supabase,
+    userId,
+  });
+  const effectiveEntitlements = authority.entitlements;
   const { data: profileRow } = await supabase
     .from('au_user_profiles')
     .select('tier')
@@ -1307,9 +1316,9 @@ export async function getBillingStatus(
   if (currentTier !== 'admin' && effectiveEntitlements.plan !== 'admin') {
     await applyPlanTransition(supabase, {
       userId,
-      targetPlan: effectiveEntitlements.plan === 'premium' ? 'premium' : (effectiveEntitlements.hasPro ? 'pro' : 'free'),
-      entitlementSource: effectiveEntitlements.entitlementSource,
-      entitlementEndsAt: effectiveEntitlements.entitlementEndsAt,
+      targetPlan: authority.effectivePlan.plan,
+      entitlementSource: authority.effectivePlan.entitlementSource,
+      entitlementEndsAt: authority.effectivePlan.expiresAt,
       transitionKind: 'sync',
       source: 'billing_status',
       reason: 'status_sync',
@@ -1384,14 +1393,12 @@ export async function getBillingStatus(
     }
   }
 
-  const currentPlan = deriveNormalizedSubscriptionState({
-    effectivePlan: effectiveEntitlements.plan,
-    entitlementSource: effectiveEntitlements.entitlementSource,
-    promoActive: effectiveEntitlements.promoActive,
+  const currentPlan = buildCanonicalSubscriptionState({
+    authority,
+    profileTier: profileTierRaw ?? currentTier,
     subscriptionPlanKey: currentSubscription?.plan_key,
     subscriptionStatus: currentSubscription?.status,
     latestPaymentPlanKey: resolveLatestTransactionPlanKey(txs || []),
-    legacyTier: profileTierRaw ?? currentTier,
   });
   const gateway = resolvePaymentGateway();
   const checkout = buildCheckoutCapability({
@@ -1409,11 +1416,17 @@ export async function getBillingStatus(
     plan_key: normalizePlanKey((row.metadata || {}).plan_key) || null,
     plan: String((row.metadata || {}).plan_key || '').replace('pro_', '') || 'pro',
   }));
+  const account = serializeCanonicalPlanSummary({
+    authority,
+    currentPlan,
+  });
 
   return {
     billingEnabled: effectiveEntitlements.billingEnabled,
+    promoEnabled: effectiveEntitlements.promoEnabled,
     canAccessBilling: effectiveEntitlements.canAccessBilling,
     tier: currentPlan.managedPlan,
+    effectivePlan: authority.effectivePlan.plan,
     entitlementPlan: effectiveEntitlements.plan,
     entitlementSource: effectiveEntitlements.entitlementSource,
     tier_expires_at: effectiveEntitlements.entitlementEndsAt,
@@ -1428,6 +1441,9 @@ export async function getBillingStatus(
     planCatalog,
     subscription: currentSubscription,
     payments,
+    account,
+    accountSource: authority.effectivePlan.source,
+    validatedAt: authority.validatedAt,
   };
 }
 

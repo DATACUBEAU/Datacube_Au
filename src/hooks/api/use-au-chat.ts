@@ -16,6 +16,7 @@ import { logEvent } from '@/lib/analytics';
 import { guardRequest } from '@/lib/api/request-guard';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
 import { mergeDocumentContext, normalizeDocumentContext, type ChatDocumentContext } from '@shared/document-chat-context';
 import {
   formatAssistantResponseText,
@@ -112,7 +113,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
   const setAuThinkingSteps = useStore(state => state.setAuThinkingSteps);
   const updateAuThinkingStep = useStore(state => state.updateAuThinkingStep);
   const { isOnline } = useNetworkStatus();
-  const { isAuthLocked } = useSmartAuth();
+  const { isAuthLocked, isLoading: isAuthLoading } = useSmartAuth();
   
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [isResponding, setIsResponding] = useState(false);
@@ -340,6 +341,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     }
   ) => {
     if (!selectedDocId || !user) return;
+    if (isAuthLoading) return;
     if (isAuthLocked) return;
     const normalizedPrompt = String(content || '').trim().toLowerCase();
     const promptHash = `${selectedDocId}:${normalizedPrompt}`;
@@ -634,6 +636,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
         return;
       }
       const normalizedError = toApiRequestError(err, 'Unexpected chat error');
+      const authFailure = classifyAuthFailure(normalizedError);
       const msg = normalizedError.message;
       const status = normalizedError.status;
       const aiUnavailable =
@@ -672,7 +675,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           ) as any,
         });
       }
-      if (msg.includes('401') || msg.toLowerCase().includes('unauthorized')) {
+      if (authFailure?.status === 401) {
         logOnce('warn', 'chat:send:unauthorized', '[useAuChat] Message unauthorized', {
           status,
           code: normalizedError.code,
@@ -683,6 +686,13 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           status: 401,
           source: 'useAuChat.sendMessage',
           reason: 'chat_unauthorized',
+        });
+      } else if (authFailure?.status === 403) {
+        logOnce('warn', 'chat:send:forbidden', '[useAuChat] Message forbidden', {
+          status,
+          code: normalizedError.code,
+          message: normalizedError.message,
+          requestId: normalizedError.requestId,
         });
       } else {
         console.error(
@@ -738,6 +748,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     config.documentCountInScope,
     config.lastUploadedDocumentId,
     ensureAccessToken,
+    isAuthLoading,
     isAuthLocked,
     isOnline,
     selectedDocId,

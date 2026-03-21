@@ -26,6 +26,7 @@ type ReadOptions = {
 type WriteOptions<T> = ReadOptions & {
   data: T;
   ttlMs?: number | null;
+  mirrorToLocalStorage?: boolean;
 };
 
 const CACHE_PREFIX = 'dcau:cache:v1';
@@ -271,6 +272,32 @@ export async function readUserCache<T = unknown>(
   return { data: null, cachedAt: null };
 }
 
+export function readUserCacheSync<T = unknown>(
+  opts: ReadOptions,
+): { data: T | null; cachedAt: number | null } {
+  const { key, schemaVersion } = buildUserCacheKey({
+    userId: opts.userId,
+    route: opts.route,
+    source: opts.source,
+    endpoint: opts.endpoint,
+    query: opts.query,
+    schemaVersion: opts.schemaVersion,
+  });
+
+  const validation = {
+    userId: opts.userId,
+    schemaVersion,
+    maxAgeMs: opts.maxAgeMs,
+  };
+
+  const local = localGet<T>(key);
+  if (isRecordValid(local, validation)) {
+    return { data: local.data, cachedAt: local.cached_at };
+  }
+
+  return { data: null, cachedAt: null };
+}
+
 export async function writeUserCache<T>(opts: WriteOptions<T>): Promise<void> {
   const { key, queryKey, schemaVersion, route } = buildUserCacheKey({
     userId: opts.userId,
@@ -297,6 +324,9 @@ export async function writeUserCache<T>(opts: WriteOptions<T>): Promise<void> {
   if (canUseIndexedDb()) {
     try {
       await idbSet(record);
+      if (opts.mirrorToLocalStorage) {
+        localSet(record);
+      }
       return;
     } catch {
       // Fallback to localStorage below.
@@ -318,4 +348,3 @@ export async function clearUserCache(userId: string): Promise<number> {
   removed += localDeleteByUser(userId);
   return removed;
 }
-

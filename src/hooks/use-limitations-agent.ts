@@ -87,7 +87,7 @@ export function useLimitationsAgent(context: AgentContext): UseLimitationsAgentR
       serverLimitError,
     });
 
-    const isFree = String(usage.plan || 'free').toLowerCase() === 'free';
+    const isFree = String(usage.plan || '').toLowerCase() === 'free';
     const visible = raw
       .filter((alert) => !dismissedIds.has(alert.id))
       .map((alert) => (isFree ? alert : toInformational(alert)));

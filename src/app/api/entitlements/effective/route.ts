@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
-import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
+import {
+  resolveCanonicalAccountPlanAuthority,
+  serializeCanonicalPlanSummary,
+} from '@/lib/server/account-plan-authority';
 
 export const runtime = 'nodejs';
 
@@ -23,10 +26,19 @@ export async function GET(req: NextRequest) {
     }
 
     const supabase = createSupabaseAdminClient();
-    const snapshot = await getEffectiveEntitlementsSnapshot(supabase, auth.userId);
+    const authority = await resolveCanonicalAccountPlanAuthority({
+      supabase,
+      userId: auth.userId,
+    });
+    const snapshot = authority.entitlements;
+    const account = serializeCanonicalPlanSummary({ authority });
     const payload = {
       requestId,
       ...snapshot,
+      managedPlan: account.managedPlan,
+      effectivePlan: account.effectivePlan,
+      isAdmin: account.isAdmin,
+      validatedAt: authority.validatedAt,
     };
     return NextResponse.json(payload, {
       status: 200,

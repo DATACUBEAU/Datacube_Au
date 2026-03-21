@@ -50,7 +50,7 @@ import type { AuDocumentRow } from '@/lib/au/types';
 import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { supabase } from '@/lib/supabase-client/client';
-import { TruncatedText } from '@/components/TruncatedText';
+import { FileNameText } from '@/components/FileNameText';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { FeatureGatePanel } from '@/components/feature-gate-panel';
@@ -413,21 +413,24 @@ function PredictionsPageContent() {
           </Alert>
 
           {/* Selects + Generate Button */}
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-[1fr_auto]">
-            <div className="grid grid-cols-1 items-end gap-4 sm:grid-cols-2">
-              <div>
+          <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-[1fr_auto]">
+            <div className="grid min-w-0 grid-cols-1 items-end gap-4 sm:grid-cols-2">
+              <div className="min-w-0">
                 <Label htmlFor="past-questions"><FileQuestion className="mr-2 inline-block h-4 w-4" aria-hidden="true" />Past Questions</Label>
                 <Select onValueChange={handlePastQuestionsChange} disabled={docsLoading || isGeneratingPredictions}>
-                  <SelectTrigger id="past-questions" aria-label="Select past questions"><SelectValue placeholder={docsLoading ? 'Loading...' : 'Select questions...'} /></SelectTrigger>
+                  <SelectTrigger
+                    id="past-questions"
+                    className="w-full min-w-0"
+                    aria-label="Select past questions"
+                    title={selectedPastQuestionDoc?.file_name || undefined}
+                  >
+                    <SelectValue placeholder={docsLoading ? 'Loading...' : 'Select questions...'} />
+                  </SelectTrigger>
                   <SelectContent>
                     {pastQuestionsDocs.map((doc) => (
                       <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
                         <div className="flex min-w-0 items-center gap-2">
-                          <TruncatedText
-                            text={doc.file_name}
-                            preserveExtension
-                            maxWidthClass="max-w-full"
-                          />
+                          <FileNameText text={doc.file_name} />
                           {doc.status !== 'completed' && (
                             <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                               {doc.status}...
@@ -440,19 +443,22 @@ function PredictionsPageContent() {
                 </Select>
               </div>
 
-              <div>
+              <div className="min-w-0">
                 <Label htmlFor="textbook"><BookOpen className="mr-2 inline-block h-4 w-4" aria-hidden="true" />Main Textbook (Auto-selected)</Label>
                 <Select value={selectedTextbookId || ''} disabled>
-                  <SelectTrigger id="textbook" aria-label="Selected textbook"><SelectValue placeholder={docsLoading ? 'Loading...' : 'Select textbook...'} /></SelectTrigger>
+                  <SelectTrigger
+                    id="textbook"
+                    className="w-full min-w-0"
+                    aria-label="Selected textbook"
+                    title={selectedTextbookDoc?.file_name || undefined}
+                  >
+                    <SelectValue placeholder={docsLoading ? 'Loading...' : 'Select textbook...'} />
+                  </SelectTrigger>
                   <SelectContent>
                     {textbookDocs.map((doc) => (
                       <SelectItem key={doc.id} value={doc.id}>
                         <div className="flex min-w-0 items-center gap-2">
-                          <TruncatedText
-                            text={doc.file_name}
-                            preserveExtension
-                            maxWidthClass="max-w-full"
-                          />
+                          <FileNameText text={doc.file_name} />
                           {doc.status !== 'completed' && (
                             <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                               {doc.status}...

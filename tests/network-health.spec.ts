@@ -8,7 +8,13 @@ test.describe('Network health and offline resilience', () => {
     expect(data.ok).toBe(true);
   });
 
-  test('shows offline indicator after consecutive health failures', async ({ page }) => {
+  test('shows offline indicator when the browser is actually offline', async ({ page }) => {
+    await page.goto('/');
+    await page.context().setOffline(true);
+    await expect(page.getByText('You are offline')).toBeVisible({ timeout: 8000 });
+  });
+
+  test('keeps the app out of hard offline mode when navigator is online but health checks degrade', async ({ page }) => {
     await page.route('**/api/health', async (route) => {
       await route.fulfill({
         status: 503,
@@ -18,6 +24,6 @@ test.describe('Network health and offline resilience', () => {
     });
 
     await page.goto('/');
-    await expect(page.getByText('You are offline')).toBeVisible({ timeout: 8000 });
+    await expect(page.getByText('You are offline')).toHaveCount(0);
   });
 });

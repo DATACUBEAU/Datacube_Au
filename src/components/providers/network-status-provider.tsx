@@ -117,20 +117,12 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
       } else {
         failCount.current++;
         lastErrorRef.current = `status_${res.status}`;
-        if (failCount.current >= MAX_FAILURES) {
-          commitState('offline');
-        } else {
-          commitState('degraded');
-        }
+        commitState('degraded');
       }
     } catch (error) {
       failCount.current++;
       lastErrorRef.current = String((error as any)?.message || error);
-      if (failCount.current >= MAX_FAILURES) {
-        commitState('offline');
-      } else {
-        commitState('degraded');
-      }
+      commitState('degraded');
     } finally {
       clearTimeout(timeoutId);
       isChecking.current = false;

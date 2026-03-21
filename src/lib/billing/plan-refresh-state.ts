@@ -24,14 +24,13 @@ export function resolveDisplayedPlanCode(input: {
   currentPlanManagedPlan?: string | null;
   tier?: string | null;
   limitsUsagePlan?: string | null;
-}): string {
-  return String(
+}): string | null {
+  const resolved =
     input.limitsUsagePlan ||
-      input.snapshot?.managedPlan ||
-      input.currentPlanManagedPlan ||
-      input.tier ||
-      'free',
-  )
-    .trim()
-    .toLowerCase();
+    input.snapshot?.managedPlan ||
+    input.currentPlanManagedPlan ||
+    input.tier ||
+    null;
+  const normalized = String(resolved || '').trim().toLowerCase();
+  return normalized || null;
 }

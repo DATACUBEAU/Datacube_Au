@@ -4,6 +4,11 @@ import {
   PAID_PRO_PLAN_EXPIRATION_DAYS,
   resolvePlanExpirationDays,
 } from '@/lib/plans/subscription-policy';
+import {
+  ACCOUNT_SNAPSHOT_ROUTE,
+  normalizeAccountSnapshotPayload,
+  readPersistedAccountSnapshotSync,
+} from '@/lib/account/account-snapshot-cache';
 
 export const FREE_RETENTION_DAYS = FREE_PLAN_EXPIRATION_DAYS;
 export const PRO_RETENTION_DAYS = PAID_PRO_PLAN_EXPIRATION_DAYS;
@@ -67,26 +72,35 @@ export async function resolveDocumentRetentionDays(userId: string | null | undef
   let retentionDays = FREE_RETENTION_DAYS;
 
   if (userId && typeof window !== 'undefined' && typeof fetch === 'function') {
+    const persisted = readPersistedAccountSnapshotSync(userId);
+    const persistedRetention = Number(persisted.snapshot?.entitlements?.retentionDays || 0);
+    if (Number.isFinite(persistedRetention) && persistedRetention > 0) {
+      retentionDays = Math.floor(persistedRetention);
+    }
+
     try {
-      const response = await fetch('/api/entitlements/effective', {
+      const response = await fetch(`/api${ACCOUNT_SNAPSHOT_ROUTE}`, {
         method: 'GET',
         credentials: 'include',
         cache: 'no-store',
       });
       const payload = await response.json().catch(() => null);
-      if (response.ok && payload) {
-        const explicitRetention = Number((payload as any)?.retentionDays);
+      const normalized = normalizeAccountSnapshotPayload(payload, userId);
+      if (response.ok && normalized) {
+        const explicitRetention = Number(normalized.entitlements.retentionDays);
         retentionDays =
           Number.isFinite(explicitRetention) && explicitRetention > 0
             ? Math.floor(explicitRetention)
             : resolvePlanExpirationDays({
-                plan: typeof (payload as any)?.plan === 'string' ? (payload as any).plan : 'free',
-                entitlementSource:
-                  typeof (payload as any)?.entitlementSource === 'string' ? (payload as any).entitlementSource : 'none',
+                plan: normalized.entitlements.plan,
+                entitlementSource: normalized.entitlements.entitlementSource,
               });
       }
     } catch {
-      retentionDays = FREE_RETENTION_DAYS;
+      retentionDays =
+        Number.isFinite(persistedRetention) && persistedRetention > 0
+          ? Math.floor(persistedRetention)
+          : retentionDays;
     }
   }
 

@@ -28,7 +28,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Icons } from '@/components/icons';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
-import { TruncatedText } from '@/components/TruncatedText';
+import { FileNameText } from '@/components/FileNameText';
 import { Badge } from '@/components/ui/badge';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useAuExams } from '@/hooks/api/use-au-exams';
@@ -537,13 +537,16 @@ function PracticePageContent() {
     <main id="practice-section" className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <h1 className="font-headline text-2xl font-semibold">Practice Exam</h1>
-        <div className="flex w-full flex-col gap-2 sm:flex-row md:ml-auto md:w-auto">
+        <div className="flex w-full min-w-0 flex-col gap-2 sm:flex-row md:ml-auto md:w-auto">
           <Select
             onValueChange={handleDocSelectionChange}
             value={selectedDocId || ''}
             disabled={docsLoading || isGenerating}
           >
-            <SelectTrigger className="flex-1 md:min-w-[250px]">
+            <SelectTrigger
+              className="min-w-0 flex-1 md:min-w-[250px]"
+              title={selectedDoc?.file_name || undefined}
+            >
               <SelectValue placeholder={docsLoading ? 'Loading...' : 'Select a document...'} />
             </SelectTrigger>
             <SelectContent>
@@ -553,11 +556,7 @@ function PracticePageContent() {
                 documents.map((doc) => (
                   <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
                     <div className="flex min-w-0 items-center gap-2">
-                      <TruncatedText
-                        text={doc.file_name}
-                        preserveExtension
-                        maxWidthClass="max-w-full"
-                      />
+                      <FileNameText text={doc.file_name} />
                       {doc.status !== 'completed' && (
                         <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                           {doc.status}...

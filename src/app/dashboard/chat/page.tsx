@@ -67,7 +67,7 @@ import { safeFetch } from '@/lib/api/safe-fetch';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { validateQuery } from '@/lib/upload/file-types';
 import { cn } from '@/lib/utils';
-import { TruncatedText } from '@/components/TruncatedText';
+import { FileNameText } from '@/components/FileNameText';
 import { ThinkingProcess } from '@/components/thinking-process';
 import { useStore } from '@/hooks/use-store';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
@@ -126,6 +126,9 @@ function chatErrorTitle(error: ApiRequestError | null): string {
   if (error.status === 401 || error.code === 'UNAUTHORIZED' || error.code === 'AUTHENTICATION_FAILED') {
     return 'Authentication failed';
   }
+  if (error.status === 403 || error.code === 'FORBIDDEN' || error.code === 'TIER_ACCESS_DENIED') {
+    return 'Access denied';
+  }
   if (
     error.status === 429 ||
     error.code === 'LIMIT_REACHED' ||
@@ -156,6 +159,10 @@ function chatErrorDescription(error: ApiRequestError): string {
 
   if (error.status === 401) {
     return 'Authentication failed. Please refresh the page and sign in again.';
+  }
+
+  if (error.status === 403) {
+    return "You don't have permission to complete that chat request.";
   }
 
   return error.message;
@@ -816,6 +823,8 @@ export default function ChatPage() {
       errorMsg = errorDescription;
       if (normalizedError.status === 401) {
         errorMsg = "It looks like your session has timed out for security. Please try refreshing the page or logging back in so we can continue our analysis.";
+      } else if (normalizedError.status === 403) {
+        errorMsg = "You don't have permission to use this chat action right now.";
       } else if (normalizedError.status === 429) {
         errorMsg = "The AU provider is rate-limiting requests right now. Please wait a moment and try again.";
       } else if (normalizedError.status === 402) {
@@ -830,7 +839,7 @@ export default function ChatPage() {
         errorMsg = "I can't reach the server right now. Please check your internet connection or try again in a few seconds.";
       }
 
-      if (![400, 401, 402, 404, 429].includes(normalizedError.status ?? -1)) {
+      if (![400, 401, 402, 403, 404, 429].includes(normalizedError.status ?? -1)) {
         errorMsg = normalizedError.message;
       }
       
@@ -880,16 +889,18 @@ export default function ChatPage() {
           <div className="flex min-w-0 items-center gap-2">
             <div className="min-w-0 flex-1 md:min-w-[250px] md:flex-none">
               <Select onValueChange={id => handleDocSelection(id)} value={selectedDocId || ''} disabled={docsLoading}>
-                <SelectTrigger className="w-full min-w-0 max-w-full md:min-w-[250px]">
+                <SelectTrigger
+                  className="w-full min-w-0 max-w-full md:min-w-[250px]"
+                  title={selectedDocName || undefined}
+                >
                   <SelectValue placeholder={docsLoading ? 'Loading docs...' : 'Select a document'} />
                 </SelectTrigger>
                 <SelectContent>
                   {documentList.map(doc => (
                     <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
                       <div className="flex min-w-0 items-center gap-2">
-                        <TruncatedText
+                        <FileNameText
                           text={doc.fileName}
-                          preserveExtension
                           maxWidthClass="max-w-full"
                         />
                         {doc.status !== 'completed' && (
@@ -905,7 +916,7 @@ export default function ChatPage() {
                           </Badge>
                         )}
                         {doc.type !== 'main_textbook' && (
-                           <Badge variant="secondary" className="h-4 px-1 text-[10px]">
+                           <Badge variant="secondary" className="h-4 shrink-0 px-1 text-[10px]">
                              {doc.type?.replace('_', ' ')}
                            </Badge>
                         )}
@@ -1328,9 +1339,8 @@ export default function ChatPage() {
               ) : selectedDocName ? (
                 <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="shrink-0">Chatting with:</span>
-                  <TruncatedText
+                  <FileNameText
                     text={selectedDocName}
-                    preserveExtension
                     className="min-w-0 flex-1 font-medium text-foreground"
                     maxWidthClass="max-w-full"
                   />

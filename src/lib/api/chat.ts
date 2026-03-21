@@ -18,6 +18,7 @@ import {
 import type { ChatDocumentContext } from '@shared/document-chat-context';
 import type { GlobalChatNavAction } from '@shared/global-chat-routing';
 import { normalizeAssistantCitations } from '@/lib/chat/assistant-response';
+import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -167,6 +168,10 @@ function isProviderSchemaOutage(error: EdgeErrorLike | null | undefined): boolea
 }
 
 function shouldFallbackToLegacyAuChat(error: EdgeErrorLike | null | undefined): boolean {
+  if (classifyAuthFailure(error)) {
+    return false;
+  }
+
   const status = Number(error?.status || 0);
   const message = String(error?.message || '').toLowerCase();
   const details =
