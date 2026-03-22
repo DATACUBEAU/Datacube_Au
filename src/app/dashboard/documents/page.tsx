@@ -336,7 +336,7 @@ export default function DocumentsPage() {
                 <FileNameText
                   text={doc.fileName}
                   className={`font-medium transition-colors ${isDeleting ? "text-muted-foreground" : "group-hover:text-primary"}`}
-                  maxWidthClass="max-w-full"
+                  maxWidthClass="max-w-[200px] sm:max-w-[300px] md:max-w-[400px] lg:max-w-[500px]"
                 />
                 {isDeleting ? (
                   <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-0.5">

@@ -18,7 +18,7 @@ export function DocumentSelectValue({
   className,
   placeholderClassName,
   textClassName,
-  maxWidthClass = 'max-w-full',
+  maxWidthClass = 'max-w-[150px] sm:max-w-[250px]',
 }: DocumentSelectValueProps) {
   const normalized = typeof text === 'string' ? text.trim() : '';
 

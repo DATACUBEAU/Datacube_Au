@@ -481,23 +481,24 @@ export default function UploadCenter() {
               }}
               disabled={!needsParent || parentsLoading}
             >
-              <SelectTrigger className="w-full min-w-0 overflow-hidden" title={selectedParentName || undefined}>
-                <DocumentSelectValue
-                  text={selectedParentName}
-                  placeholder={!needsParent ? 'Not required' : parentsLoading ? 'Loading…' : 'Select textbook'}
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {parents.length === 0 && !parentsLoading ? (
-                  <div className="px-2 py-1.5 text-sm text-muted-foreground">No textbooks available</div>
-                ) : (
-                  parents.map((p) => (
-                    <SelectItem key={p.id} value={p.id} textValue={p.file_name}>
-                      <FileNameText text={p.file_name} />
-                    </SelectItem>
-                  ))
-                )}
-              </SelectContent>
+              <SelectTrigger className="w-full min-w-0 sm:min-w-[150px] sm:max-w-[250px] overflow-hidden" title={selectedParentName || undefined}>
+              <DocumentSelectValue
+                text={selectedParentName}
+                placeholder={!needsParent ? 'Not required' : parentsLoading ? 'Loading…' : 'Select textbook'}
+                maxWidthClass="max-w-[120px] sm:max-w-[200px]"
+              />
+            </SelectTrigger>
+            <SelectContent>
+              {parents.length === 0 && !parentsLoading ? (
+                <div className="px-2 py-1.5 text-sm text-muted-foreground">No textbooks available</div>
+              ) : (
+                parents.map((p) => (
+                  <SelectItem key={p.id} value={p.id} textValue={p.file_name}>
+                    <FileNameText text={p.file_name} maxWidthClass="max-w-[200px] sm:max-w-[300px]" />
+                  </SelectItem>
+                ))
+              )}
+            </SelectContent>
             </Select>
           </div>
         </div>
@@ -553,7 +554,7 @@ export default function UploadCenter() {
                         <FileNameText
                           text={job.file_name}
                           className="font-medium group-hover:text-primary transition-colors"
-                          maxWidthClass="max-w-full"
+                          maxWidthClass="max-w-[200px] sm:max-w-[300px] md:max-w-[400px]"
                         />
                         <Badge variant={badge.variant} className="shrink-0">{badge.text}</Badge>
                         {job.label ? <Badge variant="outline" className="shrink-0">{job.label}</Badge> : null}

@@ -49,6 +49,7 @@ function shouldDeleteStalePwaCacheName(cacheName, version) {
     strict_1.default.equal(workerText.includes('__DCAU_PWA_RUNTIME_VERSION__'), true);
     strict_1.default.equal(workerText.includes(`"${runtimeVersion}"`), true);
     strict_1.default.equal(workerText.includes('__DCAU_PWA_CACHE_PATCHED__'), true);
+    strict_1.default.equal(workerText.includes('PWA_RUNTIME_HEALTHCHECK'), true);
 });
 (0, node_test_1.default)('stale service-worker runtime caches are versioned and old names are invalidated', async () => {
     const runtimeVersion = readRuntimeVersion();

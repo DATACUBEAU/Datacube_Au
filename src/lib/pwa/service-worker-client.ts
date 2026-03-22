@@ -142,6 +142,76 @@ export async function recoverBrokenServiceWorkerRuntime(): Promise<{
   return { unregistered, deletedCaches };
 }
 
+type ServiceWorkerHealthcheckResult = {
+  ok?: boolean;
+  version?: string;
+  hasPolicyShim?: boolean;
+};
+
+async function pingServiceWorker(
+  worker: ServiceWorker | null | undefined,
+  timeoutMs = 1500,
+): Promise<ServiceWorkerHealthcheckResult | null> {
+  if (!worker) return null;
+
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    let settled = false;
+
+    const finish = (result: ServiceWorkerHealthcheckResult | null) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timeoutId);
+      channel.port1.onmessage = null;
+      resolve(result);
+    };
+
+    const timeoutId = window.setTimeout(() => finish(null), timeoutMs);
+
+    channel.port1.onmessage = (event) => {
+      const data = event.data;
+      if (!data || typeof data !== 'object') {
+        finish(null);
+        return;
+      }
+      finish(data as ServiceWorkerHealthcheckResult);
+    };
+
+    try {
+      worker.postMessage({ type: 'PWA_RUNTIME_HEALTHCHECK' }, [channel.port2]);
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+async function hasHealthyExistingServiceWorker(): Promise<boolean> {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return true;
+
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  const workers: Array<ServiceWorker | null | undefined> = [
+    navigator.serviceWorker.controller,
+    ...registrations.flatMap((registration) => [
+      registration.active,
+      registration.waiting,
+      registration.installing,
+    ]),
+  ];
+
+  const seen = new Set<ServiceWorker>();
+  for (const worker of workers) {
+    if (!worker || seen.has(worker)) continue;
+    seen.add(worker);
+
+    const result = await pingServiceWorker(worker);
+    if (!result?.ok) return false;
+    if (result.version !== PWA_RUNTIME_CACHE_VERSION) return false;
+    if (result.hasPolicyShim !== true) return false;
+  }
+
+  return true;
+}
+
 export async function ensureHealthyServiceWorkerRegistration(options?: {
   scriptUrl?: string;
   registrationOptions?: RegistrationOptions;
@@ -160,6 +230,10 @@ export async function ensureHealthyServiceWorkerRegistration(options?: {
     return null;
   }
 
+  if (!(await hasHealthyExistingServiceWorker())) {
+    await recoverBrokenServiceWorkerRuntime();
+  }
+
   return navigator.serviceWorker.register(scriptUrl, {
     scope: '/',
     updateViaCache: 'none',
@@ -176,6 +250,12 @@ export async function refreshHealthyServiceWorkers(): Promise<void> {
     : [];
   if (scriptText && isBrokenServiceWorkerScript(scriptText, importedScriptTexts)) {
     await recoverBrokenServiceWorkerRuntime();
+    return;
+  }
+
+  if (!(await hasHealthyExistingServiceWorker())) {
+    await recoverBrokenServiceWorkerRuntime();
+    await ensureHealthyServiceWorkerRegistration();
     return;
   }
 

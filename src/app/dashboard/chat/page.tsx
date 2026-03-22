@@ -888,15 +888,16 @@ export default function ChatPage() {
       <header className="z-10 flex h-auto shrink-0 flex-col justify-center gap-2 border-b bg-background/80 px-4 py-3 backdrop-blur-md md:h-14 md:flex-row md:items-center md:justify-end md:px-8">
         <div className="flex w-full min-w-0 flex-col gap-2 md:w-auto md:flex-row md:items-center">
           <div className="flex min-w-0 items-center gap-2">
-            <div className="min-w-0 flex-1 md:min-w-[250px] md:flex-none">
+            <div className="min-w-0 flex-1 md:min-w-[200px] md:max-w-[300px] md:flex-none">
               <Select onValueChange={id => handleDocSelection(id)} value={selectedDocId || ''} disabled={docsLoading}>
                 <SelectTrigger
-                  className="w-full min-w-0 max-w-full overflow-hidden md:min-w-[250px]"
+                  className="w-full min-w-0 max-w-full overflow-hidden"
                   title={selectedDocName || undefined}
                 >
                   <DocumentSelectValue
                     text={selectedDocName}
                     placeholder={docsLoading ? 'Loading docs...' : 'Select a document'}
+                    maxWidthClass="max-w-[150px] sm:max-w-[200px] md:max-w-[250px]"
                   />
                 </SelectTrigger>
                 <SelectContent>
@@ -910,7 +911,7 @@ export default function ChatPage() {
                       <div className="flex min-w-0 items-center gap-2">
                         <FileNameText
                           text={doc.fileName}
-                          maxWidthClass="max-w-full"
+                          maxWidthClass="max-w-[200px] sm:max-w-[300px] md:max-w-[400px]"
                         />
                         {doc.status !== 'completed' && (
                           <Badge 
@@ -1058,9 +1059,18 @@ export default function ChatPage() {
               {currentChatHistory.length === 0 && !isResponding && (
                 <div className="flex h-full flex-col items-center justify-center pt-16">
                   {isLoading ? (
-                    <div className="flex flex-col items-center justify-center text-center">
+                    <div className="flex flex-col items-center justify-center text-center max-w-full">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <p className="mt-4 max-w-full break-words text-muted-foreground">{selectedDocName ? `Loading ${selectedDocName}...` : 'Loading...'}</p>
+                      <div className="mt-4 flex flex-col items-center gap-1 min-w-0 max-w-full">
+                        <span className="text-muted-foreground shrink-0">Loading</span>
+                        {selectedDocName && (
+                          <FileNameText 
+                            text={selectedDocName} 
+                            className="text-muted-foreground font-medium"
+                            maxWidthClass="max-w-[200px] sm:max-w-[300px]"
+                          />
+                        )}
+                      </div>
                     </div>
                   ) : selectedDocId ? (
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -1352,7 +1362,7 @@ export default function ChatPage() {
                     <FileNameText
                       text={selectedDocName}
                       className="font-medium text-foreground"
-                      maxWidthClass="max-w-full"
+                      maxWidthClass="max-w-[150px] sm:max-w-[250px] md:max-w-[350px]"
                     />
                   </div>
                   {selectedDocExpiryLabel ? (

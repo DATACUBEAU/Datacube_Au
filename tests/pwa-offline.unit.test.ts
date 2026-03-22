@@ -49,6 +49,7 @@ test('service worker cache policy keeps dashboard offline routes warm without ex
   assert.equal(workerText.includes('__DCAU_PWA_RUNTIME_VERSION__'), true);
   assert.equal(workerText.includes(`"${runtimeVersion}"`), true);
   assert.equal(workerText.includes('__DCAU_PWA_CACHE_PATCHED__'), true);
+  assert.equal(workerText.includes('PWA_RUNTIME_HEALTHCHECK'), true);
 });
 
 test('stale service-worker runtime caches are versioned and old names are invalidated', async () => {

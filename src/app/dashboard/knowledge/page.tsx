@@ -653,13 +653,14 @@ function KnowledgePageContent() {
             <div className="flex min-w-0 w-full flex-col gap-1 sm:w-auto">
               <Select value={selectedDocId || undefined} onValueChange={handleDocSelectionChange}>
                 <SelectTrigger
-                  className="w-full min-w-0 sm:w-[250px]"
+                  className="w-full min-w-0 sm:w-auto sm:min-w-[200px] sm:max-w-[300px]"
                   aria-label="Select document"
                   title={selectedDoc?.file_name || undefined}
                 >
                   <DocumentSelectValue
                     text={selectedDoc?.file_name}
                     placeholder="Select a textbook"
+                    maxWidthClass="max-w-[150px] sm:max-w-[250px]"
                   />
                 </SelectTrigger>
                 <SelectContent>
@@ -671,7 +672,7 @@ function KnowledgePageContent() {
                       textValue={doc.file_name}
                     >
                       <div className="flex min-w-0 items-center gap-2">
-                        <FileNameText text={doc.file_name} />
+                        <FileNameText text={doc.file_name} maxWidthClass="max-w-[200px] sm:max-w-[300px] md:max-w-[400px]" />
                         {doc.status !== 'completed' && (
                           <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                             {doc.status}...

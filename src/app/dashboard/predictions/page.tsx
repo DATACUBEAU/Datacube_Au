@@ -419,68 +419,70 @@ function PredictionsPageContent() {
                 <Label htmlFor="past-questions"><FileQuestion className="mr-2 inline-block h-4 w-4" aria-hidden="true" />Past Questions</Label>
                 <Select onValueChange={handlePastQuestionsChange} disabled={docsLoading || isGeneratingPredictions}>
                   <SelectTrigger
-                    id="past-questions"
-                    className="w-full min-w-0"
-                    aria-label="Select past questions"
-                    title={selectedPastQuestionDoc?.file_name || undefined}
-                  >
-                    <DocumentSelectValue
-                      text={selectedPastQuestionDoc?.file_name}
-                      placeholder={docsLoading ? 'Loading...' : 'Select questions...'}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {pastQuestionsDocs.map((doc) => (
-                      <SelectItem
-                        key={doc.id}
-                        value={doc.id}
-                        disabled={doc.status !== 'completed'}
-                        textValue={doc.file_name}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          <FileNameText text={doc.file_name} />
-                          {doc.status !== 'completed' && (
-                            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
-                              {doc.status}...
-                            </Badge>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                      id="past-questions"
+                      className="w-full min-w-0 sm:min-w-[200px] sm:max-w-[300px]"
+                      aria-label="Select past questions"
+                      title={selectedPastQuestionDoc?.file_name || undefined}
+                    >
+                      <DocumentSelectValue
+                        text={selectedPastQuestionDoc?.file_name}
+                        placeholder={docsLoading ? 'Loading...' : 'Select questions...'}
+                        maxWidthClass="max-w-[150px] sm:max-w-[250px]"
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {pastQuestionsDocs.map((doc) => (
+                        <SelectItem
+                          key={doc.id}
+                          value={doc.id}
+                          disabled={doc.status !== 'completed'}
+                          textValue={doc.file_name}
+                        >
+                          <div className="flex min-w-0 items-center gap-2">
+                            <FileNameText text={doc.file_name} maxWidthClass="max-w-[200px] sm:max-w-[300px] md:max-w-[400px]" />
+                            {doc.status !== 'completed' && (
+                              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
+                                {doc.status}...
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              <div className="min-w-0">
-                <Label htmlFor="textbook"><BookOpen className="mr-2 inline-block h-4 w-4" aria-hidden="true" />Main Textbook (Auto-selected)</Label>
-                <Select value={selectedTextbookId || ''} disabled>
-                  <SelectTrigger
-                    id="textbook"
-                    className="w-full min-w-0"
-                    aria-label="Selected textbook"
-                    title={selectedTextbookDoc?.file_name || undefined}
-                  >
-                    <DocumentSelectValue
-                      text={selectedTextbookDoc?.file_name}
-                      placeholder={docsLoading ? 'Loading...' : 'Select textbook...'}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {textbookDocs.map((doc) => (
-                      <SelectItem key={doc.id} value={doc.id} textValue={doc.file_name}>
-                        <div className="flex min-w-0 items-center gap-2">
-                          <FileNameText text={doc.file_name} />
-                          {doc.status !== 'completed' && (
-                            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
-                              {doc.status}...
-                            </Badge>
-                          )}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                <div className="min-w-0">
+                  <Label htmlFor="textbook"><BookOpen className="mr-2 inline-block h-4 w-4" aria-hidden="true" />Main Textbook (Auto-selected)</Label>
+                  <Select value={selectedTextbookId || ''} disabled>
+                    <SelectTrigger
+                      id="textbook"
+                      className="w-full min-w-0 sm:min-w-[200px] sm:max-w-[300px]"
+                      aria-label="Selected textbook"
+                      title={selectedTextbookDoc?.file_name || undefined}
+                    >
+                      <DocumentSelectValue
+                        text={selectedTextbookDoc?.file_name}
+                        placeholder={docsLoading ? 'Loading...' : 'Select textbook...'}
+                        maxWidthClass="max-w-[150px] sm:max-w-[250px]"
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {textbookDocs.map((doc) => (
+                        <SelectItem key={doc.id} value={doc.id} textValue={doc.file_name}>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <FileNameText text={doc.file_name} maxWidthClass="max-w-[200px] sm:max-w-[300px] md:max-w-[400px]" />
+                            {doc.status !== 'completed' && (
+                              <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
+                                {doc.status}...
+                              </Badge>
+                            )}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
             </div>
 
             <div className="flex items-end">

@@ -13,6 +13,7 @@ import { AuthLockOverlay } from '@/components/auth-lock-overlay';
 import { SessionDebugPanel } from '@/components/session-debug-panel';
 import { ServiceWorkerRegister } from '@/components/service-worker-register';
 import { ServiceWorkerUpdater } from '@/components/service-worker-updater';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import './globals.css';
 
 const APP_NAME = 'DataCube AU';
@@ -80,18 +81,20 @@ export default function RootLayout({
               <AccountSnapshotProvider>
                 <FeatureFlagProvider>
                   <LimitsProvider>
-                    <div className="relative isolate" id="app-shell">
-                      <BackgroundController />
-                      <div className="relative z-10">
-                        <UploadJobsProvider>{children}</UploadJobsProvider>
-                        <GlobalListeners />
-                        <AuthLockOverlay />
-                        <SessionDebugPanel />
-                        <ServiceWorkerRegister />
-                        <ServiceWorkerUpdater />
-                        <Toaster />
+                    <TooltipProvider>
+                      <div className="relative isolate" id="app-shell">
+                        <BackgroundController />
+                        <div className="relative z-10">
+                          <UploadJobsProvider>{children}</UploadJobsProvider>
+                          <GlobalListeners />
+                          <AuthLockOverlay />
+                          <SessionDebugPanel />
+                          <ServiceWorkerRegister />
+                          <ServiceWorkerUpdater />
+                          <Toaster />
+                        </div>
                       </div>
-                    </div>
+                    </TooltipProvider>
                   </LimitsProvider>
                 </FeatureFlagProvider>
               </AccountSnapshotProvider>

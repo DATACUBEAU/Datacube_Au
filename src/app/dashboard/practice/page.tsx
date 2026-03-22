@@ -544,12 +544,13 @@ function PracticePageContent() {
             disabled={docsLoading || isGenerating}
           >
             <SelectTrigger
-              className="min-w-0 flex-1 md:min-w-[250px]"
+              className="min-w-0 flex-1 sm:w-auto sm:min-w-[200px] sm:max-w-[300px]"
               title={selectedDoc?.file_name || undefined}
             >
               <DocumentSelectValue
                 text={selectedDoc?.file_name}
                 placeholder={docsLoading ? 'Loading...' : 'Select a document...'}
+                maxWidthClass="max-w-[150px] sm:max-w-[250px]"
               />
             </SelectTrigger>
             <SelectContent>
@@ -564,7 +565,7 @@ function PracticePageContent() {
                     textValue={doc.file_name}
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <FileNameText text={doc.file_name} />
+                      <FileNameText text={doc.file_name} maxWidthClass="max-w-[200px] sm:max-w-[300px] md:max-w-[400px]" />
                       {doc.status !== 'completed' && (
                         <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] animate-pulse">
                           {doc.status}...

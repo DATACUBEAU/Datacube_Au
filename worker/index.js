@@ -109,6 +109,28 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("message", (event) => {
+  if (event?.data?.type === "PWA_RUNTIME_HEALTHCHECK") {
+    const response = {
+      ok: true,
+      version: PWA_RUNTIME_CACHE_VERSION,
+      hasPolicyShim:
+        typeof self._pwacachepolicy?.isPwaCacheExcludedPathname === "function" &&
+        typeof self._pwacachepolicy?.shouldCacheNextDataPath === "function",
+    };
+
+    if (event.ports?.[0]) {
+      event.ports[0].postMessage(response);
+      return;
+    }
+
+    if (event.source && typeof event.source.postMessage === "function") {
+      event.source.postMessage({
+        type: "PWA_RUNTIME_HEALTHCHECK_RESULT",
+        ...response,
+      });
+    }
+    return;
+  }
   if (event?.data?.type === "SKIP_WAITING") {
     self.skipWaiting();
     return;
