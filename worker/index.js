@@ -1,3 +1,5 @@
+import { PWA_OFFLINE_WARMUP_ROUTES } from '../shared/pwa-cache-policy.js';
+
 const PAGE_CACHE_NAME = "pages";
 
 // Compatibility shim for older generated sw.js builds that referenced this helper.
@@ -11,34 +13,11 @@ function isProtectedAppPath(pathname) {
   );
 }
 
-// Warm core routes so cold offline launches can open app sections immediately.
-const OFFLINE_WARMUP_ROUTES = [
-  "/",
-  "/about",
-  "/features",
-  "/policy",
-  "/login",
-  "/dashboard",
-  "/dashboard/documents",
-  "/dashboard/chat",
-  "/dashboard/global-chat",
-  "/dashboard/knowledge",
-  "/dashboard/messages",
-  "/dashboard/predictions",
-  "/dashboard/practice",
-  "/dashboard/settings",
-  "/dashboard/settings/subscription",
-  "/offline",
-  "/~offline",
-  "/403",
-  "/conex",
-];
-
 async function warmOfflinePages() {
   const cache = await caches.open(PAGE_CACHE_NAME);
 
   // Keep warmup sequential to avoid saturating bandwidth and slowing active navigation.
-  for (const route of OFFLINE_WARMUP_ROUTES) {
+  for (const route of PWA_OFFLINE_WARMUP_ROUTES) {
     try {
       const requestUrl = new URL(route, self.location.origin).toString();
       const request = new Request(requestUrl, {

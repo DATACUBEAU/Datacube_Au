@@ -1,6 +1,7 @@
 import { supabase, getEffectiveOwnershipConditions, applyOwnershipFilter } from '@/lib/supabase-client/client';
 import type { AuDocumentChunkRow, AuDocumentRow } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
+import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import {
   normalizeAuDocumentRow,
   normalizeAuDocumentType,
@@ -8,6 +9,10 @@ import {
 } from '@/lib/au/document-normalization';
 
 const SAFE_DOC_COLUMNS = 'id, owner_id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, parent_document_id, error';
+const DOC_TEXT_CACHE_ROUTE = '/dashboard/documents/chunks';
+const DOC_TEXT_CACHE_SOURCE = 'au_document_chunks';
+const DOC_TEXT_CACHE_SCHEMA = 1;
+const DOC_TEXT_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 
 function isMissingColumnError(error: unknown, column: string): boolean {
   const message = String((error as any)?.message || '').toLowerCase();
@@ -100,6 +105,45 @@ export async function listCompletedAuDocumentsForUser(user: User | null, documen
 }
 
 export async function getAuDocumentChunksText(user: User | null, documentId: string): Promise<string> {
+  const readCachedText = async () => {
+    if (!user?.id) return '';
+    const cached = await readUserCache<{ text?: string }>({
+      userId: user.id,
+      route: DOC_TEXT_CACHE_ROUTE,
+      source: DOC_TEXT_CACHE_SOURCE,
+      endpoint: 'get',
+      query: { documentId },
+      schemaVersion: DOC_TEXT_CACHE_SCHEMA,
+      maxAgeMs: DOC_TEXT_CACHE_TTL_MS,
+    });
+    return typeof cached.data?.text === 'string' ? cached.data.text : '';
+  };
+
+  const writeCachedText = async (text: string) => {
+    if (!user?.id || !text) return;
+    await writeUserCache({
+      userId: user.id,
+      route: DOC_TEXT_CACHE_ROUTE,
+      source: DOC_TEXT_CACHE_SOURCE,
+      endpoint: 'get',
+      query: { documentId },
+      schemaVersion: DOC_TEXT_CACHE_SCHEMA,
+      ttlMs: DOC_TEXT_CACHE_TTL_MS,
+      data: { text },
+    });
+  };
+
+  const browserOffline =
+    typeof window !== 'undefined' &&
+    (
+      window.navigator.onLine === false ||
+      (window as any).__DCAU_NETWORK_STATE?.state === 'offline'
+    );
+
+  if (browserOffline) {
+    return readCachedText();
+  }
+
   const ownershipConditions = await getOwnershipConditionCandidates(user);
 
   for (const conditions of ownershipConditions) {
@@ -114,7 +158,9 @@ export async function getAuDocumentChunksText(user: User | null, documentId: str
 
     if (!error) {
       const rows = (data ?? []) as Pick<AuDocumentChunkRow, 'text' | 'chunk_index'>[];
-      return rows.map(r => r.text).join('\n\n');
+      const text = rows.map(r => r.text).join('\n\n');
+      void writeCachedText(text);
+      return text;
     }
 
     if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
@@ -128,10 +174,12 @@ export async function getAuDocumentChunksText(user: User | null, documentId: str
       hint: error.hint,
       fullError: error
     });
+    const cachedText = await readCachedText();
+    if (cachedText) return cachedText;
     throw error;
   }
 
-  return '';
+  return readCachedText();
 }
 
 export async function countPastQuestionsForParent(user: User | null, parentId: string): Promise<number> {

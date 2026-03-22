@@ -1,6 +1,7 @@
 import type {NextConfig} from 'next';
 import withPWAInit from '@ducanh2912/next-pwa';
 import path from 'node:path';
+import { isPwaCacheExcludedPathname, shouldCacheNextDataPath } from './shared/pwa-cache-policy.js';
 
 const withPWA = withPWAInit({
   dest: 'public',
@@ -109,12 +110,7 @@ const withPWA = withPWAInit({
         urlPattern: ({ request, url }) =>
           request.method === 'GET' &&
           /\/_next\/data\/.+\/.+\.json$/i.test(url.pathname) &&
-          (() => {
-            const match = url.pathname.match(/^\/_next\/data\/[^/]+(\/.+)\.json$/i);
-            const routePath = match?.[1] || '';
-            const adminPath = routePath === '/conex' || routePath.startsWith('/conex/');
-            return !adminPath;
-          })(),
+          shouldCacheNextDataPath(url.pathname),
         handler: 'StaleWhileRevalidate',
         options: {
           cacheName: 'next-data',
@@ -132,7 +128,7 @@ const withPWA = withPWAInit({
           request.headers.get('Next-Router-Prefetch') === '1' &&
           sameOrigin &&
           !pathname.startsWith('/api/') &&
-          !(pathname === '/conex' || pathname.startsWith('/conex/')),
+          !isPwaCacheExcludedPathname(pathname),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages-rsc-prefetch',
@@ -150,7 +146,7 @@ const withPWA = withPWAInit({
           request.headers.get('RSC') === '1' &&
           sameOrigin &&
           !pathname.startsWith('/api/') &&
-          !(pathname === '/conex' || pathname.startsWith('/conex/')),
+          !isPwaCacheExcludedPathname(pathname),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages-rsc',
@@ -168,7 +164,7 @@ const withPWA = withPWAInit({
           request.mode === 'navigate' &&
           sameOrigin &&
           !pathname.startsWith('/api/') &&
-          !(pathname === '/conex' || pathname.startsWith('/conex/')),
+          !isPwaCacheExcludedPathname(pathname),
         handler: 'NetworkFirst',
         options: {
           cacheName: 'pages',

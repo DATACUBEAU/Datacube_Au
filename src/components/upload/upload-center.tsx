@@ -6,7 +6,7 @@ import { useUploadJobs } from '@/components/upload/upload-jobs-provider';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import { listAuDocumentsForUser, countPastQuestionsForParent } from '@/lib/au/documents';
-import { useOnlineStatus } from '@/hooks/use-online-status';
+import { useConnectivityStatus } from '@/hooks/use-online-status';
 import { detectUploadKind, normalizeFileName, supportedExtensions, validateFile } from '@/lib/upload/file-types';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,7 +59,7 @@ function statusLabel(status: string) {
 export default function UploadCenter() {
   const { toast } = useToast();
   const [user, session] = useSupabaseUser();
-  const isOnline = useOnlineStatus();
+  const { isOnline, isDegraded, canPerformNetworkMutations } = useConnectivityStatus();
   const upgradeBlocked = useStore((s) => s.upgradeBlocked);
   const { 
     jobs, 
@@ -90,7 +90,11 @@ export default function UploadCenter() {
   const [isDragging, setIsDragging] = useState(false);
   const [reattachJobId, setReattachJobId] = useState<string | null>(null);
   const [pendingUploadSizeMb, setPendingUploadSizeMb] = useState<number | null>(null);
-  const supportsUploads = Boolean(session?.access_token) && Boolean(user) && isOnline && !upgradeBlocked;
+  const supportsUploads =
+    Boolean(session?.access_token) &&
+    Boolean(user) &&
+    canPerformNetworkMutations &&
+    !upgradeBlocked;
   const selectedParentName = useMemo(
     () => parents.find((parent) => parent.id === parentId)?.file_name ?? null,
     [parentId, parents],
@@ -143,12 +147,16 @@ export default function UploadCenter() {
       toast({
         variant: 'destructive',
         title: 'Upload unavailable',
-        description: !session?.access_token ? 'Sign in to upload.' : 'Connect to the internet to upload.',
+        description: !session?.access_token
+          ? 'Sign in to upload.'
+          : (isDegraded
+            ? 'Connection is unstable. Uploads will resume once the app finishes reconnecting.'
+            : 'Connect to the internet to upload.'),
       });
       return;
     }
     inputRef.current?.click();
-  }, [supportsUploads, toast, session?.access_token]);
+  }, [isDegraded, supportsUploads, toast, session?.access_token]);
 
   const addFiles = useCallback(
     async (files: File[]) => {
@@ -428,6 +436,12 @@ export default function UploadCenter() {
             <AlertTitle>Sign in required</AlertTitle>
             <AlertDescription>Sign in to upload.</AlertDescription>
           </Alert>
+        ) : isDegraded ? (
+          <Alert>
+            <Info className="h-4 w-4" aria-hidden="true" />
+            <AlertTitle>Connection unstable</AlertTitle>
+            <AlertDescription>Uploads are temporarily read-only until the app reconnects cleanly.</AlertDescription>
+          </Alert>
         ) : !isOnline ? (
           <Alert>
             <Info className="h-4 w-4" aria-hidden="true" />
@@ -466,15 +480,21 @@ export default function UploadCenter() {
               }}
               disabled={!needsParent || parentsLoading}
             >
-              <SelectTrigger className="w-full min-w-0" title={selectedParentName || undefined}>
-                <SelectValue placeholder={!needsParent ? 'Not required' : parentsLoading ? 'Loading…' : 'Select textbook'} />
+              <SelectTrigger className="w-full min-w-0 overflow-hidden" title={selectedParentName || undefined}>
+                {selectedParentName ? (
+                  <FileNameText text={selectedParentName} maxWidthClass="max-w-full" />
+                ) : (
+                  <span className="block min-w-0 flex-1 truncate text-muted-foreground">
+                    {!needsParent ? 'Not required' : parentsLoading ? 'Loading…' : 'Select textbook'}
+                  </span>
+                )}
               </SelectTrigger>
               <SelectContent>
                 {parents.length === 0 && !parentsLoading ? (
                   <div className="px-2 py-1.5 text-sm text-muted-foreground">No textbooks available</div>
                 ) : (
                   parents.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
+                    <SelectItem key={p.id} value={p.id} textValue={p.file_name}>
                       <FileNameText text={p.file_name} />
                     </SelectItem>
                   ))
@@ -525,16 +545,17 @@ export default function UploadCenter() {
                 );
 
               return (
-                <div key={job.id} className="rounded-lg border p-3 transition-all hover:bg-muted/30 hover:shadow-sm group">
+                <div key={job.id} className="group rounded-lg border p-3 transition-all hover:bg-muted/30 hover:shadow-sm">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <div className="flex min-w-0 items-center gap-2 overflow-hidden">
                         <div className="transition-transform group-hover:scale-110">
                           {icon}
                         </div>
                         <FileNameText
                           text={job.file_name}
                           className="font-medium group-hover:text-primary transition-colors"
+                          maxWidthClass="max-w-full"
                         />
                         <Badge variant={badge.variant} className="shrink-0">{badge.text}</Badge>
                         {job.label ? <Badge variant="outline" className="shrink-0">{job.label}</Badge> : null}
@@ -551,9 +572,12 @@ export default function UploadCenter() {
                         </Alert>
                       )}
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2 sm:flex-nowrap">
                       {canRetry && (
-                        <OfflineGuard>
+                        <OfflineGuard
+                          blockWhenDegraded
+                          degradedReason="Connection is unstable. Wait for sync to finish before retrying this upload."
+                        >
                         <Button
                           size="sm"
                           variant="outline"

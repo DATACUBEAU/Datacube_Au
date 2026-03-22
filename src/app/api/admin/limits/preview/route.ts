@@ -4,7 +4,7 @@ import { requireConexAdmin } from '@/app/api/feedback/_auth';
 import {
   loadPlanMetadata,
   resolveCanonicalEffectiveLimits,
-  serializeEffectivePlanLimitRule,
+  serializeEffectivePlanLimitRuleMap,
 } from '@/lib/server/au-limits';
 
 export const runtime = 'nodejs';
@@ -64,6 +64,12 @@ export async function GET(req: NextRequest) {
       limits: resolved.limits,
     });
 
+    const serializedRules = serializeEffectivePlanLimitRuleMap(resolved.limitRules);
+    const resetLabels = APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+      acc[key] = resolved.usage.windows[key]?.label || serializedRules[key].presentation.reset_label;
+      return acc;
+    }, {} as Record<string, string>);
+
     return NextResponse.json(
       {
         ok: true,
@@ -76,26 +82,14 @@ export async function GET(req: NextRequest) {
           label: metadata.label,
           description: metadata.description,
           limits: resolved.limits,
-          limit_rules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-            acc[key] = serializeEffectivePlanLimitRule(resolved.limitRules[key]);
-            return acc;
-          }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
-          resetLabels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-            acc[key] = resolved.usage.windows[key]?.label || 'No reset';
-            return acc;
-          }, {} as Record<string, string>),
+          limit_rules: serializedRules,
+          resetLabels: resetLabels,
         },
         effectiveLimits: resolved.limits,
-        effectiveLimitRules: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = serializeEffectivePlanLimitRule(resolved.limitRules[key]);
-          return acc;
-        }, {} as Record<string, ReturnType<typeof serializeEffectivePlanLimitRule>>),
+        effectiveLimitRules: serializedRules,
         usage: resolved.usage,
         resetWindows: resolved.usage.windows,
-        labels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = resolved.usage.windows[key]?.label || 'No reset';
-          return acc;
-        }, {} as Record<string, string>),
+        labels: resetLabels,
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );

@@ -20,7 +20,32 @@ type PlanCatalogEntry = {
     weekly: { amount: number; compare_at: number | null; label: string; plan_key: string | null } | null;
   };
   limits: Record<string, number>;
-  resetLabels: Record<string, string>;
+  limitRules: Record<string, {
+    key: string;
+    label: string;
+    description: string;
+    unit_label: string;
+    category: string;
+    value: number | null;
+    mode: string;
+    reset_policy: string;
+    reset_interval_value: number | null;
+    reset_interval_unit: string | null;
+    is_enabled: boolean;
+    is_unlimited: boolean;
+    state: string;
+    inherited: boolean;
+    source_scope: string;
+    updated_at: string | null;
+    enforced_by: string[];
+    presentation: {
+      cap_label: string;
+      mode_label: string;
+      reset_label: string;
+      reset_description: string;
+      summary: string;
+    };
+  }>;
 };
 
 type PlanCatalogState = {

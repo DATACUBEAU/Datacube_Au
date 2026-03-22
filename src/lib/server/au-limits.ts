@@ -87,7 +87,7 @@ export type PublicPlanCatalogEntry = {
   metadata: PlanMetadata;
   pricing: PublicPlanPricing;
   limits: CanonicalPlanLimits;
-  limitRules: Record<ApprovedLimitKey, EffectivePlanLimitRule>;
+  limitRules: Record<ApprovedLimitKey, SerializedEffectivePlanLimitRule>;
   resetLabels: Record<ApprovedLimitKey, string>;
 };
 
@@ -213,6 +213,27 @@ export type SerializedPlanLimitPresentation = {
   reset_label: string;
   reset_description: string;
   summary: string;
+};
+
+export type SerializedEffectivePlanLimitRule = {
+  key: ApprovedLimitKey;
+  label: string;
+  description: string;
+  unit_label: string;
+  category: EffectivePlanLimitRule['category'];
+  value: number | null;
+  mode: EffectivePlanLimitRule['mode'];
+  reset_policy: PlanLimitResetPolicy;
+  reset_interval_value: number | null;
+  reset_interval_unit: PlanLimitResetIntervalUnit | null;
+  is_enabled: boolean;
+  is_unlimited: boolean;
+  state: EffectivePlanLimitRule['state'];
+  inherited: boolean;
+  source_scope: PlanLimitScopeKey;
+  updated_at: string | null;
+  enforced_by: string[];
+  presentation: SerializedPlanLimitPresentation;
 };
 
 export type EffectivePlanLimitSnapshot = {
@@ -971,10 +992,15 @@ export async function loadPublicPlanCatalog(supabase: SupabaseClient): Promise<P
 
   const entries = await Promise.all(
     DEFAULT_PLAN_ORDER.map(async (plan) => {
-      const metadata = await loadPlanMetadata(supabase, plan);
-      const snapshot = await resolveEffectivePlanLimitSnapshot({ supabase, plan });
-      const limitRules = snapshot.limitRules;
-      const limits = snapshot.limits;
+      const [metadata, resolved] = await Promise.all([
+        loadPlanMetadata(supabase, plan),
+        resolveCanonicalEffectiveLimits({
+          supabase,
+          planOverride: plan,
+        }),
+      ]);
+      const limitRules = serializeEffectivePlanLimitRuleMap(resolved.limitRules);
+      const limits = resolved.limits;
       const pricing: PublicPlanPricing = {
         monthly: plan === 'pro'
           ? toPricingPoint(
@@ -1008,7 +1034,7 @@ export async function loadPublicPlanCatalog(supabase: SupabaseClient): Promise<P
         limits,
         limitRules,
         resetLabels: APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-          acc[key] = snapshot.usage.windows[key]?.label || describeResetPolicy(limitRules[key]);
+          acc[key] = resolved.usage.windows[key]?.label || limitRules[key].presentation.reset_label;
           return acc;
         }, {} as Record<ApprovedLimitKey, string>),
       } satisfies PublicPlanCatalogEntry;
@@ -1713,7 +1739,7 @@ export function toStoredPlanRuleSetForScope(input: {
   }, {} as Record<ApprovedLimitKey, StoredPlanLimitRule | null>);
 }
 
-export function serializeEffectivePlanLimitRule(rule: EffectivePlanLimitRule) {
+export function serializeEffectivePlanLimitRule(rule: EffectivePlanLimitRule): SerializedEffectivePlanLimitRule {
   const presentation = buildPlanLimitPresentation({
     value: rule.value,
     isEnabled: rule.isEnabled,
@@ -1745,6 +1771,15 @@ export function serializeEffectivePlanLimitRule(rule: EffectivePlanLimitRule) {
     enforced_by: [...rule.enforcedBy],
     presentation: serializePlanLimitPresentation(presentation),
   };
+}
+
+export function serializeEffectivePlanLimitRuleMap(
+  limitRules: Record<ApprovedLimitKey, EffectivePlanLimitRule>,
+): Record<ApprovedLimitKey, SerializedEffectivePlanLimitRule> {
+  return APPROVED_LIMIT_KEYS.reduce((acc, key) => {
+    acc[key] = serializeEffectivePlanLimitRule(limitRules[key]);
+    return acc;
+  }, {} as Record<ApprovedLimitKey, SerializedEffectivePlanLimitRule>);
 }
 
 export function serializeStoredPlanLimitRule(rule: StoredPlanLimitRule | null) {

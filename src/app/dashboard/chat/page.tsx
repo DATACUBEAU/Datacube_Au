@@ -52,7 +52,7 @@ import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from '@/components/ui/dialog';
 import { Icons } from '@/components/icons';
 import { useRouter } from 'next/navigation';
@@ -890,14 +890,29 @@ export default function ChatPage() {
             <div className="min-w-0 flex-1 md:min-w-[250px] md:flex-none">
               <Select onValueChange={id => handleDocSelection(id)} value={selectedDocId || ''} disabled={docsLoading}>
                 <SelectTrigger
-                  className="w-full min-w-0 max-w-full md:min-w-[250px]"
+                  className="w-full min-w-0 max-w-full overflow-hidden md:min-w-[250px]"
                   title={selectedDocName || undefined}
                 >
-                  <SelectValue placeholder={docsLoading ? 'Loading docs...' : 'Select a document'} />
+                  {selectedDocName ? (
+                    <FileNameText
+                      text={selectedDocName}
+                      className="font-medium text-foreground"
+                      maxWidthClass="max-w-full"
+                    />
+                  ) : (
+                    <span className="block min-w-0 flex-1 truncate text-muted-foreground">
+                      {docsLoading ? 'Loading docs...' : 'Select a document'}
+                    </span>
+                  )}
                 </SelectTrigger>
                 <SelectContent>
                   {documentList.map(doc => (
-                    <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
+                    <SelectItem
+                      key={doc.id}
+                      value={doc.id}
+                      disabled={doc.status !== 'completed'}
+                      textValue={doc.fileName}
+                    >
                       <div className="flex min-w-0 items-center gap-2">
                         <FileNameText
                           text={doc.fileName}
@@ -1337,15 +1352,17 @@ export default function ChatPage() {
                       <strong>Global Chat</strong> • App-wide help and navigation. No private document access.
                   </span>
               ) : selectedDocName ? (
-                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="shrink-0">Chatting with:</span>
-                  <FileNameText
-                    text={selectedDocName}
-                    className="min-w-0 flex-1 font-medium text-foreground"
-                    maxWidthClass="max-w-full"
-                  />
+                <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-x-2 sm:gap-y-1">
+                  <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                    <span className="shrink-0">Chatting with:</span>
+                    <FileNameText
+                      text={selectedDocName}
+                      className="font-medium text-foreground"
+                      maxWidthClass="max-w-full"
+                    />
+                  </div>
                   {selectedDocExpiryLabel ? (
-                    <span className="shrink-0">
+                    <span className="sm:shrink-0">
                       • {selectedDocExpiryLabel}
                     </span>
                   ) : null}

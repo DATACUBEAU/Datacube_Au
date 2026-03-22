@@ -15,6 +15,7 @@ import {
 import { initiateUpload, completeUpload, deleteDocument } from '@/lib/api/documents';
 import type { UploadJobRow, CreateUploadJobInput, UploadJobStatus } from '@/lib/upload/types';
 import { deleteJobFile, getJobFile, putJobFile } from '@/lib/upload/idb';
+import { readCachedUploadJobs, writeCachedUploadJobs } from '@/lib/upload/job-cache';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { v4 as uuidv4 } from 'uuid';
@@ -178,8 +179,9 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
   const { session, loading: isLoadingAuth } = useSupabaseSession();
   const { isAuthLocked } = useSmartAuth();
   const { toast } = useToast();
-  const { isOnline } = useNetworkStatus();
+  const { isOnline, networkState } = useNetworkStatus();
   const { usage: limitsUsage, reportServerLimitError } = useLimits();
+  const canPerformNetworkMutations = networkState === 'online';
 
   const [jobs, setJobs] = useState<UploadJobRow[]>([]);
   const [isThrottled, setIsThrottled] = useState(false);
@@ -221,6 +223,29 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
     }
     setMaxUploadSize(Math.floor(maxFileMb * 1024 * 1024));
   }, [limitsUsage?.limits]);
+
+  useEffect(() => {
+    if (isLoadingAuth) return;
+    if (isAuthLocked || !user?.id || !session?.access_token) {
+      setJobs([]);
+      return;
+    }
+
+    let cancelled = false;
+    void readCachedUploadJobs(user.id).then(({ jobs: cachedJobs }) => {
+      if (cancelled || cachedJobs.length === 0) return;
+      setJobs((current) => (current.length === 0 ? cachedJobs : current));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthLocked, isLoadingAuth, session?.access_token, user?.id]);
+
+  useEffect(() => {
+    if (!user?.id || isLoadingAuth || isAuthLocked || !session?.access_token) return;
+    void writeCachedUploadJobs(user.id, jobs);
+  }, [isAuthLocked, isLoadingAuth, jobs, session?.access_token, user?.id]);
 
   const mergeJobs = useCallback((remoteJobs: UploadJobRow[]) => {
     setJobs(currentJobs => {
@@ -584,7 +609,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
         const correlationId = job.id;
         const gate = guardRequest({
-          isOnline,
+          isOnline: canPerformNetworkMutations,
           requireAuth: true,
           accessToken: session?.access_token ?? null,
           allowOfflineRead: false,
@@ -831,13 +856,13 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         }
       }
     },
-    [isAuthLocked, isOnline, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
+    [canPerformNetworkMutations, isAuthLocked, maxUploadSize, reportServerLimitError, session?.access_token, updateJobLocal, updateJobRow, user]
   );
 
   useEffect(() => {
     if (!user) return;
     if (isAuthLocked) return;
-    if (!isOnline) return;
+    if (!canPerformNetworkMutations) return;
     if (isLoadingAuth) return;
     if (!session?.access_token) return;
 
@@ -850,7 +875,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         runUpload(j);
       }
     });
-  }, [isAuthLocked, isLoadingAuth, isOnline, jobs, runUpload, session?.access_token, user]);
+  }, [canPerformNetworkMutations, isAuthLocked, isLoadingAuth, jobs, runUpload, session?.access_token, user]);
 
   const enqueueUploads = useCallback(
     async (inputs: CreateUploadJobInput[]) => {
@@ -858,7 +883,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error('Session expired. Please sign in again.');
       }
       const gate = guardRequest({
-        isOnline,
+        isOnline: canPerformNetworkMutations,
         requireAuth: true,
         accessToken: session?.access_token ?? null,
         allowOfflineRead: false,
@@ -946,7 +971,7 @@ export function UploadJobsProvider({ children }: { children: React.ReactNode }) 
         throw new Error(errors.join('\n'));
       }
     },
-    [isAuthLocked, isLoadingAuth, isOnline, maxUploadSize, session?.access_token]
+    [canPerformNetworkMutations, isAuthLocked, isLoadingAuth, maxUploadSize, session?.access_token]
   );
 
   const cancelJob = useCallback(

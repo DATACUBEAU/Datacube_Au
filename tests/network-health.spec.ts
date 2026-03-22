@@ -26,4 +26,14 @@ test.describe('Network health and offline resilience', () => {
     await page.goto('/');
     await expect(page.getByText('You are offline')).toHaveCount(0);
   });
+
+  test('clears the offline indicator after connectivity returns and health checks recover', async ({ page }) => {
+    await page.goto('/');
+
+    await page.context().setOffline(true);
+    await expect(page.getByText('You are offline')).toBeVisible({ timeout: 8000 });
+
+    await page.context().setOffline(false);
+    await expect(page.getByText('You are offline')).toHaveCount(0, { timeout: 15000 });
+  });
 });

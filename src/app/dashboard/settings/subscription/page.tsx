@@ -14,7 +14,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { OfflineGuard } from '@/components/offline-guard';
-import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { safeFetch } from '@/lib/api/safe-fetch';
 import {
   buildSubscriptionCardState,
@@ -51,6 +50,7 @@ import {
   resolveDisplayedPlanCode,
   shouldApplyBillingStatusResponse,
 } from '@/lib/billing/plan-refresh-state';
+import { useConnectivityStatus } from '@/hooks/use-online-status';
 
 const EMPTY_PRICING = {
   weekly: { amount: 0, compare_at: 0, label: '' },
@@ -98,7 +98,6 @@ type PlanCatalogEntry = {
     monthly: { amount: number; compare_at: number | null; label: string; plan_key: string | null } | null;
     weekly: { amount: number; compare_at: number | null; label: string; plan_key: string | null } | null;
   };
-  resetLabels: Record<string, string>;
 };
 
 type BillingPageSubscriptionSummary = {
@@ -184,7 +183,7 @@ export default function SubscriptionPage() {
   const { toast } = useToast();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const { isOnline } = useNetworkStatus();
+  const { isOnline, isDegraded, canPerformNetworkMutations, networkState } = useConnectivityStatus();
   const { usage: limitsUsage } = useLimits();
   const { records: featureFlagRecords } = useFeatureFlags();
   const {
@@ -707,7 +706,7 @@ export default function SubscriptionPage() {
   }, [fetchBillingStatus, stopPolling]);
 
   const verifyPayment = useCallback(async (paymentReturn?: Pick<BillingReturnState, 'reference' | 'verificationTarget' | 'transactionId' | 'gatewayHint'>) => {
-      if (!isOnline) return;
+      if (!canPerformNetworkMutations) return;
       if (!session?.access_token) return;
       try {
           const verificationTarget = paymentReturn?.verificationTarget || paymentReturn?.reference || null;
@@ -768,7 +767,7 @@ export default function SubscriptionPage() {
           }
       }
       startPolling();
-  }, [fetchBillingStatus, isOnline, planSnapshot?.checksum, session?.access_token, startPolling]);
+  }, [canPerformNetworkMutations, fetchBillingStatus, planSnapshot?.checksum, session?.access_token, startPolling]);
 
   // Initial Load & URL Check
   useEffect(() => {
@@ -892,8 +891,14 @@ export default function SubscriptionPage() {
       methodOverride?: 'subscription' | 'transfer'
   ) => {
       const planKey = resolvePlanCardKey(planType);
-      if (!isOnline) {
-          toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+      if (!canPerformNetworkMutations) {
+          toast({
+              variant: 'destructive',
+              title: isDegraded ? 'Connection unstable' : 'Offline',
+              description: isDegraded
+                  ? 'Billing is temporarily read-only until the connection stabilizes.'
+                  : 'Connect to the internet to manage billing.',
+          });
           return;
       }
       if (isPromoUnlocked) {
@@ -975,8 +980,14 @@ export default function SubscriptionPage() {
   };
 
   const handleCancelSubscription = async () => {
-      if (!isOnline) {
-          toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+      if (!canPerformNetworkMutations) {
+          toast({
+              variant: 'destructive',
+              title: isDegraded ? 'Connection unstable' : 'Offline',
+              description: isDegraded
+                  ? 'Billing is temporarily read-only until the connection stabilizes.'
+                  : 'Connect to the internet to manage billing.',
+          });
           return;
       }
       if (!session?.access_token) {
@@ -1015,8 +1026,14 @@ export default function SubscriptionPage() {
   };
 
   const handleResubscribe = async () => {
-      if (!isOnline) {
-          toast({ variant: 'destructive', title: 'Offline', description: 'Connect to the internet to manage billing.' });
+      if (!canPerformNetworkMutations) {
+          toast({
+              variant: 'destructive',
+              title: isDegraded ? 'Connection unstable' : 'Offline',
+              description: isDegraded
+                  ? 'Billing is temporarily read-only until the connection stabilizes.'
+                  : 'Connect to the internet to manage billing.',
+          });
           return;
       }
       if (!session?.access_token) {
@@ -1133,6 +1150,10 @@ export default function SubscriptionPage() {
                 {usageKeys.map((key) => {
                   const rule = (limitRules[key] || {}) as any;
                   const usageEntry = (usageByLimit[key] || {}) as any;
+                  const resetText =
+                    (typeof usageEntry?.reset?.label === 'string' ? usageEntry.reset.label.trim() : '') ||
+                    (typeof rule?.presentation?.reset_description === 'string' ? rule.presentation.reset_description.trim() : '') ||
+                    (typeof rule?.presentation?.reset_label === 'string' ? rule.presentation.reset_label.trim() : '');
                   return (
                     <div key={key} className="space-y-2">
                       <LimitBar
@@ -1140,11 +1161,7 @@ export default function SubscriptionPage() {
                         used={Number(usageEntry.used || 0)}
                         limit={typeof usageEntry.limit === 'number' || usageEntry.limit === null ? usageEntry.limit : null}
                       />
-                      <p className="text-[11px] text-muted-foreground">
-                        {typeof usageEntry?.reset?.label === 'string' && usageEntry.reset.label
-                          ? usageEntry.reset.label
-                          : String(rule?.presentation?.reset_description || rule?.presentation?.reset_label || 'No reset')}
-                      </p>
+                      {resetText ? <p className="text-[11px] text-muted-foreground">{resetText}</p> : null}
                     </div>
                   );
                 })}
@@ -1334,11 +1351,15 @@ export default function SubscriptionPage() {
                   </div>
               </div>
               <h2 className="text-2xl font-bold">
-                  {isOnline ? 'Syncing your subscription...' : 'Subscription snapshot unavailable offline'}
+                  {isOnline
+                      ? (isDegraded ? 'Connection unstable while syncing subscription' : 'Syncing your subscription...')
+                      : 'Subscription snapshot unavailable offline'}
               </h2>
               <p className="text-muted-foreground">
                   {isOnline
-                      ? 'We are still validating your current plan with the server.'
+                      ? (isDegraded
+                          ? 'Your last validated subscription snapshot is still shown while the app reconnects.'
+                          : 'We are still validating your current plan with the server.')
                       : 'Reconnect once to refresh your subscription snapshot on this device.'}
               </p>
               <div className="flex justify-center gap-4">
@@ -1397,7 +1418,10 @@ export default function SubscriptionPage() {
                           Document expiration window: {formatExpirationWindowLabel(currentExpirationDays)}
                       </p>
                       {isAutoRenewActive && !hasPremiumAccess ? (
-                          <OfflineGuard>
+                          <OfflineGuard
+                              blockWhenDegraded
+                              degradedReason="Connection is unstable. Wait for sync to finish before changing billing."
+                          >
                               <Dialog open={isCancelDialogOpen} onOpenChange={setIsCancelDialogOpen}>
                                   <DialogTrigger asChild>
                                       <Button variant="outline" className="w-full text-red-600 hover:text-red-700 hover:bg-red-50 border-red-100">
@@ -1433,7 +1457,10 @@ export default function SubscriptionPage() {
                               Manage Premium via Support
                           </Button>
                       ) : canResumeAutoRenew ? (
-                          <OfflineGuard>
+                          <OfflineGuard
+                              blockWhenDegraded
+                              degradedReason="Connection is unstable. Wait for sync to finish before changing billing."
+                          >
                               <Button
                                   className="w-full bg-primary hover:bg-primary/90"
                                   onClick={() => void handleResubscribe()}
@@ -1572,7 +1599,11 @@ export default function SubscriptionPage() {
                   ctaLabel={freeCardState.ctaLabel}
               />
 
-              <OfflineGuard asChild>
+              <OfflineGuard
+                  asChild
+                  blockWhenDegraded
+                  degradedReason="Connection is unstable. Wait for sync to finish before starting checkout."
+              >
                   <PricingCard
                       title={`${proPlanCatalog?.metadata?.label || 'Pro'} Monthly`}
                       price={pricing.monthly.amount > 0 ? `NGN ${pricing.monthly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
@@ -1594,7 +1625,11 @@ export default function SubscriptionPage() {
                   />
               </OfflineGuard>
 
-              <OfflineGuard asChild>
+              <OfflineGuard
+                  asChild
+                  blockWhenDegraded
+                  degradedReason="Connection is unstable. Wait for sync to finish before starting checkout."
+              >
                   <PricingCard
                       title={`${proPlanCatalog?.metadata?.label || 'Pro'} Weekly`}
                       price={pricing.weekly.amount > 0 ? `NGN ${pricing.weekly.amount.toLocaleString()}` : (proPlanCatalog?.metadata?.price_display || 'Loading...')}
@@ -1619,7 +1654,11 @@ export default function SubscriptionPage() {
           </div>
 
           <div className="flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
-              <OfflineGuard asChild>
+              <OfflineGuard
+                  asChild
+                  blockWhenDegraded
+                  degradedReason="Connection is unstable. Wait for sync to finish before starting checkout."
+              >
                   <Button
                       variant="outline"
                       className="w-full sm:w-auto"
@@ -1639,7 +1678,11 @@ export default function SubscriptionPage() {
                             : 'Pay with Transfer (Monthly)'}
                   </Button>
               </OfflineGuard>
-              <OfflineGuard asChild>
+              <OfflineGuard
+                  asChild
+                  blockWhenDegraded
+                  degradedReason="Connection is unstable. Wait for sync to finish before starting checkout."
+              >
                   <Button
                       variant="outline"
                       className="w-full sm:w-auto"
@@ -1668,9 +1711,10 @@ export default function SubscriptionPage() {
   return (
     <div className="relative min-h-screen overflow-x-clip bg-transparent pb-16">
         {showSlowNotice && isBootLoading ? <SlowNetworkNotice onRetry={() => void fetchBillingStatus()} /> : null}
-        {isUsingCachedData && !isOnline ? (
+        {isUsingCachedData && networkState !== 'online' ? (
             <div className="mx-4 mt-4 rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100 md:mx-8">
-                Offline • showing cached subscription data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+                {isOnline ? 'Connection unstable' : 'Offline'}
+                {' '}• showing cached subscription data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
             </div>
         ) : null}
 

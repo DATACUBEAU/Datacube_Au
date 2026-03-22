@@ -11,32 +11,39 @@ interface OfflineGuardProps {
   children: React.ReactNode;
   fallback?: React.ReactNode; // Optional alternative UI when offline
   disabledReason?: string;
+  degradedReason?: string;
   className?: string;
   asChild?: boolean; // If true, clones the child and adds disabled prop
+  blockWhenDegraded?: boolean;
 }
 
 export function OfflineGuard({ 
   children, 
   fallback, 
   disabledReason = "You are offline. Reconnect to use this feature.",
+  degradedReason = "Connection is unstable. Wait for sync to finish before retrying.",
   className,
-  asChild = false
+  asChild = false,
+  blockWhenDegraded = false,
 }: OfflineGuardProps) {
-  const { isOnline } = useNetworkStatus();
+  const { isOnline, networkState } = useNetworkStatus();
   const { toast } = useToast();
+  const blockedByDegraded = blockWhenDegraded && networkState === 'degraded';
+  const isBlocked = !isOnline || blockedByDegraded;
+  const reason = blockedByDegraded ? degradedReason : disabledReason;
 
   const handleOfflineClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     toast({
       variant: 'destructive',
-      title: "Offline Mode",
-      description: disabledReason,
+      title: blockedByDegraded ? "Read-Only Mode" : "Offline Mode",
+      description: reason,
       duration: 3000
     });
   };
 
-  if (isOnline) {
+  if (!isBlocked) {
     return <>{children}</>;
   }
 
@@ -59,7 +66,7 @@ export function OfflineGuard({
           <TooltipContent>
             <p className="flex items-center gap-2">
               <WifiOff className="h-4 w-4" />
-              {disabledReason}
+              {reason}
             </p>
           </TooltipContent>
         </Tooltip>
@@ -84,7 +91,7 @@ export function OfflineGuard({
           <TooltipContent>
             <p className="flex items-center gap-2">
               <WifiOff className="h-4 w-4" />
-              {disabledReason}
+              {reason}
             </p>
           </TooltipContent>
         </Tooltip>

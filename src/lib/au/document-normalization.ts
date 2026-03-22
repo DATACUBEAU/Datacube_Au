@@ -5,10 +5,9 @@ import {
   resolvePlanExpirationDays,
 } from '@/lib/plans/subscription-policy';
 import {
-  ACCOUNT_SNAPSHOT_ROUTE,
-  normalizeAccountSnapshotPayload,
-  readPersistedAccountSnapshotSync,
-} from '@/lib/account/account-snapshot-cache';
+  fetchCanonicalAccountSnapshotFromApi,
+  resolveCanonicalAccountSnapshotClientFallback,
+} from '@/lib/account/account-snapshot-client';
 
 export const FREE_RETENTION_DAYS = FREE_PLAN_EXPIRATION_DAYS;
 export const PRO_RETENTION_DAYS = PAID_PRO_PLAN_EXPIRATION_DAYS;
@@ -72,20 +71,18 @@ export async function resolveDocumentRetentionDays(userId: string | null | undef
   let retentionDays = FREE_RETENTION_DAYS;
 
   if (userId && typeof window !== 'undefined' && typeof fetch === 'function') {
-    const persisted = readPersistedAccountSnapshotSync(userId);
+    const persisted = await resolveCanonicalAccountSnapshotClientFallback(userId);
     const persistedRetention = Number(persisted.snapshot?.entitlements?.retentionDays || 0);
     if (Number.isFinite(persistedRetention) && persistedRetention > 0) {
       retentionDays = Math.floor(persistedRetention);
     }
 
     try {
-      const response = await fetch(`/api${ACCOUNT_SNAPSHOT_ROUTE}`, {
-        method: 'GET',
-        credentials: 'include',
-        cache: 'no-store',
+      const { response, snapshot: normalized } = await fetchCanonicalAccountSnapshotFromApi({
+        userId,
+        fetchImpl: fetch,
+        useSafeFetch: false,
       });
-      const payload = await response.json().catch(() => null);
-      const normalized = normalizeAccountSnapshotPayload(payload, userId);
       if (response.ok && normalized) {
         const explicitRetention = Number(normalized.entitlements.retentionDays);
         retentionDays =

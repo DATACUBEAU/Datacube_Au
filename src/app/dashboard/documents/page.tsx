@@ -62,7 +62,7 @@ interface DocumentData {
 
 export default function DocumentsPage() {
   const [user] = useSupabaseUser();
-  const { isOnline } = useNetworkStatus();
+  const { isOnline, networkState } = useNetworkStatus();
   const { 
     documents: apiDocuments, 
     loading: apiLoading, 
@@ -332,10 +332,11 @@ export default function DocumentsPage() {
             </div>
 
             <div className="flex-1 min-w-0">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <div className="flex min-w-0 items-center gap-2 overflow-hidden">
                 <FileNameText
                   text={doc.fileName}
                   className={`font-medium transition-colors ${isDeleting ? "text-muted-foreground" : "group-hover:text-primary"}`}
+                  maxWidthClass="max-w-full"
                 />
                 {isDeleting ? (
                   <div className="flex shrink-0 items-center gap-1.5 rounded-full border border-destructive/20 bg-destructive/10 px-2 py-0.5">
@@ -437,9 +438,10 @@ export default function DocumentsPage() {
   return (
     <main className="p-4 md:p-8 space-y-6">
       {showSlowNotice && loading ? <SlowNetworkNotice onRetry={() => void refresh()} /> : null}
-      {isUsingCachedData && !isOnline ? (
+      {isUsingCachedData && networkState !== 'online' ? (
         <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
-          Offline • showing cached data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+          {isOnline ? 'Connection unstable' : 'Offline'}
+          {' '}• showing cached data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
         </div>
       ) : null}
 

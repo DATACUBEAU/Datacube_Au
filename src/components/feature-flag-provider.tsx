@@ -19,6 +19,8 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
+import { useAccountSnapshot } from '@/components/providers/account-snapshot-provider';
+import { buildSnapshotFallbackFlags } from '@/lib/feature-flags/client-fallback';
 
 export type FeatureFlagScope = 'global' | 'org' | 'user';
 
@@ -120,7 +122,7 @@ function normalizeFlagRow(row: any): FeatureFlagRecord | null {
 
 function rowsToState(rows: FeatureFlagRecord[]): { flags: FeatureFlagsMap; records: FeatureFlagsRecordMap } {
   const records: FeatureFlagsRecordMap = {};
-  const flags: FeatureFlagsMap = { ...DEFAULT_FLAGS };
+  const flags: FeatureFlagsMap = {};
 
   for (const row of rows) {
     records[row.key] = row;
@@ -148,6 +150,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const { isOnline } = useNetworkStatus();
   const { loading: isLoadingAuth } = useSupabaseSession();
   const { isAuthLocked } = useSmartAuth();
+  const { snapshot: accountSnapshot } = useAccountSnapshot();
   const isFetchingRef = useRef(false);
 
   const readCachedRows = useCallback(async (): Promise<FeatureFlagRecord[] | null> => {
@@ -496,7 +499,13 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   }, [fetchFlags]);
 
   const value = useMemo<FeatureFlagContextType>(() => {
-    const { flags, records } = rowsToState(rows);
+    const { flags: rawFlags, records } = rowsToState(rows);
+    const fallbackFlags = buildSnapshotFallbackFlags(accountSnapshot);
+    const flags: FeatureFlagsMap = {
+      ...DEFAULT_FLAGS,
+      ...fallbackFlags,
+      ...rawFlags,
+    };
     return {
       flags,
       records,
@@ -508,7 +517,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       refreshFlags,
       setFlag,
     };
-  }, [loading, refreshFlags, rows, setFlag]);
+  }, [accountSnapshot, loading, refreshFlags, rows, setFlag]);
 
   return (
     <FeatureFlagContext.Provider value={value}>

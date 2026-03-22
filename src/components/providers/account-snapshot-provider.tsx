@@ -10,19 +10,20 @@ import React, {
   useState,
 } from 'react';
 import { supabase } from '@/lib/supabase-client/client';
-import { safeFetch } from '@/lib/api/safe-fetch';
-import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
+import { writeUserCache } from '@/lib/cache/user-cache';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import {
+  fetchCanonicalAccountSnapshotFromApi,
+  readCanonicalAccountSnapshotCache,
+} from '@/lib/account/account-snapshot-client';
+import {
   ACCOUNT_SNAPSHOT_CACHE_SCHEMA,
-  ACCOUNT_SNAPSHOT_LEGACY_ROUTE,
   ACCOUNT_SNAPSHOT_CACHE_TTL_MS,
   ACCOUNT_SNAPSHOT_ROUTE,
   ACCOUNT_SNAPSHOT_SOURCE,
   clearPersistedAccountSnapshotSync,
-  normalizeAccountSnapshotPayload,
   resolveCachedAccountSnapshotFallback,
   readPersistedAccountSnapshotSync,
   writePersistedAccountSnapshotSync,
@@ -109,28 +110,10 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
 
   const readCachedSnapshot = useCallback(async (): Promise<CachedSnapshotResult> => {
     if (!user?.id) return { snapshot: null, cachedAt: null };
-    const cached = await readUserCache<unknown>({
-      userId: user.id,
-      route: ACCOUNT_SNAPSHOT_ROUTE,
-      source: ACCOUNT_SNAPSHOT_SOURCE,
-      endpoint: 'get',
-      schemaVersion: ACCOUNT_SNAPSHOT_CACHE_SCHEMA,
-      maxAgeMs: ACCOUNT_SNAPSHOT_CACHE_TTL_MS,
-    });
-    const legacyCached =
-      cached.data === null || cached.data === undefined
-        ? await readUserCache<unknown>({
-            userId: user.id,
-            route: ACCOUNT_SNAPSHOT_LEGACY_ROUTE,
-            source: ACCOUNT_SNAPSHOT_SOURCE,
-            endpoint: 'get',
-            schemaVersion: ACCOUNT_SNAPSHOT_CACHE_SCHEMA,
-            maxAgeMs: ACCOUNT_SNAPSHOT_CACHE_TTL_MS,
-          })
-        : cached;
+    const cached = await readCanonicalAccountSnapshotCache(user.id);
     return {
-      snapshot: normalizeAccountSnapshotPayload(legacyCached.data, user.id),
-      cachedAt: legacyCached.cachedAt,
+      snapshot: cached.snapshot,
+      cachedAt: cached.cachedAt,
     };
   }, [user?.id]);
 
@@ -188,13 +171,10 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
 
     isFetchingRef.current = true;
     try {
-      const headers = new Headers();
-      headers.set('Authorization', `Bearer ${session.access_token}`);
-      const response = await safeFetch(`/api${ACCOUNT_SNAPSHOT_ROUTE}`, {
-        method: 'GET',
-        headers,
-        credentials: 'include',
-        timeout: 10_000,
+      const { response, payload, snapshot: normalized } = await fetchCanonicalAccountSnapshotFromApi({
+        userId: user.id,
+        accessToken: session.access_token,
+        timeoutMs: 10_000,
         silent: true,
       });
       if (response.status === 401 || response.status === 403) {
@@ -204,8 +184,6 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
         authError.status = response.status;
         throw authError;
       }
-      const payload = await response.json().catch(() => null);
-      const normalized = normalizeAccountSnapshotPayload(payload, user.id);
       if (!response.ok || !normalized) {
         const requestError: Error & { status?: number } = new Error(
           String(

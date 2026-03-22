@@ -14,8 +14,21 @@ function formatCount(value: number) {
   return Number(value || 0).toLocaleString();
 }
 
-function describeLimit(label: string, value: number, resetLabel: string) {
-  return `${label}: ${formatCount(value)} (${resetLabel})`;
+function summarizeLimit(rule?: {
+  presentation?: {
+    summary?: string;
+    cap_label?: string;
+    mode_label?: string;
+    reset_label?: string;
+  };
+} | null) {
+  const summary = String(rule?.presentation?.summary || '').trim();
+  if (summary) return summary;
+  return [
+    String(rule?.presentation?.cap_label || '').trim(),
+    String(rule?.presentation?.mode_label || '').trim(),
+    String(rule?.presentation?.reset_label || '').trim(),
+  ].filter(Boolean).join(' / ');
 }
 
 export default async function PricingPage({
@@ -96,14 +109,14 @@ export default async function PricingPage({
 
                 <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                   <p>Document expiration: {formatExpirationWindowLabel(Number(plan.metadata.expiration_days || 0))}</p>
-                  <p>{describeLimit('Chats', Number(plan.limits.max_chats_total || 0), plan.resetLabels.max_chats_total)}</p>
-                  <p>{describeLimit('Uploads stored', Number(plan.limits.max_uploads_total || 0), plan.resetLabels.max_uploads_total)}</p>
-                  <p>{describeLimit('Tokens', Number(plan.limits.max_tokens_total || 0), plan.resetLabels.max_tokens_total)}</p>
-                  <p>{describeLimit('Exam predictions', Number(plan.limits.max_exam_predictions || 0), plan.resetLabels.max_exam_predictions)}</p>
-                  <p>{describeLimit('Practice exams', Number(plan.limits.max_practice_exams || 0), plan.resetLabels.max_practice_exams)}</p>
-                  <p>{describeLimit('Knowledge Hub items', Number(plan.limits.max_knowledge_hub || 0), plan.resetLabels.max_knowledge_hub)}</p>
-                  <p>{describeLimit('Concurrent jobs', Number(plan.limits.max_concurrent_jobs || 0), plan.resetLabels.max_concurrent_jobs)}</p>
-                  <p>Per-file upload size: {formatCount(Number(plan.limits.max_file_size_mb || 0))} MB ({plan.resetLabels.max_file_size_mb})</p>
+                  <p>Chats: {summarizeLimit(plan.limitRules.max_chats_total)}</p>
+                  <p>Uploads stored: {summarizeLimit(plan.limitRules.max_uploads_total)}</p>
+                  <p>Tokens: {summarizeLimit(plan.limitRules.max_tokens_total)}</p>
+                  <p>Exam predictions: {summarizeLimit(plan.limitRules.max_exam_predictions)}</p>
+                  <p>Practice exams: {summarizeLimit(plan.limitRules.max_practice_exams)}</p>
+                  <p>Knowledge Hub items: {summarizeLimit(plan.limitRules.max_knowledge_hub)}</p>
+                  <p>Concurrent jobs: {summarizeLimit(plan.limitRules.max_concurrent_jobs)}</p>
+                  <p>Per-file upload size: {summarizeLimit(plan.limitRules.max_file_size_mb)}</p>
                 </div>
 
                 <Button asChild className="w-full" variant={plan.plan === 'free' ? 'outline' : 'default'}>
