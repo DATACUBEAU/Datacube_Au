@@ -1,12 +1,89 @@
 import type {NextConfig} from 'next';
 import withPWAInit from '@ducanh2912/next-pwa';
 import path from 'node:path';
-import { isPwaCacheExcludedPathname, shouldCacheNextDataPath } from './shared/pwa-cache-policy.js';
+import { PWA_RUNTIME_CACHE_NAMES } from './shared/pwa-runtime.js';
+
+const matchNextDataRoute = ({ request, url }: { request: Request; url: URL }) => {
+  if (request.method !== 'GET') return false;
+  if (!/\/_next\/data\/.+\/.+\.json$/i.test(url.pathname)) return false;
+
+  const matchedRoute = url.pathname.match(/^\/_next\/data\/[^/]+(\/.+)\.json$/i)?.[1] || '';
+  if (!matchedRoute) return false;
+
+  const excludedPrefixes = ['/conex'];
+  return !excludedPrefixes.some((prefix) => {
+    return matchedRoute === prefix || matchedRoute.startsWith(`${prefix}/`);
+  });
+};
+
+const matchPrefetchedRscRoute = ({
+  request,
+  url: { pathname },
+  sameOrigin,
+}: {
+  request: Request;
+  url: { pathname: string };
+  sameOrigin: boolean;
+}) => {
+  if (request.method !== 'GET') return false;
+  if (request.headers.get('RSC') !== '1') return false;
+  if (request.headers.get('Next-Router-Prefetch') !== '1') return false;
+  if (!sameOrigin) return false;
+  if (pathname.startsWith('/api/')) return false;
+
+  const normalizedPath = typeof pathname === 'string' && pathname.trim() ? pathname : '/';
+  const excludedPrefixes = ['/conex'];
+  return !excludedPrefixes.some((prefix) => {
+    return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
+  });
+};
+
+const matchRscRoute = ({
+  request,
+  url: { pathname },
+  sameOrigin,
+}: {
+  request: Request;
+  url: { pathname: string };
+  sameOrigin: boolean;
+}) => {
+  if (request.method !== 'GET') return false;
+  if (request.headers.get('RSC') !== '1') return false;
+  if (!sameOrigin) return false;
+  if (pathname.startsWith('/api/')) return false;
+
+  const normalizedPath = typeof pathname === 'string' && pathname.trim() ? pathname : '/';
+  const excludedPrefixes = ['/conex'];
+  return !excludedPrefixes.some((prefix) => {
+    return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
+  });
+};
+
+const matchNavigationRoute = ({
+  request,
+  url: { pathname },
+  sameOrigin,
+}: {
+  request: Request;
+  url: { pathname: string };
+  sameOrigin: boolean;
+}) => {
+  if (request.method !== 'GET') return false;
+  if (request.mode !== 'navigate') return false;
+  if (!sameOrigin) return false;
+  if (pathname.startsWith('/api/')) return false;
+
+  const normalizedPath = typeof pathname === 'string' && pathname.trim() ? pathname : '/';
+  const excludedPrefixes = ['/conex'];
+  return !excludedPrefixes.some((prefix) => {
+    return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
+  });
+};
 
 const withPWA = withPWAInit({
   dest: 'public',
   disable: process.env.NODE_ENV === 'development',
-  register: true,
+  register: false,
   cacheOnFrontEndNav: true,
   aggressiveFrontEndNavCaching: true,
   dynamicStartUrlRedirect: '/dashboard',
@@ -22,31 +99,31 @@ const withPWA = withPWAInit({
         urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/api/'),
         method: 'GET',
         handler: 'NetworkOnly',
-        options: { cacheName: 'api-get-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['api-get-no-cache'] },
       },
       {
         urlPattern: ({ sameOrigin }) => sameOrigin,
         method: 'POST',
         handler: 'NetworkOnly',
-        options: { cacheName: 'post-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['post-no-cache'] },
       },
       {
         urlPattern: ({ sameOrigin }) => sameOrigin,
         method: 'PUT',
         handler: 'NetworkOnly',
-        options: { cacheName: 'put-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['put-no-cache'] },
       },
       {
         urlPattern: ({ sameOrigin }) => sameOrigin,
         method: 'PATCH',
         handler: 'NetworkOnly',
-        options: { cacheName: 'patch-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['patch-no-cache'] },
       },
       {
         urlPattern: ({ sameOrigin }) => sameOrigin,
         method: 'DELETE',
         handler: 'NetworkOnly',
-        options: { cacheName: 'delete-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['delete-no-cache'] },
       },
       {
         urlPattern: ({ request, sameOrigin }) =>
@@ -56,7 +133,7 @@ const withPWA = withPWAInit({
           ['style', 'script', 'font', 'image', 'worker'].includes(request.destination),
         handler: 'StaleWhileRevalidate',
         options: {
-          cacheName: 'static-assets',
+          cacheName: PWA_RUNTIME_CACHE_NAMES['static-assets'],
           expiration: {
             maxEntries: 256,
             maxAgeSeconds: 30 * 24 * 60 * 60,
@@ -66,13 +143,13 @@ const withPWA = withPWAInit({
       {
         urlPattern: ({ request, url }) => request.method === 'GET' && /^https:\/\/.*\.supabase\.co\/.*/i.test(url.toString()),
         handler: 'NetworkOnly',
-        options: { cacheName: 'supabase-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['supabase-no-cache'] },
       },
       {
         urlPattern: ({ request, url }) => request.method === 'GET' && /\/api\/health$/i.test(url.pathname),
         handler: 'NetworkOnly',
         options: {
-          cacheName: 'health-no-cache',
+          cacheName: PWA_RUNTIME_CACHE_NAMES['health-no-cache'],
           plugins: [
             {
               handlerDidError: async () =>
@@ -88,7 +165,7 @@ const withPWA = withPWAInit({
         urlPattern: ({ request, url }) => request.method === 'GET' && /manifest\.webmanifest$/i.test(url.pathname),
         handler: 'StaleWhileRevalidate',
         options: {
-          cacheName: 'manifest-cache',
+          cacheName: PWA_RUNTIME_CACHE_NAMES['manifest-cache'],
           expiration: {
             maxEntries: 1,
             maxAgeSeconds: 24 * 60 * 60,
@@ -98,22 +175,19 @@ const withPWA = withPWAInit({
       {
         urlPattern: ({ request, url }) => request.method === 'GET' && /^https:\/\/www\.google\.com\/images\/cleardot\.gif/i.test(url.toString()),
         handler: 'NetworkOnly',
-        options: { cacheName: 'google-pixel-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['google-pixel-no-cache'] },
       },
       {
         urlPattern: ({ request, url }) => request.method === 'GET' && /^https:\/\/www\.googletagmanager\.com\/.*/i.test(url.toString()),
         handler: 'NetworkOnly',
-        options: { cacheName: 'gtm-no-cache' },
+        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['gtm-no-cache'] },
       },
       {
         // Keep Next.js data payloads around longer so already-visited pages reopen offline.
-        urlPattern: ({ request, url }) =>
-          request.method === 'GET' &&
-          /\/_next\/data\/.+\/.+\.json$/i.test(url.pathname) &&
-          shouldCacheNextDataPath(url.pathname),
+        urlPattern: matchNextDataRoute,
         handler: 'StaleWhileRevalidate',
         options: {
-          cacheName: 'next-data',
+          cacheName: PWA_RUNTIME_CACHE_NAMES['next-data'],
           expiration: {
             maxEntries: 256,
             maxAgeSeconds: 7 * 24 * 60 * 60,
@@ -122,16 +196,10 @@ const withPWA = withPWAInit({
       },
       {
         // Cache dashboard route payload shells so previously visited pages can reopen offline.
-        urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
-          request.method === 'GET' &&
-          request.headers.get('RSC') === '1' &&
-          request.headers.get('Next-Router-Prefetch') === '1' &&
-          sameOrigin &&
-          !pathname.startsWith('/api/') &&
-          !isPwaCacheExcludedPathname(pathname),
+        urlPattern: matchPrefetchedRscRoute,
         handler: 'NetworkFirst',
         options: {
-          cacheName: 'pages-rsc-prefetch',
+          cacheName: PWA_RUNTIME_CACHE_NAMES['pages-rsc-prefetch'],
           networkTimeoutSeconds: 2,
           expiration: {
             maxEntries: 256,
@@ -141,15 +209,10 @@ const withPWA = withPWAInit({
       },
       {
         // Route payloads should not block UI for long on flaky networks.
-        urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
-          request.method === 'GET' &&
-          request.headers.get('RSC') === '1' &&
-          sameOrigin &&
-          !pathname.startsWith('/api/') &&
-          !isPwaCacheExcludedPathname(pathname),
+        urlPattern: matchRscRoute,
         handler: 'NetworkFirst',
         options: {
-          cacheName: 'pages-rsc',
+          cacheName: PWA_RUNTIME_CACHE_NAMES['pages-rsc'],
           networkTimeoutSeconds: 2,
           expiration: {
             maxEntries: 256,
@@ -159,15 +222,10 @@ const withPWA = withPWAInit({
       },
       {
         // Main HTML navigation fallback for instant offline/poor-network transitions.
-        urlPattern: ({ request, url: { pathname }, sameOrigin }) =>
-          request.method === 'GET' &&
-          request.mode === 'navigate' &&
-          sameOrigin &&
-          !pathname.startsWith('/api/') &&
-          !isPwaCacheExcludedPathname(pathname),
+        urlPattern: matchNavigationRoute,
         handler: 'NetworkFirst',
         options: {
-          cacheName: 'pages',
+          cacheName: PWA_RUNTIME_CACHE_NAMES['pages'],
           networkTimeoutSeconds: 2,
           expiration: {
             maxEntries: 256,

@@ -5,6 +5,7 @@ import {
   resolveBootstrapAccountSnapshotState,
   resolveFailedAccountSnapshotState,
   resolveSuccessfulAccountSnapshotState,
+  shouldDeferAccountSnapshotBootstrap,
 } from '../src/lib/account/account-snapshot-state.js';
 import { resolveDisplayedPlanCode } from '../src/lib/billing/plan-refresh-state.js';
 
@@ -160,6 +161,25 @@ async function main() {
     assert.equal(state.reason, 'unauthorized');
     assert.equal(state.snapshot, null);
     assert.equal(state.clearPersistedSnapshot, true);
+  });
+
+  await run('account snapshot bootstrap waits for auth restore so cached users do not race into false logout', () => {
+    assert.equal(
+      shouldDeferAccountSnapshotBootstrap({
+        hasUser: true,
+        isLoadingAuth: false,
+        runtimeAuthState: 'RESTORING',
+      }),
+      true,
+    );
+    assert.equal(
+      shouldDeferAccountSnapshotBootstrap({
+        hasUser: true,
+        isLoadingAuth: false,
+        runtimeAuthState: 'AUTHENTICATED',
+      }),
+      false,
+    );
   });
 
   await run('reconnect applies the latest backend snapshot and only downgrades when the server says free', () => {

@@ -58,6 +58,16 @@ export function resolveBootstrapAccountSnapshotState<TSnapshot>(
   };
 }
 
+export function shouldDeferAccountSnapshotBootstrap(input: {
+  hasUser: boolean;
+  isLoadingAuth: boolean;
+  runtimeAuthState: 'RESTORING' | 'AUTHENTICATED' | 'EXPIRED' | 'REAUTH_IN_PROGRESS';
+}): boolean {
+  if (!input.hasUser) return false;
+  if (input.isLoadingAuth) return true;
+  return input.runtimeAuthState === 'RESTORING';
+}
+
 export function resolveSuccessfulAccountSnapshotState<TSnapshot>(
   snapshot: TSnapshot,
   cachedAt: number,

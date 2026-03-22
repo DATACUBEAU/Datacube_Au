@@ -414,7 +414,10 @@ export default function SubscriptionPage() {
       return parsed as { authorization_url: string; reference: string };
   }, [planSnapshot?.checksum, session?.access_token]);
 
-  const applyBillingStatus = useCallback((data: any, options?: { fromCache?: boolean }) => {
+  const applyBillingStatus = useCallback((data: any, options?: {
+      fromCache?: boolean;
+      applyPlanAuthority?: boolean;
+  }) => {
       if (!data) return;
       const paymentsList = Array.isArray(data.payments) ? data.payments : [];
       const subscriptionRow = data.subscription ?? null;
@@ -425,40 +428,13 @@ export default function SubscriptionPage() {
           entitlementSource: data?.currentPlan?.entitlementSource || data.entitlementSource || 'none',
           promoActive: data?.currentPlan?.promoActive ?? Boolean(data?.promo?.active),
           subscriptionPlanKey: data?.currentPlan?.activePlanKey || subscriptionRow?.plan_key,
-          subscriptionStatus: data?.currentPlan?.subscriptionStatus || subscriptionRow?.status,
-          latestPaymentPlanKey: data?.currentPlan?.activePlanKey || latestPaymentPlanKey,
-          legacyTier: data?.currentPlan?.activePlanKey || data?.currentPlan?.managedPlan || data.tier,
-      });
+           subscriptionStatus: data?.currentPlan?.subscriptionStatus || subscriptionRow?.status,
+           latestPaymentPlanKey: data?.currentPlan?.activePlanKey || latestPaymentPlanKey,
+           legacyTier: data?.currentPlan?.activePlanKey || data?.currentPlan?.managedPlan || data.tier,
+       });
 
-      setTier(data.tier || normalizedCurrentPlan.managedPlan || null);
-      setExpiry(data.tier_expires_at ?? null);
       setSubscription(subscriptionRow);
       setPayments(paymentsList);
-      setBillingEnabled(data.billingEnabled ?? false);
-      setCanAccessBilling(Boolean(data?.canAccessBilling));
-      setEntitlementSource((data.entitlementSource || 'none') as 'paid' | 'promo' | 'none');
-      setPromoActive(Boolean(data?.promo?.active));
-      setCurrentPlan(normalizedCurrentPlan);
-      setCheckoutCapability(data?.checkout
-          ? {
-              ...EMPTY_CHECKOUT,
-              ...data.checkout,
-            }
-          : {
-              ...EMPTY_CHECKOUT,
-              enabled: Boolean(data?.canAccessBilling),
-            });
-      if (typeof data?.promo?.ends_at_lagos === 'string' && data.promo.ends_at_lagos.trim()) {
-          const label = new Date(data.promo.ends_at_lagos).toLocaleString('en-US', {
-              timeZone: 'Africa/Lagos',
-              month: 'long',
-              day: 'numeric',
-              year: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit',
-          });
-          setPromoEndsAtLabel(label);
-      }
       if (data.pricing) {
           setPricing({
               weekly: {
@@ -475,19 +451,48 @@ export default function SubscriptionPage() {
       }
        if (Array.isArray(data.planCatalog)) {
            setPlanCatalog(data.planCatalog);
-       }
-       if (data?.planSnapshot && typeof data.planSnapshot === 'object') {
-           setPlanSnapshot(data.planSnapshot);
-           if (typeof data.planSnapshot.issuedAt === 'string') {
-               latestAppliedStatusIssuedAtRef.current = data.planSnapshot.issuedAt;
-           }
-       }
-       if (Boolean(data?.canAccessBilling) && subscriptionRow?.status === 'active') {
-           setIsAutoRenew(true);
-       }
-       if (options?.fromCache) {
-           setIsUsingCachedData(true);
-       }
+        }
+        if (options?.applyPlanAuthority !== false) {
+            setTier(data.tier || normalizedCurrentPlan.managedPlan || null);
+            setExpiry(data.tier_expires_at ?? null);
+            setBillingEnabled(data.billingEnabled ?? false);
+            setCanAccessBilling(Boolean(data?.canAccessBilling));
+            setEntitlementSource((data.entitlementSource || 'none') as 'paid' | 'promo' | 'none');
+            setPromoActive(Boolean(data?.promo?.active));
+            setCurrentPlan(normalizedCurrentPlan);
+            setCheckoutCapability(data?.checkout
+                ? {
+                    ...EMPTY_CHECKOUT,
+                    ...data.checkout,
+                  }
+                : {
+                    ...EMPTY_CHECKOUT,
+                    enabled: Boolean(data?.canAccessBilling),
+                  });
+            if (typeof data?.promo?.ends_at_lagos === 'string' && data.promo.ends_at_lagos.trim()) {
+                const label = new Date(data.promo.ends_at_lagos).toLocaleString('en-US', {
+                    timeZone: 'Africa/Lagos',
+                    month: 'long',
+                    day: 'numeric',
+                    year: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit',
+                });
+                setPromoEndsAtLabel(label);
+            }
+            if (data?.planSnapshot && typeof data.planSnapshot === 'object') {
+                setPlanSnapshot(data.planSnapshot);
+                if (typeof data.planSnapshot.issuedAt === 'string') {
+                    latestAppliedStatusIssuedAtRef.current = data.planSnapshot.issuedAt;
+                }
+            }
+        }
+        if (Boolean(data?.canAccessBilling) && subscriptionRow?.status === 'active') {
+            setIsAutoRenew(true);
+        }
+        if (options?.fromCache) {
+            setIsUsingCachedData(true);
+        }
   }, []);
 
   const applyAccountSnapshotSeed = useCallback((snapshot: NonNullable<typeof accountSnapshot>, options?: {
@@ -547,17 +552,18 @@ export default function SubscriptionPage() {
       if (!user?.id) return null;
       if (!isOnline || !session?.access_token) {
           const cached = await readCachedBillingStatus();
-          if (cached.data) {
-              applyBillingStatus(cached.data, { fromCache: true });
-              setCachedAt(cached.cachedAt);
-          } else if (accountSnapshot) {
+          if (accountSnapshot) {
               applyAccountSnapshotSeed(accountSnapshot, {
                   fromCache: isUsingCachedAccountSnapshot,
                   cachedAt: accountSnapshotCachedAt,
               });
           }
-            return cached.data;
-       }
+          if (cached.data) {
+              applyBillingStatus(cached.data, { fromCache: true, applyPlanAuthority: false });
+              setCachedAt(accountSnapshotCachedAt ?? cached.cachedAt);
+          }
+             return cached.data;
+        }
        const requestId = ++statusRequestIdRef.current;
        try {
            const res = await billingRequest<any>('status', { method: 'GET' });
@@ -581,22 +587,22 @@ export default function SubscriptionPage() {
                void writeCachedBillingStatus(res.data);
                return res.data;
            }
-       } catch (e) {
-           console.error("Failed to fetch billing status", e);
-           const cached = await readCachedBillingStatus();
-           if (cached.data) {
-               applyBillingStatus(cached.data, { fromCache: true });
-               setCachedAt(cached.cachedAt);
-               return cached.data;
-           }
-           if (accountSnapshot) {
-               applyAccountSnapshotSeed(accountSnapshot, {
-                   fromCache: isUsingCachedAccountSnapshot,
-                   cachedAt: accountSnapshotCachedAt,
-               });
-           }
-       }
-       return null;
+        } catch (e) {
+            console.error("Failed to fetch billing status", e);
+            const cached = await readCachedBillingStatus();
+            if (accountSnapshot) {
+                applyAccountSnapshotSeed(accountSnapshot, {
+                    fromCache: isUsingCachedAccountSnapshot,
+                    cachedAt: accountSnapshotCachedAt,
+                });
+            }
+            if (cached.data) {
+                applyBillingStatus(cached.data, { fromCache: true, applyPlanAuthority: false });
+                setCachedAt(accountSnapshotCachedAt ?? cached.cachedAt);
+                return cached.data;
+            }
+        }
+        return null;
   }, [
       accountSnapshot,
       accountSnapshotCachedAt,

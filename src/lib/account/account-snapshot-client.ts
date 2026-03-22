@@ -22,6 +22,7 @@ type FetchCanonicalAccountSnapshotOptions = {
   accessToken?: string | null;
   timeoutMs?: number;
   silent?: boolean;
+  suppressAuthError?: boolean;
   credentials?: RequestCredentials;
   fetchImpl?: typeof fetch;
   useSafeFetch?: boolean;
@@ -102,6 +103,7 @@ export async function fetchCanonicalAccountSnapshotFromApi(
       ...requestInit,
       timeout: opts.timeoutMs ?? 10_000,
       silent: opts.silent ?? true,
+      suppressAuthError: opts.suppressAuthError ?? true,
     });
   } else {
     const fetchImpl = opts.fetchImpl ?? fetch;

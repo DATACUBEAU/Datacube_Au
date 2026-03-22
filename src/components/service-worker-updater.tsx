@@ -1,31 +1,15 @@
 "use client";
 
 import { useEffect } from "react";
-
-async function refreshServiceWorkers(): Promise<void> {
-  if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
-
-  const registrations = await navigator.serviceWorker.getRegistrations();
-  for (const registration of registrations) {
-    try {
-      // Ask waiting worker to activate immediately when available.
-      if (registration.waiting) {
-        registration.waiting.postMessage({ type: "SKIP_WAITING" });
-      }
-      await registration.update();
-    } catch {
-      // Best effort.
-    }
-  }
-}
+import { refreshHealthyServiceWorkers } from "@/lib/pwa/service-worker-client";
 
 export function ServiceWorkerUpdater() {
   useEffect(() => {
     if (process.env.NODE_ENV !== "production") return;
 
-    void refreshServiceWorkers();
+    void refreshHealthyServiceWorkers();
     const interval = window.setInterval(() => {
-      void refreshServiceWorkers();
+      void refreshHealthyServiceWorkers();
     }, 60_000);
 
     return () => {
@@ -35,4 +19,3 @@ export function ServiceWorkerUpdater() {
 
   return null;
 }
-

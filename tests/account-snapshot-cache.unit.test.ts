@@ -235,6 +235,21 @@ async function main() {
     );
   });
 
+  await run('partial snapshot payloads without canonical plan authority are rejected instead of normalized to free', () => {
+    assert.equal(
+      normalizeAccountSnapshotPayload(
+        {
+          userId: 'user-1',
+          entitlements: {},
+          currentPlan: {},
+          effectivePlan: {},
+        },
+        'user-1',
+      ),
+      null,
+    );
+  });
+
   if (failed > 0) {
     process.exit(1);
   }

@@ -11,6 +11,7 @@ import { AccountSnapshotProvider } from '@/components/providers/account-snapshot
 import { LimitsProvider } from '@/components/providers/limits-provider';
 import { AuthLockOverlay } from '@/components/auth-lock-overlay';
 import { SessionDebugPanel } from '@/components/session-debug-panel';
+import { ServiceWorkerRegister } from '@/components/service-worker-register';
 import { ServiceWorkerUpdater } from '@/components/service-worker-updater';
 import './globals.css';
 
@@ -86,6 +87,7 @@ export default function RootLayout({
                         <GlobalListeners />
                         <AuthLockOverlay />
                         <SessionDebugPanel />
+                        <ServiceWorkerRegister />
                         <ServiceWorkerUpdater />
                         <Toaster />
                       </div>

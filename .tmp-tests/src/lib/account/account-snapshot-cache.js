@@ -76,7 +76,7 @@ function normalizeWindowMap(value) {
 function buildUnknownAccountEntitlements(userId) {
     return {
         userId: userId || null,
-        plan: 'free',
+        plan: 'unknown',
         hasPro: false,
         entitlementSource: 'none',
         entitlementEndsAt: null,
@@ -95,7 +95,10 @@ function buildUnknownAccountEntitlements(userId) {
 }
 function normalizeEntitlements(value, fallbackUserId) {
     const row = asRecord(value);
-    const plan = (0, plans_1.normalizeEffectiveEntitlementPlan)(row.plan);
+    const plan = (() => {
+        const rawPlan = asString(row.plan);
+        return rawPlan ? (0, plans_1.normalizeEffectiveEntitlementPlan)(rawPlan) : 'unknown';
+    })();
     const entitlementSource = (0, plans_1.normalizeBillingEntitlementSource)(row.entitlementSource);
     const promoActive = row.promoActive === true;
     return {
@@ -164,7 +167,11 @@ function normalizeAccountSnapshotPayload(payload, fallbackUserId) {
         entitlements.asOf ||
         asString(asRecord(root.planSnapshot).issuedAt);
     const effectivePlanRow = asRecord(root.effectivePlan);
-    const plan = asString(root.plan) || asString(effectivePlanRow.plan) || entitlements.plan || 'free';
+    const plan = asString(root.plan) ||
+        asString(effectivePlanRow.plan) ||
+        (entitlements.plan !== 'unknown' ? entitlements.plan : null);
+    if (!plan)
+        return null;
     const currentPlan = normalizeCurrentPlan(root.currentPlan, entitlements, plan);
     return {
         userId,

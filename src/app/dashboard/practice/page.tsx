@@ -6,7 +6,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import {
@@ -29,6 +28,7 @@ import { Icons } from '@/components/icons';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { FileNameText } from '@/components/FileNameText';
+import { DocumentSelectValue } from '@/components/document-select-value';
 import { Badge } from '@/components/ui/badge';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useAuExams } from '@/hooks/api/use-au-exams';
@@ -547,14 +547,22 @@ function PracticePageContent() {
               className="min-w-0 flex-1 md:min-w-[250px]"
               title={selectedDoc?.file_name || undefined}
             >
-              <SelectValue placeholder={docsLoading ? 'Loading...' : 'Select a document...'} />
+              <DocumentSelectValue
+                text={selectedDoc?.file_name}
+                placeholder={docsLoading ? 'Loading...' : 'Select a document...'}
+              />
             </SelectTrigger>
             <SelectContent>
               {docsLoading ? (
                 <div className="flex items-center justify-center p-4"><Loader2 className="h-5 w-5 animate-spin" /></div>
               ) : (
                 documents.map((doc) => (
-                  <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
+                  <SelectItem
+                    key={doc.id}
+                    value={doc.id}
+                    disabled={doc.status !== 'completed'}
+                    textValue={doc.file_name}
+                  >
                     <div className="flex min-w-0 items-center gap-2">
                       <FileNameText text={doc.file_name} />
                       {doc.status !== 'completed' && (

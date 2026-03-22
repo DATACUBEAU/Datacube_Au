@@ -68,6 +68,7 @@ import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { validateQuery } from '@/lib/upload/file-types';
 import { cn } from '@/lib/utils';
 import { FileNameText } from '@/components/FileNameText';
+import { DocumentSelectValue } from '@/components/document-select-value';
 import { ThinkingProcess } from '@/components/thinking-process';
 import { useStore } from '@/hooks/use-store';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
@@ -893,17 +894,10 @@ export default function ChatPage() {
                   className="w-full min-w-0 max-w-full overflow-hidden md:min-w-[250px]"
                   title={selectedDocName || undefined}
                 >
-                  {selectedDocName ? (
-                    <FileNameText
-                      text={selectedDocName}
-                      className="font-medium text-foreground"
-                      maxWidthClass="max-w-full"
-                    />
-                  ) : (
-                    <span className="block min-w-0 flex-1 truncate text-muted-foreground">
-                      {docsLoading ? 'Loading docs...' : 'Select a document'}
-                    </span>
-                  )}
+                  <DocumentSelectValue
+                    text={selectedDocName}
+                    placeholder={docsLoading ? 'Loading docs...' : 'Select a document'}
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {documentList.map(doc => (

@@ -15,6 +15,7 @@ import {
 const ACTIVE_SUBSCRIPTION_STATUSES = new Set(['active', 'trialing', 'non_renewing']);
 
 export type SubscriptionPlanResolutionSource =
+  | 'unknown'
   | 'promo'
   | 'subscription'
   | 'transaction'
@@ -26,6 +27,7 @@ export type NormalizedSubscriptionState = {
   managedPlan: CanonicalBillingManagedPlan;
   effectivePlan: EffectiveEntitlementPlan;
   entitlementSource: CanonicalEntitlementSource;
+  isAuthoritative: boolean;
   promoActive: boolean;
   hasPaidEntitlement: boolean;
   hasPromoEntitlement: boolean;
@@ -75,6 +77,14 @@ export function deriveNormalizedSubscriptionState(input: {
   latestPaymentPlanKey?: unknown;
   legacyTier?: unknown;
 }): NormalizedSubscriptionState {
+  const hasAuthorityInput =
+    typeof input.promoActive === 'boolean' ||
+    String(input.effectivePlan ?? '').trim().length > 0 ||
+    String(input.entitlementSource ?? '').trim().length > 0 ||
+    String(input.subscriptionPlanKey ?? '').trim().length > 0 ||
+    String(input.subscriptionStatus ?? '').trim().length > 0 ||
+    String(input.latestPaymentPlanKey ?? '').trim().length > 0 ||
+    String(input.legacyTier ?? '').trim().length > 0;
   const effectivePlan = normalizeEffectiveEntitlementPlan(input.effectivePlan);
   const entitlementSource = normalizeBillingEntitlementSource(input.entitlementSource);
   const promoActive = input.promoActive === true || entitlementSource === 'promo';
@@ -93,9 +103,12 @@ export function deriveNormalizedSubscriptionState(input: {
   })();
 
   let activePlanKey: CanonicalBillingPlanKey | null = null;
-  let resolutionSource: SubscriptionPlanResolutionSource = 'free';
+  let resolutionSource: SubscriptionPlanResolutionSource = hasAuthorityInput ? 'free' : 'unknown';
 
-  if (promoActive) {
+  if (!hasAuthorityInput) {
+    activePlanKey = null;
+    resolutionSource = 'unknown';
+  } else if (promoActive) {
     activePlanKey = managedPlan === 'premium' ? 'premium' : 'pro';
     resolutionSource = 'promo';
   } else if (managedPlan === 'premium') {
@@ -122,6 +135,7 @@ export function deriveNormalizedSubscriptionState(input: {
     managedPlan,
     effectivePlan,
     entitlementSource,
+    isAuthoritative: hasAuthorityInput,
     promoActive,
     hasPaidEntitlement: entitlementSource === 'paid',
     hasPromoEntitlement: promoActive,
@@ -131,7 +145,10 @@ export function deriveNormalizedSubscriptionState(input: {
     subscriptionStatus,
     hasActiveSubscription,
     resolutionSource,
-    currentPlanLabel: formatBillingPlanLabel(activePlanKey || (managedPlan === 'premium' ? 'premium' : managedPlan === 'pro' ? 'pro' : 'free')),
+    currentPlanLabel:
+      resolutionSource === 'unknown'
+        ? 'Plan pending'
+        : formatBillingPlanLabel(activePlanKey || (managedPlan === 'premium' ? 'premium' : managedPlan === 'pro' ? 'pro' : 'free')),
   };
 }
 
@@ -154,6 +171,17 @@ export function buildSubscriptionCardState(input: {
   checkout: BillingCheckoutCapability;
 }): SubscriptionCardState {
   const { planKey, state, canAccessBilling, checkout } = input;
+
+  if (!state.isAuthoritative) {
+    return {
+      planKey,
+      isCurrent: false,
+      disabled: true,
+      action: 'unavailable',
+      ctaLabel: 'PLAN LOADING',
+      reason: 'Plan details are still restoring from the server.',
+    };
+  }
 
   if (planKey === 'free') {
     const isCurrent = isCurrentCardPlan(state, 'free');
@@ -254,6 +282,7 @@ export function canStartCheckoutForPlan(input: {
 }
 
 export function resolvePlanStatusLabelFromState(state: NormalizedSubscriptionState): string {
+  if (!state.isAuthoritative) return 'Plan pending';
   if (state.effectivePlan === 'admin') return 'Admin';
   if (state.managedPlan === 'premium') return 'Premium';
   if (state.hasPromoEntitlement) return 'Promo Pro';

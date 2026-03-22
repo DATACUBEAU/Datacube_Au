@@ -131,7 +131,7 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         }
       }
 
-      if (typeof window !== 'undefined' && (response.status === 401 || response.status === 403) && !suppressAuthError) {
+      if (typeof window !== 'undefined' && response.status === 401 && !suppressAuthError) {
         console.warn('[safeFetch] auth error detected', {
           status: response.status,
           url,

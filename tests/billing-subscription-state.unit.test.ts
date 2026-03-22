@@ -137,7 +137,7 @@ async function main() {
     assert.equal(monthlyCard.action, 'select');
   });
 
-  await run('free card renders correctly', () => {
+  await run('missing subscription authority stays pending instead of silently becoming free', () => {
     const state = deriveNormalizedSubscriptionState({});
     const freeCard = buildSubscriptionCardState({
       planKey: 'free',
@@ -147,8 +147,12 @@ async function main() {
     });
 
     assert.equal(state.managedPlan, 'free');
-    assert.equal(freeCard.isCurrent, true);
-    assert.equal(freeCard.ctaLabel, 'CURRENT PLAN');
+    assert.equal(state.isAuthoritative, false);
+    assert.equal(state.resolutionSource, 'unknown');
+    assert.equal(state.activePlanKey, null);
+    assert.equal(state.currentPlanLabel, 'Plan pending');
+    assert.equal(freeCard.isCurrent, false);
+    assert.equal(freeCard.ctaLabel, 'PLAN LOADING');
     assert.equal(freeCard.disabled, true);
   });
 

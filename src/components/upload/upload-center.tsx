@@ -20,6 +20,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 import { UploadCloud, X, RefreshCw, CheckCircle2, AlertTriangle, Loader2, Info } from 'lucide-react';
 import { FileNameText } from '@/components/FileNameText';
+import { DocumentSelectValue } from '@/components/document-select-value';
 import { AUThrottlingDialog } from '@/components/au-throttling-dialog';
 import { OfflineGuard } from '@/components/offline-guard';
 import { useStore } from '@/hooks/use-store';
@@ -481,13 +482,10 @@ export default function UploadCenter() {
               disabled={!needsParent || parentsLoading}
             >
               <SelectTrigger className="w-full min-w-0 overflow-hidden" title={selectedParentName || undefined}>
-                {selectedParentName ? (
-                  <FileNameText text={selectedParentName} maxWidthClass="max-w-full" />
-                ) : (
-                  <span className="block min-w-0 flex-1 truncate text-muted-foreground">
-                    {!needsParent ? 'Not required' : parentsLoading ? 'Loading…' : 'Select textbook'}
-                  </span>
-                )}
+                <DocumentSelectValue
+                  text={selectedParentName}
+                  placeholder={!needsParent ? 'Not required' : parentsLoading ? 'Loading…' : 'Select textbook'}
+                />
               </SelectTrigger>
               <SelectContent>
                 {parents.length === 0 && !parentsLoading ? (

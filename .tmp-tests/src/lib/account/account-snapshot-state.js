@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.classifyAccountSnapshotFailure = classifyAccountSnapshotFailure;
 exports.resolveBootstrapAccountSnapshotState = resolveBootstrapAccountSnapshotState;
+exports.shouldDeferAccountSnapshotBootstrap = shouldDeferAccountSnapshotBootstrap;
 exports.resolveSuccessfulAccountSnapshotState = resolveSuccessfulAccountSnapshotState;
 exports.resolveFailedAccountSnapshotState = resolveFailedAccountSnapshotState;
 function normalizeErrorMessage(error) {
@@ -35,6 +36,13 @@ function resolveBootstrapAccountSnapshotState(snapshot, cachedAt) {
         isUsingCachedData: Boolean(snapshot),
         cachedAt: snapshot ? cachedAt : null,
     };
+}
+function shouldDeferAccountSnapshotBootstrap(input) {
+    if (!input.hasUser)
+        return false;
+    if (input.isLoadingAuth)
+        return true;
+    return input.runtimeAuthState === 'RESTORING';
 }
 function resolveSuccessfulAccountSnapshotState(snapshot, cachedAt) {
     return {

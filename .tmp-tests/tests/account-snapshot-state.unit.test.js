@@ -150,6 +150,18 @@ async function main() {
         strict_1.default.equal(state.snapshot, null);
         strict_1.default.equal(state.clearPersistedSnapshot, true);
     });
+    await run('account snapshot bootstrap waits for auth restore so cached users do not race into false logout', () => {
+        strict_1.default.equal((0, account_snapshot_state_js_1.shouldDeferAccountSnapshotBootstrap)({
+            hasUser: true,
+            isLoadingAuth: false,
+            runtimeAuthState: 'RESTORING',
+        }), true);
+        strict_1.default.equal((0, account_snapshot_state_js_1.shouldDeferAccountSnapshotBootstrap)({
+            hasUser: true,
+            isLoadingAuth: false,
+            runtimeAuthState: 'AUTHENTICATED',
+        }), false);
+    });
     await run('reconnect applies the latest backend snapshot and only downgrades when the server says free', () => {
         const proSnapshot = createSnapshot('pro');
         const freeSnapshot = createSnapshot('free');

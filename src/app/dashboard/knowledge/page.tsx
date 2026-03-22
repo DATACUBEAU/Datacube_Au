@@ -19,7 +19,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select';
 import { Loader2, Wand2, Info, WifiOff, BrainCircuit } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -33,6 +32,7 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { FileNameText } from '@/components/FileNameText';
+import { DocumentSelectValue } from '@/components/document-select-value';
 import { Badge } from '@/components/ui/badge';
 import { formatDistanceToNowStrict } from 'date-fns';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
@@ -657,11 +657,19 @@ function KnowledgePageContent() {
                   aria-label="Select document"
                   title={selectedDoc?.file_name || undefined}
                 >
-                  <SelectValue placeholder="Select a textbook" />
+                  <DocumentSelectValue
+                    text={selectedDoc?.file_name}
+                    placeholder="Select a textbook"
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {documents.map((doc) => (
-                    <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
+                    <SelectItem
+                      key={doc.id}
+                      value={doc.id}
+                      disabled={doc.status !== 'completed'}
+                      textValue={doc.file_name}
+                    >
                       <div className="flex min-w-0 items-center gap-2">
                         <FileNameText text={doc.file_name} />
                         {doc.status !== 'completed' && (

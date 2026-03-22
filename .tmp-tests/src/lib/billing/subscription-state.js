@@ -17,6 +17,13 @@ function isActiveSubscriptionStatus(raw) {
     return Boolean(status && ACTIVE_SUBSCRIPTION_STATUSES.has(status));
 }
 function deriveNormalizedSubscriptionState(input) {
+    const hasAuthorityInput = typeof input.promoActive === 'boolean' ||
+        String(input.effectivePlan ?? '').trim().length > 0 ||
+        String(input.entitlementSource ?? '').trim().length > 0 ||
+        String(input.subscriptionPlanKey ?? '').trim().length > 0 ||
+        String(input.subscriptionStatus ?? '').trim().length > 0 ||
+        String(input.latestPaymentPlanKey ?? '').trim().length > 0 ||
+        String(input.legacyTier ?? '').trim().length > 0;
     const effectivePlan = (0, plans_1.normalizeEffectiveEntitlementPlan)(input.effectivePlan);
     const entitlementSource = (0, plans_1.normalizeBillingEntitlementSource)(input.entitlementSource);
     const promoActive = input.promoActive === true || entitlementSource === 'promo';
@@ -34,8 +41,12 @@ function deriveNormalizedSubscriptionState(input) {
         return legacyManagedPlan;
     })();
     let activePlanKey = null;
-    let resolutionSource = 'free';
-    if (promoActive) {
+    let resolutionSource = hasAuthorityInput ? 'free' : 'unknown';
+    if (!hasAuthorityInput) {
+        activePlanKey = null;
+        resolutionSource = 'unknown';
+    }
+    else if (promoActive) {
         activePlanKey = managedPlan === 'premium' ? 'premium' : 'pro';
         resolutionSource = 'promo';
     }
@@ -67,6 +78,7 @@ function deriveNormalizedSubscriptionState(input) {
         managedPlan,
         effectivePlan,
         entitlementSource,
+        isAuthoritative: hasAuthorityInput,
         promoActive,
         hasPaidEntitlement: entitlementSource === 'paid',
         hasPromoEntitlement: promoActive,
@@ -76,7 +88,9 @@ function deriveNormalizedSubscriptionState(input) {
         subscriptionStatus,
         hasActiveSubscription,
         resolutionSource,
-        currentPlanLabel: (0, plans_1.formatBillingPlanLabel)(activePlanKey || (managedPlan === 'premium' ? 'premium' : managedPlan === 'pro' ? 'pro' : 'free')),
+        currentPlanLabel: resolutionSource === 'unknown'
+            ? 'Plan pending'
+            : (0, plans_1.formatBillingPlanLabel)(activePlanKey || (managedPlan === 'premium' ? 'premium' : managedPlan === 'pro' ? 'pro' : 'free')),
     };
 }
 function isCurrentCardPlan(state, planKey) {
@@ -90,6 +104,16 @@ function hasGenericManagedProPlan(state) {
 }
 function buildSubscriptionCardState(input) {
     const { planKey, state, canAccessBilling, checkout } = input;
+    if (!state.isAuthoritative) {
+        return {
+            planKey,
+            isCurrent: false,
+            disabled: true,
+            action: 'unavailable',
+            ctaLabel: 'PLAN LOADING',
+            reason: 'Plan details are still restoring from the server.',
+        };
+    }
     if (planKey === 'free') {
         const isCurrent = isCurrentCardPlan(state, 'free');
         return {
@@ -175,6 +199,8 @@ function canStartCheckoutForPlan(input) {
     return buildSubscriptionCardState(input).action === 'select';
 }
 function resolvePlanStatusLabelFromState(state) {
+    if (!state.isAuthoritative)
+        return 'Plan pending';
     if (state.effectivePlan === 'admin')
         return 'Admin';
     if (state.managedPlan === 'premium')

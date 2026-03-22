@@ -27,7 +27,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert';
@@ -51,6 +50,7 @@ import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/docume
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { supabase } from '@/lib/supabase-client/client';
 import { FileNameText } from '@/components/FileNameText';
+import { DocumentSelectValue } from '@/components/document-select-value';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { FeatureGatePanel } from '@/components/feature-gate-panel';
@@ -424,11 +424,19 @@ function PredictionsPageContent() {
                     aria-label="Select past questions"
                     title={selectedPastQuestionDoc?.file_name || undefined}
                   >
-                    <SelectValue placeholder={docsLoading ? 'Loading...' : 'Select questions...'} />
+                    <DocumentSelectValue
+                      text={selectedPastQuestionDoc?.file_name}
+                      placeholder={docsLoading ? 'Loading...' : 'Select questions...'}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {pastQuestionsDocs.map((doc) => (
-                      <SelectItem key={doc.id} value={doc.id} disabled={doc.status !== 'completed'}>
+                      <SelectItem
+                        key={doc.id}
+                        value={doc.id}
+                        disabled={doc.status !== 'completed'}
+                        textValue={doc.file_name}
+                      >
                         <div className="flex min-w-0 items-center gap-2">
                           <FileNameText text={doc.file_name} />
                           {doc.status !== 'completed' && (
@@ -452,11 +460,14 @@ function PredictionsPageContent() {
                     aria-label="Selected textbook"
                     title={selectedTextbookDoc?.file_name || undefined}
                   >
-                    <SelectValue placeholder={docsLoading ? 'Loading...' : 'Select textbook...'} />
+                    <DocumentSelectValue
+                      text={selectedTextbookDoc?.file_name}
+                      placeholder={docsLoading ? 'Loading...' : 'Select textbook...'}
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {textbookDocs.map((doc) => (
-                      <SelectItem key={doc.id} value={doc.id}>
+                      <SelectItem key={doc.id} value={doc.id} textValue={doc.file_name}>
                         <div className="flex min-w-0 items-center gap-2">
                           <FileNameText text={doc.file_name} />
                           {doc.status !== 'completed' && (

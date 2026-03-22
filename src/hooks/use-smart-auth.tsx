@@ -10,6 +10,7 @@ import {
   AUTH_STATE_CHANGED_EVENT,
   clearAuthActionsDisabled,
   getAuthRuntimeState,
+  markAuthRestoring,
   markReauthInProgress,
   type AuthRuntimeState,
 } from '@/lib/auth/session-expiry-events';
@@ -29,6 +30,7 @@ interface SmartAuthContextType {
   runtimeAuthState: AuthRuntimeState;
   isOfflineSession: boolean;
   isAuthLocked: boolean;
+  isRestoringAuth: boolean;
   isAuthed: boolean;
   isLoadingAuth: boolean;
   isLoading: boolean;
@@ -102,6 +104,46 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     return normalizeBootstrapSession(candidate);
   }, []);
 
+  const isOnlineNow = useCallback(() => {
+    if (typeof window === 'undefined') return true;
+    if (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean') {
+      return (window as any).__DCAU_NETWORK_STATE.isOnline !== false;
+    }
+    return window.navigator.onLine !== false;
+  }, []);
+
+  const resolveSessionFromSupabase = useCallback(async () => {
+    const persisted = normalizeSession(readPersistedSupabaseSession());
+
+    if (!isOnlineNow()) {
+      return {
+        session: persisted,
+        usedCachedSession: Boolean(persisted?.user),
+      };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.getSession();
+      let liveSession = normalizeSession(error ? null : data.session ?? null);
+
+      if (!liveSession) {
+        const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
+        liveSession = normalizeSession(refreshError ? null : refreshedData.session ?? null);
+      }
+
+      const nextSession = liveSession ?? persisted;
+      return {
+        session: nextSession,
+        usedCachedSession: Boolean(!liveSession && nextSession?.user),
+      };
+    } catch {
+      return {
+        session: persisted,
+        usedCachedSession: Boolean(persisted?.user),
+      };
+    }
+  }, [isOnlineNow, normalizeSession]);
+
   const applySessionState = useCallback(
     (nextSession: Session | null, options?: { offlineBootstrap?: boolean; force?: boolean }) => {
       const normalizedSession = normalizeSession(nextSession);
@@ -142,92 +184,76 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     const syncInitialSession = async () => {
-      const offlineAtBoot =
-        typeof window !== 'undefined' &&
-        (window.navigator.onLine === false ||
-          (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean' &&
-            (window as any).__DCAU_NETWORK_STATE.isOnline === false));
+      markAuthRestoring('useSmartAuth.bootstrap');
+      const resolved = await resolveSessionFromSupabase();
+      if (!mounted) return;
 
-      if (offlineAtBoot) {
-        const persisted = readPersistedSupabaseSession();
-        if (!mounted) return;
-        applySessionState(persisted, { offlineBootstrap: true, force: true });
-        return;
-      }
+      applySessionState(resolved.session, {
+        force: true,
+        offlineBootstrap: resolved.usedCachedSession,
+      });
 
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (!mounted) return;
-        const fallbackSession = readPersistedSupabaseSession();
-        const nextSession = data.session ?? fallbackSession;
-        applySessionState(nextSession, {
-          force: true,
-          offlineBootstrap: Boolean(!data.session && nextSession?.user),
-        });
-        if (data.session?.user?.id) {
-          clearAuthActionsDisabled();
-          recordSignIn(data.session.user.id);
-        } else if (nextSession?.user?.id) {
-          clearAuthActionsDisabled();
-        }
-      } catch {
-        if (!mounted) return;
-        const persisted = readPersistedSupabaseSession();
-        applySessionState(persisted, {
-          force: true,
-          offlineBootstrap: Boolean(persisted?.user),
-        });
-        if (persisted?.user?.id) {
-          clearAuthActionsDisabled();
-        }
+      if (resolved.session?.user?.id) {
+        recordSignIn(resolved.session.user.id);
       }
+      clearAuthActionsDisabled();
     };
 
     void syncInitialSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
-      applySessionState(session);
+      applySessionState(session, { force: event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' });
       if (event !== 'SIGNED_OUT') {
         setIsOfflineSession(false);
       }
       if (event === 'SIGNED_IN' && session?.user?.id) {
         clearAuthActionsDisabled();
         recordSignIn(session.user.id);
+      } else if (event === 'TOKEN_REFRESHED' && session?.user?.id) {
+        clearAuthActionsDisabled();
+      } else if (event === 'SIGNED_OUT') {
+        clearAuthActionsDisabled();
       }
     });
 
     const handleOnline = () => {
       if (!mounted) return;
-      if (authStateRef.current === 'authenticated') {
-        void supabase.auth.getSession().then(({ data }) => {
+      if (authStateRef.current === 'unauthenticated' && !sessionSignatureRef.current) return;
+
+      markAuthRestoring('useSmartAuth.online');
+      void resolveSessionFromSupabase()
+        .then((resolved) => {
           if (!mounted) return;
-          const persisted = readPersistedSupabaseSession();
-          const nextSession = data.session ?? persisted;
-          if (!nextSession) {
-            applySessionState(null);
+          if (!resolved.session) {
+            applySessionState(null, { force: true });
             setIsOfflineSession(false);
+            clearAuthActionsDisabled();
             return;
           }
-          applySessionState(nextSession, {
-            force: !data.session,
-            offlineBootstrap: Boolean(!data.session && nextSession.user),
+
+          applySessionState(resolved.session, {
+            force: true,
+            offlineBootstrap: resolved.usedCachedSession,
           });
-          if (nextSession?.user?.id) {
+          if (resolved.session.user?.id) {
             clearAuthActionsDisabled();
           }
-          setIsOfflineSession(!data.session);
-        }).catch(() => {
+          setIsOfflineSession(resolved.usedCachedSession);
+        })
+        .catch(() => {
           if (!mounted) return;
-          const persisted = readPersistedSupabaseSession();
+          const persisted = normalizeSession(readPersistedSupabaseSession());
           if (persisted?.user) {
             applySessionState(persisted, { force: true, offlineBootstrap: true });
+            clearAuthActionsDisabled();
             setIsOfflineSession(true);
             return;
           }
-          setIsOfflineSession(true);
+          applySessionState(null, { force: true });
+          clearAuthActionsDisabled();
+          setIsOfflineSession(false);
         });
-      }
     };
 
     const handleOffline = () => {
@@ -247,7 +273,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener(AUTH_STATE_CHANGED_EVENT, handleRuntimeAuthStateChange as EventListener);
     };
-  }, [applySessionState]);
+  }, [applySessionState, normalizeSession, resolveSessionFromSupabase]);
 
   const signInWithGoogle = useCallback(async (redirectPath?: string) => {
     authStateRef.current = 'loading';
@@ -279,6 +305,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     setAuthState('loading');
     await explicitSignOut(session?.user?.id ?? null);
     applySessionState(null, { force: true });
+    clearAuthActionsDisabled();
   }, [applySessionState, session?.user?.id]);
 
   const startReauth = useCallback((source?: string) => {
@@ -287,18 +314,17 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const getToken = useCallback(async () => {
-    // If we have a session in state, use it (it's kept up to date by the listener)
-    if (session?.access_token) return session.access_token;
-    
-    // Fallback to fetching fresh
-    const { data } = await supabase.auth.getSession();
-    if (data.session?.access_token) return data.session.access_token;
-    return null;
-  }, [session]);
+    const normalizedSession = normalizeSession(session);
+    if (normalizedSession?.access_token) return normalizedSession.access_token;
+
+    const resolved = await resolveSessionFromSupabase();
+    return resolved.session?.access_token ?? null;
+  }, [normalizeSession, resolveSessionFromSupabase, session]);
 
   const isAuthed = authState === 'authenticated';
   const isLoading = authState === 'loading';
   const isAuthLocked = runtimeAuthState === 'EXPIRED' || runtimeAuthState === 'REAUTH_IN_PROGRESS';
+  const isRestoringAuth = runtimeAuthState === 'RESTORING';
 
   const value = useMemo(
     () => ({
@@ -308,6 +334,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       runtimeAuthState,
       isOfflineSession,
       isAuthLocked,
+      isRestoringAuth,
       isAuthed,
       isLoadingAuth: isLoading,
       isLoading,
@@ -323,6 +350,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       runtimeAuthState,
       isOfflineSession,
       isAuthLocked,
+      isRestoringAuth,
       isAuthed,
       isLoading,
       signInWithGoogle,

@@ -2,13 +2,12 @@
 
 import { useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 
 export function AuthLockOverlay() {
   const router = useRouter();
   const pathname = usePathname();
-  const { user, session, isAuthLocked, runtimeAuthState, startReauth } = useSmartAuth();
+  const { isAuthLocked, runtimeAuthState, startReauth } = useSmartAuth();
   const hasHandledRef = useRef(false);
 
   const shouldShow = isAuthLocked && !pathname?.startsWith('/login');
@@ -48,23 +47,15 @@ export function AuthLockOverlay() {
     }
     if (hasHandledRef.current) return;
     hasHandledRef.current = true;
-    startReauth('auth-lock-overlay:auto-logout');
+    startReauth('auth-lock-overlay:redirect');
     const redirectTarget = pathname || '/dashboard';
-    void (async () => {
-      try {
-        await explicitSignOut(session?.user?.id ?? user?.id ?? null, { preserveAuthLock: true });
-      } catch {
-        // Continue to redirect even if client cleanup partially fails.
-      } finally {
-        if (process.env.NODE_ENV === 'development') {
-          console.info('[auth-overlay] forced logout redirect', {
-            redirectTo: redirectTarget,
-          });
-        }
-        router.replace(`/login?redirectTo=${encodeURIComponent(redirectTarget)}&reason=session_expired`);
-      }
-    })();
-  }, [pathname, router, session?.user?.id, shouldShow, startReauth, user?.id]);
+    if (process.env.NODE_ENV === 'development') {
+      console.info('[auth-overlay] redirecting to reauthenticate', {
+        redirectTo: redirectTarget,
+      });
+    }
+    router.replace(`/login?redirectTo=${encodeURIComponent(redirectTarget)}&reason=session_expired`);
+  }, [pathname, router, shouldShow, startReauth]);
 
   return null;
 }

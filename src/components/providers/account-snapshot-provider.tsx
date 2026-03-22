@@ -33,6 +33,7 @@ import {
   resolveBootstrapAccountSnapshotState,
   resolveFailedAccountSnapshotState,
   resolveSuccessfulAccountSnapshotState,
+  shouldDeferAccountSnapshotBootstrap,
 } from '@/lib/account/account-snapshot-state';
 
 type AccountSnapshotContextValue = {
@@ -62,7 +63,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
   const { isOnline } = useNetworkStatus();
-  const { isAuthLocked } = useSmartAuth();
+  const { isAuthLocked, isRestoringAuth, runtimeAuthState } = useSmartAuth();
   const initialSyncSnapshot = user?.id ? readPersistedAccountSnapshotSync(user.id) : { snapshot: null, cachedAt: null };
   const bootstrapState = resolveBootstrapAccountSnapshotState(
     initialSyncSnapshot.snapshot,
@@ -73,6 +74,11 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(bootstrapState.loading);
   const [isUsingCachedData, setIsUsingCachedData] = useState(bootstrapState.isUsingCachedData);
   const [cachedAt, setCachedAt] = useState<number | null>(bootstrapState.cachedAt);
+  const shouldDeferBootstrap = shouldDeferAccountSnapshotBootstrap({
+    hasUser: Boolean(user?.id),
+    isLoadingAuth,
+    runtimeAuthState,
+  });
 
   const snapshotRef = useRef<PersistedCanonicalAccountSnapshot | null>(bootstrapState.snapshot);
   const cachedAtRef = useRef<number | null>(bootstrapState.cachedAt);
@@ -140,8 +146,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
       return null;
     }
 
-    if (isAuthLocked) {
-      setLoading(false);
+    if (isAuthLocked || isRestoringAuth) {
       return snapshotRef.current;
     }
 
@@ -171,12 +176,27 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
 
     isFetchingRef.current = true;
     try {
-      const { response, payload, snapshot: normalized } = await fetchCanonicalAccountSnapshotFromApi({
+      let snapshotResponse = await fetchCanonicalAccountSnapshotFromApi({
         userId: user.id,
         accessToken: session.access_token,
         timeoutMs: 10_000,
         silent: true,
+        suppressAuthError: true,
       });
+      if (snapshotResponse.response.status === 401) {
+        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+        if (!refreshError && refreshed.session?.access_token) {
+          snapshotResponse = await fetchCanonicalAccountSnapshotFromApi({
+            userId: user.id,
+            accessToken: refreshed.session.access_token,
+            timeoutMs: 10_000,
+            silent: true,
+            suppressAuthError: true,
+          });
+        }
+      }
+
+      const { response, payload, snapshot: normalized } = snapshotResponse;
       if (response.status === 401 || response.status === 403) {
         const authError: Error & { status?: number } = new Error(
           `${ACCOUNT_SNAPSHOT_ROUTE} failed (${response.status})`,
@@ -240,6 +260,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     applySnapshot,
     clearSnapshot,
     isAuthLocked,
+    isRestoringAuth,
     isOnline,
     readCachedSnapshot,
     session?.access_token,
@@ -270,7 +291,12 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   }, [applySnapshot, clearSnapshot, user?.id]);
 
   useEffect(() => {
-    if (isLoadingAuth) return;
+    if (shouldDeferBootstrap) {
+      if (!snapshotRef.current) {
+        setLoading(true);
+      }
+      return;
+    }
     if (!user?.id) {
       clearSnapshot();
       return;
@@ -300,10 +326,10 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     return () => {
       cancelled = true;
     };
-  }, [applySnapshot, clearSnapshot, fetchSnapshot, isLoadingAuth, readCachedSnapshot, user?.id]);
+  }, [applySnapshot, clearSnapshot, fetchSnapshot, readCachedSnapshot, shouldDeferBootstrap, user?.id]);
 
   useEffect(() => {
-    if (!user?.id || !isOnline || isAuthLocked) return;
+    if (!user?.id || !isOnline || isAuthLocked || isRestoringAuth) return;
 
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
     const scheduleRefresh = () => {
@@ -343,15 +369,15 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
       if (refreshTimeout) clearTimeout(refreshTimeout);
       void supabase.removeChannel(channel);
     };
-  }, [fetchSnapshot, isAuthLocked, isOnline, user?.id]);
+  }, [fetchSnapshot, isAuthLocked, isOnline, isRestoringAuth, user?.id]);
 
   useEffect(() => {
-    if (!user?.id || !session?.access_token || !isOnline || isAuthLocked) return;
+    if (!user?.id || !session?.access_token || !isOnline || isAuthLocked || isRestoringAuth) return;
     const timer = window.setInterval(() => {
       void fetchSnapshot({ silent: true });
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [fetchSnapshot, isAuthLocked, isOnline, session?.access_token, user?.id]);
+  }, [fetchSnapshot, isAuthLocked, isOnline, isRestoringAuth, session?.access_token, user?.id]);
 
   const value = useMemo<AccountSnapshotContextValue>(() => ({
     snapshot,

@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+import { createClient, type Session, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
 import { toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
 import { guardRequest } from '@/lib/api/request-guard';
@@ -9,6 +9,8 @@ const publicEnv = {
   NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   NEXT_PUBLIC_SUPABASE_BUCKET: process.env.NEXT_PUBLIC_SUPABASE_BUCKET,
 } as const;
+
+let refreshBrowserSessionPromise: Promise<Session | null> | null = null;
 
 type PublicEnvKey = keyof typeof publicEnv;
 
@@ -27,6 +29,14 @@ export function getDeviceId(): string {
     localStorage.setItem(k, v);
   }
   return v;
+}
+
+function isBrowserOnline(): boolean {
+  if (typeof window === 'undefined') return true;
+  if (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean') {
+    return (window as any).__DCAU_NETWORK_STATE.isOnline !== false;
+  }
+  return window.navigator.onLine !== false;
 }
 
 const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -152,6 +162,25 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
+async function refreshBrowserSession(): Promise<Session | null> {
+  if (!isBrowserOnline()) return null;
+  if (refreshBrowserSessionPromise) return refreshBrowserSessionPromise;
+
+  refreshBrowserSessionPromise = (async () => {
+    try {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error) return null;
+      return data.session ?? null;
+    } catch {
+      return null;
+    } finally {
+      refreshBrowserSessionPromise = null;
+    }
+  })();
+
+  return refreshBrowserSessionPromise;
+}
+
 function supabaseProjectRefFromUrl(url: string): string | null {
   try {
     const u = new URL(url);
@@ -188,18 +217,18 @@ function tokenProjectRefFromAccessToken(accessToken: string): string | null {
 
 export async function getSupabaseAccessToken(): Promise<string | null> {
   try {
-    // We rely on the auto-refresh mechanism of the client.
-    // Manual refresh calls are removed to prevent 429 errors.
-    
     const { data, error } = await supabase.auth.getSession();
-    if (error) return null;
-    
-    const expiresAt = data.session?.expires_at;
-    if (typeof expiresAt === 'number' && expiresAt * 1000 <= Date.now() + 5000) {
-      return null;
+    let session = error ? null : data.session ?? null;
+
+    const expiresAt = session?.expires_at;
+    const isExpiredOrExpiring =
+      typeof expiresAt === 'number' && expiresAt * 1000 <= Date.now() + 5000;
+
+    if ((!session || isExpiredOrExpiring) && isBrowserOnline()) {
+      session = await refreshBrowserSession();
     }
 
-    const token = data.session?.access_token ?? null;
+    const token = session?.access_token ?? null;
     if (!token) return null;
 
     // Security check: ensure token matches project
@@ -387,7 +416,7 @@ export async function invokeEdgeFunction<T = any>(
   const firstAttempt = await attemptOnce(accessToken);
 
   if (!requireAuth || !firstAttempt.error || Number(firstAttempt.error?.status) !== 401) {
-    if (requireAuth && firstAttempt.error && [401, 403].includes(Number(firstAttempt.error?.status))) {
+    if (requireAuth && firstAttempt.error && Number(firstAttempt.error?.status) === 401) {
       dispatchSessionExpired({
         status: Number(firstAttempt.error?.status),
         source: `invokeEdgeFunction:${functionName}`,
@@ -399,10 +428,7 @@ export async function invokeEdgeFunction<T = any>(
 
   let refreshedToken: string | null = accessToken;
   try {
-    const { data, error } = await supabase.auth.refreshSession();
-    if (!error) {
-      refreshedToken = data.session?.access_token ?? null;
-    }
+    refreshedToken = (await refreshBrowserSession())?.access_token ?? accessToken;
   } catch {
     // Fallback to first unauthorized result.
   }
@@ -416,7 +442,7 @@ export async function invokeEdgeFunction<T = any>(
     return firstAttempt;
   }
   const retryAttempt = await attemptOnce(refreshedToken);
-  if (requireAuth && retryAttempt.error && [401, 403].includes(Number(retryAttempt.error?.status))) {
+  if (requireAuth && retryAttempt.error && Number(retryAttempt.error?.status) === 401) {
     dispatchSessionExpired({
       status: Number(retryAttempt.error?.status),
       source: `invokeEdgeFunction:${functionName}`,

@@ -1,10 +1,12 @@
+import { shouldDispatchSessionExpiry } from '@/lib/auth/session-expiry-policy';
+
 export const AUTH_SESSION_EXPIRED_EVENT = 'dcau:auth-session-expired';
 export const AUTH_REQUIRED_EVENT = 'dcau:auth-required';
 export const AUTH_STATE_CHANGED_EVENT = 'dcau:auth-state-changed';
 export const AUTH_ACTIONS_DISABLED_KEY = 'dcau:auth-actions-disabled';
 export const AUTH_RUNTIME_STATE_KEY = 'dcau:auth-runtime-state';
 
-export type AuthRuntimeState = 'AUTHENTICATED' | 'EXPIRED' | 'REAUTH_IN_PROGRESS';
+export type AuthRuntimeState = 'RESTORING' | 'AUTHENTICATED' | 'EXPIRED' | 'REAUTH_IN_PROGRESS';
 
 const DISPATCH_COOLDOWN_MS = 15000;
 let lastDispatchAt = 0;
@@ -22,6 +24,7 @@ type SessionExpiredDetail = {
 
 function normalizeRuntimeState(value: unknown): AuthRuntimeState {
   const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'RESTORING') return 'RESTORING';
   if (normalized === 'EXPIRED') return 'EXPIRED';
   if (normalized === 'REAUTH_IN_PROGRESS') return 'REAUTH_IN_PROGRESS';
   return 'AUTHENTICATED';
@@ -60,6 +63,10 @@ export function getAuthRuntimeState(): AuthRuntimeState {
 export function isAuthLocked(): boolean {
   const state = getAuthRuntimeState();
   return state === 'EXPIRED' || state === 'REAUTH_IN_PROGRESS';
+}
+
+export function isAuthRestoring(): boolean {
+  return getAuthRuntimeState() === 'RESTORING';
 }
 
 export function areAuthActionsDisabled(): boolean {
@@ -154,6 +161,14 @@ export function clearAuthActionsDisabled(): void {
   });
 }
 
+export function markAuthRestoring(source = 'auth_restore'): void {
+  setAuthActionsDisabled(false);
+  setAuthRuntimeState('RESTORING', {
+    source,
+    reason: 'session_restoring',
+  });
+}
+
 export function markReauthInProgress(source = 'manual_reauth'): void {
   setAuthActionsDisabled(true);
   setAuthRuntimeState('REAUTH_IN_PROGRESS', { source, reason: 'reauth_started' });
@@ -163,17 +178,27 @@ export function dispatchSessionExpired(detail?: {
   status?: number;
   source?: string;
   reason?: string;
-}): void {
-  if (typeof window === 'undefined') return;
+}): boolean {
+  if (typeof window === 'undefined') return false;
+
+  const isOnline =
+    window.navigator.onLine !== false &&
+    (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean'
+      ? (window as any).__DCAU_NETWORK_STATE.isOnline !== false
+      : true);
 
   const state = getAuthRuntimeState();
-  if (state === 'EXPIRED' || state === 'REAUTH_IN_PROGRESS') {
-    return;
+  if (!shouldDispatchSessionExpiry({
+    status: detail?.status,
+    runtimeState: state,
+    isOnline,
+  })) {
+    return false;
   }
 
   const now = Date.now();
-  if (now - lastDispatchAt < DISPATCH_COOLDOWN_MS && state !== 'AUTHENTICATED') {
-    return;
+  if (now - lastDispatchAt < DISPATCH_COOLDOWN_MS) {
+    return false;
   }
   lastDispatchAt = now;
 
@@ -193,4 +218,5 @@ export function dispatchSessionExpired(detail?: {
 
   window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT, { detail: payload }));
   window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, { detail: payload }));
+  return true;
 }

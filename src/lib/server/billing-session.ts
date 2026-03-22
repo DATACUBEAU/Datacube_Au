@@ -96,14 +96,23 @@ export function buildBillingPlanSnapshot(input: {
   status: Record<string, unknown>;
 }): BillingPlanSnapshot {
   const currentPlan = ((input.status.currentPlan || {}) as Record<string, unknown>) || {};
+  const managedPlan =
+    String(
+      currentPlan.managedPlan ||
+      input.status.tier ||
+      input.status.effectivePlan ||
+      '',
+    ).trim().toLowerCase() || 'unknown';
+  const entitlementSource =
+    String(input.status.entitlementSource || currentPlan.entitlementSource || '').trim().toLowerCase() || 'unknown';
   const base = {
     userId: input.userId,
-    managedPlan: String(currentPlan.managedPlan || input.status.tier || 'free'),
+    managedPlan,
     activePlanKey:
       typeof currentPlan.activePlanKey === 'string' && currentPlan.activePlanKey.trim()
         ? currentPlan.activePlanKey
         : null,
-    entitlementSource: String(input.status.entitlementSource || currentPlan.entitlementSource || 'none'),
+    entitlementSource,
     expiresAt:
       typeof input.status.tier_expires_at === 'string' && String(input.status.tier_expires_at).trim()
         ? String(input.status.tier_expires_at)

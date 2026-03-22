@@ -21,7 +21,7 @@ export type AccountPlanSnapshot = {
 
 export type AccountEntitlementsSnapshot = {
   userId: string | null;
-  plan: 'free' | 'pro' | 'promo_pro' | 'premium' | 'admin';
+  plan: 'unknown' | 'free' | 'pro' | 'promo_pro' | 'premium' | 'admin';
   hasPro: boolean;
   entitlementSource: 'paid' | 'promo' | 'none';
   entitlementEndsAt: string | null;
@@ -170,7 +170,7 @@ function normalizeWindowMap(value: unknown): Record<string, AccountUsageWindow> 
 export function buildUnknownAccountEntitlements(userId?: string | null): AccountEntitlementsSnapshot {
   return {
     userId: userId || null,
-    plan: 'free',
+    plan: 'unknown',
     hasPro: false,
     entitlementSource: 'none',
     entitlementEndsAt: null,
@@ -193,7 +193,10 @@ function normalizeEntitlements(
   fallbackUserId: string | null,
 ): AccountEntitlementsSnapshot {
   const row = asRecord(value);
-  const plan = normalizeEffectiveEntitlementPlan(row.plan);
+  const plan = (() => {
+    const rawPlan = asString(row.plan);
+    return rawPlan ? normalizeEffectiveEntitlementPlan(rawPlan) : 'unknown';
+  })();
   const entitlementSource = normalizeBillingEntitlementSource(row.entitlementSource);
   const promoActive = row.promoActive === true;
 
@@ -276,7 +279,11 @@ export function normalizeAccountSnapshotPayload(
     entitlements.asOf ||
     asString(asRecord(root.planSnapshot).issuedAt);
   const effectivePlanRow = asRecord(root.effectivePlan);
-  const plan = asString(root.plan) || asString(effectivePlanRow.plan) || entitlements.plan || 'free';
+  const plan =
+    asString(root.plan) ||
+    asString(effectivePlanRow.plan) ||
+    (entitlements.plan !== 'unknown' ? entitlements.plan : null);
+  if (!plan) return null;
   const currentPlan = normalizeCurrentPlan(root.currentPlan, entitlements, plan);
 
   return {

@@ -126,6 +126,19 @@ async function main() {
     );
   });
 
+  await run('partial billing status snapshots stay unknown instead of implying free', () => {
+    const snapshot = buildBillingPlanSnapshot({
+      userId: 'user-unknown',
+      status: {
+        currentPlan: {},
+      },
+    });
+
+    assert.equal(snapshot.managedPlan, 'unknown');
+    assert.equal(snapshot.entitlementSource, 'unknown');
+    assert.equal(snapshot.activePlanKey, null);
+  });
+
   await run('renewal retries back off exponentially and downgrade on final failure', () => {
     const first = buildRenewalRetryState({
       existingAttemptCount: 0,

@@ -89,8 +89,6 @@ export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   if (isDashboardRoute(pathname)) {
-    const auth = await requireUserFromRequest(req);
-    if (!auth.ok) return unauthorizedResponse(req);
     return applyClickjackingHeaders(NextResponse.next());
   }
 
