@@ -67,7 +67,7 @@ export async function DELETE(req: NextRequest) {
 
     // Audit logging for cache-clear action
     if (cleared > 0) {
-      await adminResult.supabase.from('au_admin_audit_logs').insert({
+      const { error: auditLogError } = await adminResult.supabase.from('au_admin_audit_logs').insert({
         admin_id: adminResult.auth.userId,
         action: 'clear_feature_output_cache',
         target_user_id: userId,
@@ -79,7 +79,10 @@ export async function DELETE(req: NextRequest) {
           previous_failure_reason: previousFailureReason,
           correlation_id: correlationId,
         },
-      }).catch(err => console.error('[admin] audit log failed', err));
+      });
+      if (auditLogError) {
+        console.error('[admin] audit log failed', auditLogError);
+      }
     }
 
     return NextResponse.json(

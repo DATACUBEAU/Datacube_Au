@@ -30,6 +30,7 @@ import {
   buildIdempotencyStorageKey,
   buildSettingsHash,
   classifyTemplateResponse,
+  clearFeatureOutput,
   getFeatureGateDecision,
   markFeatureOutputFailed,
   markFeatureOutputReady,
