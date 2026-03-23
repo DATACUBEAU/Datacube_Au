@@ -207,6 +207,41 @@ async function main() {
     });
   });
 
+  await run('PAYSTACK_SECRET_KEY enables paystack billing without requiring a client key', () => {
+    withEnv({
+      PAYSTACK_SECRET_KEY: 'sk_live_server_only',
+      PAYSTACK_SECRET: undefined,
+      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: undefined,
+    }, () => {
+      const capability = assertBillingGatewayCapability({
+        gateway: 'paystack',
+        action: 'checkout_initialize',
+      });
+
+      assert.equal(capability.enabled, true);
+    });
+  });
+
+  await run('client public key alone does not satisfy server paystack billing requirements', () => {
+    withEnv({
+      PAYSTACK_SECRET_KEY: undefined,
+      PAYSTACK_SECRET: undefined,
+      NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY: 'pk_live_public_only',
+    }, () => {
+      let error: unknown = null;
+      try {
+        assertBillingGatewayCapability({
+          gateway: 'paystack',
+          action: 'checkout_initialize',
+        });
+      } catch (caught) {
+        error = caught;
+      }
+
+      assert.ok(error instanceof BillingConfigurationError);
+    });
+  });
+
   await run('frontend keeps the active plan non-selectable when checkout initialization fails', () => {
     const state = deriveNormalizedSubscriptionState({
       effectivePlan: 'pro',
