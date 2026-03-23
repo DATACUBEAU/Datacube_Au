@@ -135,12 +135,26 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         console.warn('[safeFetch] auth error detected', {
           status: response.status,
           url,
+          requestId: response.headers.get('x-request-id'),
+          correlationId: response.headers.get('x-correlation-id'),
         });
-        dispatchSessionExpired({
-          status: response.status,
-          source: 'safeFetch',
-          reason: 'http_auth_error',
-        });
+
+        // Clear local auth cache and trigger redirection
+        if (typeof window !== 'undefined') {
+          const currentPath = window.location.pathname + window.location.search;
+          const loginUrl = `/login?redirect=${encodeURIComponent(currentPath)}`;
+          
+          dispatchSessionExpired({
+            status: response.status,
+            source: 'safeFetch',
+            reason: 'http_auth_error',
+          });
+
+          // Force redirect after a short delay to allow event listeners to handle cleanup
+          setTimeout(() => {
+            window.location.href = loginUrl;
+          }, 500);
+        }
       }
       
       return response;

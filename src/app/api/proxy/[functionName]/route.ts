@@ -121,8 +121,9 @@ function functionsBaseUrl(): string | null {
 function corsHeaders(requestId?: string): HeadersInit {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, apikey, x-admin-token',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, DELETE',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, apikey, x-admin-token, x-correlation-id, x-request-id',
+    'Access-Control-Expose-Headers': 'x-request-id, x-correlation-id, retry-after, x-au-model, x-au-service',
   };
   if (requestId) headers['x-request-id'] = requestId;
   return headers;
@@ -1348,6 +1349,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }
 
     if (effectiveLimits && normalizedCacheFeature && normalizedCacheFeature !== 'chat') {
+      const force = incomingUrl.searchParams.get('force') === 'true';
       let gateFeature: 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation' | null = null;
       if (normalizedFunction === 'generate-knowledge') gateFeature = 'knowledge_hub';
       if (normalizedFunction === 'prediction-engine' || normalizedFunction === 'generate-exam-predictions') {
@@ -1407,72 +1409,94 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             documentId,
             docVersionId: resolvedVersion.versionId,
           };
-          if (resolvedVersion.versionId) {
-            const existingFeatureOutput = await readFeatureOutput({
-              supabase: adminSupabase,
-              userId: auth.userId,
-              docVersionId: resolvedVersion.versionId,
-              feature: gateFeature,
-            });
 
-            if (existingFeatureOutput?.status === 'ready') {
-              await recordSyntheticUsage({
-                supabase: adminSupabase,
-                userId: auth.userId,
-                feature: gateFeature,
-                model: existingFeatureOutput.model || 'feature_output_cache',
+          const isAdmin = effectiveLimits.effectivePlan.isAdmin;
+          const bypassConflict = force && isAdmin;
+
+          if (resolvedVersion.versionId) {
+            if (bypassConflict) {
+              console.info('[proxy] bypassing feature output cache check (force=true)', {
                 requestId,
                 correlationId,
-                cacheHit: true,
-                savedTokens: existingFeatureOutput.tokens,
-                metadata: { source: 'feature_output_cache' },
-              });
-              return NextResponse.json({
-                ...(existingFeatureOutput.output || {}),
+                userId: auth.userId,
+                docVersionId: resolvedVersion.versionId,
                 feature: gateFeature,
-                doc_version_id: resolvedVersion.versionId,
-                fromCache: true,
-                generatedAt: existingFeatureOutput.updatedAt || existingFeatureOutput.createdAt,
-                message: 'Already generated; cached result reused.',
-              }, {
-                status: 200,
-                headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
               });
-            }
+              await clearFeatureOutput({
+                supabase: adminSupabase,
+                userId: auth.userId,
+                docVersionId: resolvedVersion.versionId,
+                feature: gateFeature,
+              }).catch(() => {});
+            } else {
+              const existingFeatureOutput = await readFeatureOutput({
+                supabase: adminSupabase,
+                userId: auth.userId,
+                docVersionId: resolvedVersion.versionId,
+                feature: gateFeature,
+              });
 
-            if (existingFeatureOutput?.status === 'running') {
-              return NextResponse.json(
-                {
-                  status: 409,
-                  code: 'ALREADY_GENERATING',
-                  message: 'This feature is already generating for the selected document.',
-                  limit: gateFeature,
-                  current: 1,
-                  action: gateFeature,
-                  correlation_id: correlationId,
+              if (existingFeatureOutput?.status === 'ready') {
+                await recordSyntheticUsage({
+                  supabase: adminSupabase,
+                  userId: auth.userId,
+                  feature: gateFeature,
+                  model: existingFeatureOutput.model || 'feature_output_cache',
+                  requestId,
+                  correlationId,
+                  cacheHit: true,
+                  savedTokens: existingFeatureOutput.tokens,
+                  metadata: { source: 'feature_output_cache' },
+                });
+                return NextResponse.json({
+                  ...(existingFeatureOutput.output || {}),
                   feature: gateFeature,
                   doc_version_id: resolvedVersion.versionId,
-                },
-                { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
-              );
-            }
+                  fromCache: true,
+                  generatedAt: existingFeatureOutput.updatedAt || existingFeatureOutput.createdAt,
+                  message: 'Already generated; cached result reused.',
+                }, {
+                  status: 200,
+                  headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' },
+                });
+              }
 
-            if (existingFeatureOutput?.status === 'failed') {
-              return NextResponse.json(
-                {
-                  status: 409,
-                  code: 'FEATURE_OUTPUT_FAILED',
-                  message: 'Generation previously failed for this document. Ask an admin to clear the cached output before retrying.',
-                  limit: gateFeature,
-                  current: 1,
-                  action: gateFeature,
-                  correlation_id: correlationId,
-                  feature: gateFeature,
-                  doc_version_id: resolvedVersion.versionId,
-                  details: existingFeatureOutput.output,
-                },
-                { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
-              );
+              if (existingFeatureOutput?.status === 'running') {
+                const retryAfter = new Date(Date.now() + 30000).toISOString();
+                return NextResponse.json(
+                  {
+                    status: 409,
+                    code: 'GENERATION_LOCKED',
+                    message: 'This feature is already generating for the selected document.',
+                    limit: gateFeature,
+                    current: 1,
+                    action: gateFeature,
+                    correlation_id: correlationId,
+                    feature: gateFeature,
+                    doc_version_id: resolvedVersion.versionId,
+                    retryAfter,
+                  },
+                  { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store', 'Retry-After': '30' } },
+                );
+              }
+
+              if (existingFeatureOutput?.status === 'failed') {
+                return NextResponse.json(
+                  {
+                    status: 409,
+                    code: 'FEATURE_OUTPUT_FAILED',
+                    message: 'Generation previously failed for this document. Ask an admin to clear the cached output before retrying.',
+                    limit: gateFeature,
+                    current: 1,
+                    action: gateFeature,
+                    correlation_id: correlationId,
+                    feature: gateFeature,
+                    doc_version_id: resolvedVersion.versionId,
+                    details: existingFeatureOutput.output,
+                  },
+                  { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+                );
+              }
             }
 
             pendingFeatureReservation = {
@@ -1536,10 +1560,11 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           }
 
           if (featureOutputState.state === 'running') {
+            const retryAfter = new Date(Date.now() + 30000).toISOString();
             return NextResponse.json(
               {
                 status: 409,
-                code: 'ALREADY_GENERATING',
+                code: 'GENERATION_LOCKED',
                 message: 'This feature is already generating for the selected document.',
                 limit: gateFeature,
                 current: 1,
@@ -1547,8 +1572,9 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
                 correlation_id: correlationId,
                 feature: gateFeature,
                 doc_version_id: pendingFeatureReservation.docVersionId,
+                retryAfter,
               },
-              { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store' } },
+              { status: 409, headers: { ...corsHeaders(requestId), 'Cache-Control': 'no-store', 'Retry-After': '30' } },
             );
           }
 

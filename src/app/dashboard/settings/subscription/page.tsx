@@ -29,7 +29,6 @@ import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useLimits } from '@/components/providers/limits-provider';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
-import { supabase } from '@/lib/supabase-client/client';
 import { useAccountSnapshot } from '@/components/providers/account-snapshot-provider';
 import type {
   AccountPlanSnapshot,
@@ -47,9 +46,13 @@ import {
   resolvePlanExpirationDays,
 } from '@/lib/plans/subscription-policy';
 import {
-  resolveDisplayedPlanCode,
   shouldApplyBillingStatusResponse,
 } from '@/lib/billing/plan-refresh-state';
+import {
+  buildSubscriptionBootstrapKey,
+  buildSubscriptionUsageRows,
+  hasMeaningfulSubscriptionUsageData,
+} from '@/lib/billing/subscription-page-state';
 import { useConnectivityStatus } from '@/hooks/use-online-status';
 
 const EMPTY_PRICING = {
@@ -182,15 +185,20 @@ export default function SubscriptionPage() {
   const [user, session, isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
   const searchParams = useSearchParams();
+  const searchParamsKey = searchParams.toString();
   const router = useRouter();
   const { isOnline, isDegraded, canPerformNetworkMutations, networkState } = useConnectivityStatus();
-  const { usage: limitsUsage } = useLimits();
+  const { usage: limitsUsage, refreshUsage } = useLimits();
   const { records: featureFlagRecords } = useFeatureFlags();
   const {
     snapshot: accountSnapshot,
     isUsingCachedData: isUsingCachedAccountSnapshot,
     cachedAt: accountSnapshotCachedAt,
   } = useAccountSnapshot();
+  const paymentReturnState = useMemo(
+    () => extractBillingReturnState(new URLSearchParams(searchParamsKey)),
+    [searchParamsKey],
+  );
   const initialSnapshotSeed = useMemo(
     () => buildBillingPageSnapshotSeed(accountSnapshot),
     [accountSnapshot],
@@ -224,11 +232,15 @@ export default function SubscriptionPage() {
   const [isInitialLoading, setIsInitialLoading] = useState(!initialSnapshotSeed.hasSnapshot);
   const [isUsingCachedData, setIsUsingCachedData] = useState(Boolean(initialSnapshotSeed.hasSnapshot && isUsingCachedAccountSnapshot));
   const [cachedAt, setCachedAt] = useState<number | null>(initialSnapshotSeed.hasSnapshot ? accountSnapshotCachedAt : null);
+  const [isRefreshingUsage, setIsRefreshingUsage] = useState(false);
+  const [usageError, setUsageError] = useState<string | null>(null);
   const [planCatalog, setPlanCatalog] = useState<PlanCatalogEntry[]>([]);
   const [planSnapshot, setPlanSnapshot] = useState<BillingPageSnapshotSeed['planSnapshot']>(initialSnapshotSeed.planSnapshot);
   const billingRequestTokenRef = useRef<string | null>(null);
   const statusRequestIdRef = useRef(0);
   const latestAppliedStatusIssuedAtRef = useRef<string | null>(null);
+  const bootstrapKeyRef = useRef<string | null>(null);
+  const usageRefreshAttemptRef = useRef<string | null>(null);
 
   const [pricing, setPricing] = useState<{
     weekly: { amount: number; compare_at: number; label: string };
@@ -308,6 +320,33 @@ export default function SubscriptionPage() {
     }),
     [canAccessBilling, checkoutCapability, currentPlan],
   );
+  const bootstrapKey = useMemo(
+    () => buildSubscriptionBootstrapKey(user?.id ?? null, paymentReturnState),
+    [paymentReturnState, user?.id],
+  );
+  const usageHasMeaningfulData = useMemo(
+    () => hasMeaningfulSubscriptionUsageData(limitsUsage),
+    [limitsUsage],
+  );
+  const usageView = useMemo(() => buildSubscriptionUsageRows({
+    snapshot: planSnapshot,
+    currentPlanManagedPlan: tier ? currentPlan.managedPlan : null,
+    tier,
+    usage: {
+      plan: typeof limitsUsage.plan === 'string' ? limitsUsage.plan : null,
+      limits: limitsUsage.limits || {},
+      limitRules: limitsUsage.limitRules || {},
+      usageByLimit: limitsUsage.usageByLimit || {},
+    },
+  }), [
+    currentPlan.managedPlan,
+    limitsUsage.limitRules,
+    limitsUsage.limits,
+    limitsUsage.plan,
+    limitsUsage.usageByLimit,
+    planSnapshot,
+    tier,
+  ]);
 
   const billingRequest = useCallback(async <T,>(
       path: string,
@@ -521,7 +560,7 @@ export default function SubscriptionPage() {
           setIsUsingCachedData(true);
           setCachedAt(options.cachedAt ?? null);
       }
-  }, [accountSnapshot]);
+  }, []);
 
   const readCachedBillingStatus = useCallback(async () => {
       if (!user?.id) return { data: null as any, cachedAt: null as number | null };
@@ -772,8 +811,45 @@ export default function SubscriptionPage() {
               console.error('Verification failed', e);
           }
       }
-      startPolling();
+       startPolling();
   }, [canPerformNetworkMutations, fetchBillingStatus, planSnapshot?.checksum, session?.access_token, startPolling]);
+  const fetchBillingStatusRef = useRef(fetchBillingStatus);
+  const verifyPaymentRef = useRef(verifyPayment);
+  const startPollingRef = useRef(startPolling);
+  const stopPollingRef = useRef(stopPolling);
+
+  useEffect(() => {
+      fetchBillingStatusRef.current = fetchBillingStatus;
+  }, [fetchBillingStatus]);
+
+  useEffect(() => {
+      verifyPaymentRef.current = verifyPayment;
+  }, [verifyPayment]);
+
+  useEffect(() => {
+      startPollingRef.current = startPolling;
+  }, [startPolling]);
+
+  useEffect(() => {
+      stopPollingRef.current = stopPolling;
+  }, [stopPolling]);
+
+  const refreshUsageSection = useCallback(async () => {
+      if (!isOnline) {
+          setUsageError('Reconnect to load usage and limits.');
+          return;
+      }
+      setIsRefreshingUsage(true);
+      setUsageError(null);
+      try {
+          await refreshUsage();
+      } catch (error) {
+          console.error('Failed to refresh usage and limits', error);
+          setUsageError('Unable to refresh usage and limits right now.');
+      } finally {
+          setIsRefreshingUsage(false);
+      }
+  }, [isOnline, refreshUsage]);
 
   // Initial Load & URL Check
   useEffect(() => {
@@ -820,33 +896,37 @@ export default function SubscriptionPage() {
   ]);
 
   useEffect(() => {
-    if (!user) {
+    if (!user?.id) {
+        bootstrapKeyRef.current = null;
         setIsInitialLoading(false);
         return;
     }
+    if (!bootstrapKey || bootstrapKeyRef.current === bootstrapKey) {
+        return;
+    }
+
+    bootstrapKeyRef.current = bootstrapKey;
+    stopPollingRef.current();
 
     let canceled = false;
     setIsInitialLoading(true);
 
     const bootstrap = async () => {
-        await Promise.all([fetchBillingStatus()]);
+        await fetchBillingStatusRef.current();
         if (canceled) return;
         setIsInitialLoading(false);
 
-        // Check for payment provider return and clear callback params once consumed.
-        const paymentReturn = extractBillingReturnState(searchParams);
-
-        if (paymentReturn.isCanceled && !paymentReturn.isSuccess) {
+        if (paymentReturnState.isCanceled && !paymentReturnState.isSuccess) {
             setPaymentState('error');
-        } else if (paymentReturn.verificationTarget) {
+        } else if (paymentReturnState.verificationTarget) {
             setPaymentState('confirming');
-            void verifyPayment(paymentReturn);
-        } else if (paymentReturn.isSuccess) {
+            void verifyPaymentRef.current(paymentReturnState);
+        } else if (paymentReturnState.isSuccess) {
             setPaymentState('confirming');
-            startPolling();
+            startPollingRef.current();
         }
 
-        if (paymentReturn.hasCallbackState) {
+        if (paymentReturnState.hasCallbackState) {
             router.replace(BILLING_ROUTE, { scroll: false });
         }
     };
@@ -855,9 +935,14 @@ export default function SubscriptionPage() {
 
     return () => {
         canceled = true;
-        stopPolling();
     };
-  }, [user, searchParams, fetchBillingStatus, verifyPayment, startPolling, stopPolling, router]);
+  }, [bootstrapKey, paymentReturnState, router, user?.id]);
+
+  useEffect(() => {
+      return () => {
+          stopPollingRef.current();
+      };
+  }, []);
 
   useEffect(() => {
       if (isPromoUnlocked || !canAccessBilling) {
@@ -866,31 +951,37 @@ export default function SubscriptionPage() {
   }, [canAccessBilling, isPromoUnlocked]);
 
   useEffect(() => {
-      if (!user?.id || !isOnline) return;
-
-      let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
-      const scheduleRefresh = () => {
-          if (refreshTimeout) return;
-          refreshTimeout = setTimeout(() => {
-              refreshTimeout = null;
-              void fetchBillingStatus();
-          }, 150);
-      };
-
-      const channel = supabase
-          .channel(`billing-status:${user.id}`)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_subscriptions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'entitlement_grants', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_entitlements', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_profiles', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'au_plan_transitions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-          .subscribe();
-
-      return () => {
-          if (refreshTimeout) clearTimeout(refreshTimeout);
-          void supabase.removeChannel(channel);
-      };
-  }, [fetchBillingStatus, isOnline, user?.id]);
+      if (!user?.id) {
+          usageRefreshAttemptRef.current = null;
+          setUsageError(null);
+          setIsRefreshingUsage(false);
+          return;
+      }
+      if (limitsUsage.loading) return;
+      if (usageHasMeaningfulData) {
+          setUsageError(null);
+          return;
+      }
+      if (!isOnline) {
+          setUsageError('Reconnect to load usage and limits.');
+          return;
+      }
+      if (usageRefreshAttemptRef.current === user.id) {
+          if (!isRefreshingUsage) {
+              setUsageError((current) => current || 'Usage and limits are still syncing. Retry shortly.');
+          }
+          return;
+      }
+      usageRefreshAttemptRef.current = user.id;
+      void refreshUsageSection();
+  }, [
+      isOnline,
+      isRefreshingUsage,
+      limitsUsage.loading,
+      refreshUsageSection,
+      usageHasMeaningfulData,
+      user?.id,
+  ]);
 
   const handlePaymentCheckout = async (
       planType: 'weekly' | 'monthly',
@@ -1086,11 +1177,16 @@ export default function SubscriptionPage() {
       if (!dateStr) return '';
       return new Date(dateStr).toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
   };
+  const formatUsageMetric = (value: number) => (
+      new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Math.max(0, value))
+  );
 
   // --- Usage Meter ---
-  const LimitBar = ({ label, used, limit }: any) => {
-    const safeLimit = limit === null ? null : (Number.isFinite(limit) ? Math.max(0, Number(limit)) : 0);
-    const safeUsed = Number.isFinite(used) ? used : 0;
+  const LimitBar = ({ label, used, limit }: { label: string; used: number; limit: number | null }) => {
+    const parsedLimit = limit === null ? null : Number(limit);
+    const parsedUsed = Number(used);
+    const safeLimit = parsedLimit === null ? null : (Number.isFinite(parsedLimit) ? Math.max(0, parsedLimit) : 0);
+    const safeUsed = Number.isFinite(parsedUsed) ? Math.max(0, parsedUsed) : 0;
     const percent = typeof safeLimit === 'number' && safeLimit > 0 ? Math.min(100, (safeUsed / safeLimit) * 100) : 0;
     const isLimit = typeof safeLimit === 'number' && safeLimit > 0 ? safeUsed >= safeLimit : false;
     return (
@@ -1098,7 +1194,9 @@ export default function SubscriptionPage() {
             <div className="mb-1.5 flex flex-col gap-1 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <span className="font-medium text-foreground">{label}</span>
                 <span className={cn("font-mono text-xs", isLimit ? "text-destructive font-bold" : "text-muted-foreground")}>
-                    {safeLimit === null ? `${safeUsed} / Unlimited` : `${safeUsed} / ${safeLimit}`}
+                    {safeLimit === null
+                        ? `${formatUsageMetric(safeUsed)} / Unlimited`
+                        : `${formatUsageMetric(safeUsed)} / ${formatUsageMetric(safeLimit)}`}
                 </span>
             </div>
             <div className="h-2.5 bg-muted rounded-full overflow-hidden">
@@ -1112,35 +1210,8 @@ export default function SubscriptionPage() {
   };
 
   const UsageMeter = () => {
-    if (limitsUsage.loading) return null;
-
-    const planCode = resolveDisplayedPlanCode({
-      snapshot: planSnapshot,
-      currentPlanManagedPlan: tier ? currentPlan.managedPlan : null,
-      tier,
-      limitsUsagePlan: typeof limitsUsage.plan === 'string' ? limitsUsage.plan : null,
-    });
-    if (!planCode) return null;
-    const isFreePlan = planCode === 'free';
-    const usageByLimit = limitsUsage.usageByLimit || {};
-    const limitRules = limitsUsage.limitRules || {};
-    const usageKeys = [
-      'max_chats_total',
-      'max_uploads_total',
-      'max_tokens_total',
-      'max_file_size_mb',
-      'max_concurrent_jobs',
-      'max_exam_predictions',
-      'max_practice_exams',
-      'max_knowledge_hub',
-    ];
-    const resetSummary = usageKeys
-      .map((key) => {
-        const entry = usageByLimit[key] as any;
-        return typeof entry?.reset?.label === 'string' ? entry.reset.label : '';
-      })
-      .filter(Boolean)
-      .slice(0, 2);
+    if (limitsUsage.loading && !usageView.planCode) return null;
+    if (!usageView.planCode) return null;
 
     return (
         <div className="mx-auto mb-8 max-w-4xl rounded-3xl border border-border bg-card p-5 shadow-sm sm:p-6">
@@ -1149,30 +1220,41 @@ export default function SubscriptionPage() {
                 <h2 className="text-lg font-bold text-foreground">Limits & Usage</h2>
             </div>
             <p className="mb-4 text-xs text-muted-foreground">
-              Plan: <span className="font-semibold text-foreground">{planCode.toUpperCase()}</span>
-              {resetSummary.length > 0 ? ` / ${resetSummary.join(' / ')}` : ''}
+              Plan: <span className="font-semibold text-foreground">{usageView.planCode.toUpperCase()}</span>
+              {usageView.resetSummary.length > 0 ? ` / ${usageView.resetSummary.join(' / ')}` : ''}
             </p>
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-                {usageKeys.map((key) => {
-                  const rule = (limitRules[key] || {}) as any;
-                  const usageEntry = (usageByLimit[key] || {}) as any;
-                  const resetText =
-                    (typeof usageEntry?.reset?.label === 'string' ? usageEntry.reset.label.trim() : '') ||
-                    (typeof rule?.presentation?.reset_description === 'string' ? rule.presentation.reset_description.trim() : '') ||
-                    (typeof rule?.presentation?.reset_label === 'string' ? rule.presentation.reset_label.trim() : '');
-                  return (
-                    <div key={key} className="space-y-2">
+            {usageView.hasData ? (
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                  {usageView.rows.map((row) => (
+                    <div key={row.key} className="space-y-2">
                       <LimitBar
-                        label={String(rule.label || key)}
-                        used={Number(usageEntry.used || 0)}
-                        limit={typeof usageEntry.limit === 'number' || usageEntry.limit === null ? usageEntry.limit : null}
+                        label={row.label}
+                        used={row.used}
+                        limit={row.limit}
                       />
-                      {resetText ? <p className="text-[11px] text-muted-foreground">{resetText}</p> : null}
+                      {row.resetText ? <p className="text-[11px] text-muted-foreground">{row.resetText}</p> : null}
                     </div>
-                  );
-                })}
-            </div>
-            {isFreePlan && billingEnabled ? (
+                  ))}
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-dashed border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+                <p>{usageError || 'Usage and limit data are still syncing for this account.'}</p>
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void refreshUsageSection()}
+                    disabled={isRefreshingUsage || !isOnline}
+                  >
+                    {isRefreshingUsage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    {isRefreshingUsage ? 'Refreshing usage...' : 'Retry usage sync'}
+                  </Button>
+                  {!isOnline ? <span>Reconnect to fetch the latest saved usage.</span> : null}
+                </div>
+              </div>
+            )}
+            {usageView.isFreePlan && billingEnabled ? (
               <p className="mt-4 text-xs text-muted-foreground">
                 Free users get full visibility + limit alerts. Upgrade to increase caps instantly.
               </p>

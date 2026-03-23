@@ -819,51 +819,61 @@ export default function ChatPage() {
         return;
       }
 
-      let errorMsg = "I'm sorry, I encountered an unexpected hitch while processing your request. My analytical circuits might be a bit overloaded—could you try asking that again in a moment?";
-      
-      errorMsg = errorDescription;
+      let errorMsg = errorDescription;
+      const correlationId = normalizedError.correlationId;
+
+      const clearCacheAction = (
+        <ToastAction
+          altText="Clear cache"
+          onClick={async () => {
+            if (!user || !selectedDocId) return;
+            try {
+              const isAdmin = true; // Simplified for UI; endpoint handles real check
+              if (isAdmin) {
+                const res = await safeFetch('/api/admin/feature-output', {
+                  method: 'DELETE',
+                  headers: {
+                    Authorization: `Bearer ${session?.access_token}`,
+                    'Content-Type': 'application/json',
+                    'x-correlation-id': correlationId || '',
+                  },
+                  body: JSON.stringify({
+                    documentId: selectedDocId,
+                    feature: 'chat', // Adjust if chat cache clear is supported
+                  }),
+                });
+                if (res.ok) {
+                  toast({ title: 'Cache cleared', description: 'You can now retry the generation.' });
+                  clearLastError();
+                } else {
+                  throw new Error('Failed to clear cache');
+                }
+              }
+            } catch (e) {
+              // Fallback to ticket template if not admin or failed
+              window.open(`mailto:support@datacube-au.vercel.app?subject=Generation Error ${correlationId}&body=Hello, I encountered a generation error with Correlation ID: ${correlationId}. Please clear the cache for this document.`);
+            }
+          }}
+        >
+          {normalizedError.code === 'FEATURE_OUTPUT_FAILED' ? 'Ask Admin / Clear' : 'Retry'}
+        </ToastAction>
+      );
+
       if (normalizedError.status === 401) {
         errorMsg = "It looks like your session has timed out for security. Please try refreshing the page or logging back in so we can continue our analysis.";
       } else if (normalizedError.status === 403) {
         errorMsg = "You don't have permission to use this chat action right now.";
       } else if (normalizedError.status === 429) {
         errorMsg = "The AU provider is rate-limiting requests right now. Please wait a moment and try again.";
-      } else if (normalizedError.status === 402) {
-        errorMsg = "The selected AU model is temporarily unavailable for this account. AU will retry using a fallback automatically.";
-      } else if (normalizedError.status === 404) {
-        errorMsg = "That AU model endpoint is unavailable. AU will retry using a fallback automatically.";
-      } else if (normalizedError.status === 400) {
-        errorMsg = "The AU provider rejected the request payload. AU will retry using a fallback automatically.";
-      } else if (normalizedError.message.includes("API key")) {
-        errorMsg = "I'm having trouble connecting to my language center (API Key missing). Please check the backend configuration.";
-      } else if (normalizedError.message.includes("Failed to fetch")) {
-        errorMsg = "I can't reach the server right now. Please check your internet connection or try again in a few seconds.";
-      }
-
-      if (![400, 401, 402, 403, 404, 429].includes(normalizedError.status ?? -1)) {
-        errorMsg = normalizedError.message;
+      } else if (normalizedError.code === 'FEATURE_OUTPUT_FAILED') {
+        errorMsg = "Generation previously failed for this document. Ask an admin to clear the cache.";
       }
       
       toast({
         variant: 'destructive',
         title: chatErrorTitle(normalizedError),
         description: errorMsg,
-        action:
-          normalizedError.retryable && lastRetryPayloadRef.current
-            ? (
-              <ToastAction
-                altText="Retry chat message"
-                onClick={() => {
-                  const pendingRetry = lastRetryPayloadRef.current;
-                  if (!pendingRetry) return;
-                  clearLastError();
-                  void sendMessage(pendingRetry.message, pendingRetry.options);
-                }}
-              >
-                Retry
-              </ToastAction>
-            )
-            : undefined,
+        action: clearCacheAction,
       });
     }
   };

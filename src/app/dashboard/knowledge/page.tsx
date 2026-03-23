@@ -22,9 +22,11 @@ import {
 } from '@/components/ui/select';
 import { Loader2, Wand2, Info, WifiOff, BrainCircuit } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { useStore } from '@/hooks/use-store';
+import { safeFetch } from '@/lib/api/safe-fetch';
 import type { GenerateKnowledgeOutput } from '@/app/actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOnlineStatus } from '@/hooks/use-online-status';
@@ -365,9 +367,34 @@ function KnowledgePageContent() {
   const showGeneratedExplanation = useCallback(() => {
     toast({
       title: 'Already generated',
-      description: 'This Knowledge Hub output is already saved for this document. Upload a new version or ask an admin to clear the cache to regenerate.',
+      description: 'This Knowledge Hub output is already saved for this document. Use "Force" mode if you are an admin or upload a new version.',
     });
   }, [toast]);
+
+  const handleClearCache = useCallback(async () => {
+    if (!selectedDocId || !user) return;
+    try {
+      const res = await safeFetch('/api/admin/feature-output', {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId: selectedDocId,
+          feature: 'knowledge_hub',
+        }),
+      });
+      if (res.ok) {
+        toast({ title: 'Cache cleared', description: 'Generation lock released. You can now retry.' });
+        void knowledgeOutput.refresh();
+      } else {
+        throw new Error('Failed to clear cache');
+      }
+    } catch (e) {
+      window.open(`mailto:support@datacube-au.vercel.app?subject=Knowledge Generation Locked&body=Hello, I encountered a generation lock for document ${selectedDocId}. Please clear the cache.`);
+    }
+  }, [selectedDocId, user, session?.access_token, toast, knowledgeOutput]);
 
   const handleGenerateClick = async () => {
     if (knowledgeButtonState.effectiveLockStatus === 'ready') {
@@ -378,7 +405,12 @@ function KnowledgePageContent() {
       toast({
         variant: 'destructive',
         title: 'Generation locked',
-        description: 'This document has a failed cached output. Upload a new version or ask an admin to clear the cache before retrying.',
+        description: 'This document has a failed cached output. Ask an admin to clear the cache before retrying.',
+        action: (
+          <ToastAction altText="Clear Cache" onClick={handleClearCache}>
+            Ask Admin / Clear
+          </ToastAction>
+        ),
       });
       return;
     }
@@ -643,9 +675,9 @@ function KnowledgePageContent() {
           </div>
         </div>
 
-        <div className="flex w-full min-w-0 items-center gap-3 sm:w-auto">
+        <div className="flex w-full min-w-0 flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
           {docsLoading ? (
-             <div className="flex items-center gap-2 text-sm text-muted-foreground">
+             <div className="flex items-center gap-2 text-sm text-muted-foreground sm:shrink-0">
                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                Loading documents...
              </div>
@@ -660,7 +692,7 @@ function KnowledgePageContent() {
                   <DocumentSelectValue
                     text={selectedDoc?.file_name}
                     placeholder="Select a textbook"
-                    maxWidthClass="max-w-[150px] sm:max-w-[250px]"
+                    maxWidthClass="max-w-full sm:max-w-[250px]"
                   />
                 </SelectTrigger>
                 <SelectContent>
@@ -704,14 +736,14 @@ function KnowledgePageContent() {
             onClick={() => void handleGenerateClick()}
             disabled={knowledgeButtonState.disabled}
             aria-disabled={knowledgeButtonState.ariaDisabled}
-            className="shrink-0 gap-2 shadow-md hover:shadow-lg transition-all"
+            className="w-full shrink-0 gap-2 shadow-md hover:shadow-lg transition-all sm:w-auto"
           >
             {isGeneratingKnowledge || knowledgeOutput.status === 'loading' || knowledgeOutput.status === 'running' ? (
               <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             ) : (
               <Wand2 className="h-4 w-4" aria-hidden="true" />
             )}
-            {knowledgeButtonState.label}
+            <span className="truncate">{knowledgeButtonState.label}</span>
           </Button>
         </div>
       </div>

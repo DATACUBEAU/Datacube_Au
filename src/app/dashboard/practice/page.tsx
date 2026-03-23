@@ -286,9 +286,34 @@ function PracticePageContent() {
   const showPracticeExplanation = useCallback(() => {
     toast({
       title: 'Already generated',
-      description: 'This practice exam pack is already saved for the current document. Use Retry This Exam without extra token cost, or upload a new version to generate again.',
+      description: 'This practice exam pack is already saved. Use "Force" mode if you are an admin or upload a new version.',
     });
   }, [toast]);
+
+  const handleClearCache = useCallback(async () => {
+    if (!selectedDocId || !user) return;
+    try {
+      const res = await safeFetch('/api/admin/feature-output', {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId: selectedDocId,
+          feature: 'practice_exam_generation',
+        }),
+      });
+      if (res.ok) {
+        toast({ title: 'Cache cleared', description: 'Generation lock released. You can now retry.' });
+        void practiceOutput.refresh();
+      } else {
+        throw new Error('Failed to clear cache');
+      }
+    } catch (e) {
+      window.open(`mailto:support@datacube-au.vercel.app?subject=Practice Generation Locked&body=Hello, I encountered a generation lock for document ${selectedDocId}. Please clear the cache.`);
+    }
+  }, [selectedDocId, user, session?.access_token, toast, practiceOutput]);
 
   const handleGenerateClick = async () => {
     if (practiceOutput.status === 'ready' || questionPack.length > 0) {
@@ -306,7 +331,12 @@ function PracticePageContent() {
       toast({
         variant: 'destructive',
         title: 'Generation locked',
-        description: 'This document has a failed cached exam pack. Upload a new version or ask an admin to clear the cache before retrying.',
+        description: 'This document has a failed cached exam pack. Ask an admin to clear the cache before retrying.',
+        action: (
+          <ToastAction altText="Clear Cache" onClick={handleClearCache}>
+            Ask Admin / Clear
+          </ToastAction>
+        ),
       });
       return;
     }

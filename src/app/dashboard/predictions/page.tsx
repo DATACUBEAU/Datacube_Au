@@ -4,8 +4,10 @@ import { useState, useMemo, useCallback, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 
 import { useToast } from '@/hooks/use-toast';
+import { ToastAction } from '@/components/ui/toast';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useStore } from '@/hooks/use-store';
+import { safeFetch } from '@/lib/api/safe-fetch';
 
 import {
   Card,
@@ -366,9 +368,34 @@ function PredictionsPageContent() {
   const showPredictionExplanation = useCallback(() => {
     toast({
       title: 'Already generated',
-      description: 'This exam briefing is already saved for the current document version. Upload an updated document or ask an admin to clear the cache to regenerate.',
+      description: 'This exam briefing is already saved. Use "Force" mode if you are an admin or upload a new version.',
     });
   }, [toast]);
+
+  const handleClearCache = useCallback(async () => {
+    if (!selectedPastQuestionsId || !user) return;
+    try {
+      const res = await safeFetch('/api/admin/feature-output', {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          documentId: selectedPastQuestionsId,
+          feature: 'exam_prediction',
+        }),
+      });
+      if (res.ok) {
+        toast({ title: 'Cache cleared', description: 'Generation lock released. You can now retry.' });
+        void predictionOutput.refresh();
+      } else {
+        throw new Error('Failed to clear cache');
+      }
+    } catch (e) {
+      window.open(`mailto:support@datacube-au.vercel.app?subject=Prediction Generation Locked&body=Hello, I encountered a generation lock for document ${selectedPastQuestionsId}. Please clear the cache.`);
+    }
+  }, [selectedPastQuestionsId, user, session?.access_token, toast, predictionOutput]);
 
   const handlePredictionClick = async () => {
     if (predictionOutput.status === 'ready') {
@@ -386,7 +413,12 @@ function PredictionsPageContent() {
       toast({
         variant: 'destructive',
         title: 'Generation locked',
-        description: 'This document has a failed cached prediction. Upload a new version or ask an admin to clear the cache before retrying.',
+        description: 'This document has a failed cached prediction. Ask an admin to clear the cache before retrying.',
+        action: (
+          <ToastAction altText="Clear Cache" onClick={handleClearCache}>
+            Ask Admin / Clear
+          </ToastAction>
+        ),
       });
       return;
     }

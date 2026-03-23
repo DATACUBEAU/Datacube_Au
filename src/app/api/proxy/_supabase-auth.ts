@@ -201,5 +201,12 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
     };
   }
 
-  return { ok: false, status: 401, error: 'unauthorized', reason: 'invalid_token', debug: debugMessage };
+  // Token was present but invalid/expired
+  return { 
+    ok: false, 
+    status: 401, 
+    error: 'unauthorized', 
+    reason: 'invalid_token',
+    debug: debugMessage || 'All provided tokens failed validation.'
+  };
 }
