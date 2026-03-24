@@ -4,6 +4,7 @@ import {
   isAuthLocked,
   registerAuthBoundAbortController,
 } from '@/lib/auth/session-expiry-events';
+import type { SessionExpiryTriggerIntent } from '@/lib/auth/session-expiry-policy';
 
 export class OfflineError extends Error {
   constructor(message = "You are offline") {
@@ -18,6 +19,24 @@ interface SafeFetchOptions extends RequestInit {
   allowOffline?: boolean; // If true, caller handles offline fallback manually
   allowWhenAuthLocked?: boolean; // If true, bypasses auth-lock guard (used for login/reauth flows)
   suppressAuthError?: boolean; // If true, 401/403 errors will not trigger global session expiry events
+  authIntent?: SessionExpiryTriggerIntent; // Distinguishes interactive calls from passive/bootstrap traffic
+}
+
+function createSafeFetchError(
+  message: string,
+  extra?: {
+    status?: number;
+    code?: string;
+    retryable?: boolean;
+    cause?: unknown;
+  },
+) {
+  const error: any = new Error(message);
+  if (typeof extra?.status === 'number') error.status = extra.status;
+  if (typeof extra?.code === 'string') error.code = extra.code;
+  if (typeof extra?.retryable === 'boolean') error.retryable = extra.retryable;
+  if (extra?.cause !== undefined) error.cause = extra.cause;
+  return error;
 }
 
 /**
@@ -40,14 +59,16 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     allowOffline = false,
     allowWhenAuthLocked = false,
     suppressAuthError = false,
+    authIntent = 'background',
     ...fetchOptions
   } = options;
 
   if (!allowWhenAuthLocked && isAuthLocked()) {
-    const err: any = new Error('Session expired. Sign in again.');
-    err.status = 401;
-    err.code = 'AUTH_REQUIRED';
-    throw err;
+    throw createSafeFetchError('Session expired. Sign in again.', {
+      status: 401,
+      code: 'AUTH_REQUIRED',
+      retryable: false,
+    });
   }
 
   if (!allowOffline && isOfflineNow()) {
@@ -131,7 +152,12 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         }
       }
 
-      if (typeof window !== 'undefined' && response.status === 401 && !suppressAuthError) {
+      if (
+        typeof window !== 'undefined' &&
+        response.status === 401 &&
+        !suppressAuthError &&
+        authIntent === 'interactive'
+      ) {
         console.warn('[safeFetch] auth error detected', {
           status: response.status,
           url,
@@ -139,22 +165,12 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
           correlationId: response.headers.get('x-correlation-id'),
         });
 
-        // Clear local auth cache and trigger redirection
-        if (typeof window !== 'undefined') {
-          const currentPath = window.location.pathname + window.location.search;
-          const loginUrl = `/login?redirect=${encodeURIComponent(currentPath)}`;
-          
-          dispatchSessionExpired({
-            status: response.status,
-            source: 'safeFetch',
-            reason: 'http_auth_error',
-          });
-
-          // Force redirect after a short delay to allow event listeners to handle cleanup
-          setTimeout(() => {
-            window.location.href = loginUrl;
-          }, 500);
-        }
+        dispatchSessionExpired({
+          status: response.status,
+          source: 'safeFetch',
+          reason: 'http_auth_error',
+          intent: authIntent,
+        });
       }
       
       return response;
@@ -170,10 +186,11 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       const isNetworkError = !isAbort; // Fetch only throws on network error (DNS, etc)
 
       if (isAuthAbort) {
-        const authError: any = new Error('Session expired. Sign in again.');
-        authError.status = 401;
-        authError.code = 'AUTH_REQUIRED';
-        throw authError;
+        throw createSafeFetchError('Session expired. Sign in again.', {
+          status: 401,
+          code: 'AUTH_REQUIRED',
+          retryable: false,
+        });
       }
 
       // User-requested abort should never retry.
@@ -204,7 +221,22 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
                 duration: 3000
             });
         }
-        throw new Error("Request timed out");
+        throw createSafeFetchError('Request timed out', {
+          status: 408,
+          code: 'REQUEST_TIMEOUT',
+          retryable: true,
+        });
+      }
+      if (isNetworkError) {
+        throw createSafeFetchError(
+          String(error?.message || 'Network request failed'),
+          {
+            status: 0,
+            code: 'NETWORK_ERROR',
+            retryable: true,
+            cause: error,
+          },
+        );
       }
       throw error;
     }

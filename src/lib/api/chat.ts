@@ -491,6 +491,8 @@ export async function sendChatMessageStream(
       signal: opts?.signal,
       timeout: 120_000,
       silent: true,
+      suppressAuthError: true,
+      authIntent: 'interactive',
     });
   };
 

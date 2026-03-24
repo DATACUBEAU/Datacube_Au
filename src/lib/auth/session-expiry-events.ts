@@ -1,4 +1,7 @@
-import { shouldDispatchSessionExpiry } from '@/lib/auth/session-expiry-policy';
+import {
+  shouldDispatchSessionExpiry,
+  type SessionExpiryTriggerIntent,
+} from '@/lib/auth/session-expiry-policy';
 
 export const AUTH_SESSION_EXPIRED_EVENT = 'dcau:auth-session-expired';
 export const AUTH_REQUIRED_EVENT = 'dcau:auth-required';
@@ -10,6 +13,9 @@ export type AuthRuntimeState = 'RESTORING' | 'AUTHENTICATED' | 'EXPIRED' | 'REAU
 
 const DISPATCH_COOLDOWN_MS = 15000;
 let lastDispatchAt = 0;
+const REAUTH_REDIRECT_COOLDOWN_MS = 5000;
+let reauthRedirectClaimed = false;
+let lastReauthRedirectAt = 0;
 
 let hasInitializedRuntimeState = false;
 let runtimeStateCache: AuthRuntimeState = 'AUTHENTICATED';
@@ -19,6 +25,7 @@ type SessionExpiredDetail = {
   status?: number;
   source?: string;
   reason?: string;
+  intent?: SessionExpiryTriggerIntent;
   at: string;
 };
 
@@ -155,6 +162,7 @@ export function setAuthActionsDisabled(disabled: boolean): void {
 
 export function clearAuthActionsDisabled(): void {
   setAuthActionsDisabled(false);
+  releaseReauthRedirect();
   setAuthRuntimeState('AUTHENTICATED', {
     source: 'clearAuthActionsDisabled',
     reason: 'session_restored',
@@ -163,6 +171,7 @@ export function clearAuthActionsDisabled(): void {
 
 export function markAuthRestoring(source = 'auth_restore'): void {
   setAuthActionsDisabled(false);
+  releaseReauthRedirect();
   setAuthRuntimeState('RESTORING', {
     source,
     reason: 'session_restoring',
@@ -178,6 +187,7 @@ export function dispatchSessionExpired(detail?: {
   status?: number;
   source?: string;
   reason?: string;
+  intent?: SessionExpiryTriggerIntent;
 }): boolean {
   if (typeof window === 'undefined') return false;
 
@@ -192,6 +202,7 @@ export function dispatchSessionExpired(detail?: {
     status: detail?.status,
     runtimeState: state,
     isOnline,
+    intent: detail?.intent,
   })) {
     return false;
   }
@@ -213,10 +224,25 @@ export function dispatchSessionExpired(detail?: {
     status: detail?.status,
     source: detail?.source,
     reason: detail?.reason,
+    intent: detail?.intent,
     at: new Date(now).toISOString(),
   };
 
   window.dispatchEvent(new CustomEvent(AUTH_SESSION_EXPIRED_EVENT, { detail: payload }));
   window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, { detail: payload }));
   return true;
+}
+
+export function claimReauthRedirect(): boolean {
+  if (typeof window === 'undefined') return true;
+  const now = Date.now();
+  if (reauthRedirectClaimed) return false;
+  if (now - lastReauthRedirectAt < REAUTH_REDIRECT_COOLDOWN_MS) return false;
+  reauthRedirectClaimed = true;
+  lastReauthRedirectAt = now;
+  return true;
+}
+
+export function releaseReauthRedirect(): void {
+  reauthRedirectClaimed = false;
 }

@@ -104,6 +104,8 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     return safeFetch(url, {
       ...options,
       headers: requestHeaders,
+      suppressAuthError: true,
+      authIntent: 'interactive',
     });
   };
 
@@ -119,11 +121,6 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   } else {
     accessToken = await resolveAccessToken();
     if (!accessToken) {
-      dispatchSessionExpired({
-        status: 401,
-        source: 'fetchAdmin',
-        reason: 'missing_access_token',
-      });
       return new Response(JSON.stringify({ error: 'unauthorized' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
@@ -133,11 +130,6 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   }
 
   if (!accessToken) {
-    dispatchSessionExpired({
-      status: 401,
-      source: 'fetchAdmin',
-      reason: 'no_resolved_access_token',
-    });
     return new Response(JSON.stringify({ error: 'unauthorized' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
@@ -166,11 +158,12 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     }
   }
 
-  if (res.status === 401 || res.status === 403) {
+  if (res.status === 401 && !hadExplicitAuthorization) {
     dispatchSessionExpired({
-      status: res.status,
+      status: 401,
       source: 'fetchAdmin',
       reason: 'admin_proxy_auth_error',
+      intent: 'interactive',
     });
   }
 

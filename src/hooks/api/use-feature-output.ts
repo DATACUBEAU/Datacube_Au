@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { safeFetch } from '@/lib/api/safe-fetch';
-import { useSupabaseSession } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { shouldDeferProtectedRequest } from '@/lib/auth/session-expiry-policy';
 
 export type FeatureOutputKey = 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation';
 export type FeatureOutputStatus = 'idle' | 'loading' | 'missing' | 'ready' | 'running' | 'failed';
@@ -23,7 +24,7 @@ export function useFeatureOutput<T>(input: {
   docVersionId?: string | null;
   enabled?: boolean;
 }) {
-  const { session } = useSupabaseSession();
+  const { session, isLoadingAuth, isRestoringAuth, isAuthLocked } = useSmartAuth();
   const [status, setStatus] = useState<FeatureOutputStatus>('idle');
   const [output, setOutput] = useState<T | null>(null);
   const [docVersionId, setDocVersionId] = useState<string | null>(null);
@@ -36,6 +37,16 @@ export function useFeatureOutput<T>(input: {
       setOutput(null);
       setDocVersionId(null);
       setGeneratedAt(null);
+      setErrorMessage(null);
+      return;
+    }
+
+    if (shouldDeferProtectedRequest({
+      isAuthLoading: isLoadingAuth,
+      isAuthRestoring: isRestoringAuth,
+      isAuthLocked,
+    })) {
+      setStatus('idle');
       setErrorMessage(null);
       return;
     }
@@ -68,6 +79,8 @@ export function useFeatureOutput<T>(input: {
         credentials: 'include',
         timeout: 15_000,
         silent: true,
+        suppressAuthError: true,
+        authIntent: 'background',
       });
       const payload = (await response.json().catch(() => null)) as FeatureOutputResponse<T> | null;
 
@@ -91,7 +104,16 @@ export function useFeatureOutput<T>(input: {
       setGeneratedAt(null);
       setErrorMessage(String(error?.message || error || 'Failed to load cached output.'));
     }
-  }, [input.docVersionId, input.documentId, input.enabled, input.feature, session?.access_token]);
+  }, [
+    input.docVersionId,
+    input.documentId,
+    input.enabled,
+    input.feature,
+    isAuthLocked,
+    isLoadingAuth,
+    isRestoringAuth,
+    session?.access_token,
+  ]);
 
   useEffect(() => {
     void refresh();

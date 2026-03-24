@@ -214,6 +214,8 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         credentials: 'include',
         timeout: 15000,
         silent: true,
+        suppressAuthError: true,
+        authIntent: 'background',
       });
 
       const payload = await res.json().catch(() => null);

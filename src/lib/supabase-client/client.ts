@@ -3,6 +3,7 @@ import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
 import { toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
 import { guardRequest } from '@/lib/api/request-guard';
 import { areAuthActionsDisabled, dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
+import type { SessionExpiryTriggerIntent } from '@/lib/auth/session-expiry-policy';
 
 const publicEnv = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -316,6 +317,8 @@ export async function invokeEdgeFunction<T = any>(
     method?: 'POST' | 'GET';
     silent?: boolean;
     allowOffline?: boolean;
+    authIntent?: SessionExpiryTriggerIntent;
+    reauthOnAuthFailure?: boolean;
   }
 ): Promise<{ data: T | null; error: any | null }> {
   const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
@@ -324,6 +327,8 @@ export async function invokeEdgeFunction<T = any>(
   const silent = options?.silent ?? true;
   const requireAuth = options?.requireAuth ?? true;
   const allowOffline = options?.allowOffline === true;
+  const authIntent = options?.authIntent ?? 'interactive';
+  const reauthOnAuthFailure = options?.reauthOnAuthFailure ?? (authIntent === 'interactive');
 
   const attemptOnce = async (accessToken: string | null) => {
     const isOnline =
@@ -342,11 +347,12 @@ export async function invokeEdgeFunction<T = any>(
     });
 
     if (!gate.ok) {
-      if (gate.reason === 'unauthenticated' && requireAuth) {
+      if (gate.reason === 'unauthenticated' && requireAuth && reauthOnAuthFailure) {
         dispatchSessionExpired({
           status: 401,
           source: `invokeEdgeFunction:${functionName}`,
           reason: 'request_guard_unauthenticated',
+          intent: authIntent,
         });
       }
       return {
@@ -379,6 +385,8 @@ export async function invokeEdgeFunction<T = any>(
         credentials: 'include',
         timeout: timeoutMs,
         silent,
+        suppressAuthError: true,
+        authIntent,
       });
     } catch (e: any) {
       if (e instanceof OfflineError) {
@@ -416,13 +424,6 @@ export async function invokeEdgeFunction<T = any>(
   const firstAttempt = await attemptOnce(accessToken);
 
   if (!requireAuth || !firstAttempt.error || Number(firstAttempt.error?.status) !== 401) {
-    if (requireAuth && firstAttempt.error && Number(firstAttempt.error?.status) === 401) {
-      dispatchSessionExpired({
-        status: Number(firstAttempt.error?.status),
-        source: `invokeEdgeFunction:${functionName}`,
-        reason: 'edge_response_auth_error',
-      });
-    }
     return firstAttempt;
   }
 
@@ -434,19 +435,23 @@ export async function invokeEdgeFunction<T = any>(
   }
 
   if (!refreshedToken && !accessToken) {
-    dispatchSessionExpired({
-      status: 401,
-      source: `invokeEdgeFunction:${functionName}`,
-      reason: 'refresh_failed_no_token',
-    });
+    if (reauthOnAuthFailure) {
+      dispatchSessionExpired({
+        status: 401,
+        source: `invokeEdgeFunction:${functionName}`,
+        reason: 'refresh_failed_no_token',
+        intent: authIntent,
+      });
+    }
     return firstAttempt;
   }
   const retryAttempt = await attemptOnce(refreshedToken);
-  if (requireAuth && retryAttempt.error && Number(retryAttempt.error?.status) === 401) {
+  if (reauthOnAuthFailure && requireAuth && retryAttempt.error && Number(retryAttempt.error?.status) === 401) {
     dispatchSessionExpired({
       status: Number(retryAttempt.error?.status),
       source: `invokeEdgeFunction:${functionName}`,
       reason: 'edge_retry_auth_error',
+      intent: authIntent,
     });
   }
   return retryAttempt;

@@ -113,7 +113,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
   const setAuThinkingSteps = useStore(state => state.setAuThinkingSteps);
   const updateAuThinkingStep = useStore(state => state.updateAuThinkingStep);
   const { isOnline } = useNetworkStatus();
-  const { isAuthLocked, isLoading: isAuthLoading } = useSmartAuth();
+  const { isAuthLocked, isLoading: isAuthLoading, isRestoringAuth } = useSmartAuth();
   
   const [history, setHistory] = useState<ChatMessage[]>([]);
   const [isResponding, setIsResponding] = useState(false);
@@ -341,7 +341,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     }
   ) => {
     if (!selectedDocId || !user) return;
-    if (isAuthLoading) return;
+    if (isAuthLoading || isRestoringAuth) return;
     if (isAuthLocked) return;
     const normalizedPrompt = String(content || '').trim().toLowerCase();
     const promptHash = `${selectedDocId}:${normalizedPrompt}`;
@@ -750,6 +750,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     ensureAccessToken,
     isAuthLoading,
     isAuthLocked,
+    isRestoringAuth,
     isOnline,
     selectedDocId,
     selectedModel,
@@ -764,6 +765,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
 
   const scanAndGreet = useCallback(async () => {
     if (!selectedDocId || !user) return;
+    if (isAuthLoading || isRestoringAuth) return;
     if (isAuthLocked) return;
     const gate = guardRequest({
       isOnline,
@@ -859,7 +861,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           setAuAnimationState('idle');
         }, 1200);
     }
-  }, [isAuthLocked, selectedDocId, user, history.length, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, ensureAccessToken, isOnline, session?.access_token]);
+  }, [ensureAccessToken, history.length, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, selectedModel, session?.access_token, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, user]);
 
   const setHistoryPersisted = useCallback((next: ChatMessage[]) => {
     setHistory(next);
@@ -876,6 +878,9 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
 
   const fetchPrompts = useCallback(async (title: string, content: string, idea?: string) => {
     try {
+      if (isAuthLoading || isRestoringAuth || isAuthLocked) {
+        return [];
+      }
       const gate = guardRequest({
         isOnline,
         requireAuth: true,
@@ -918,7 +923,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       console.error('[useAuChat] Prompt generation failed:', err);
       return [];
     }
-  }, [selectedDocId, session?.access_token, history, isOnline]);
+  }, [history, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, session?.access_token]);
 
   return {
     history,

@@ -43,3 +43,29 @@ export interface PaymentGateway {
   initializePayment(data: PaymentInitializeData): Promise<PaymentInitializeResult>;
   verifyPayment(referenceOrTransactionId: string): Promise<PaymentVerifyResult>;
 }
+
+export function getSupportedPaymentMethodsForGateway(gatewayId: PaymentGatewayId): PaymentMethod[] {
+  return gatewayId === 'flutterwave' ? ['transfer'] : ['subscription', 'transfer'];
+}
+
+export function isPaymentMethodSupportedForGateway(
+  gatewayId: PaymentGatewayId,
+  paymentMethod: PaymentMethod,
+): boolean {
+  return getSupportedPaymentMethodsForGateway(gatewayId).includes(paymentMethod);
+}
+
+export function getDefaultPaymentMethodForGateway(gatewayId: PaymentGatewayId): PaymentMethod {
+  const supported = getSupportedPaymentMethodsForGateway(gatewayId);
+  return supported.includes('subscription') ? 'subscription' : 'transfer';
+}
+
+export function coercePaymentMethodForGateway(
+  gatewayId: PaymentGatewayId,
+  requestedPaymentMethod: PaymentMethod | null | undefined,
+): PaymentMethod {
+  if (requestedPaymentMethod && isPaymentMethodSupportedForGateway(gatewayId, requestedPaymentMethod)) {
+    return requestedPaymentMethod;
+  }
+  return getDefaultPaymentMethodForGateway(gatewayId);
+}

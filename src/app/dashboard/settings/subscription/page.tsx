@@ -251,6 +251,15 @@ export default function SubscriptionPage() {
     ...EMPTY_CHECKOUT,
     enabled: initialSnapshotSeed.canAccessBilling,
   });
+  const supportedCheckoutPaymentMethods =
+    Array.isArray(checkoutCapability.supportedPaymentMethods) && checkoutCapability.supportedPaymentMethods.length > 0
+      ? checkoutCapability.supportedPaymentMethods
+      : (['subscription', 'transfer'] as const);
+  const supportsSubscriptionCheckout = supportedCheckoutPaymentMethods.includes('subscription');
+  const supportsTransferCheckout = supportedCheckoutPaymentMethods.includes('transfer');
+  const defaultCheckoutPaymentMethod =
+    checkoutCapability.defaultPaymentMethod ||
+    (supportsSubscriptionCheckout ? 'subscription' : 'transfer');
   const isPromoUnlocked = promoActive;
   const hasPaidProAccess = currentPlan.managedPlan === 'pro' && currentPlan.hasPaidEntitlement;
   const hasPremiumAccess = currentPlan.managedPlan === 'premium' && currentPlan.hasPaidEntitlement;
@@ -488,28 +497,29 @@ export default function SubscriptionPage() {
               },
           });
       }
-       if (Array.isArray(data.planCatalog)) {
-           setPlanCatalog(data.planCatalog);
-        }
-        if (options?.applyPlanAuthority !== false) {
+        const nextCheckoutCapability = data?.checkout
+            ? {
+                ...EMPTY_CHECKOUT,
+                ...data.checkout,
+              }
+            : {
+                ...EMPTY_CHECKOUT,
+                enabled: Boolean(data?.canAccessBilling),
+              };
+        if (Array.isArray(data.planCatalog)) {
+            setPlanCatalog(data.planCatalog);
+         }
+         if (options?.applyPlanAuthority !== false) {
             setTier(data.tier || normalizedCurrentPlan.managedPlan || null);
             setExpiry(data.tier_expires_at ?? null);
-            setBillingEnabled(data.billingEnabled ?? false);
-            setCanAccessBilling(Boolean(data?.canAccessBilling));
-            setEntitlementSource((data.entitlementSource || 'none') as 'paid' | 'promo' | 'none');
-            setPromoActive(Boolean(data?.promo?.active));
-            setCurrentPlan(normalizedCurrentPlan);
-            setCheckoutCapability(data?.checkout
-                ? {
-                    ...EMPTY_CHECKOUT,
-                    ...data.checkout,
-                  }
-                : {
-                    ...EMPTY_CHECKOUT,
-                    enabled: Boolean(data?.canAccessBilling),
-                  });
-            if (typeof data?.promo?.ends_at_lagos === 'string' && data.promo.ends_at_lagos.trim()) {
-                const label = new Date(data.promo.ends_at_lagos).toLocaleString('en-US', {
+             setBillingEnabled(data.billingEnabled ?? false);
+             setCanAccessBilling(Boolean(data?.canAccessBilling));
+             setEntitlementSource((data.entitlementSource || 'none') as 'paid' | 'promo' | 'none');
+             setPromoActive(Boolean(data?.promo?.active));
+             setCurrentPlan(normalizedCurrentPlan);
+             setCheckoutCapability(nextCheckoutCapability);
+             if (typeof data?.promo?.ends_at_lagos === 'string' && data.promo.ends_at_lagos.trim()) {
+                 const label = new Date(data.promo.ends_at_lagos).toLocaleString('en-US', {
                     timeZone: 'Africa/Lagos',
                     month: 'long',
                     day: 'numeric',
@@ -523,16 +533,33 @@ export default function SubscriptionPage() {
                 setPlanSnapshot(data.planSnapshot);
                 if (typeof data.planSnapshot.issuedAt === 'string') {
                     latestAppliedStatusIssuedAtRef.current = data.planSnapshot.issuedAt;
-                }
-            }
-        }
-        if (Boolean(data?.canAccessBilling) && subscriptionRow?.status === 'active') {
-            setIsAutoRenew(true);
-        }
+                 }
+             }
+         }
+         const supportsSubscription =
+             Array.isArray(nextCheckoutCapability.supportedPaymentMethods) &&
+             nextCheckoutCapability.supportedPaymentMethods.length > 0
+                 ? nextCheckoutCapability.supportedPaymentMethods.includes('subscription')
+                 : true;
+         if (!supportsSubscription) {
+             setIsAutoRenew(false);
+         } else if (
+             Boolean(data?.canAccessBilling) &&
+             subscriptionRow?.status === 'active' &&
+             subscriptionRow?.cancel_at_period_end !== true
+         ) {
+             setIsAutoRenew(true);
+         }
         if (options?.fromCache) {
             setIsUsingCachedData(true);
         }
   }, []);
+
+  useEffect(() => {
+      if (!supportsSubscriptionCheckout && isAutoRenew) {
+          setIsAutoRenew(false);
+      }
+  }, [isAutoRenew, supportsSubscriptionCheckout]);
 
   const applyAccountSnapshotSeed = useCallback((snapshot: NonNullable<typeof accountSnapshot>, options?: {
       fromCache?: boolean;
@@ -707,6 +734,13 @@ export default function SubscriptionPage() {
           });
           return;
       }
+      if (!supportsTransferCheckout) {
+          toast({
+              title: 'Transfer unavailable',
+              description: 'The current payment provider does not support transfer checkout.',
+          });
+          return;
+      }
       const planKey = resolvePlanCardKey(planType);
       if (!canStartCheckoutForPlan({
           planKey,
@@ -719,7 +753,7 @@ export default function SubscriptionPage() {
       }
       setManualPlan(planType);
       setShowBankTransfer(true);
-  }, [canAccessBilling, checkoutCapability, currentPlan, isPromoUnlocked, resolvePlanCardKey, showPlanActionBlockedToast, toast]);
+  }, [canAccessBilling, checkoutCapability, currentPlan, isPromoUnlocked, resolvePlanCardKey, showPlanActionBlockedToast, supportsTransferCheckout, toast]);
 
   const stopPolling = useCallback(() => {
       if (pollTimerRef.current) {
@@ -1026,10 +1060,28 @@ export default function SubscriptionPage() {
       if (!billingRequestTokenRef.current) {
           await fetchBillingStatus();
       }
+      const paymentMethod =
+          methodOverride ||
+          (isAutoRenew && supportsSubscriptionCheckout ? 'subscription' : defaultCheckoutPaymentMethod);
+      if (paymentMethod === 'subscription' && !supportsSubscriptionCheckout) {
+          setIsAutoRenew(false);
+          toast({
+              title: 'Auto-renew unavailable',
+              description: 'The current payment provider only supports one-time transfer checkout.',
+          });
+          return;
+      }
+      if (paymentMethod === 'transfer' && !supportsTransferCheckout) {
+          toast({
+              variant: 'destructive',
+              title: 'Transfer unavailable',
+              description: 'The current payment provider cannot start a transfer checkout right now.',
+          });
+          return;
+      }
       setLoadingPlan(planType);
       
       try {
-          const paymentMethod = methodOverride || (isAutoRenew ? 'subscription' : 'transfer');
           const response = await initializePaymentRequest({
               plan_key: planKey,
               payment_method: paymentMethod,
@@ -1053,6 +1105,15 @@ export default function SubscriptionPage() {
               await fetchBillingStatus();
               toast({
                   title: errorCode === 'plan_already_active' ? 'Current plan' : 'Managed separately',
+                  description: errorMessage,
+              });
+          } else if (errorCode === 'payment_method_not_supported') {
+              if (paymentMethod === 'subscription') {
+                  setIsAutoRenew(false);
+              }
+              toast({
+                  variant: 'destructive',
+                  title: 'Payment method unavailable',
                   description: errorMessage,
               });
           } else if (Number(e?.status || 0) === 429) {
@@ -1756,7 +1817,7 @@ export default function SubscriptionPage() {
                           state: currentPlan,
                           canAccessBilling,
                           checkout: checkoutCapability,
-                      })}
+                      }) || !supportsTransferCheckout}
                       >
                           <Banknote className="mr-2 h-4 w-4" />
                       {monthlyCardState.isCurrent
@@ -1780,7 +1841,7 @@ export default function SubscriptionPage() {
                           state: currentPlan,
                           canAccessBilling,
                           checkout: checkoutCapability,
-                      })}
+                      }) || !supportsTransferCheckout}
                       >
                           <Banknote className="mr-2 h-4 w-4" />
                       {weeklyCardState.isCurrent
@@ -1827,12 +1888,17 @@ export default function SubscriptionPage() {
                         <Switch
                             checked={isAutoRenew}
                             onCheckedChange={setIsAutoRenew}
-                            disabled={isPromoUnlocked}
+                            disabled={isPromoUnlocked || !supportsSubscriptionCheckout}
                             className="data-[state=checked]:bg-primary"
                         />
                         <span className={cn("text-sm font-medium transition-colors", isAutoRenew ? "text-foreground" : "text-muted-foreground") }>
                             Auto-renew Subscription
                         </span>
+                        {!supportsSubscriptionCheckout ? (
+                            <span className="w-full text-center text-xs text-muted-foreground">
+                                Auto-renew is unavailable on the current payment provider. One-time transfer checkout will be used.
+                            </span>
+                        ) : null}
                     </div>
                 )}
             </div>
@@ -1873,6 +1939,7 @@ export default function SubscriptionPage() {
                         onClick={() => void handlePaymentCheckout(manualPlan, 'transfer')}
                         disabled={
                             loadingPlan === manualPlan ||
+                            !supportsTransferCheckout ||
                             !canStartCheckoutForPlan({
                                 planKey: manualPlan === 'weekly' ? 'pro_weekly' : 'pro_monthly',
                                 state: currentPlan,

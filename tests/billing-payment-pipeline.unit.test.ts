@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import {
   BILLING_PLAN_CODES,
   DEFAULT_BILLING_PLAN_CATALOG,
+  materializeBillingPlanRow,
+  resolveBillingPlanKeyByAmount,
 } from '../src/lib/server/billing-plan-catalog.js';
 import {
   BILLING_RENEWAL_MAX_ATTEMPTS,
@@ -25,6 +27,12 @@ import {
   resolveDisplayedPlanCode,
   shouldApplyBillingStatusResponse,
 } from '../src/lib/billing/plan-refresh-state.js';
+import {
+  coercePaymentMethodForGateway,
+  getDefaultPaymentMethodForGateway,
+  getSupportedPaymentMethodsForGateway,
+  isPaymentMethodSupportedForGateway,
+} from '../src/lib/payments/payment-gateway.js';
 
 let failed = 0;
 
@@ -64,6 +72,33 @@ function createMockResponse() {
   };
 }
 
+function withEnv(
+  overrides: Record<string, string | undefined>,
+  fn: () => void,
+) {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(overrides)) {
+    previous.set(key, process.env[key]);
+    if (value == null) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    fn();
+  } finally {
+    for (const [key, value] of previous.entries()) {
+      if (value == null) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
 async function main() {
   await run('rotated Paystack plan codes are the canonical defaults', () => {
     assert.equal(BILLING_PLAN_CODES.pro_weekly, 'PLN_h3teb0z285iuyet');
@@ -76,6 +111,67 @@ async function main() {
       DEFAULT_BILLING_PLAN_CATALOG.find((plan) => plan.planKey === 'pro_monthly')?.fallbackPaystackPlanCode,
       BILLING_PLAN_CODES.pro_monthly,
     );
+  });
+
+  await run('missing billing plan rows fall back to the default catalog without losing plan pricing', () => {
+    const monthly = materializeBillingPlanRow({ planKeyRaw: 'monthly_pro' });
+    const weekly = materializeBillingPlanRow({ planKeyRaw: 'weekly' });
+
+    assert.deepEqual(monthly, {
+      plan_key: 'pro_monthly',
+      interval: 'monthly',
+      amount_kobo: 450000,
+      paystack_plan_code: BILLING_PLAN_CODES.pro_monthly,
+      is_active: true,
+      source: 'default_catalog',
+    });
+    assert.deepEqual(weekly, {
+      plan_key: 'pro_weekly',
+      interval: 'weekly',
+      amount_kobo: 150000,
+      paystack_plan_code: BILLING_PLAN_CODES.pro_weekly,
+      is_active: true,
+      source: 'default_catalog',
+    });
+  });
+
+  await run('configured Paystack plan codes override stale database plan rows', () => {
+    withEnv({
+      PAYSTACK_PLAN_MONTHLY_CODE: 'PLN_live_monthly',
+      PAYSTACK_PLAN_WEEKLY_CODE: 'PLN_live_weekly',
+    }, () => {
+      const monthly = materializeBillingPlanRow({
+        planKeyRaw: 'pro_monthly',
+        row: {
+          plan_key: 'pro_monthly',
+          interval: 'monthly',
+          amount_kobo: 450000,
+          paystack_plan_code: 'PLN_stale_monthly',
+          is_active: true,
+        },
+      });
+      const weekly = materializeBillingPlanRow({
+        planKeyRaw: 'pro_weekly',
+        row: {
+          plan_key: 'pro_weekly',
+          interval: 'weekly',
+          amount_kobo: 150000,
+          paystack_plan_code: 'PLN_stale_weekly',
+          is_active: true,
+        },
+      });
+
+      assert.equal(monthly?.paystack_plan_code, 'PLN_live_monthly');
+      assert.equal(weekly?.paystack_plan_code, 'PLN_live_weekly');
+      assert.equal(monthly?.source, 'database');
+      assert.equal(weekly?.source, 'database');
+    });
+  });
+
+  await run('plan keys can be recovered from billed amounts when metadata is missing', () => {
+    assert.equal(resolveBillingPlanKeyByAmount(450000), 'pro_monthly');
+    assert.equal(resolveBillingPlanKeyByAmount(150000), 'pro_weekly');
+    assert.equal(resolveBillingPlanKeyByAmount(9999), null);
   });
 
   await run('signed billing action tokens bind the request to the authenticated user and checksum', () => {
@@ -139,7 +235,7 @@ async function main() {
     assert.equal(snapshot.activePlanKey, null);
   });
 
-  await run('renewal retries back off exponentially and downgrade on final failure', () => {
+  await run('renewal failures are terminal immediately with no grace retry window', () => {
     const first = buildRenewalRetryState({
       existingAttemptCount: 0,
       now: new Date('2026-03-20T10:00:00.000Z'),
@@ -150,20 +246,14 @@ async function main() {
       now: new Date('2026-03-20T10:00:00.000Z'),
       failureKind: classifyRenewalFailure({ gatewayResponse: 'insufficient funds' }),
     });
-    const final = buildRenewalRetryState({
-      existingAttemptCount: BILLING_RENEWAL_MAX_ATTEMPTS - 1,
-      now: new Date('2026-03-20T10:00:00.000Z'),
-      failureKind: classifyRenewalFailure({ gatewayResponse: 'do not honor' }),
-    });
 
-    assert.equal(first.status, 'retrying');
-    assert.equal(first.finalFailure, false);
-    assert.ok(first.nextRetryAt);
-    assert.equal(second.status, 'retrying');
-    assert.ok(new Date(String(second.nextRetryAt)).getTime() > new Date(String(first.nextRetryAt)).getTime());
-    assert.equal(final.status, 'failed');
-    assert.equal(final.finalFailure, true);
-    assert.equal(final.nextRetryAt, null);
+    assert.equal(BILLING_RENEWAL_MAX_ATTEMPTS, 1);
+    assert.equal(first.status, 'failed');
+    assert.equal(first.finalFailure, true);
+    assert.equal(first.nextRetryAt, null);
+    assert.equal(second.status, 'failed');
+    assert.equal(second.finalFailure, true);
+    assert.equal(second.nextRetryAt, null);
   });
 
   await run('renewal success metadata clears retry state and preserves gateway response evidence', () => {
@@ -178,6 +268,19 @@ async function main() {
     assert.equal(metadata.renewal_final_failure, false);
     assert.equal(metadata.renewal_next_retry_at, null);
     assert.equal(metadata.renewal_last_reference, 'DCAU-PRO-1');
+  });
+
+  await run('payment method capabilities stay aligned with gateway support', () => {
+    assert.deepEqual(getSupportedPaymentMethodsForGateway('paystack'), ['subscription', 'transfer']);
+    assert.deepEqual(getSupportedPaymentMethodsForGateway('flutterwave'), ['transfer']);
+    assert.equal(getDefaultPaymentMethodForGateway('paystack'), 'subscription');
+    assert.equal(getDefaultPaymentMethodForGateway('flutterwave'), 'transfer');
+    assert.equal(isPaymentMethodSupportedForGateway('paystack', 'subscription'), true);
+    assert.equal(isPaymentMethodSupportedForGateway('paystack', 'transfer'), true);
+    assert.equal(isPaymentMethodSupportedForGateway('flutterwave', 'subscription'), false);
+    assert.equal(isPaymentMethodSupportedForGateway('flutterwave', 'transfer'), true);
+    assert.equal(coercePaymentMethodForGateway('flutterwave', 'subscription'), 'transfer');
+    assert.equal(coercePaymentMethodForGateway('paystack', 'subscription'), 'subscription');
   });
 
   await run('billing request idempotency keys are normalized and request bodies hash deterministically', () => {

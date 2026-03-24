@@ -80,17 +80,15 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   );
   const [user, setUser] = useState<SmartUser | null>(() => sessionToBootstrapUser(bootstrapSession));
   const [session, setSession] = useState<Session | null>(() => bootstrapSession);
-  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>(
-    () => (bootstrapSession?.user ? 'authenticated' : 'loading'),
-  );
+  // Keep bootstrap session data available for rendering, but hold protected requests in a loading
+  // state until the initial restore/refresh pass has settled.
+  const [authState, setAuthState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [isOfflineSession, setIsOfflineSession] = useState(
     () => Boolean(bootstrapSession?.user && typeof window !== 'undefined' && window.navigator.onLine === false),
   );
-  const [runtimeAuthState, setRuntimeAuthState] = useState<AuthRuntimeState>('AUTHENTICATED');
+  const [runtimeAuthState, setRuntimeAuthState] = useState<AuthRuntimeState>(() => getAuthRuntimeState());
   const sessionSignatureRef = useRef<string | null>(signatureFromBootstrapSession(bootstrapSession));
-  const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>(
-    bootstrapSession?.user ? 'authenticated' : 'loading',
-  );
+  const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>('loading');
 
   const sessionToUser = useCallback((nextSession: Session | null): SmartUser | null => {
     return sessionToBootstrapUser(nextSession);

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { claimReauthRedirect, releaseReauthRedirect } from '@/lib/auth/session-expiry-events';
 
 export function AuthLockOverlay() {
   const router = useRouter();
@@ -43,9 +44,11 @@ export function AuthLockOverlay() {
   useEffect(() => {
     if (!shouldShow) {
       hasHandledRef.current = false;
+      releaseReauthRedirect();
       return;
     }
     if (hasHandledRef.current) return;
+    if (!claimReauthRedirect()) return;
     hasHandledRef.current = true;
     startReauth('auth-lock-overlay:redirect');
     const redirectTarget = pathname || '/dashboard';

@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { shouldDispatchSessionExpiry } from '../src/lib/auth/session-expiry-policy.js';
+import {
+  shouldDeferProtectedRequest,
+  shouldDispatchSessionExpiry,
+} from '../src/lib/auth/session-expiry-policy.js';
 
 let failed = 0;
 
@@ -23,6 +26,7 @@ async function main() {
         status: 401,
         runtimeState: 'RESTORING',
         isOnline: true,
+        intent: 'interactive',
       }),
       false,
     );
@@ -34,6 +38,7 @@ async function main() {
         status: 401,
         runtimeState: 'AUTHENTICATED',
         isOnline: false,
+        intent: 'interactive',
       }),
       false,
     );
@@ -45,19 +50,92 @@ async function main() {
         status: 403,
         runtimeState: 'AUTHENTICATED',
         isOnline: true,
+        intent: 'interactive',
       }),
       false,
     );
   });
 
-  await run('real online 401 failures still surface reauthentication', () => {
+  await run('background analytics or polling failures do not trigger reauthenticate', () => {
     assert.equal(
       shouldDispatchSessionExpiry({
         status: 401,
         runtimeState: 'AUTHENTICATED',
         isOnline: true,
+        intent: 'background',
+      }),
+      false,
+    );
+  });
+
+  await run('bootstrap-time 401 failures do not trigger reauthenticate', () => {
+    assert.equal(
+      shouldDispatchSessionExpiry({
+        status: 401,
+        runtimeState: 'AUTHENTICATED',
+        isOnline: true,
+        intent: 'bootstrap',
+      }),
+      false,
+    );
+  });
+
+  await run('degraded backend 5xx responses do not masquerade as auth expiry', () => {
+    assert.equal(
+      shouldDispatchSessionExpiry({
+        status: 503,
+        runtimeState: 'AUTHENTICATED',
+        isOnline: true,
+        intent: 'interactive',
+      }),
+      false,
+    );
+  });
+
+  await run('real online interactive 401 failures still surface reauthentication', () => {
+    assert.equal(
+      shouldDispatchSessionExpiry({
+        status: 401,
+        runtimeState: 'AUTHENTICATED',
+        isOnline: true,
+        intent: 'interactive',
       }),
       true,
+    );
+  });
+
+  await run('protected background data waits for auth bootstrap to settle', () => {
+    assert.equal(
+      shouldDeferProtectedRequest({
+        isAuthLoading: true,
+        isAuthRestoring: false,
+        isAuthLocked: false,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldDeferProtectedRequest({
+        isAuthLoading: false,
+        isAuthRestoring: true,
+        isAuthLocked: false,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldDeferProtectedRequest({
+        isAuthLoading: false,
+        isAuthRestoring: false,
+        isAuthLocked: true,
+      }),
+      true,
+    );
+    assert.equal(
+      shouldDeferProtectedRequest({
+        isAuthLoading: false,
+        isAuthRestoring: false,
+        isAuthLocked: false,
+      }),
+      false,
     );
   });
 

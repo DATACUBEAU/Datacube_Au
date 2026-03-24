@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 /**
  * E2E Validation for Auth Resilience and Generation Conflict Resolution
  * Covers:
- * 1. 401 Unauthorized Interceptor & Redirection
+ * 1. 401 Unauthorized responses do not create forced redirect loops
  * 2. 409 Conflict Handling (GENERATION_LOCKED)
  * 3. Admin Cache Reset (DELETE /api/admin/feature-output)
  */
@@ -18,7 +18,7 @@ test.describe('Auth and Generation Resilience Flow', () => {
     await expect(page).toHaveURL('/dashboard');
   });
 
-  test('should redirect to login with redirect param on 401', async ({ page }) => {
+  test('should stay on the current page when a passive 401 occurs', async ({ page }) => {
     await page.goto('/dashboard/chat');
     
     // Mock a 401 response for the documents list or chat history
@@ -33,10 +33,8 @@ test.describe('Auth and Generation Resilience Flow', () => {
       });
     });
 
-    // Wait for the interceptor to trigger
-    await page.waitForURL(/\/login\?redirect=.*/);
-    const url = page.url();
-    expect(url).toContain('redirect=%2Fdashboard%2Fchat');
+    await page.waitForTimeout(1500);
+    await expect(page).toHaveURL(/\/dashboard\/chat/);
   });
 
   test('should handle 409 Conflict and allow admin to clear cache', async ({ page }) => {

@@ -1,7 +1,4 @@
-const BILLING_RENEWAL_BASE_DELAY_MS = 15 * 60 * 1000;
-const BILLING_RENEWAL_MAX_DELAY_MS = 24 * 60 * 60 * 1000;
-
-export const BILLING_RENEWAL_MAX_ATTEMPTS = 3;
+export const BILLING_RENEWAL_MAX_ATTEMPTS = 1;
 
 export type RenewalFailureKind = 'hard_decline' | 'soft_decline' | 'network_timeout' | 'gateway_error';
 
@@ -10,7 +7,7 @@ export type RenewalRetryState = {
   failureKind: RenewalFailureKind;
   nextRetryAt: string | null;
   finalFailure: boolean;
-  status: 'retrying' | 'failed';
+  status: 'failed';
 };
 
 function normalizeString(value: unknown): string {
@@ -66,32 +63,14 @@ export function buildRenewalRetryState(input: {
   now?: Date;
   failureKind: RenewalFailureKind;
 }): RenewalRetryState {
-  const now = input.now ?? new Date();
   const previousAttempts = Math.max(0, Number(input.existingAttemptCount || 0));
   const attemptNumber = previousAttempts + 1;
-  const finalFailure = attemptNumber >= BILLING_RENEWAL_MAX_ATTEMPTS;
-  if (finalFailure) {
-    return {
-      attemptNumber,
-      failureKind: input.failureKind,
-      nextRetryAt: null,
-      finalFailure: true,
-      status: 'failed',
-    };
-  }
-
-  const exponent = Math.max(0, attemptNumber - 1);
-  const delayMs = Math.min(
-    BILLING_RENEWAL_MAX_DELAY_MS,
-    BILLING_RENEWAL_BASE_DELAY_MS * Math.pow(2, exponent),
-  );
-
   return {
     attemptNumber,
     failureKind: input.failureKind,
-    nextRetryAt: new Date(now.getTime() + delayMs).toISOString(),
-    finalFailure: false,
-    status: 'retrying',
+    nextRetryAt: null,
+    finalFailure: attemptNumber >= BILLING_RENEWAL_MAX_ATTEMPTS,
+    status: 'failed',
   };
 }
 

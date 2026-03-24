@@ -45,6 +45,8 @@ export type BillingCheckoutCapability = {
   gateway?: string | null;
   code?: string | null;
   message?: string | null;
+  supportedPaymentMethods?: Array<'subscription' | 'transfer'>;
+  defaultPaymentMethod?: 'subscription' | 'transfer' | null;
 };
 
 export type SubscriptionCardKey = 'free' | 'pro_monthly' | 'pro_weekly';

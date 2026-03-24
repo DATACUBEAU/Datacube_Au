@@ -61,6 +61,8 @@ const processQueue = async () => {
           requireAuth: true,
           silent: true,
           timeoutMs: 5000, // Short timeout for logs, don't hang app
+          authIntent: 'background',
+          reauthOnAuthFailure: false,
           body: {
             name: item.name,
             params: item.params,

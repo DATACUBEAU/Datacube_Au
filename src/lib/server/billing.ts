@@ -18,7 +18,14 @@ import {
   getBillingGatewayCapability,
 } from '@/lib/server/billing-config';
 import { firstEnv } from '@/lib/server/env';
-import type { PaymentGatewayId, PaymentVerifyResult } from '@/lib/payments/payment-gateway';
+import {
+  coercePaymentMethodForGateway,
+  getDefaultPaymentMethodForGateway,
+  getSupportedPaymentMethodsForGateway,
+  isPaymentMethodSupportedForGateway,
+  type PaymentGatewayId,
+  type PaymentVerifyResult,
+} from '@/lib/payments/payment-gateway';
 import {
   getPaymentGatewayById,
   resolvePaymentGateway,
@@ -31,6 +38,11 @@ import {
 import {
   DEFAULT_BILLING_PLAN_CATALOG,
   type BillingPlanCatalogEntry,
+  type MaterializedBillingPlanRow,
+  materializeBillingPlanRow,
+  resolveBillingPlanCatalogEntry,
+  resolveBillingPlanKeyByAmount,
+  resolveBillingPlanCode,
 } from '@/lib/server/billing-plan-catalog';
 import {
   buildRenewalRetryState,
@@ -58,19 +70,9 @@ export type CheckoutResult = {
   reference: string;
 };
 
-type BillingPlanRow = {
-  plan_key: string;
-  interval: BillingInterval;
-  amount_kobo: number;
-  paystack_plan_code: string | null;
-  is_active: boolean;
-};
+type BillingPlanRow = MaterializedBillingPlanRow;
 
 const PLAN_CATALOG: BillingPlanCatalogEntry[] = DEFAULT_BILLING_PLAN_CATALOG;
-
-function resolvePlanCodeFromEnv(plan: BillingPlanCatalogEntry): string | null {
-  return firstEnv(...plan.envCodes);
-}
 
 function entitlementDays(interval: BillingInterval): number {
   return interval === 'weekly' ? 7 : 30;
@@ -105,6 +107,17 @@ function normalizePlanKey(raw: unknown): string {
   return '';
 }
 
+function resolvePaymentPlanKey(input: {
+  planKeyRaw?: unknown;
+  amountKobo?: unknown;
+}): BillingPlanCatalogEntry['planKey'] | null {
+  return (
+    resolveBillingPlanCatalogEntry(input.planKeyRaw)?.planKey ||
+    resolveBillingPlanKeyByAmount(input.amountKobo) ||
+    null
+  );
+}
+
 function resolveLatestTransactionPlanKey(rows: any[] | null | undefined): string | null {
   const ordered = rows || [];
   for (const requireSuccess of [true, false]) {
@@ -124,12 +137,17 @@ function buildCheckoutCapability(input: {
   promoActive: boolean;
   gateway: PaymentGatewayId;
 }): BillingCheckoutCapability {
+  const supportedPaymentMethods = getSupportedPaymentMethodsForGateway(input.gateway);
+  const defaultPaymentMethod = getDefaultPaymentMethodForGateway(input.gateway);
+
   if (!input.billingEnabled) {
     return {
       enabled: false,
       gateway: input.gateway,
       code: 'billing_disabled',
       message: 'Billing is currently disabled.',
+      supportedPaymentMethods,
+      defaultPaymentMethod,
     };
   }
 
@@ -139,6 +157,8 @@ function buildCheckoutCapability(input: {
       gateway: input.gateway,
       code: 'promo_active',
       message: 'Checkout is unavailable while promo Pro access is active.',
+      supportedPaymentMethods,
+      defaultPaymentMethod,
     };
   }
 
@@ -152,6 +172,8 @@ function buildCheckoutCapability(input: {
       gateway: input.gateway,
       code: gatewayCapability.issue?.code || 'billing_gateway_not_configured',
       message: gatewayCapability.issue?.message || 'Checkout is not configured on the server.',
+      supportedPaymentMethods,
+      defaultPaymentMethod,
     };
   }
 
@@ -160,6 +182,8 @@ function buildCheckoutCapability(input: {
     gateway: input.gateway,
     code: null,
     message: null,
+    supportedPaymentMethods,
+    defaultPaymentMethod,
   };
 }
 
@@ -360,17 +384,34 @@ async function loadBillingPlan(
     .from('billing_plans')
     .select('plan_key,interval,amount_kobo,paystack_plan_code,is_active')
     .eq('plan_key', planKey)
-    .eq('is_active', true)
     .maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-  return {
-    plan_key: String((data as any).plan_key),
-    interval: normalizeInterval((data as any).interval),
-    amount_kobo: Number((data as any).amount_kobo || 0),
-    paystack_plan_code: (data as any).paystack_plan_code ? String((data as any).paystack_plan_code) : null,
-    is_active: Boolean((data as any).is_active),
-  };
+  if (error) {
+    if (isSchemaDriftError(error)) return null;
+    throw error;
+  }
+  return materializeBillingPlanRow({
+    planKeyRaw: planKey,
+    row: data
+      ? {
+          plan_key: (data as any).plan_key,
+          interval: (data as any).interval,
+          amount_kobo: (data as any).amount_kobo,
+          paystack_plan_code: (data as any).paystack_plan_code,
+          is_active: (data as any).is_active,
+        }
+      : null,
+  });
+}
+
+async function resolveBillingPlan(
+  supabase: SupabaseClient,
+  planKeyRaw: unknown,
+): Promise<BillingPlanRow | null> {
+  const normalizedPlanKey = normalizePlanKey(planKeyRaw);
+  if (!normalizedPlanKey) return null;
+  const persisted = await loadBillingPlan(supabase, normalizedPlanKey);
+  if (persisted) return persisted;
+  return materializeBillingPlanRow({ planKeyRaw: normalizedPlanKey });
 }
 
 async function ensurePlanCatalog(supabase: SupabaseClient): Promise<void> {
@@ -379,7 +420,10 @@ async function ensurePlanCatalog(supabase: SupabaseClient): Promise<void> {
     .from('billing_plans')
     .select('plan_key,paystack_plan_code')
     .in('plan_key', planKeys);
-  if (existingError) throw existingError;
+  if (existingError) {
+    if (isSchemaDriftError(existingError)) return;
+    throw existingError;
+  }
 
   const existingCodes = new Map<string, string>();
   for (const row of existingRows || []) {
@@ -395,15 +439,18 @@ async function ensurePlanCatalog(supabase: SupabaseClient): Promise<void> {
     interval: plan.interval,
     amount_kobo: plan.amountKobo,
     paystack_plan_code:
-      resolvePlanCodeFromEnv(plan) ||
+      firstEnv(...plan.envCodes) ||
       existingCodes.get(plan.planKey) ||
-      plan.fallbackPaystackPlanCode,
+      resolveBillingPlanCode(plan),
     is_active: true,
   }));
   const { error } = await supabase
     .from('billing_plans')
     .upsert(rows, { onConflict: 'plan_key' });
-  if (error) throw error;
+  if (error) {
+    if (isSchemaDriftError(error)) return;
+    throw error;
+  }
 }
 
 async function writeEntitlementAudit(
@@ -604,7 +651,7 @@ async function applyVerifiedPaymentEffects(input: {
   idempotencyKey: string;
   traceId: string;
   reference: string;
-  planKey: string;
+  planKey: string | null;
   userId: string | null;
   customerEmail: string;
   transactionId: string;
@@ -638,18 +685,44 @@ async function applyVerifiedPaymentEffects(input: {
     metadata: transactionMetadata,
   });
 
-  if (!verified.success || !userId || !planKey) {
+  if (!verified.success || !userId) {
     return;
   }
+  if (!planKey) {
+    throw new BillingApiError(
+      422,
+      'payment_plan_unresolvable',
+      'Payment plan could not be resolved for this transaction.',
+      {
+        reference,
+        requestedPlanKey: null,
+        gateway,
+      },
+    );
+  }
 
-  const plan = await loadBillingPlan(supabase, planKey);
-  if (!plan) return;
+  const plan = await resolveBillingPlan(supabase, planKey);
+  if (!plan || !plan.is_active) {
+    throw new BillingApiError(
+      422,
+      'payment_plan_unresolvable',
+      'Payment plan could not be resolved for this transaction.',
+      {
+        reference,
+        requestedPlanKey: planKey || null,
+        gateway,
+      },
+    );
+  }
 
   const metadata = (verified.metadata || payload?.data?.metadata || {}) as Record<string, unknown>;
-  const chargeMethod = normalizePaymentMethod(metadata.payment_method) || 'subscription';
+  const requestedChargeMethod = normalizePaymentMethod(metadata.payment_method) || 'subscription';
+  const chargeMethod = coercePaymentMethodForGateway(gateway, requestedChargeMethod);
   const subscriptionMetadata = {
     latest_reference: reference,
     gateway,
+    requested_payment_method: requestedChargeMethod,
+    effective_payment_method: chargeMethod,
     transaction_id: transactionId,
     ...buildRenewalSuccessMetadata({
       reference,
@@ -729,6 +802,8 @@ async function applyVerifiedPaymentEffects(input: {
       plan_key: planKey,
       gateway,
       transaction_id: transactionId,
+      requested_payment_method: requestedChargeMethod,
+      effective_payment_method: chargeMethod,
     },
   });
 
@@ -871,19 +946,15 @@ async function applyRenewalFailureEffects(input: {
     {
       user_id: input.userId,
       plan_key: input.planKey,
-      status: input.retryState.finalFailure ? 'expired' : 'retrying',
+      status: 'expired',
       paystack_subscription_code: input.subscriptionCode || null,
-      ends_at: input.retryState.finalFailure ? nowIso : (input.currentEndsAt || null),
-      cancel_at_period_end: input.retryState.finalFailure,
+      ends_at: nowIso,
+      cancel_at_period_end: true,
       metadata: nextMetadata,
       updated_at: nowIso,
     },
     { onConflict: 'user_id' }
   );
-
-  if (!input.retryState.finalFailure) {
-    return;
-  }
 
   await input.supabase
     .from('entitlement_grants')
@@ -945,8 +1016,20 @@ export async function createCheckout(input: {
   if (!paymentMethod) {
     throw new BillingApiError(400, 'invalid_payment_method', 'Payment method must be subscription or transfer.');
   }
-  const plan = await loadBillingPlan(supabase, planKey);
-  if (!plan) {
+  const gateway = resolvePaymentGateway();
+  if (!isPaymentMethodSupportedForGateway(gateway.gateway, paymentMethod)) {
+    throw new BillingApiError(
+      409,
+      'payment_method_not_supported',
+      `${gateway.gateway} does not support ${paymentMethod} billing for this checkout.`,
+      {
+        gateway: gateway.gateway,
+        paymentMethod,
+      },
+    );
+  }
+  const plan = await resolveBillingPlan(supabase, planKey);
+  if (!plan || !plan.is_active) {
     throw new BillingApiError(404, 'plan_not_available', 'Selected plan is not available.');
   }
 
@@ -1013,7 +1096,6 @@ export async function createCheckout(input: {
     );
   }
 
-  const gateway = resolvePaymentGateway();
   assertBillingGatewayCapability({ gateway: gateway.gateway, action: 'checkout_initialize' });
   if (gateway.gateway === 'paystack' && paymentMethod === 'subscription' && !plan.paystack_plan_code) {
     throw new BillingApiError(
@@ -1729,16 +1811,24 @@ async function handleSuccessfulPayment(input: {
   if (!reference) return;
 
   const metadata = (verified.metadata || payload?.data?.metadata || {}) as Record<string, unknown>;
-  const planKey = normalizePlanKey(metadata.plan_key);
+  const planKey = resolvePaymentPlanKey({
+    planKeyRaw: metadata.plan_key,
+    amountKobo: verified.amountKobo,
+  });
   const userIdFromMetadata = String(metadata.user_id || '').trim();
   const customerEmail = String(verified.customerEmail || '').trim().toLowerCase();
   const userIdFromCustomer = await resolveUserIdFromEmail(supabase, customerEmail);
   const userId = userIdFromMetadata || userIdFromCustomer || null;
   const transactionId = String(verified.gatewayTransactionId || reference);
+  const requestedPaymentMethod = normalizePaymentMethod(metadata.payment_method) || 'subscription';
+  const effectivePaymentMethod = coercePaymentMethodForGateway(gateway, requestedPaymentMethod);
 
   const transactionMetadata: Record<string, unknown> = {
     ...metadata,
+    plan_key: planKey || null,
     gateway,
+    requested_payment_method: requestedPaymentMethod,
+    effective_payment_method: effectivePaymentMethod,
     gateway_transaction_id: transactionId,
     authorization_code: verified.authorizationCode || null,
     customer_code: verified.customerCode || null,
@@ -1841,9 +1931,14 @@ async function processSubscriptionEvent(input: {
   const subscriptionCode = String(data?.subscription_code || data?.code || '').trim();
   const emailToken = String(data?.email_token || '').trim();
   const planKey =
-    normalizePlanKey(data?.plan?.name || data?.metadata?.plan_key || '') ||
-    normalizePlanKey((existingSubscription as any)?.plan_key || '') ||
-    'pro_monthly';
+    resolvePaymentPlanKey({
+      planKeyRaw:
+        data?.plan?.name ||
+        data?.metadata?.plan_key ||
+        (existingSubscription as any)?.plan_key ||
+        null,
+      amountKobo: Number(data?.amount || 0),
+    }) || 'pro_monthly';
 
   if (eventType === 'invoice.payment_failed') {
     const retryState = buildRenewalRetryState({

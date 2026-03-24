@@ -687,6 +687,8 @@ export default function ChatPage() {
             documentContent: documentContent.substring(0, 10000), // Limit content for efficiency
             userIdea: promptStudioInput,
           }),
+          suppressAuthError: true,
+          authIntent: 'interactive',
         });
 
       let accessToken = await getSupabaseAccessToken();
