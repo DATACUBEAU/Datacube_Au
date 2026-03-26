@@ -50,6 +50,7 @@ import { Icons } from '@/components/icons';
 import { Input } from '@/components/ui/input';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { validateQuery } from '@/lib/upload/file-types';
 import { ThinkingProcess } from '@/components/thinking-process';
 import { useStore } from '@/hooks/use-store';
@@ -95,8 +96,9 @@ export default function GlobalChatPage() {
   const { toast } = useToast();
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
+  const { isAuthLocked, isRestoringAuth } = useSmartAuth();
   const isOnline = useOnlineStatus();
-  const canChat = isOnline && !!session?.access_token && !isLoadingAuth;
+  const canChat = isOnline && Boolean(user) && !isLoadingAuth && !isRestoringAuth && !isAuthLocked;
 
   // Hardcoded to 'global'
   const selectedDocId = GLOBAL_CHAT_ID;
@@ -489,7 +491,9 @@ export default function GlobalChatPage() {
                 placeholder={
                   !isOnline
                     ? "Offline mode"
-                    : !session?.access_token
+                    : isLoadingAuth || isRestoringAuth
+                      ? "Restoring session..."
+                      : !user || isAuthLocked
                       ? "Sign in required"
                       : `Ask ${GLOBAL_CHAT_TITLE}...`
                 }
@@ -507,7 +511,10 @@ export default function GlobalChatPage() {
               {!isOnline && (
                 <div className="mt-1 pl-3 text-xs text-muted-foreground">Offline mode</div>
               )}
-              {!session?.access_token && isOnline && (
+              {(isLoadingAuth || isRestoringAuth) && isOnline && (
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Restoring session...</div>
+              )}
+              {!isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline && (
                 <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in required</div>
               )}
             </div>

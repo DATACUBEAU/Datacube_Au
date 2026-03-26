@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { generatePracticeExam, generatePredictions } from '@/lib/api/exams';
 import { getDocumentText } from '@/lib/api/documents';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useToast } from '@/hooks/use-toast';
 import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '@shared/schemas';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
@@ -13,6 +14,7 @@ export function useAuExams(selectedDocId: string | null) {
   const { session } = useSupabaseSession();
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
+  const { isLoading: isAuthLoading, isRestoringAuth, isAuthLocked } = useSmartAuth();
   
   const [isGenerating, setIsGenerating] = useState(false);
   const [examData, setExamData] = useState<GeneratePracticeExamOutput | null>(null);
@@ -20,10 +22,11 @@ export function useAuExams(selectedDocId: string | null) {
 
   const startExamGeneration = useCallback(async (pastQuestionIds: string[] = []) => {
     if (!selectedDocId || !user) return;
+    if (isAuthLoading || isRestoringAuth || isAuthLocked) return;
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? null,
+      accessToken: session?.access_token ?? '__cookie_session__',
       warnKey: 'exams:practice',
       context: 'practice exam',
     });
@@ -68,14 +71,15 @@ export function useAuExams(selectedDocId: string | null) {
     } finally {
       setIsGenerating(false);
     }
-  }, [selectedDocId, user, session?.access_token, toast, isOnline]);
+  }, [isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, user, session?.access_token, toast]);
 
   const startPredictionGeneration = useCallback(async (pastQuestionIds: string[]) => {
     if (!selectedDocId || !user || pastQuestionIds.length === 0) return;
+    if (isAuthLoading || isRestoringAuth || isAuthLocked) return;
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? null,
+      accessToken: session?.access_token ?? '__cookie_session__',
       warnKey: 'exams:predictions',
       context: 'predictions',
     });
@@ -113,7 +117,7 @@ export function useAuExams(selectedDocId: string | null) {
     } finally {
       setIsGenerating(false);
     }
-  }, [selectedDocId, user, session?.access_token, toast, isOnline]);
+  }, [isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, user, session?.access_token, toast]);
 
   return {
     isGenerating,

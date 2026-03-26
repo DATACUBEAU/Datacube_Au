@@ -31,6 +31,7 @@ function shouldDeleteStalePwaCacheName(cacheName: string, version: string): bool
 }
 
 test('service worker cache policy keeps dashboard offline routes warm without excluding app pages', async () => {
+  const nextConfigText = readFileSync(path.join(process.cwd(), 'next.config.ts'), 'utf8');
   const policyText = readFileSync(path.join(process.cwd(), 'shared', 'pwa-cache-policy.js'), 'utf8');
   assert.equal(policyText.includes("'/dashboard/documents'"), true);
   assert.equal(policyText.includes("'/dashboard/settings/subscription'"), true);
@@ -50,6 +51,10 @@ test('service worker cache policy keeps dashboard offline routes warm without ex
   assert.equal(workerText.includes(`"${runtimeVersion}"`), true);
   assert.equal(workerText.includes('__DCAU_PWA_CACHE_PATCHED__'), true);
   assert.equal(workerText.includes('PWA_RUNTIME_HEALTHCHECK'), true);
+  assert.equal(nextConfigText.includes("url.pathname.startsWith('/api/')"), true);
+  assert.equal(nextConfigText.includes("handler: 'NetworkOnly'"), true);
+  assert.equal(swText.includes('e.pathname.startsWith("/api/"),new e.NetworkOnly'), true);
+  assert.equal(swText.includes('if(a.startsWith("/api/"))return!1'), true);
 });
 
 test('stale service-worker runtime caches are versioned and old names are invalidated', async () => {

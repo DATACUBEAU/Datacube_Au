@@ -1,32 +1,14 @@
-import { NextResponse } from 'next/server';
+import { buildUnexpectedProxyError, forwardProxyJsonRequest } from '@/app/api/_proxy-forward';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: Request) {
   try {
-    const authorization = req.headers.get('authorization') ?? undefined;
-    const body = await req.json();
-    const proxyUrl = new URL('/api/proxy/generate-prompt-starters', req.url);
-    const res = await fetch(proxyUrl.toString(), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authorization ? { Authorization: authorization } : {}),
-      },
-      body: JSON.stringify(body),
+    return await forwardProxyJsonRequest(req, {
+      routeLabel: '/api/generate-prompt-starters',
+      targetPath: '/api/proxy/generate-prompt-starters',
     });
-
-    const text = await res.text();
-    let json: any = null;
-    try {
-      json = text ? JSON.parse(text) : null;
-    } catch {
-      json = { error: text || 'Unknown error' };
-    }
-
-    return NextResponse.json(json, { status: res.status });
   } catch (error: any) {
-    console.error('[API /api/generate-prompt-starters] Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return buildUnexpectedProxyError('/api/generate-prompt-starters', error);
   }
 }

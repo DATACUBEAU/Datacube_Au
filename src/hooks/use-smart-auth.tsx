@@ -3,6 +3,7 @@
 import { useEffect, useState, createContext, useContext, useMemo, useCallback, useRef } from 'react';
 import { recordUserActivityRpc, supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
+import { normalizeUsableSupabaseSession } from '@/lib/auth/browser-session';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
@@ -41,7 +42,6 @@ interface SmartAuthContextType {
 }
 
 const SmartAuthContext = createContext<SmartAuthContextType | undefined>(undefined);
-const SESSION_EXPIRY_SKEW_MS = 5_000;
 
 function sessionToBootstrapUser(nextSession: Session | null): SmartUser | null {
   if (!nextSession?.user) return null;
@@ -55,12 +55,7 @@ function sessionToBootstrapUser(nextSession: Session | null): SmartUser | null {
 }
 
 function normalizeBootstrapSession(candidate: Session | null): Session | null {
-  if (!candidate?.user?.id || !candidate?.access_token) return null;
-  const expiresAt = typeof candidate.expires_at === 'number' ? candidate.expires_at : null;
-  if (expiresAt !== null && expiresAt * 1000 <= Date.now() + SESSION_EXPIRY_SKEW_MS) {
-    return null;
-  }
-  return candidate;
+  return normalizeUsableSupabaseSession(candidate);
 }
 
 function signatureFromBootstrapSession(nextSession: Session | null): string | null {

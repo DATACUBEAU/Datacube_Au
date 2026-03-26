@@ -47,10 +47,10 @@ import {
 } from '@/components/ui/chart';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
-import { supabase } from '@/lib/supabase-client/client';
 import { FileNameText } from '@/components/FileNameText';
 import { DocumentSelectValue } from '@/components/document-select-value';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
@@ -150,6 +150,7 @@ export default function PredictionsPage() {
 function PredictionsPageContent() {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
+  const { isLoading: isAuthLoading, isRestoringAuth, isAuthLocked } = useSmartAuth();
   const isOnline = useOnlineStatus();
   const { toast } = useToast();
   const upgradeBlocked = useStore((s) => s.upgradeBlocked);
@@ -186,7 +187,7 @@ function PredictionsPageContent() {
   const predictionOutput = useFeatureOutput<GeneratePredictionsOutput>({
     feature: 'exam_prediction',
     documentId: selectedTextbookId || selectedPastQuestionsId,
-    enabled: Boolean((selectedTextbookId || selectedPastQuestionsId) && user && session?.access_token),
+    enabled: Boolean((selectedTextbookId || selectedPastQuestionsId) && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked),
   });
 
   const mainTextbookIds = useMemo(() => textbookDocs.map((doc) => doc.id), [textbookDocs]);
@@ -349,8 +350,8 @@ function PredictionsPageContent() {
       const pastQuestionsContent = await getDocContent(selectedPastQuestionsId);
       const mainTextbookContent = selectedTextbookId ? await getDocContent(selectedTextbookId) : undefined;
 
-      if (!session?.access_token) {
-        toast({ variant: 'destructive', title: 'Authentication Error', description: 'Session expired. Please log in again.' });
+      if (isAuthLoading || isRestoringAuth || isAuthLocked) {
+        toast({ variant: 'destructive', title: 'Authentication Error', description: 'Wait for session restore to finish, then try again.' });
         return;
       }
 
@@ -375,12 +376,14 @@ function PredictionsPageContent() {
   const handleClearCache = useCallback(async () => {
     if (!selectedPastQuestionsId || !user) return;
     try {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
       const res = await safeFetch('/api/admin/feature-output', {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
+        headers,
+        credentials: 'include',
         body: JSON.stringify({
           documentId: selectedPastQuestionsId,
           feature: 'exam_prediction',
@@ -395,7 +398,7 @@ function PredictionsPageContent() {
     } catch (e) {
       window.open(`mailto:support@datacube-au.vercel.app?subject=Prediction Generation Locked&body=Hello, I encountered a generation lock for document ${selectedPastQuestionsId}. Please clear the cache.`);
     }
-  }, [selectedPastQuestionsId, user, session?.access_token, toast, predictionOutput]);
+  }, [predictionOutput, selectedPastQuestionsId, session?.access_token, toast, user]);
 
   const handlePredictionClick = async () => {
     if (predictionOutput.status === 'ready') {

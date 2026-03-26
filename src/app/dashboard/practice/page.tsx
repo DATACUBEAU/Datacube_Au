@@ -28,6 +28,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Icons } from '@/components/icons';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { FileNameText } from '@/components/FileNameText';
 import { DocumentSelectValue } from '@/components/document-select-value';
 import { Badge } from '@/components/ui/badge';
@@ -106,6 +107,7 @@ export default function PracticePage() {
 function PracticePageContent() {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
+  const { isLoading: isAuthLoading, isRestoringAuth, isAuthLocked } = useSmartAuth();
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
   const upgradeBlocked = useStore((s) => s.upgradeBlocked);
@@ -138,7 +140,7 @@ function PracticePageContent() {
   const practiceOutput = useFeatureOutput<GeneratePracticeExamOutput>({
     feature: 'practice_exam_generation',
     documentId: selectedDocId,
-    enabled: Boolean(selectedDocId && user && session?.access_token),
+    enabled: Boolean(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked),
   });
 
   const getDocumentExpiryMs = useCallback((docId: string): number | null => {
@@ -250,6 +252,10 @@ function PracticePageContent() {
     if (upgradeBlocked) {
       return;
     }
+    if (isAuthLoading || isRestoringAuth || isAuthLocked) {
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Wait for session restore to finish, then try again.' });
+      return;
+    }
     
      if (!isOnline) {
         toast({ variant: 'destructive', title: 'You are offline', description: 'This action requires an internet connection.' });
@@ -294,12 +300,14 @@ function PracticePageContent() {
   const handleClearCache = useCallback(async () => {
     if (!selectedDocId || !user) return;
     try {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
       const res = await safeFetch('/api/admin/feature-output', {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
+        headers,
+        credentials: 'include',
         body: JSON.stringify({
           documentId: selectedDocId,
           feature: 'practice_exam_generation',
@@ -314,7 +322,7 @@ function PracticePageContent() {
     } catch (e) {
       window.open(`mailto:support@datacube-au.vercel.app?subject=Practice Generation Locked&body=Hello, I encountered a generation lock for document ${selectedDocId}. Please clear the cache.`);
     }
-  }, [selectedDocId, user, session?.access_token, toast, practiceOutput]);
+  }, [practiceOutput, selectedDocId, session?.access_token, toast, user]);
 
   const handleGenerateClick = async () => {
     if (practiceOutput.status === 'ready' || questionPack.length > 0) {
@@ -382,7 +390,7 @@ function PracticePageContent() {
   };
 
   useEffect(() => {
-    if (!examFinished || !selectedDocId || !session?.access_token || questions.length === 0) {
+    if (!examFinished || !selectedDocId || !user || questions.length === 0 || isAuthLoading || isRestoringAuth || isAuthLocked) {
       return;
     }
 
@@ -400,12 +408,13 @@ function PracticePageContent() {
       isCorrect: question.userAnswer === question.correctAnswer,
     }));
 
+    const headers = new Headers({ 'Content-Type': 'application/json' });
+    if (session?.access_token) {
+      headers.set('Authorization', `Bearer ${session.access_token}`);
+    }
     void safeFetch('/api/au/practice-attempts', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       credentials: 'include',
       timeout: 10_000,
       silent: true,
@@ -421,7 +430,7 @@ function PracticePageContent() {
       console.warn('[practice] Failed to persist attempt', error);
       submittedAttemptRef.current = null;
     });
-  }, [attemptCycle, examFinished, questions, score, selectedDocId, session?.access_token]);
+  }, [attemptCycle, examFinished, isAuthLoading, isAuthLocked, isRestoringAuth, questions, score, selectedDocId, session?.access_token, user]);
   
   const currentQuestion = questions[currentQuestionIndex];
   const progress = questions.length > 0 ? ((currentQuestionIndex + 1) / questions.length) * 100 : 0;

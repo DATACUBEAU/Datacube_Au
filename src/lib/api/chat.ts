@@ -1,5 +1,4 @@
 
-import { safeFetch } from '@/lib/api/safe-fetch';
 import {
   extractApiError,
   extractApiErrorMessage,
@@ -8,7 +7,7 @@ import {
   type ApiErrorShape,
 } from '@/lib/api/api-contract';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
-import { getSupabaseAccessToken, invokeEdgeFunction, supabase } from '@/lib/supabase-client/client';
+import { fetchEdgeFunctionResponse, invokeEdgeFunction } from '@/lib/supabase-client/client';
 import {
   validateAndNormalizeChatPayload,
   toLegacyEdgePayload,
@@ -462,8 +461,6 @@ export async function sendChatMessageStream(
     return doneEvent;
   }
 
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
   const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
     clientMessageId: request.clientMessageId,
   });
@@ -472,47 +469,19 @@ export async function sendChatMessageStream(
     stream: true,
   };
 
-  const doRequest = async (token: string | null) => {
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
+  const res = await fetchEdgeFunctionResponse(endpoint, {
+    method: 'POST',
+    requireAuth: true,
+    timeoutMs: 120_000,
+    silent: true,
+    body: payload,
+    headers: {
       Accept: 'text/event-stream',
       'x-correlation-id': correlationId,
-    };
-    if (token) {
-      headers.Authorization = `Bearer ${token}`;
-    }
-    if (anonKey) headers.apikey = anonKey;
-
-    return await safeFetch(`/api/proxy/${endpoint}`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(payload),
-      credentials: 'include',
-      signal: opts?.signal,
-      timeout: 120_000,
-      silent: true,
-      suppressAuthError: true,
-      authIntent: 'interactive',
-    });
-  };
-
-  let accessToken = await getSupabaseAccessToken();
-  let res = await doRequest(accessToken);
-
-  if (res.status === 401) {
-    try {
-      const { data, error } = await supabase.auth.refreshSession();
-      if (!error) {
-        accessToken = data.session?.access_token ?? null;
-      }
-    } catch {
-      // Keep the original unauthorized response.
-    }
-
-    if (accessToken) {
-      res = await doRequest(accessToken);
-    }
-  }
+    },
+    authIntent: 'interactive',
+    signal: opts?.signal,
+  });
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -715,6 +684,8 @@ export async function getAvailableModels(): Promise<string[]> {
       requireAuth: true,
       silent: true,
       body: { action: 'get_models' },
+      authIntent: 'background',
+      reauthOnAuthFailure: false,
     });
     if (error) return DEFAULT_MODEL_IDS;
 

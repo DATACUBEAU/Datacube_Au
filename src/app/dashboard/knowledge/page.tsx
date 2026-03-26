@@ -31,6 +31,7 @@ import type { GenerateKnowledgeOutput } from '@/app/actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { FileNameText } from '@/components/FileNameText';
@@ -120,6 +121,7 @@ export default function KnowledgePage() {
 function KnowledgePageContent() {
   const [user] = useSupabaseUser();
   const { session } = useSupabaseSession();
+  const { isLoading: isAuthLoading, isRestoringAuth, isAuthLocked } = useSmartAuth();
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
   
@@ -139,7 +141,7 @@ function KnowledgePageContent() {
   const knowledgeOutput = useFeatureOutput<GenerateKnowledgeOutput>({
     feature: 'knowledge_hub',
     documentId: selectedDocId,
-    enabled: Boolean(selectedDocId && user && session?.access_token),
+    enabled: Boolean(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked),
   });
 
   const attachedFileCount = useMemo(() => {
@@ -325,8 +327,8 @@ function KnowledgePageContent() {
         toast({ variant: 'destructive', title: 'You are offline', description: 'This action requires an internet connection.' });
         return;
     }
-    if (!session?.access_token) {
-      toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to generate knowledge materials.' });
+    if (isAuthLoading || isRestoringAuth || isAuthLocked) {
+      toast({ variant: 'destructive', title: 'Sign in required', description: 'Wait for session restore to finish, then try again.' });
       return;
     }
 
@@ -374,12 +376,14 @@ function KnowledgePageContent() {
   const handleClearCache = useCallback(async () => {
     if (!selectedDocId || !user) return;
     try {
+      const headers = new Headers({ 'Content-Type': 'application/json' });
+      if (session?.access_token) {
+        headers.set('Authorization', `Bearer ${session.access_token}`);
+      }
       const res = await safeFetch('/api/admin/feature-output', {
         method: 'DELETE',
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`,
-          'Content-Type': 'application/json',
-        },
+        headers,
+        credentials: 'include',
         body: JSON.stringify({
           documentId: selectedDocId,
           feature: 'knowledge_hub',
@@ -394,7 +398,7 @@ function KnowledgePageContent() {
     } catch (e) {
       window.open(`mailto:support@datacube-au.vercel.app?subject=Knowledge Generation Locked&body=Hello, I encountered a generation lock for document ${selectedDocId}. Please clear the cache.`);
     }
-  }, [selectedDocId, user, session?.access_token, toast, knowledgeOutput]);
+  }, [knowledgeOutput, selectedDocId, session?.access_token, toast, user]);
 
   const handleGenerateClick = async () => {
     if (knowledgeButtonState.effectiveLockStatus === 'ready') {

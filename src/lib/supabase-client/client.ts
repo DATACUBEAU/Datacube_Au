@@ -2,8 +2,11 @@ import { createClient, type Session, type SupabaseClient, type User } from '@sup
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
 import { toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
 import { guardRequest } from '@/lib/api/request-guard';
+import { normalizeUsableSupabaseSession, selectUsableSupabaseSession } from '@/lib/auth/browser-session';
+import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { areAuthActionsDisabled, dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import type { SessionExpiryTriggerIntent } from '@/lib/auth/session-expiry-policy';
+import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 
 const publicEnv = {
   NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -164,16 +167,29 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 export const supabase = createBrowserSupabaseClient();
 
 async function refreshBrowserSession(): Promise<Session | null> {
-  if (!isBrowserOnline()) return null;
+  const persistedSession = normalizeUsableSupabaseSession(readPersistedSupabaseSession());
+  if (!isBrowserOnline()) {
+    if (persistedSession) {
+      syncServerAuthSessionCookie(persistedSession);
+    }
+    return persistedSession;
+  }
   if (refreshBrowserSessionPromise) return refreshBrowserSessionPromise;
 
   refreshBrowserSessionPromise = (async () => {
     try {
       const { data, error } = await supabase.auth.refreshSession();
-      if (error) return null;
-      return data.session ?? null;
+      const refreshedSession = normalizeUsableSupabaseSession(error ? null : data.session ?? null);
+      const nextSession = selectUsableSupabaseSession(refreshedSession, persistedSession);
+      if (nextSession) {
+        syncServerAuthSessionCookie(nextSession);
+      }
+      return nextSession;
     } catch {
-      return null;
+      if (persistedSession) {
+        syncServerAuthSessionCookie(persistedSession);
+      }
+      return persistedSession;
     } finally {
       refreshBrowserSessionPromise = null;
     }
@@ -218,15 +234,20 @@ function tokenProjectRefFromAccessToken(accessToken: string): string | null {
 
 export async function getSupabaseAccessToken(): Promise<string | null> {
   try {
+    const persistedSession = normalizeUsableSupabaseSession(readPersistedSupabaseSession());
     const { data, error } = await supabase.auth.getSession();
-    let session = error ? null : data.session ?? null;
+    let session = normalizeUsableSupabaseSession(error ? null : data.session ?? null);
 
     const expiresAt = session?.expires_at;
     const isExpiredOrExpiring =
       typeof expiresAt === 'number' && expiresAt * 1000 <= Date.now() + 5000;
 
+    if (!session && persistedSession) {
+      session = persistedSession;
+    }
+
     if ((!session || isExpiredOrExpiring) && isBrowserOnline()) {
-      session = await refreshBrowserSession();
+      session = selectUsableSupabaseSession(await refreshBrowserSession(), persistedSession);
     }
 
     const token = session?.access_token ?? null;
@@ -237,10 +258,149 @@ export async function getSupabaseAccessToken(): Promise<string | null> {
     const tokenRef = tokenProjectRefFromAccessToken(token);
     if (expectedRef && tokenRef && expectedRef !== tokenRef) return null;
 
+    syncServerAuthSessionCookie(session);
     return token;
   } catch {
     return null;
   }
+}
+
+type EdgeFunctionRequestOptions = {
+  body?: any;
+  headers?: Record<string, string>;
+  requireAuth?: boolean;
+  timeoutMs?: number;
+  method?: 'POST' | 'GET';
+  silent?: boolean;
+  allowOffline?: boolean;
+  authIntent?: SessionExpiryTriggerIntent;
+  reauthOnAuthFailure?: boolean;
+  signal?: AbortSignal;
+};
+
+function isBodyInitLike(value: unknown): value is BodyInit {
+  if (typeof value === 'string') return true;
+  if (value instanceof Blob) return true;
+  if (value instanceof FormData) return true;
+  if (value instanceof URLSearchParams) return true;
+  if (value instanceof ReadableStream) return true;
+  if (value instanceof ArrayBuffer) return true;
+  return ArrayBuffer.isView(value);
+}
+
+function resolveEdgeRequestBody(method: 'POST' | 'GET', body: unknown): BodyInit | undefined {
+  if (method !== 'POST' || body == null) return undefined;
+  if (isBodyInitLike(body)) return body;
+  return JSON.stringify(body ?? {});
+}
+
+export async function fetchEdgeFunctionResponse(
+  functionName: string,
+  options?: EdgeFunctionRequestOptions,
+): Promise<Response> {
+  const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+  const method = options?.method ?? 'POST';
+  const timeoutMs = options?.timeoutMs ?? 10000;
+  const silent = options?.silent ?? true;
+  const requireAuth = options?.requireAuth ?? true;
+  const allowOffline = options?.allowOffline === true;
+  const authIntent = options?.authIntent ?? 'interactive';
+  const reauthOnAuthFailure = options?.reauthOnAuthFailure ?? (authIntent === 'interactive');
+  const requestBody = resolveEdgeRequestBody(method, options?.body);
+
+  const attemptOnce = async (accessToken: string | null) => {
+    const isOnline =
+      typeof window === 'undefined'
+        ? true
+        : (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean'
+            ? (window as any).__DCAU_NETWORK_STATE.isOnline
+            : window.navigator.onLine);
+    const gate = guardRequest({
+      isOnline,
+      requireAuth,
+      accessToken: accessToken ?? (requireAuth ? '__cookie_session__' : null),
+      allowOfflineRead: allowOffline,
+      warnKey: `invoke-edge:${functionName}`,
+      context: functionName,
+    });
+
+    if (!gate.ok) {
+      if (gate.reason === 'unauthenticated' && requireAuth && reauthOnAuthFailure) {
+        dispatchSessionExpired({
+          status: 401,
+          source: `invokeEdgeFunction:${functionName}`,
+          reason: 'request_guard_unauthenticated',
+          intent: authIntent,
+        });
+      }
+
+      throw toApiRequestError({
+        message: gate.message,
+        status: gate.reason === 'offline' ? 0 : 401,
+        code: gate.reason === 'offline' ? 'OFFLINE' : 'UNAUTHORIZED',
+        retryable: gate.reason === 'offline',
+      });
+    }
+
+    const headers = new Headers(options?.headers ?? {});
+    headers.set('apikey', anonKey);
+    if (requestBody && !(requestBody instanceof FormData) && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (accessToken) {
+      headers.set('Authorization', `Bearer ${accessToken}`);
+    }
+
+    return safeFetch(`/api/proxy/${functionName}`, {
+      method,
+      headers,
+      body: requestBody,
+      credentials: 'include',
+      timeout: timeoutMs,
+      silent,
+      allowOffline,
+      suppressAuthError: true,
+      authIntent,
+      signal: options?.signal,
+    });
+  };
+
+  let accessToken = await getSupabaseAccessToken();
+  let response = await attemptOnce(accessToken);
+
+  if (!requireAuth || response.status !== 401) {
+    return response;
+  }
+
+  try {
+    accessToken = (await refreshBrowserSession())?.access_token ?? accessToken;
+  } catch {
+    // Fall back to the original unauthorized response.
+  }
+
+  if (!accessToken) {
+    if (reauthOnAuthFailure) {
+      dispatchSessionExpired({
+        status: 401,
+        source: `invokeEdgeFunction:${functionName}`,
+        reason: 'refresh_failed_no_token',
+        intent: authIntent,
+      });
+    }
+    return response;
+  }
+
+  response = await attemptOnce(accessToken);
+  if (reauthOnAuthFailure && requireAuth && response.status === 401) {
+    dispatchSessionExpired({
+      status: 401,
+      source: `invokeEdgeFunction:${functionName}`,
+      reason: 'edge_retry_auth_error',
+      intent: authIntent,
+    });
+  }
+
+  return response;
 }
 
 type RecordUserActivityRpcOptions = {
@@ -319,88 +479,11 @@ export async function invokeEdgeFunction<T = any>(
     allowOffline?: boolean;
     authIntent?: SessionExpiryTriggerIntent;
     reauthOnAuthFailure?: boolean;
+    signal?: AbortSignal;
   }
 ): Promise<{ data: T | null; error: any | null }> {
-  const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-  const method = options?.method ?? 'POST';
-  const timeoutMs = options?.timeoutMs ?? 10000;
-  const silent = options?.silent ?? true;
-  const requireAuth = options?.requireAuth ?? true;
-  const allowOffline = options?.allowOffline === true;
-  const authIntent = options?.authIntent ?? 'interactive';
-  const reauthOnAuthFailure = options?.reauthOnAuthFailure ?? (authIntent === 'interactive');
-
-  const attemptOnce = async (accessToken: string | null) => {
-    const isOnline =
-      typeof window === 'undefined'
-        ? true
-        : (typeof (window as any).__DCAU_NETWORK_STATE?.isOnline === 'boolean'
-            ? (window as any).__DCAU_NETWORK_STATE.isOnline
-            : window.navigator.onLine);
-    const gate = guardRequest({
-      isOnline,
-      requireAuth,
-      accessToken: accessToken ?? (requireAuth ? '__cookie_session__' : null),
-      allowOfflineRead: allowOffline,
-      warnKey: `invoke-edge:${functionName}`,
-      context: functionName,
-    });
-
-    if (!gate.ok) {
-      if (gate.reason === 'unauthenticated' && requireAuth && reauthOnAuthFailure) {
-        dispatchSessionExpired({
-          status: 401,
-          source: `invokeEdgeFunction:${functionName}`,
-          reason: 'request_guard_unauthenticated',
-          intent: authIntent,
-        });
-      }
-      return {
-        data: null as T | null,
-        error: toApiRequestError({
-          message: gate.message,
-          status: gate.reason === 'offline' ? 0 : 401,
-          code: gate.reason === 'offline' ? 'OFFLINE' : 'UNAUTHORIZED',
-          retryable: gate.reason === 'offline',
-        }),
-      };
-    }
-
-    const headers = new Headers(options?.headers ?? {});
-    headers.set('apikey', anonKey);
-    headers.set('Content-Type', 'application/json');
-    if (accessToken) {
-        headers.set('Authorization', `Bearer ${accessToken}`);
-    }
-
-    // Use local proxy to avoid CORS issues
-    const url = `/api/proxy/${functionName}`;
-
-    let res: Response;
-    try {
-      res = await safeFetch(url, {
-        method,
-        headers,
-        body: method === 'POST' ? JSON.stringify(options?.body ?? {}) : undefined,
-        credentials: 'include',
-        timeout: timeoutMs,
-        silent,
-        suppressAuthError: true,
-        authIntent,
-      });
-    } catch (e: any) {
-      if (e instanceof OfflineError) {
-        return {
-          data: null as T | null,
-          error: toApiRequestError({ message: 'Offline', status: 0, code: 'OFFLINE', retryable: true }),
-        };
-      }
-      return {
-        data: null as T | null,
-        error: toApiRequestError(e, e?.message || 'Network error'),
-      };
-    }
-
+  try {
+    const res = await fetchEdgeFunctionResponse(functionName, options);
     const contentType = res.headers.get('content-type') || '';
     const isJson = contentType.includes('application/json');
     const payload = isJson ? await res.json().catch(() => null) : await res.text().catch(() => null);
@@ -418,43 +501,18 @@ export async function invokeEdgeFunction<T = any>(
         res.statusText || 'Request failed',
       ),
     };
-  };
-
-  const accessToken = await getSupabaseAccessToken();
-  const firstAttempt = await attemptOnce(accessToken);
-
-  if (!requireAuth || !firstAttempt.error || Number(firstAttempt.error?.status) !== 401) {
-    return firstAttempt;
-  }
-
-  let refreshedToken: string | null = accessToken;
-  try {
-    refreshedToken = (await refreshBrowserSession())?.access_token ?? accessToken;
-  } catch {
-    // Fallback to first unauthorized result.
-  }
-
-  if (!refreshedToken && !accessToken) {
-    if (reauthOnAuthFailure) {
-      dispatchSessionExpired({
-        status: 401,
-        source: `invokeEdgeFunction:${functionName}`,
-        reason: 'refresh_failed_no_token',
-        intent: authIntent,
-      });
+  } catch (e: any) {
+    if (e instanceof OfflineError) {
+      return {
+        data: null as T | null,
+        error: toApiRequestError({ message: 'Offline', status: 0, code: 'OFFLINE', retryable: true }),
+      };
     }
-    return firstAttempt;
+    return {
+      data: null as T | null,
+      error: toApiRequestError(e, e?.message || 'Network error'),
+    };
   }
-  const retryAttempt = await attemptOnce(refreshedToken);
-  if (reauthOnAuthFailure && requireAuth && retryAttempt.error && Number(retryAttempt.error?.status) === 401) {
-    dispatchSessionExpired({
-      status: Number(retryAttempt.error?.status),
-      source: `invokeEdgeFunction:${functionName}`,
-      reason: 'edge_retry_auth_error',
-      intent: authIntent,
-    });
-  }
-  return retryAttempt;
 }
 
 /**

@@ -1,37 +1,52 @@
-import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { NextRequest, NextResponse } from 'next/server';
+import { buildApiErrorBody } from '@/lib/api/api-contract';
+import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
+import { createSupabaseRlsClient } from '@/lib/server/supabase-admin';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
-function requiredEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) throw new Error(`Missing environment variable: ${key}`);
-  return value;
-}
+export async function GET(req: NextRequest) {
+  const requestId = crypto.randomUUID();
 
-function createRequestClient(authorization?: string) {
-  const url = requiredEnv('NEXT_PUBLIC_SUPABASE_URL');
-  const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-  return createClient(url, anonKey, {
-    global: {
-      headers: authorization ? { Authorization: authorization } : {},
-    },
-  });
-}
-
-export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const sessionId = searchParams.get('sessionId');
-    const authorization = req.headers.get('authorization') ?? undefined;
 
     if (!sessionId) {
-      return NextResponse.json({ error: 'Missing sessionId' }, { status: 400 });
+      return NextResponse.json(
+        buildApiErrorBody({
+          status: 400,
+          code: 'INVALID_REQUEST_PAYLOAD',
+          message: 'Missing sessionId.',
+          requestId,
+          retryable: false,
+        }),
+        {
+          status: 400,
+          headers: { 'Cache-Control': 'no-store' },
+        },
+      );
     }
 
-    const supabase = createRequestClient(authorization);
+    const auth = await requireUserFromRequest(req);
+    if (!auth.ok) {
+      return NextResponse.json(
+        buildApiErrorBody({
+          status: 401,
+          code: 'UNAUTHORIZED',
+          message: 'Sign in required.',
+          details: { reason: auth.reason },
+          requestId,
+          retryable: false,
+        }),
+        {
+          status: 401,
+          headers: { 'Cache-Control': 'no-store' },
+        },
+      );
+    }
 
-    // RLS will ensure the user can only see their own session's messages
+    const supabase = createSupabaseRlsClient(auth.accessToken);
     const { data, error } = await supabase
       .from('au_messages')
       .select('*')
@@ -40,12 +55,51 @@ export async function GET(req: Request) {
 
     if (error) {
       console.error('[API /api/chat/history] Supabase error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      const status = error.code === '42501' ? 403 : 500;
+      return NextResponse.json(
+        buildApiErrorBody({
+          status,
+          code: status === 403 ? 'FORBIDDEN' : 'CHAT_HISTORY_QUERY_FAILED',
+          message: status === 403 ? 'You do not have access to this chat history.' : 'Failed to load chat history.',
+          details: {
+            supabaseCode: error.code ?? null,
+            hint: error.hint ?? null,
+          },
+          requestId,
+          retryable: status >= 500,
+        }),
+        {
+          status,
+          headers: { 'Cache-Control': 'no-store' },
+        },
+      );
     }
 
-    return NextResponse.json({ messages: data });
+    return NextResponse.json(
+      {
+        ok: true,
+        requestId,
+        messages: data ?? [],
+      },
+      {
+        status: 200,
+        headers: { 'Cache-Control': 'no-store' },
+      },
+    );
   } catch (error: any) {
     console.error('[API /api/chat/history] Error:', error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json(
+      buildApiErrorBody({
+        status: 500,
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'Unexpected server error.',
+        details: String(error?.message || error || 'unknown_error'),
+        requestId,
+      }),
+      {
+        status: 500,
+        headers: { 'Cache-Control': 'no-store' },
+      },
+    );
   }
 }

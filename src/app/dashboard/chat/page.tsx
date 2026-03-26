@@ -61,10 +61,10 @@ import { logOnce } from '@/lib/log/dedupe';
 import type { RagBasedQuestionAnsweringOutput } from '@/app/actions';
 import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { safeFetch } from '@/lib/api/safe-fetch';
-import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { validateQuery } from '@/lib/upload/file-types';
 import { cn } from '@/lib/utils';
 import { FileNameText } from '@/components/FileNameText';
@@ -82,7 +82,7 @@ import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
 import { toApiRequestError, type ApiRequestError } from '@/lib/api/api-contract';
 
-import { type ChatMessage } from '@/lib/api/chat';
+import { generatePromptStarters, type ChatMessage } from '@/lib/api/chat';
 import { AssistantResponseBody } from '@/components/chat/assistant-response-body';
 import { FollowUpSuggestions } from '@/components/chat/follow-up-suggestions';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
@@ -174,8 +174,9 @@ export default function ChatPage() {
   const router = useRouter();
   const [user] = useSupabaseUser();
   const { session, loading: isLoadingAuth } = useSupabaseSession();
+  const { isAuthLocked, isRestoringAuth } = useSmartAuth();
   const isOnline = useOnlineStatus();
-  const canChat = isOnline && !!session?.access_token && !isLoadingAuth;
+  const canChat = isOnline && Boolean(user) && !isLoadingAuth && !isRestoringAuth && !isAuthLocked;
 
   const [now, setNow] = useState(() => Date.now());
 
@@ -660,11 +661,6 @@ export default function ChatPage() {
       logOnce('warn', 'chat:enhance_prompt:blocked', '[chat] Prompt studio blocked (auth/online)');
       return;
     }
-    if (!session?.access_token) {
-      logOnce('warn', 'chat:enhance_prompt:no_token', '[chat] Prompt studio blocked (no access token)');
-      return;
-    }
-    
     setIsGenerating(true);
     setGeneratedPrompts([]);
     
@@ -674,48 +670,7 @@ export default function ChatPage() {
     try {
       const documentContent = await getDocumentContent(selectedDocId);
       const documentTitle = selectedDocName || 'Current Document';
-      const doRequest = async (token: string | null) =>
-        safeFetch(`/api/proxy/generate-prompt-starters`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          credentials: 'include',
-          body: JSON.stringify({ 
-            documentTitle,
-            documentContent: documentContent.substring(0, 10000), // Limit content for efficiency
-            userIdea: promptStudioInput,
-          }),
-          suppressAuthError: true,
-          authIntent: 'interactive',
-        });
-
-      let accessToken = await getSupabaseAccessToken();
-      let result = await doRequest(accessToken);
-
-      if (result.status === 401) {
-        try {
-          const { data, error } = await supabase.auth.refreshSession();
-          if (!error) {
-            accessToken = data.session?.access_token ?? null;
-          }
-        } catch {
-          // Keep original unauthorized response.
-        }
-
-        if (accessToken) {
-          result = await doRequest(accessToken);
-        }
-      }
-
-      if (!result.ok) {
-        const raw = await result.text().catch(() => '');
-        throw new Error(`Prompt enhancement request failed: ${result.status} ${raw}`.trim());
-      }
-      
-      const data = await result.json();
-      const prompts = data.prompts || [];
+      const prompts = await generatePromptStarters(documentTitle, documentContent, promptStudioInput);
       
       if (prompts.length > 0) {
         setGeneratedPrompts(prompts);
@@ -832,13 +787,17 @@ export default function ChatPage() {
             try {
               const isAdmin = true; // Simplified for UI; endpoint handles real check
               if (isAdmin) {
+                const headers = new Headers({
+                  'Content-Type': 'application/json',
+                  'x-correlation-id': correlationId || '',
+                });
+                if (session?.access_token) {
+                  headers.set('Authorization', `Bearer ${session.access_token}`);
+                }
                 const res = await safeFetch('/api/admin/feature-output', {
                   method: 'DELETE',
-                  headers: {
-                    Authorization: `Bearer ${session?.access_token}`,
-                    'Content-Type': 'application/json',
-                    'x-correlation-id': correlationId || '',
-                  },
+                  headers,
+                  credentials: 'include',
                   body: JSON.stringify({
                     documentId: selectedDocId,
                     feature: 'chat', // Adjust if chat cache clear is supported
@@ -955,7 +914,7 @@ export default function ChatPage() {
                   variant="ghost"
                   size="icon"
                   className="h-10 w-10 text-muted-foreground hover:text-primary transition-all duration-300"
-                  disabled={!session?.access_token || isLoadingAuth}
+                  disabled={!user || isLoadingAuth || isRestoringAuth || isAuthLocked}
                   onClick={() => router.push('/dashboard/global-chat')}
                 >
                   <Globe className="h-5 w-5" />
@@ -1453,7 +1412,9 @@ export default function ChatPage() {
                       ? `Document is ${selectedDoc?.status || 'not ready'}...`
                     : !isOnline
                       ? "Offline mode"
-                      : !session?.access_token
+                      : isLoadingAuth || isRestoringAuth
+                        ? "Restoring session..."
+                        : !user || isAuthLocked
                         ? "Sign in required"
                         : "Message AU..."
                 }
@@ -1471,7 +1432,10 @@ export default function ChatPage() {
               {selectedDocId && !isOnline && (
                 <div className="mt-1 pl-3 text-xs text-muted-foreground">Offline mode</div>
               )}
-              {selectedDocId && !session?.access_token && isOnline && (
+              {selectedDocId && (isLoadingAuth || isRestoringAuth) && isOnline && (
+                <div className="mt-1 pl-3 text-xs text-muted-foreground">Restoring session...</div>
+              )}
+              {selectedDocId && !isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline && (
                 <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in required</div>
               )}
               {selectedDocId && selectedDoc && selectedDoc.status !== 'completed' && (

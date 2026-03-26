@@ -9,7 +9,6 @@ import { useStore } from '@/hooks/use-store';
 import { nanoid } from 'nanoid';
 import { getMemorySummary, upsertMemorySummary } from '@/lib/api/memory-summaries';
 import { appendTurn, clearWorkingMemory, docMemoryKey, globalMemoryKey, loadWorkingMemory, saveWorkingMemory, type WorkingMemoryPayload } from '@/lib/memory/working-memory';
-import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { logOnce, shouldDedupe } from '@/lib/log/dedupe';
 import { logEvent } from '@/lib/analytics';
@@ -142,10 +141,6 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     });
   }, []);
 
-  const ensureAccessToken = useCallback(async (): Promise<string | null> => {
-    return await getSupabaseAccessToken();
-  }, []);
-
   const persistHistory = useCallback(async (nextHistory: ChatMessage[]) => {
     if (!selectedDocId || !user?.id) return;
     const scope = selectedDocId === 'global' ? 'global' : 'doc';
@@ -226,14 +221,14 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
   // ... (Load Models & Persistence Effects) ...
   useEffect(() => {
     if (!user) return;
+    if (isAuthLoading || isRestoringAuth) return;
     if (isAuthLocked) return;
     if (!isOnline) return;
-    if (!session?.access_token) return;
 
     getAvailableModels()
       .then(models => setAvailableModels(models))
       .catch(err => console.error("Failed to load models:", err));
-  }, [isAuthLocked, isOnline, session?.access_token, user]);
+  }, [isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, user]);
 
   useEffect(() => {
     const seed = buildDocumentContextSeed({
@@ -353,7 +348,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? null,
+      accessToken: session?.access_token ?? '__cookie_session__',
       warnKey: 'chat:send',
       context: 'chat send',
     });
@@ -361,23 +356,6 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       if (gate.reason === 'offline') {
         logOnce('warn', 'chat:send:offline', '[chat] Send blocked (offline)');
       }
-      return;
-    }
-
-    const accessToken = await ensureAccessToken();
-    if (!accessToken) {
-      logOnce('warn', 'chat:send:no_token', '[chat] Send blocked (no access token)');
-      dispatchSessionExpired({
-        status: 401,
-        source: 'useAuChat.sendMessage',
-        reason: 'missing_access_token',
-      });
-      toast({
-        variant: 'destructive',
-        title: 'Session expired',
-        description: 'Please sign in again to continue chatting.',
-        duration: 3000,
-      });
       return;
     }
 
@@ -747,7 +725,6 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     config.activeDocumentName,
     config.documentCountInScope,
     config.lastUploadedDocumentId,
-    ensureAccessToken,
     isAuthLoading,
     isAuthLocked,
     isRestoringAuth,
@@ -770,7 +747,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? null,
+      accessToken: session?.access_token ?? '__cookie_session__',
       warnKey: 'chat:greet',
       context: 'chat greet',
     });
@@ -781,12 +758,6 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       return;
     }
 
-    const accessToken = await ensureAccessToken();
-    if (!accessToken) {
-      logOnce('warn', 'chat:greet:no_token', '[chat] scanAndGreet blocked (no access token)');
-      return;
-    }
-    
     abortControllerRef.current = new AbortController();
     setIsResponding(true);
     setAuAnimationState('thinking');
@@ -861,7 +832,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           setAuAnimationState('idle');
         }, 1200);
     }
-  }, [ensureAccessToken, history.length, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, selectedModel, session?.access_token, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, user]);
+  }, [history.length, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, selectedModel, session?.access_token, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, user]);
 
   const setHistoryPersisted = useCallback((next: ChatMessage[]) => {
     setHistory(next);
@@ -884,7 +855,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       const gate = guardRequest({
         isOnline,
         requireAuth: true,
-        accessToken: session?.access_token ?? null,
+        accessToken: session?.access_token ?? '__cookie_session__',
         warnKey: 'chat:prompts',
         context: 'prompt generation',
       });
