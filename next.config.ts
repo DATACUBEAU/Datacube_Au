@@ -99,13 +99,43 @@ const withPWA = withPWAInit({
         urlPattern: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith('/api/'),
         method: 'GET',
         handler: 'NetworkOnly',
-        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['api-get-no-cache'] },
+        options: {
+          cacheName: PWA_RUNTIME_CACHE_NAMES['api-get-no-cache'],
+          plugins: [
+            {
+              handlerDidError: async ({ request, error }) => {
+                console.error('[SW] API GET request failed:', {
+                  url: request.url,
+                  method: request.method,
+                  headers: Object.fromEntries(request.headers.entries()),
+                  error: error.message,
+                });
+                return Response.error();
+              },
+            },
+          ],
+        },
       },
       {
         urlPattern: ({ sameOrigin }) => sameOrigin,
         method: 'POST',
         handler: 'NetworkOnly',
-        options: { cacheName: PWA_RUNTIME_CACHE_NAMES['post-no-cache'] },
+        options: {
+          cacheName: PWA_RUNTIME_CACHE_NAMES['post-no-cache'],
+          plugins: [
+            {
+              handlerDidError: async ({ request, error }) => {
+                console.error('[SW] API POST request failed:', {
+                  url: request.url,
+                  method: request.method,
+                  headers: Object.fromEntries(request.headers.entries()),
+                  error: error.message,
+                });
+                return Response.error();
+              },
+            },
+          ],
+        },
       },
       {
         urlPattern: ({ sameOrigin }) => sameOrigin,
