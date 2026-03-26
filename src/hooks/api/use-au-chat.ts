@@ -359,6 +359,17 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       return;
     }
 
+    console.log('[useAuChat] Preparing to send message', {
+      selectedDocId,
+      userId: user.id,
+      isAuthLoading,
+      isRestoringAuth,
+      isAuthLocked,
+      hasSession: !!session,
+      tokenExists: !!session?.access_token,
+      tokenExpiresAt: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
+    });
+
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
     const requestId = nanoid();
