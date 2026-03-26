@@ -4,7 +4,7 @@ import { toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
 import { guardRequest } from '@/lib/api/request-guard';
 import { normalizeUsableSupabaseSession, selectUsableSupabaseSession } from '@/lib/auth/browser-session';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
-import { areAuthActionsDisabled, dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
+import { areAuthActionsDisabled, dispatchSessionExpired, getAuthRuntimeState } from '@/lib/auth/session-expiry-events';
 import type { SessionExpiryTriggerIntent } from '@/lib/auth/session-expiry-policy';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 
@@ -179,17 +179,18 @@ async function refreshBrowserSession(): Promise<Session | null> {
   refreshBrowserSessionPromise = (async () => {
     try {
       const { data, error } = await supabase.auth.refreshSession();
-      const refreshedSession = normalizeUsableSupabaseSession(error ? null : data.session ?? null);
-      const nextSession = selectUsableSupabaseSession(refreshedSession, persistedSession);
-      if (nextSession) {
-        syncServerAuthSessionCookie(nextSession);
+      if (error) {
+        console.warn('[client] refreshBrowserSession failed:', error.message);
+        return null; // Don't return the stale persistedSession if explicit refresh failed
       }
-      return nextSession;
-    } catch {
-      if (persistedSession) {
-        syncServerAuthSessionCookie(persistedSession);
+      const refreshedSession = normalizeUsableSupabaseSession(data.session ?? null);
+      if (refreshedSession) {
+        syncServerAuthSessionCookie(refreshedSession);
       }
-      return persistedSession;
+      return refreshedSession;
+    } catch (err: any) {
+      console.error('[client] refreshBrowserSession unexpected error:', err?.message || err);
+      return null;
     } finally {
       refreshBrowserSessionPromise = null;
     }
@@ -365,39 +366,48 @@ export async function fetchEdgeFunctionResponse(
     });
   };
 
-  let accessToken = await getSupabaseAccessToken();
-  let response = await attemptOnce(accessToken);
+  const initialToken = await getSupabaseAccessToken();
+  let response = await attemptOnce(initialToken);
 
   if (!requireAuth || response.status !== 401) {
     return response;
   }
 
+  // If we got a 401, try to refresh the session exactly once.
+  let refreshedToken: string | null = null;
   try {
-    accessToken = (await refreshBrowserSession())?.access_token ?? accessToken;
+    const refreshedSession = await refreshBrowserSession();
+    refreshedToken = refreshedSession?.access_token ?? null;
   } catch {
-    // Fall back to the original unauthorized response.
+    // Ignore refresh failures here; we'll handle the 401 below.
   }
 
-  if (!accessToken) {
-    if (reauthOnAuthFailure) {
+  // If we got a NEW token, try the request again.
+  if (refreshedToken && refreshedToken !== initialToken) {
+    response = await attemptOnce(refreshedToken);
+  }
+
+  // If it's still 401, check if we should trigger a global session expiry event.
+  if (reauthOnAuthFailure && requireAuth && response.status === 401) {
+    const currentState = getAuthRuntimeState();
+    
+    // Only poison the session if we are not already in a re-auth/restoration flow.
+    // This prevents one failing endpoint from creating an infinite loop if the
+    // session itself is actually restored but this specific request still fails.
+    if (currentState === 'AUTHENTICATED') {
       dispatchSessionExpired({
         status: 401,
         source: `invokeEdgeFunction:${functionName}`,
-        reason: 'refresh_failed_no_token',
+        reason: refreshedToken ? 'edge_retry_auth_error' : 'refresh_failed_no_token',
         intent: authIntent,
       });
+    } else {
+      console.warn('[client] suppressed redundant session expiry dispatch', {
+        functionName,
+        currentState,
+        status: response.status
+      });
     }
-    return response;
-  }
-
-  response = await attemptOnce(accessToken);
-  if (reauthOnAuthFailure && requireAuth && response.status === 401) {
-    dispatchSessionExpired({
-      status: 401,
-      source: `invokeEdgeFunction:${functionName}`,
-      reason: 'edge_retry_auth_error',
-      intent: authIntent,
-    });
   }
 
   return response;

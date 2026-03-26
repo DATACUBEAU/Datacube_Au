@@ -155,16 +155,15 @@ async function validateAccessToken(token: string): Promise<{ userId: string; ema
 
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user?.id) {
-    // Debug logging for Vercel
-    if (process.env.VERCEL) {
-      console.error('[validateAccessToken] Validation failed:', {
-        error: error?.message,
-        hasData: !!data,
-        hasUser: !!data?.user,
-        url: supabaseUrl.replace(/https:\/\/(.*?)\.supabase.*/, 'https://...$1...'), // Mask URL
-        hasAnonKey: !!anonKey,
-      });
-    }
+    // Enhanced diagnostic logging
+    console.warn('[proxy] validateAccessToken failed:', {
+      error: error?.message || 'missing_user_id',
+      errorCode: (error as any)?.code || (error as any)?.status || 'unknown',
+      tokenPreview: `${token.slice(0, 8)}...${token.slice(-8)}`,
+      tokenLength: token.length,
+      hasData: !!data,
+      hasUser: !!data?.user,
+    });
     return null;
   }
   return {
@@ -176,19 +175,31 @@ async function validateAccessToken(token: string): Promise<{ userId: string; ema
 export async function requireUserFromRequest(req: NextRequest): Promise<RequestAuthResult> {
   const headerToken = normalizeBearerToken(req.headers.get('authorization'));
   const cookieToken = extractAccessTokenFromCookies(req);
-  const candidates = [cookieToken, headerToken].filter((value): value is string => Boolean(value));
-  const uniqueTokens = [...new Set(candidates)];
+  
+  // Track sources for diagnostics
+  const candidates: Array<{ token: string; source: 'header' | 'cookie' }> = [];
+  if (cookieToken) candidates.push({ token: cookieToken, source: 'cookie' });
+  if (headerToken) candidates.push({ token: headerToken, source: 'header' });
 
-  if (uniqueTokens.length === 0) {
+  if (candidates.length === 0) {
+    console.warn('[proxy] no auth tokens found in request', {
+      hasCookie: !!req.cookies.get('sb-access-token'),
+      hasAuthHeader: !!req.headers.get('authorization'),
+    });
     return { ok: false, status: 401, error: 'unauthorized', reason: 'missing_token' };
   }
 
   let debugMessage = '';
+  const seenTokens = new Set<string>();
 
-  for (const token of uniqueTokens) {
+  for (const { token, source } of candidates) {
+    if (seenTokens.has(token)) continue;
+    seenTokens.add(token);
+
     const validation = await validateAccessToken(token);
     if (!validation?.userId) {
-      if (!debugMessage) debugMessage = `Validation failed for token: ${token.slice(0, 10)}...`;
+      const msg = `Validation failed for ${source} token: ${token.slice(0, 10)}...`;
+      if (!debugMessage) debugMessage = msg;
       continue;
     }
 
@@ -197,11 +208,17 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
       accessToken: token,
       userId: validation.userId,
       email: validation.email,
-      source: token === cookieToken ? 'cookie' : 'header',
+      source: source,
     };
   }
 
   // Token was present but invalid/expired
+  console.warn('[proxy] all provided tokens failed validation', {
+    candidateCount: candidates.length,
+    sources: candidates.map(c => c.source),
+    debug: debugMessage
+  });
+
   return { 
     ok: false, 
     status: 401, 
