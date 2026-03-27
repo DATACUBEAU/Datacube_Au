@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const strict_1 = __importDefault(require("node:assert/strict"));
 const session_expiry_policy_js_1 = require("../src/lib/auth/session-expiry-policy.js");
+const browser_session_js_1 = require("../src/lib/auth/browser-session.js");
 let failed = 0;
 async function run(name, fn) {
     try {
@@ -95,6 +96,35 @@ async function main() {
             isAuthRestoring: false,
             isAuthLocked: false,
         }), false);
+    });
+    await run('expiring persisted sessions are not treated as usable auth during restore', () => {
+        const now = Date.now();
+        strict_1.default.equal((0, browser_session_js_1.normalizeUsableSupabaseSession)({
+            access_token: 'token',
+            token_type: 'bearer',
+            refresh_token: 'refresh',
+            expires_in: 60,
+            expires_at: Math.floor((now + browser_session_js_1.SUPABASE_SESSION_EXPIRY_SKEW_MS - 1) / 1000),
+            user: { id: 'user-1' },
+        }, now), null);
+    });
+    await run('restore picks the first usable live or persisted Supabase session', () => {
+        const now = Date.now();
+        const persisted = {
+            access_token: 'persisted-token',
+            token_type: 'bearer',
+            refresh_token: 'refresh',
+            expires_in: 60,
+            expires_at: Math.floor((now + 60000) / 1000),
+            user: { id: 'user-1' },
+        };
+        const expired = {
+            ...persisted,
+            access_token: 'expired-token',
+            expires_at: Math.floor((now - 60000) / 1000),
+        };
+        strict_1.default.equal((0, browser_session_js_1.selectUsableSupabaseSession)(expired, persisted)?.access_token, 'persisted-token');
+        strict_1.default.equal((0, browser_session_js_1.selectUsableSupabaseSession)(persisted, expired)?.access_token, 'persisted-token');
     });
     if (failed > 0) {
         process.exit(1);

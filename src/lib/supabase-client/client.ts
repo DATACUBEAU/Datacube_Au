@@ -1,6 +1,6 @@
 import { createClient, type Session, type SupabaseClient, type User } from '@supabase/supabase-js';
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
-import { toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
+import { extractApiError, toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
 import { guardRequest } from '@/lib/api/request-guard';
 import { normalizeUsableSupabaseSession, selectUsableSupabaseSession } from '@/lib/auth/browser-session';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
@@ -181,16 +181,17 @@ async function refreshBrowserSession(): Promise<Session | null> {
       const { data, error } = await supabase.auth.refreshSession();
       if (error) {
         console.warn('[client] refreshBrowserSession failed:', error.message);
-        return null; // Don't return the stale persistedSession if explicit refresh failed
+        return readCurrentUsableBrowserSession();
       }
       const refreshedSession = normalizeUsableSupabaseSession(data.session ?? null);
       if (refreshedSession) {
         syncServerAuthSessionCookie(refreshedSession);
+        return refreshedSession;
       }
-      return refreshedSession;
+      return readCurrentUsableBrowserSession();
     } catch (err: any) {
       console.error('[client] refreshBrowserSession unexpected error:', err?.message || err);
-      return null;
+      return readCurrentUsableBrowserSession();
     } finally {
       refreshBrowserSessionPromise = null;
     }
@@ -233,22 +234,150 @@ function tokenProjectRefFromAccessToken(accessToken: string): string | null {
   }
 }
 
+type EdgeAuthFailureDiagnostics = {
+  authStage: 'proxy_gate' | 'edge_function' | 'unknown';
+  reason: string | null;
+  hasAuthorizationHeader: boolean | null;
+  hasAuthCookie: boolean | null;
+  attemptedSources: string[];
+  failedSources: string[];
+  validatedSource: string | null;
+  requestId: string | null;
+};
+
+function parseDelimitedHeader(raw: string | null): string[] {
+  if (!raw) return [];
+  return raw.split(',').map((entry) => entry.trim()).filter(Boolean);
+}
+
+function parseDebugBoolean(raw: string | null): boolean | null {
+  if (raw == null || raw === '') return null;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no') return false;
+  return null;
+}
+
+function parseEdgeAuthFailureDiagnostics(response: Response, payload: unknown): EdgeAuthFailureDiagnostics {
+  const parsed = extractApiError(payload, response.statusText || 'Request failed');
+  const details = parsed.details && typeof parsed.details === 'object' ? parsed.details as Record<string, any> : null;
+  const requestAuth =
+    details?.request_auth && typeof details.request_auth === 'object'
+      ? details.request_auth as Record<string, any>
+      : null;
+  const requestId =
+    typeof (payload as any)?.requestId === 'string'
+      ? String((payload as any).requestId)
+      : typeof (payload as any)?.request_id === 'string'
+        ? String((payload as any).request_id)
+        : response.headers.get('x-request-id');
+
+  return {
+    authStage: (
+      response.headers.get('x-dcau-auth-stage') ||
+      details?.auth_stage ||
+      'unknown'
+    ) as EdgeAuthFailureDiagnostics['authStage'],
+    reason:
+      response.headers.get('x-dcau-auth-reason') ||
+      (typeof details?.reason === 'string' ? details.reason : null) ||
+      null,
+    hasAuthorizationHeader:
+      parseDebugBoolean(response.headers.get('x-dcau-auth-has-authorization')) ??
+      (typeof requestAuth?.has_authorization === 'boolean' ? requestAuth.has_authorization : null),
+    hasAuthCookie:
+      parseDebugBoolean(response.headers.get('x-dcau-auth-has-cookie')) ??
+      (typeof requestAuth?.has_cookie === 'boolean' ? requestAuth.has_cookie : null),
+    attemptedSources:
+      parseDelimitedHeader(response.headers.get('x-dcau-auth-attempted-sources')).length > 0
+        ? parseDelimitedHeader(response.headers.get('x-dcau-auth-attempted-sources'))
+        : Array.isArray(requestAuth?.attempted_sources)
+          ? requestAuth.attempted_sources.map((entry: unknown) => String(entry))
+          : [],
+    failedSources:
+      parseDelimitedHeader(response.headers.get('x-dcau-auth-failed-sources')).length > 0
+        ? parseDelimitedHeader(response.headers.get('x-dcau-auth-failed-sources'))
+        : Array.isArray(requestAuth?.failed_sources)
+          ? requestAuth.failed_sources.map((entry: unknown) => String(entry))
+          : [],
+    validatedSource:
+      response.headers.get('x-dcau-auth-source') ||
+      (typeof requestAuth?.validated_source === 'string' ? requestAuth.validated_source : null),
+    requestId: requestId || null,
+  };
+}
+
+async function readEdgeAuthFailureDiagnostics(response: Response): Promise<EdgeAuthFailureDiagnostics> {
+  const raw = await response.clone().text().catch(() => '');
+  if (!raw) {
+    return parseEdgeAuthFailureDiagnostics(response, null);
+  }
+
+  try {
+    return parseEdgeAuthFailureDiagnostics(response, JSON.parse(raw));
+  } catch {
+    return parseEdgeAuthFailureDiagnostics(response, { message: raw, details: raw });
+  }
+}
+
+async function readCurrentUsableBrowserSession(): Promise<Session | null> {
+  const persistedSession = normalizeUsableSupabaseSession(readPersistedSupabaseSession());
+
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    const liveSession = normalizeUsableSupabaseSession(error ? null : data.session ?? null);
+    const session = selectUsableSupabaseSession(liveSession, persistedSession);
+    if (session) {
+      syncServerAuthSessionCookie(session);
+    }
+    return session;
+  } catch {
+    if (persistedSession) {
+      syncServerAuthSessionCookie(persistedSession);
+    }
+    return persistedSession;
+  }
+}
+
+async function validateBrowserAccessToken(accessToken: string | null): Promise<boolean | null> {
+  if (!accessToken) return false;
+  if (!isBrowserOnline()) return null;
+
+  try {
+    const { data, error } = await supabase.auth.getUser(accessToken);
+    if (error) return false;
+    return Boolean(data.user?.id);
+  } catch (error: any) {
+    console.warn('[client] access token validation was inconclusive', {
+      message: String(error?.message || error || 'unknown_error'),
+    });
+    return null;
+  }
+}
+
+function shouldRetryWithRecoveredToken(input: {
+  diagnostics: EdgeAuthFailureDiagnostics;
+  attemptedToken: string | null;
+  candidateToken: string | null;
+}): boolean {
+  if (!input.candidateToken) return false;
+  if (input.candidateToken !== input.attemptedToken) return true;
+  if (input.diagnostics.reason === 'missing_token') return true;
+  if (input.diagnostics.hasAuthorizationHeader === false) return true;
+  if (input.diagnostics.hasAuthCookie === false) return true;
+  return false;
+}
+
 export async function getSupabaseAccessToken(): Promise<string | null> {
   try {
-    const persistedSession = normalizeUsableSupabaseSession(readPersistedSupabaseSession());
-    const { data, error } = await supabase.auth.getSession();
-    let session = normalizeUsableSupabaseSession(error ? null : data.session ?? null);
-
+    const currentSession = await readCurrentUsableBrowserSession();
+    let session = currentSession;
     const expiresAt = session?.expires_at;
     const isExpiredOrExpiring =
       typeof expiresAt === 'number' && expiresAt * 1000 <= Date.now() + 5000;
 
-    if (!session && persistedSession) {
-      session = persistedSession;
-    }
-
     if ((!session || isExpiredOrExpiring) && isBrowserOnline()) {
-      session = selectUsableSupabaseSession(await refreshBrowserSession(), persistedSession);
+      session = selectUsableSupabaseSession(await refreshBrowserSession(), currentSession);
     }
 
     const token = session?.access_token ?? null;
@@ -367,45 +496,89 @@ export async function fetchEdgeFunctionResponse(
   };
 
   const initialToken = await getSupabaseAccessToken();
-  let response = await attemptOnce(initialToken);
+  let lastAttemptedToken = initialToken;
+  let response = await attemptOnce(lastAttemptedToken);
 
   if (!requireAuth || response.status !== 401) {
     return response;
   }
 
-  // If we got a 401, try to refresh the session exactly once.
-  let refreshedToken: string | null = null;
-  try {
-    const refreshedSession = await refreshBrowserSession();
-    refreshedToken = refreshedSession?.access_token ?? null;
-  } catch {
-    // Ignore refresh failures here; we'll handle the 401 below.
-  }
+  let authDiagnostics = await readEdgeAuthFailureDiagnostics(response);
+  console.warn('[client] protected edge request returned 401', {
+    functionName,
+    authStage: authDiagnostics.authStage,
+    reason: authDiagnostics.reason,
+    hasAuthorizationHeader: authDiagnostics.hasAuthorizationHeader,
+    hasAuthCookie: authDiagnostics.hasAuthCookie,
+    attemptedSources: authDiagnostics.attemptedSources,
+    failedSources: authDiagnostics.failedSources,
+    validatedSource: authDiagnostics.validatedSource,
+    requestId: authDiagnostics.requestId,
+  });
 
-  // If we got a NEW token, try the request again.
-  if (refreshedToken && refreshedToken !== initialToken) {
+  const currentSession = await readCurrentUsableBrowserSession();
+  const refreshedSession = selectUsableSupabaseSession(await refreshBrowserSession(), currentSession);
+  const refreshedToken = refreshedSession?.access_token ?? null;
+
+  if (shouldRetryWithRecoveredToken({
+    diagnostics: authDiagnostics,
+    attemptedToken: lastAttemptedToken,
+    candidateToken: refreshedToken,
+  })) {
+    lastAttemptedToken = refreshedToken;
     response = await attemptOnce(refreshedToken);
+    if (response.status !== 401) {
+      return response;
+    }
+    authDiagnostics = await readEdgeAuthFailureDiagnostics(response);
   }
 
-  // If it's still 401, check if we should trigger a global session expiry event.
+  const settledSession = await readCurrentUsableBrowserSession();
+  const settledToken = settledSession?.access_token ?? null;
+  if (response.status === 401 && shouldRetryWithRecoveredToken({
+    diagnostics: authDiagnostics,
+    attemptedToken: lastAttemptedToken,
+    candidateToken: settledToken,
+  })) {
+    lastAttemptedToken = settledToken;
+    response = await attemptOnce(settledToken);
+    if (response.status !== 401) {
+      return response;
+    }
+    authDiagnostics = await readEdgeAuthFailureDiagnostics(response);
+  }
+
   if (reauthOnAuthFailure && requireAuth && response.status === 401) {
     const currentState = getAuthRuntimeState();
-    
-    // Only poison the session if we are not already in a re-auth/restoration flow.
-    // This prevents one failing endpoint from creating an infinite loop if the
-    // session itself is actually restored but this specific request still fails.
-    if (currentState === 'AUTHENTICATED') {
+    const latestSession = await readCurrentUsableBrowserSession();
+    const latestToken = latestSession?.access_token ?? null;
+    const latestTokenValidation = await validateBrowserAccessToken(latestToken);
+    const hasRecoverableSession = Boolean(latestToken) && latestTokenValidation !== false;
+    const shouldSuppressExpiry =
+      currentState !== 'AUTHENTICATED' ||
+      authDiagnostics.authStage === 'edge_function' ||
+      hasRecoverableSession ||
+      latestTokenValidation == null;
+
+    if (!shouldSuppressExpiry) {
       dispatchSessionExpired({
         status: 401,
         source: `invokeEdgeFunction:${functionName}`,
-        reason: refreshedToken ? 'edge_retry_auth_error' : 'refresh_failed_no_token',
+        reason: authDiagnostics.reason || (refreshedToken ? 'edge_retry_auth_error' : 'refresh_failed_no_token'),
         intent: authIntent,
       });
     } else {
-      console.warn('[client] suppressed redundant session expiry dispatch', {
+      console.warn('[client] suppressed session expiry for recoverable or endpoint-scoped 401', {
         functionName,
         currentState,
-        status: response.status
+        status: response.status,
+        authStage: authDiagnostics.authStage,
+        reason: authDiagnostics.reason,
+        hasAuthorizationHeader: authDiagnostics.hasAuthorizationHeader,
+        hasAuthCookie: authDiagnostics.hasAuthCookie,
+        validatedSource: authDiagnostics.validatedSource,
+        latestTokenValidated: latestTokenValidation,
+        requestId: authDiagnostics.requestId,
       });
     }
   }

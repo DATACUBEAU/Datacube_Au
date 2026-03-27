@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
+import { requireUserFromRequest, type RequestAuthDiagnostics } from '@/app/api/proxy/_supabase-auth';
 import {
   buildRoutingCandidates,
   getAllowedPaidModelsForProvider,
@@ -124,10 +124,73 @@ function corsHeaders(requestId?: string): HeadersInit {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS, DELETE',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, Accept, apikey, x-admin-token, x-correlation-id, x-request-id',
-    'Access-Control-Expose-Headers': 'x-request-id, x-correlation-id, retry-after, x-au-model, x-au-service',
+    'Access-Control-Expose-Headers': [
+      'x-request-id',
+      'x-correlation-id',
+      'retry-after',
+      'x-au-model',
+      'x-au-service',
+      'x-dcau-auth-stage',
+      'x-dcau-auth-reason',
+      'x-dcau-auth-source',
+      'x-dcau-auth-has-authorization',
+      'x-dcau-auth-has-cookie',
+      'x-dcau-auth-attempted-sources',
+      'x-dcau-auth-failed-sources',
+    ].join(', '),
   };
   if (requestId) headers['x-request-id'] = requestId;
   return headers;
+}
+
+function serializeRequestAuthDiagnostics(
+  diagnostics: RequestAuthDiagnostics | undefined | null,
+  source?: 'header' | 'cookie' | null,
+): Record<string, unknown> {
+  return {
+    has_authorization: diagnostics?.hasAuthorizationHeader === true,
+    has_cookie: diagnostics?.hasAuthCookie === true,
+    attempted_sources: diagnostics?.attemptedSources ?? [],
+    failed_sources: diagnostics?.failedSources ?? [],
+    validated_source: source ?? diagnostics?.validatedSource ?? null,
+  };
+}
+
+function applyRequestAuthDebugHeaders(
+  headers: Headers,
+  input: {
+    stage: 'proxy_gate' | 'edge_function';
+    diagnostics?: RequestAuthDiagnostics | null;
+    source?: 'header' | 'cookie' | null;
+    reason?: string | null;
+  },
+): Headers {
+  headers.set('x-dcau-auth-stage', input.stage);
+  headers.set('x-dcau-auth-reason', String(input.reason || ''));
+  headers.set('x-dcau-auth-source', String(input.source ?? input.diagnostics?.validatedSource ?? ''));
+  headers.set('x-dcau-auth-has-authorization', input.diagnostics?.hasAuthorizationHeader ? '1' : '0');
+  headers.set('x-dcau-auth-has-cookie', input.diagnostics?.hasAuthCookie ? '1' : '0');
+  headers.set('x-dcau-auth-attempted-sources', (input.diagnostics?.attemptedSources ?? []).join(','));
+  headers.set('x-dcau-auth-failed-sources', (input.diagnostics?.failedSources ?? []).join(','));
+  return headers;
+}
+
+function buildAuthFailureDetails(input: {
+  stage: 'proxy_gate' | 'edge_function';
+  reason?: string | null;
+  diagnostics?: RequestAuthDiagnostics | null;
+  source?: 'header' | 'cookie' | null;
+  upstreamDetails?: unknown;
+}): Record<string, unknown> {
+  const details: Record<string, unknown> = {
+    reason: input.reason || null,
+    auth_stage: input.stage,
+    request_auth: serializeRequestAuthDiagnostics(input.diagnostics, input.source),
+  };
+  if (typeof input.upstreamDetails !== 'undefined') {
+    details.upstream = input.upstreamDetails;
+  }
+  return details;
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -857,13 +920,26 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         requestId,
         functionName,
         reason: auth.reason,
+        requestAuth: serializeRequestAuthDiagnostics(auth.diagnostics),
       });
+      const headers = applyRequestAuthDebugHeaders(
+        new Headers(corsHeaders(requestId)),
+        {
+          stage: 'proxy_gate',
+          diagnostics: auth.diagnostics,
+          reason: auth.reason,
+        },
+      );
       const body = usesStructuredChatContract
         ? buildApiErrorBody({
             status: 401,
             code: 'UNAUTHORIZED',
             message: 'Authentication failed.',
-            details: { reason: auth.reason },
+            details: buildAuthFailureDetails({
+              stage: 'proxy_gate',
+              reason: auth.reason,
+              diagnostics: auth.diagnostics,
+            }),
             retryable: false,
             requestId,
             correlationId,
@@ -873,11 +949,15 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             error: 'unauthorized',
             status: 401,
             requestId,
-            details: { reason: auth.reason },
+            details: buildAuthFailureDetails({
+              stage: 'proxy_gate',
+              reason: auth.reason,
+              diagnostics: auth.diagnostics,
+            }),
           };
       return NextResponse.json(
         body,
-        { status: 401, headers: corsHeaders(requestId) },
+        { status: 401, headers },
       );
     }
     reservationUserId = auth.userId;
@@ -887,6 +967,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       correlationId,
       functionName,
       userId: auth.userId,
+      authSource: auth.source,
+      requestAuth: serializeRequestAuthDiagnostics(auth.diagnostics, auth.source),
     });
 
     const adminSupabase = createSupabaseAdminClient();
@@ -1712,6 +1794,29 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       const { details, raw } = await parseErrorPayload(response);
       const parsedError = extractApiError(details, messageFromFailure(response.status, details, response.statusText));
       const message = parsedError.message;
+      const isAuthStatus = response.status === 401 || response.status === 403;
+      const authReason = response.status === 401
+        ? String(
+            (parsedError.details as any)?.reason ||
+            (details as any)?.reason ||
+            (details as any)?.details?.reason ||
+            'upstream_unauthorized',
+          )
+        : String(
+            (parsedError.details as any)?.reason ||
+            (details as any)?.reason ||
+            (details as any)?.details?.reason ||
+            'upstream_forbidden',
+          );
+      const normalizedDetails = isAuthStatus
+        ? buildAuthFailureDetails({
+            stage: 'edge_function',
+            reason: authReason,
+            diagnostics: auth.diagnostics,
+            source: auth.source,
+            upstreamDetails: details,
+          })
+        : details;
       if (featureOutputReservation?.docVersionId) {
         await markFeatureOutputFailed({
           supabase: adminSupabase,
@@ -1742,6 +1847,14 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       const outHeaders = withDebugHeaders(applyResponseHeaders(response.headers, requestId), candidate, req);
       const retryAfter = response.headers.get('retry-after');
       if (retryAfter) outHeaders.set('retry-after', retryAfter);
+      if (isAuthStatus) {
+        applyRequestAuthDebugHeaders(outHeaders, {
+          stage: 'edge_function',
+          diagnostics: auth.diagnostics,
+          source: auth.source,
+          reason: authReason,
+        });
+      }
       if (proxyDebugEnabled) {
         console.info('[proxy] upstream non-2xx', {
           requestId,
@@ -1774,7 +1887,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
                 status: response.status,
                 code: String((structured as any)?.code || (structured as any)?.error || 'LIMIT_REACHED'),
                 message: String((structured as any)?.message || message || 'Usage limit reached.'),
-                details,
+                details: normalizedDetails,
                 retryable: response.status === 429,
                 retryAfter,
                 isThrottled: response.status === 429,
@@ -1798,7 +1911,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               status: response.status,
               code: parsedError.code,
               message,
-              details,
+              details: normalizedDetails,
               retryable: response.status === 408 || response.status === 429 || response.status >= 500,
               retryAfter,
               isThrottled: response.status === 429,
@@ -1809,7 +1922,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               status: response.status,
               requestId,
               correlation_id: correlationId,
-              details,
+              details: normalizedDetails,
             },
         { status: response.status, headers: outHeaders },
       );

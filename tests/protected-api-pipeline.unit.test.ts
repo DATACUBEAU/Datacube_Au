@@ -35,12 +35,16 @@ async function main() {
     assert.match(source, /suppressAuthError:\s*true/);
     assert.match(source, /reauthOnAuthFailure/);
     assert.match(source, /authIntent,\s*\n/);
+    assert.match(source, /readEdgeAuthFailureDiagnostics/);
+    assert.match(source, /shouldRetryWithRecoveredToken/);
+    assert.match(source, /suppressed session expiry for recoverable or endpoint-scoped 401/);
   });
 
   await run('browser auth restore reuses persisted sessions and syncs the server cookie before protected proxy calls', () => {
     const source = readRepoFile('src/lib/supabase-client/client.ts');
     assert.match(source, /readPersistedSupabaseSession/);
-    assert.match(source, /syncServerAuthSessionCookie\(nextSession\)/);
+    assert.match(source, /syncServerAuthSessionCookie\(persistedSession\)/);
+    assert.match(source, /syncServerAuthSessionCookie\(refreshedSession\)/);
     assert.match(source, /syncServerAuthSessionCookie\(session\)/);
     assert.match(source, /export async function fetchEdgeFunctionResponse/);
   });
@@ -68,6 +72,7 @@ async function main() {
     assert.equal(source.includes('missing_access_token'), false);
     assert.match(source, /isAuthLoading \|\| isRestoringAuth/);
     assert.match(source, /accessToken:\s*session\?\.access_token \?\? '__cookie_session__'/);
+    assert.equal(source.includes("source: 'useAuChat.sendMessage'"), false);
   });
 
   await run('document bootstrap defers realtime and polling while auth is restoring', () => {
@@ -120,6 +125,14 @@ async function main() {
     assert.match(source, /requireUserFromRequest/);
     assert.match(source, /createSupabaseRlsClient/);
     assert.equal(source.includes("runtime = 'edge'"), false);
+  });
+
+  await run('proxy auth failures now expose request auth diagnostics for runtime debugging', () => {
+    const source = readRepoFile('src/app/api/proxy/[functionName]/route.ts');
+    assert.match(source, /x-dcau-auth-stage/);
+    assert.match(source, /x-dcau-auth-has-authorization/);
+    assert.match(source, /serializeRequestAuthDiagnostics/);
+    assert.match(source, /auth_stage:\s*input\.stage/);
   });
 
   if (failed > 0) {

@@ -13,7 +13,6 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { logOnce, shouldDedupe } from '@/lib/log/dedupe';
 import { logEvent } from '@/lib/analytics';
 import { guardRequest } from '@/lib/api/request-guard';
-import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
 import { mergeDocumentContext, normalizeDocumentContext, type ChatDocumentContext } from '@shared/document-chat-context';
@@ -670,11 +669,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           code: normalizedError.code,
           message: normalizedError.message,
           requestId: normalizedError.requestId,
-        });
-        dispatchSessionExpired({
-          status: 401,
-          source: 'useAuChat.sendMessage',
-          reason: 'chat_unauthorized',
+          details: normalizedError.details,
         });
       } else if (authFailure?.status === 403) {
         logOnce('warn', 'chat:send:forbidden', '[useAuChat] Message forbidden', {

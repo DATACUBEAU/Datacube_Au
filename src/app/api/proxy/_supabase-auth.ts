@@ -7,6 +7,7 @@ type AuthSuccess = {
   userId: string;
   email: string | null;
   source: 'header' | 'cookie';
+  diagnostics: RequestAuthDiagnostics;
 };
 
 type AuthFailure = {
@@ -15,9 +16,18 @@ type AuthFailure = {
   error: 'unauthorized';
   reason: 'missing_token' | 'invalid_token';
   debug?: string; // For diagnostics
+  diagnostics: RequestAuthDiagnostics;
 };
 
 export type RequestAuthResult = AuthSuccess | AuthFailure;
+
+export type RequestAuthDiagnostics = {
+  hasAuthorizationHeader: boolean;
+  hasAuthCookie: boolean;
+  attemptedSources: Array<'header' | 'cookie'>;
+  failedSources: Array<'header' | 'cookie'>;
+  validatedSource: 'header' | 'cookie' | null;
+};
 
 function firstEnv(...keys: string[]): string | null {
   for (const key of keys) {
@@ -97,9 +107,10 @@ function extractAccessTokenFromCookieValue(rawValue: string): string | null {
   return null;
 }
 
-function extractAccessTokenFromCookies(req: NextRequest): string | null {
+function inspectAuthCookies(req: NextRequest): { hasAuthCookie: boolean; accessToken: string | null } {
   const cookies = req.cookies.getAll();
   const groups = new Map<string, Array<{ name: string; value: string; index: number | null }>>();
+  let hasAuthCookie = false;
   for (const c of cookies) {
     const nameLower = c.name.toLowerCase();
     const baseName = nameLower.replace(/\.\d+$/, '');
@@ -110,6 +121,7 @@ function extractAccessTokenFromCookies(req: NextRequest): string | null {
       baseName.endsWith('-auth-token') ||
       (baseName.includes('supabase') && baseName.includes('auth'));
     if (!isAuthCookie) continue;
+    hasAuthCookie = true;
 
     const match = nameLower.match(/\.(\d+)$/);
     const index = match ? Number(match[1]) : null;
@@ -131,9 +143,17 @@ function extractAccessTokenFromCookies(req: NextRequest): string | null {
     const token = combined ? extractAccessTokenFromCookieValue(combined) : null;
     if (!token) continue;
     const normalized = normalizeBearerToken(token);
-    if (normalized) return normalized;
+    if (normalized) {
+      return {
+        hasAuthCookie,
+        accessToken: normalized,
+      };
+    }
   }
-  return null;
+  return {
+    hasAuthCookie,
+    accessToken: null,
+  };
 }
 
 async function validateAccessToken(token: string): Promise<{ userId: string; email: string | null } | null> {
@@ -174,19 +194,32 @@ async function validateAccessToken(token: string): Promise<{ userId: string; ema
 
 export async function requireUserFromRequest(req: NextRequest): Promise<RequestAuthResult> {
   const headerToken = normalizeBearerToken(req.headers.get('authorization'));
-  const cookieToken = extractAccessTokenFromCookies(req);
-  
-  // Track sources for diagnostics
+  const cookieInspection = inspectAuthCookies(req);
+  const cookieToken = cookieInspection.accessToken;
+  const diagnostics: RequestAuthDiagnostics = {
+    hasAuthorizationHeader: Boolean(req.headers.get('authorization')),
+    hasAuthCookie: cookieInspection.hasAuthCookie,
+    attemptedSources: [],
+    failedSources: [],
+    validatedSource: null,
+  };
+
   const candidates: Array<{ token: string; source: 'header' | 'cookie' }> = [];
   if (cookieToken) candidates.push({ token: cookieToken, source: 'cookie' });
   if (headerToken) candidates.push({ token: headerToken, source: 'header' });
 
   if (candidates.length === 0) {
     console.warn('[proxy] no auth tokens found in request', {
-      hasCookie: !!req.cookies.get('sb-access-token'),
-      hasAuthHeader: !!req.headers.get('authorization'),
+      hasCookie: diagnostics.hasAuthCookie,
+      hasAuthHeader: diagnostics.hasAuthorizationHeader,
     });
-    return { ok: false, status: 401, error: 'unauthorized', reason: 'missing_token' };
+    return {
+      ok: false,
+      status: 401,
+      error: 'unauthorized',
+      reason: 'missing_token',
+      diagnostics,
+    };
   }
 
   let debugMessage = '';
@@ -195,20 +228,24 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
   for (const { token, source } of candidates) {
     if (seenTokens.has(token)) continue;
     seenTokens.add(token);
+    diagnostics.attemptedSources.push(source);
 
     const validation = await validateAccessToken(token);
     if (!validation?.userId) {
+      diagnostics.failedSources.push(source);
       const msg = `Validation failed for ${source} token: ${token.slice(0, 10)}...`;
       if (!debugMessage) debugMessage = msg;
       continue;
     }
 
+    diagnostics.validatedSource = source;
     return {
       ok: true,
       accessToken: token,
       userId: validation.userId,
       email: validation.email,
       source: source,
+      diagnostics,
     };
   }
 
@@ -224,6 +261,7 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
     status: 401, 
     error: 'unauthorized', 
     reason: 'invalid_token',
-    debug: debugMessage || 'All provided tokens failed validation.'
+    debug: debugMessage || 'All provided tokens failed validation.',
+    diagnostics,
   };
 }
