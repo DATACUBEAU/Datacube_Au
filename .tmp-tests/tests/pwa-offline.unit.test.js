@@ -15,6 +15,11 @@ function readRuntimeVersion() {
     strict_1.default.ok(version, 'expected PWA runtime cache version in shared/pwa-runtime.js');
     return version;
 }
+function readImportedWorkerFileName(swText) {
+    const workerFileName = swText.match(/\/(worker-[a-f0-9]+\.js)/i)?.[1];
+    strict_1.default.ok(workerFileName, 'expected sw.js to import a hashed worker helper file');
+    return workerFileName;
+}
 function versionPwaCacheName(cacheName, version) {
     const normalized = String(cacheName || '').trim();
     if (!normalized)
@@ -33,13 +38,14 @@ function shouldDeleteStalePwaCacheName(cacheName, version) {
     return normalized !== versionPwaCacheName('pages', version);
 }
 (0, node_test_1.default)('service worker cache policy keeps dashboard offline routes warm without excluding app pages', async () => {
+    const nextConfigText = (0, node_fs_1.readFileSync)(node_path_1.default.join(process.cwd(), 'next.config.ts'), 'utf8');
     const policyText = (0, node_fs_1.readFileSync)(node_path_1.default.join(process.cwd(), 'shared', 'pwa-cache-policy.js'), 'utf8');
+    const workerSourceText = (0, node_fs_1.readFileSync)(node_path_1.default.join(process.cwd(), 'worker', 'index.js'), 'utf8');
     strict_1.default.equal(policyText.includes("'/dashboard/documents'"), true);
     strict_1.default.equal(policyText.includes("'/dashboard/settings/subscription'"), true);
     strict_1.default.equal(policyText.includes("['/conex']"), true);
     const swText = (0, node_fs_1.readFileSync)(node_path_1.default.join(process.cwd(), 'public', 'sw.js'), 'utf8');
-    const workerFileName = (0, node_fs_1.readdirSync)(node_path_1.default.join(process.cwd(), 'public')).find((entry) => /^worker-.*\.js$/i.test(entry));
-    strict_1.default.ok(workerFileName, 'expected a generated worker helper file in public/');
+    const workerFileName = readImportedWorkerFileName(swText);
     const workerText = (0, node_fs_1.readFileSync)(node_path_1.default.join(process.cwd(), 'public', workerFileName), 'utf8');
     const runtimeVersion = readRuntimeVersion();
     strict_1.default.equal(swText.includes('"/dashboard"===a||a.startsWith("/dashboard/")'), false);
@@ -50,6 +56,16 @@ function shouldDeleteStalePwaCacheName(cacheName, version) {
     strict_1.default.equal(workerText.includes(`"${runtimeVersion}"`), true);
     strict_1.default.equal(workerText.includes('__DCAU_PWA_CACHE_PATCHED__'), true);
     strict_1.default.equal(workerText.includes('PWA_RUNTIME_HEALTHCHECK'), true);
+    strict_1.default.equal(workerSourceText.includes('self.fallback = async'), true);
+    strict_1.default.equal(workerText.includes('SW_NETWORK_ERROR'), true);
+    strict_1.default.equal(workerText.includes('Ignoring malformed request in fallback'), true);
+    strict_1.default.equal(nextConfigText.includes('hasUsableRequestUrl'), true);
+    strict_1.default.equal(nextConfigText.includes('createNetworkFailurePlugin'), true);
+    strict_1.default.equal(nextConfigText.includes("url.pathname.startsWith('/api/')"), true);
+    strict_1.default.equal(nextConfigText.includes("handler: 'NetworkOnly'"), true);
+    strict_1.default.equal(swText.includes('a.pathname.startsWith("/api/"),new e.NetworkOnly') || swText.includes('e.pathname.startsWith("/api/"),new e.NetworkOnly'), true);
+    strict_1.default.equal(swText.includes('hasUsableRequestUrl({request:e,url:a})'), true);
+    strict_1.default.equal(swText.includes('if(a.startsWith("/api/"))return!1'), true);
 });
 (0, node_test_1.default)('stale service-worker runtime caches are versioned and old names are invalidated', async () => {
     const runtimeVersion = readRuntimeVersion();

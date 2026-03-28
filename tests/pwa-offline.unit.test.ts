@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { buildSnapshotFallbackFlags } from '../src/lib/feature-flags/client-fallback.js';
 import {
@@ -13,6 +13,12 @@ function readRuntimeVersion(): string {
   const version = runtimeText.match(/PWA_RUNTIME_CACHE_VERSION = '([^']+)'/)?.[1];
   assert.ok(version, 'expected PWA runtime cache version in shared/pwa-runtime.js');
   return version;
+}
+
+function readImportedWorkerFileName(swText: string): string {
+  const workerFileName = swText.match(/\/(worker-[a-f0-9]+\.js)/i)?.[1];
+  assert.ok(workerFileName, 'expected sw.js to import a hashed worker helper file');
+  return workerFileName!;
 }
 
 function versionPwaCacheName(cacheName: string, version: string): string {
@@ -33,13 +39,13 @@ function shouldDeleteStalePwaCacheName(cacheName: string, version: string): bool
 test('service worker cache policy keeps dashboard offline routes warm without excluding app pages', async () => {
   const nextConfigText = readFileSync(path.join(process.cwd(), 'next.config.ts'), 'utf8');
   const policyText = readFileSync(path.join(process.cwd(), 'shared', 'pwa-cache-policy.js'), 'utf8');
+  const workerSourceText = readFileSync(path.join(process.cwd(), 'worker', 'index.js'), 'utf8');
   assert.equal(policyText.includes("'/dashboard/documents'"), true);
   assert.equal(policyText.includes("'/dashboard/settings/subscription'"), true);
   assert.equal(policyText.includes("['/conex']"), true);
 
   const swText = readFileSync(path.join(process.cwd(), 'public', 'sw.js'), 'utf8');
-  const workerFileName = readdirSync(path.join(process.cwd(), 'public')).find((entry) => /^worker-.*\.js$/i.test(entry));
-  assert.ok(workerFileName, 'expected a generated worker helper file in public/');
+  const workerFileName = readImportedWorkerFileName(swText);
   const workerText = readFileSync(path.join(process.cwd(), 'public', workerFileName!), 'utf8');
   const runtimeVersion = readRuntimeVersion();
 
@@ -51,9 +57,16 @@ test('service worker cache policy keeps dashboard offline routes warm without ex
   assert.equal(workerText.includes(`"${runtimeVersion}"`), true);
   assert.equal(workerText.includes('__DCAU_PWA_CACHE_PATCHED__'), true);
   assert.equal(workerText.includes('PWA_RUNTIME_HEALTHCHECK'), true);
+  assert.equal(workerSourceText.includes('self.fallback = async'), true);
+  assert.equal(workerText.includes('SW_NETWORK_ERROR'), true);
+  assert.equal(workerText.includes('Ignoring malformed request in fallback'), true);
+  assert.equal(nextConfigText.includes('hasUsableRequestUrl'), true);
+  assert.equal(nextConfigText.includes('apiGetFailurePlugin'), true);
+  assert.equal(nextConfigText.includes('apiPostFailurePlugin'), true);
   assert.equal(nextConfigText.includes("url.pathname.startsWith('/api/')"), true);
   assert.equal(nextConfigText.includes("handler: 'NetworkOnly'"), true);
-  assert.equal(swText.includes('e.pathname.startsWith("/api/"),new e.NetworkOnly'), true);
+  assert.equal(swText.includes('a.pathname.startsWith("/api/"),new e.NetworkOnly') || swText.includes('e.pathname.startsWith("/api/"),new e.NetworkOnly'), true);
+  assert.equal(swText.includes('hasUsableRequestUrl({request:e,url:a})'), true);
   assert.equal(swText.includes('if(a.startsWith("/api/"))return!1'), true);
 });
 

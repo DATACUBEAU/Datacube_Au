@@ -11,6 +11,7 @@ import {
 } from '../shared/pwa-runtime.js';
 
 const PAGE_CACHE_NAME = PWA_RUNTIME_CACHE_NAMES.pages;
+const originalFallback = typeof self.fallback === "function" ? self.fallback.bind(self) : null;
 
 const rawCacheStorage = self.caches;
 const rawOpenCache = rawCacheStorage?.open?.bind(rawCacheStorage);
@@ -54,6 +55,130 @@ self.__DCAU_PWA_RUNTIME_VERSION__ = PWA_RUNTIME_CACHE_VERSION;
 self._pwacachepolicy = {
   isPwaCacheExcludedPathname,
   shouldCacheNextDataPath,
+};
+
+function readRequestUrl(request) {
+  return typeof request?.url === "string" ? request.url.trim() : "";
+}
+
+function tryParseRequestUrl(request) {
+  const requestUrl = readRequestUrl(request);
+  if (!requestUrl) return null;
+
+  try {
+    return new URL(requestUrl, self.location.origin);
+  } catch {
+    return null;
+  }
+}
+
+function isHttpRequestUrl(url) {
+  return Boolean(url && (url.protocol === "http:" || url.protocol === "https:"));
+}
+
+function isApiRequest(request, url) {
+  if (!request || !url) return false;
+  return url.origin === self.location.origin && url.pathname.startsWith("/api/");
+}
+
+function isNextDataRequest(url) {
+  return Boolean(url && /\/_next\/data\/.+\/.+\.json$/i.test(url.pathname));
+}
+
+function serializeRequestHeaders(request) {
+  try {
+    return Object.fromEntries(request?.headers?.entries?.() ?? []);
+  } catch {
+    return {};
+  }
+}
+
+function buildServiceWorkerNetworkFailureResponse(request, input = {}) {
+  const url = tryParseRequestUrl(request);
+  const accept = String(request?.headers?.get?.("accept") || "").toLowerCase();
+  const wantsJson =
+    input.forceJson === true ||
+    request?.destination === "" ||
+    accept.includes("application/json") ||
+    accept.includes("text/event-stream") ||
+    isApiRequest(request, url) ||
+    isNextDataRequest(url);
+
+  const payload = {
+    ok: false,
+    code: "SW_NETWORK_ERROR",
+    message: String(input.message || "Network request failed in service worker."),
+    offline: true,
+    url: url?.toString() || readRequestUrl(request) || null,
+    method: String(request?.method || "GET"),
+    stage: String(input.stage || "network_failure"),
+  };
+
+  return new Response(
+    wantsJson ? JSON.stringify(payload) : payload.message,
+    {
+      status: Number(input.status || 503),
+      headers: {
+        "Content-Type": wantsJson ? "application/json; charset=utf-8" : "text/plain; charset=utf-8",
+        "Cache-Control": "no-store",
+        "x-dcau-sw": "network-fallback",
+        "x-dcau-sw-stage": payload.stage,
+      },
+    },
+  );
+}
+
+self.fallback = async (request) => {
+  const requestUrl = readRequestUrl(request);
+  const url = tryParseRequestUrl(request);
+  const destination = typeof request?.destination === "string" ? request.destination : "";
+
+  if (!requestUrl || !isHttpRequestUrl(url)) {
+    console.warn("[SW] Ignoring malformed request in fallback", {
+      url: requestUrl,
+      method: request?.method || "GET",
+      destination,
+      headers: serializeRequestHeaders(request),
+    });
+    return buildServiceWorkerNetworkFailureResponse(request, {
+      stage: "malformed_request",
+      message: "Malformed request intercepted by service worker.",
+      forceJson: true,
+    });
+  }
+
+  if (isApiRequest(request, url)) {
+    console.warn("[SW] Returning typed API fallback response", {
+      url: url.toString(),
+      method: request?.method || "GET",
+      destination,
+      headers: serializeRequestHeaders(request),
+    });
+    return buildServiceWorkerNetworkFailureResponse(request, {
+      stage: "api_network_failure",
+      message: "API request failed while handled by the service worker.",
+      forceJson: true,
+    });
+  }
+
+  if (destination === "" && !isNextDataRequest(url)) {
+    return buildServiceWorkerNetworkFailureResponse(request, {
+      stage: "generic_fetch_failure",
+      message: "Fetch request failed while handled by the service worker.",
+      forceJson: true,
+    });
+  }
+
+  if (originalFallback) {
+    const fallbackResponse = await originalFallback(request);
+    if (fallbackResponse) return fallbackResponse;
+  }
+
+  return buildServiceWorkerNetworkFailureResponse(request, {
+    stage: "fallback_unavailable",
+    message: "No offline fallback response was available.",
+    forceJson: destination === "",
+  });
 };
 
 async function cleanupStaleRuntimeCaches() {
