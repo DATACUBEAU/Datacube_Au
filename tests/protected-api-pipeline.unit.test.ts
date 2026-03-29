@@ -145,6 +145,9 @@ async function main() {
     assert.match(source, /x-dcau-auth-has-authorization/);
     assert.match(source, /serializeRequestAuthDiagnostics/);
     assert.match(source, /auth_stage:\s*input\.stage/);
+    assert.match(source, /\[proxy\] auth failure surfaced via catch/);
+    assert.match(source, /const headers = applyRequestAuthDebugHeaders/);
+    assert.match(source, /const normalizedDetails = buildAuthFailureDetails/);
   });
 
   await run('proxy auth validation prefers the explicit authorization header over ambient cookies after refresh', () => {

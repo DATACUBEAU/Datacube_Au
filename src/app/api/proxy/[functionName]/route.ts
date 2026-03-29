@@ -791,6 +791,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   let fallbackFunctionsUrl: string | null = null;
   let fallbackAnonKey: string | null = null;
   let fallbackAccessToken: string | null = null;
+  let requestAuthDiagnostics: RequestAuthDiagnostics | null = null;
+  let requestAuthSource: 'header' | 'cookie' | null = null;
   let fallbackChatQuestion = '';
   let fallbackChatAction = '';
   let chatPlanForLog = 'unknown';
@@ -962,6 +964,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     }
     reservationUserId = auth.userId;
     fallbackAccessToken = auth.accessToken;
+    requestAuthDiagnostics = auth.diagnostics;
+    requestAuthSource = auth.source;
     console.info('[proxy] authenticated request', {
       requestId,
       correlationId,
@@ -2302,6 +2306,31 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
 
     const authFailure = classifyAuthFailure(error);
     if (authFailure) {
+      const parsedAuthError = extractApiError(error, authFailure.message);
+      const parsedAuthDetails =
+        parsedAuthError.details && typeof parsedAuthError.details === 'object'
+          ? parsedAuthError.details as Record<string, unknown>
+          : null;
+      const authStage =
+        parsedAuthDetails?.auth_stage === 'edge_function'
+          ? 'edge_function'
+          : 'proxy_gate';
+      const headers = applyRequestAuthDebugHeaders(
+        new Headers(corsHeaders(requestId)),
+        {
+          stage: authStage,
+          diagnostics: requestAuthDiagnostics,
+          source: requestAuthSource,
+          reason: authFailure.reason,
+        },
+      );
+      const normalizedDetails = buildAuthFailureDetails({
+        stage: authStage,
+        reason: authFailure.reason,
+        diagnostics: requestAuthDiagnostics,
+        source: requestAuthSource,
+        upstreamDetails: parsedAuthError.details,
+      });
       console.warn('[proxy] auth failure surfaced via catch', {
         requestId,
         correlationId,
@@ -2321,7 +2350,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               status: authFailure.status,
               code: authFailure.code,
               message: authFailure.message,
-              details: { reason: authFailure.reason },
+              details: normalizedDetails,
               retryable: false,
             })
           : {
@@ -2330,9 +2359,9 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
               status: authFailure.status,
               requestId,
               correlation_id: correlationId,
-              details: { reason: authFailure.reason },
+              details: normalizedDetails,
             },
-        { status: authFailure.status, headers: corsHeaders(requestId) },
+        { status: authFailure.status, headers },
       );
     }
 

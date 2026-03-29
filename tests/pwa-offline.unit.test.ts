@@ -40,6 +40,7 @@ test('service worker cache policy keeps dashboard offline routes warm without ex
   const nextConfigText = readFileSync(path.join(process.cwd(), 'next.config.ts'), 'utf8');
   const policyText = readFileSync(path.join(process.cwd(), 'shared', 'pwa-cache-policy.js'), 'utf8');
   const workerSourceText = readFileSync(path.join(process.cwd(), 'worker', 'index.js'), 'utf8');
+  const serviceWorkerClientText = readFileSync(path.join(process.cwd(), 'src', 'lib', 'pwa', 'service-worker-client.ts'), 'utf8');
   assert.equal(policyText.includes("'/dashboard/documents'"), true);
   assert.equal(policyText.includes("'/dashboard/settings/subscription'"), true);
   assert.equal(policyText.includes("['/conex']"), true);
@@ -74,6 +75,11 @@ test('service worker cache policy keeps dashboard offline routes warm without ex
   assert.equal(swText.includes('Malformed request intercepted by the service worker.'), true);
   assert.equal(swText.includes('API GET request failed while handled by the service worker.'), true);
   assert.equal(swText.includes('if(a.startsWith("/api/"))return!1'), true);
+  assert.equal(serviceWorkerClientText.includes("'hasUsableRequestUrl'"), true);
+  assert.equal(serviceWorkerClientText.includes("'describeWorkboxRequest'"), true);
+  assert.equal(serviceWorkerClientText.includes("'buildServiceWorkerFailureResponse'"), true);
+  assert.match(serviceWorkerClientText, /BROKEN_SW_HELPER_SYMBOLS/);
+  assert.match(serviceWorkerClientText, /hasDefinedServiceWorkerHelper/);
 });
 
 test('stale service-worker runtime caches are versioned and old names are invalidated', async () => {

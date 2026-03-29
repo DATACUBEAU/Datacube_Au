@@ -9,6 +9,11 @@ import {
 } from '../../../shared/pwa-runtime.js';
 
 const BROKEN_SW_GLOBAL = '_pwacachepolicy';
+const BROKEN_SW_HELPER_SYMBOLS = [
+  'hasUsableRequestUrl',
+  'describeWorkboxRequest',
+  'buildServiceWorkerFailureResponse',
+] as const;
 
 function hasDefinedServiceWorkerGlobal(scriptText: string): boolean {
   const source = String(scriptText || '');
@@ -17,6 +22,12 @@ function hasDefinedServiceWorkerGlobal(scriptText: string): boolean {
     /\bself\._pwacachepolicy\s*=/.test(source) ||
     /\bglobalThis\._pwacachepolicy\s*=/.test(source)
   );
+}
+
+function hasDefinedServiceWorkerHelper(scriptText: string, symbol: string): boolean {
+  const escaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const source = String(scriptText || '');
+  return new RegExp(`\\b(?:function|const|let|var)\\s+${escaped}\\b`).test(source);
 }
 
 export function extractImportedServiceWorkerScriptUrls(scriptText: string): string[] {
@@ -41,9 +52,18 @@ export function isBrokenServiceWorkerScript(
   importedScriptTexts: string[] = [],
 ): boolean {
   const source = String(scriptText || '');
-  if (!source.includes(BROKEN_SW_GLOBAL)) return false;
-  if (hasDefinedServiceWorkerGlobal(source)) return false;
-  return !importedScriptTexts.some((text) => hasDefinedServiceWorkerGlobal(text));
+  const missingGlobalDefinition =
+    source.includes(BROKEN_SW_GLOBAL) &&
+    !hasDefinedServiceWorkerGlobal(source) &&
+    !importedScriptTexts.some((text) => hasDefinedServiceWorkerGlobal(text));
+
+  if (missingGlobalDefinition) return true;
+
+  return BROKEN_SW_HELPER_SYMBOLS.some((symbol) => {
+    if (!source.includes(symbol)) return false;
+    if (hasDefinedServiceWorkerHelper(source, symbol)) return false;
+    return !importedScriptTexts.some((text) => hasDefinedServiceWorkerHelper(text, symbol));
+  });
 }
 
 export async function fetchServiceWorkerScript(
