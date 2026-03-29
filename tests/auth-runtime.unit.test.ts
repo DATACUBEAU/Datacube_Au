@@ -7,6 +7,8 @@ import {
   normalizeUsableSupabaseSession,
   selectUsableSupabaseSession,
   SUPABASE_SESSION_EXPIRY_SKEW_MS,
+  SUPABASE_SESSION_REFRESH_WINDOW_MS,
+  shouldRefreshSupabaseSession,
 } from '../src/lib/auth/browser-session.js';
 
 let failed = 0;
@@ -177,6 +179,40 @@ async function main() {
 
     assert.equal(selectUsableSupabaseSession(expired, persisted)?.access_token, 'persisted-token');
     assert.equal(selectUsableSupabaseSession(persisted, expired)?.access_token, 'persisted-token');
+  });
+
+  await run('sessions inside the proactive refresh window refresh before the token actually expires', () => {
+    const now = Date.now();
+    const expiringSoon = {
+      access_token: 'expiring-soon',
+      token_type: 'bearer',
+      refresh_token: 'refresh',
+      expires_in: 60,
+      expires_at: Math.floor((now + SUPABASE_SESSION_REFRESH_WINDOW_MS - 1_000) / 1000),
+      user: { id: 'user-1' } as any,
+    } as any;
+
+    assert.equal(
+      shouldRefreshSupabaseSession(expiringSoon, now, SUPABASE_SESSION_REFRESH_WINDOW_MS),
+      true,
+    );
+  });
+
+  await run('healthy sessions outside the proactive refresh window do not refresh eagerly', () => {
+    const now = Date.now();
+    const healthy = {
+      access_token: 'healthy-token',
+      token_type: 'bearer',
+      refresh_token: 'refresh',
+      expires_in: 60,
+      expires_at: Math.floor((now + SUPABASE_SESSION_REFRESH_WINDOW_MS + 120_000) / 1000),
+      user: { id: 'user-1' } as any,
+    } as any;
+
+    assert.equal(
+      shouldRefreshSupabaseSession(healthy, now, SUPABASE_SESSION_REFRESH_WINDOW_MS),
+      false,
+    );
   });
 
   if (failed > 0) {

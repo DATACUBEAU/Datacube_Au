@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, createContext, useContext, useMemo, useCallback, useRef } from 'react';
-import { recordUserActivityRpc, supabase } from '@/lib/supabase-client/client';
+import { recordUserActivityRpc, resolveBrowserSession, supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
 import { normalizeUsableSupabaseSession } from '@/lib/auth/browser-session';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
@@ -116,25 +116,18 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      const { data, error } = await supabase.auth.getSession();
-      let liveSession = normalizeSession(error ? null : data.session ?? null);
-
-      if (!liveSession) {
-        const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession();
-        liveSession = normalizeSession(refreshError ? null : refreshedData.session ?? null);
-      }
-
-      const nextSession = liveSession ?? persisted;
+      const resolved = await resolveBrowserSession();
       console.log('[useSmartAuth] Resolved session from Supabase', {
-        hasLiveSession: !!liveSession,
-        hasPersistedSession: !!persisted,
-        finalSessionSource: nextSession === liveSession ? 'live' : 'persisted',
-        hasToken: !!nextSession?.access_token,
-        expiresAt: nextSession?.expires_at ? new Date(nextSession.expires_at * 1000).toISOString() : null,
+        hasLiveSession: resolved.hasLiveSession,
+        hasPersistedSession: resolved.hasPersistedSession,
+        finalSessionSource: resolved.source,
+        refreshed: resolved.refreshed,
+        hasToken: !!resolved.session?.access_token,
+        expiresAt: resolved.session?.expires_at ? new Date(resolved.session.expires_at * 1000).toISOString() : null,
       });
       return {
-        session: nextSession,
-        usedCachedSession: Boolean(!liveSession && nextSession?.user),
+        session: normalizeSession(resolved.session),
+        usedCachedSession: resolved.usedCachedSession,
       };
     } catch {
       return {
@@ -322,11 +315,15 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
     console.log('[useSmartAuth] getToken: no session token, resolving from Supabase');
     const resolved = await resolveSessionFromSupabase();
+    applySessionState(resolved.session, {
+      force: true,
+      offlineBootstrap: resolved.usedCachedSession,
+    });
     console.log('[useSmartAuth] getToken: resolved session from Supabase', {
       hasToken: !!resolved.session?.access_token,
     });
     return resolved.session?.access_token ?? null;
-  }, [normalizeSession, resolveSessionFromSupabase, session]);
+  }, [applySessionState, normalizeSession, resolveSessionFromSupabase, session]);
 
   const isAuthed = authState === 'authenticated';
   const isLoading = authState === 'loading';

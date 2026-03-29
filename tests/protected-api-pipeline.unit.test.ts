@@ -37,16 +37,26 @@ async function main() {
     assert.match(source, /authIntent,\s*\n/);
     assert.match(source, /readEdgeAuthFailureDiagnostics/);
     assert.match(source, /shouldRetryWithRecoveredToken/);
+    assert.match(source, /markAuthRestoring\(`invokeEdgeFunction:\$\{functionName\}`\)/);
+    assert.match(source, /restoreRecoveredAuthState/);
     assert.match(source, /suppressed session expiry for recoverable or endpoint-scoped 401/);
   });
 
   await run('browser auth restore reuses persisted sessions and syncs the server cookie before protected proxy calls', () => {
     const source = readRepoFile('src/lib/supabase-client/client.ts');
     assert.match(source, /readPersistedSupabaseSession/);
+    assert.match(source, /export async function resolveBrowserSession/);
+    assert.match(source, /SUPABASE_SESSION_REFRESH_WINDOW_MS/);
     assert.match(source, /syncServerAuthSessionCookie\(persistedSession\)/);
     assert.match(source, /syncServerAuthSessionCookie\(refreshedSession\)/);
     assert.match(source, /syncServerAuthSessionCookie\(session\)/);
     assert.match(source, /export async function fetchEdgeFunctionResponse/);
+  });
+
+  await run('auth refresh stays single-flight and does not stampede concurrent protected requests', () => {
+    const source = readRepoFile('src/lib/supabase-client/client.ts');
+    assert.match(source, /let refreshBrowserSessionPromise: Promise<Session \| null> \| null = null;/);
+    assert.match(source, /if \(refreshBrowserSessionPromise\) return refreshBrowserSessionPromise;/);
   });
 
   await run('background analytics logging cannot force a full-page reauthenticate flow', () => {
@@ -65,6 +75,7 @@ async function main() {
   await run('smart auth bootstrap starts in a loading state until restore settles', () => {
     const source = readRepoFile('src/hooks/use-smart-auth.tsx');
     assert.match(source, /useState<'loading' \| 'authenticated' \| 'unauthenticated'>\('loading'\)/);
+    assert.match(source, /resolveBrowserSession\(\)/);
   });
 
   await run('chat pipeline does not force expiry on a transient missing token during restore', () => {
@@ -133,6 +144,15 @@ async function main() {
     assert.match(source, /x-dcau-auth-has-authorization/);
     assert.match(source, /serializeRequestAuthDiagnostics/);
     assert.match(source, /auth_stage:\s*input\.stage/);
+  });
+
+  await run('proxy auth validation prefers the explicit authorization header over ambient cookies after refresh', () => {
+    const source = readRepoFile('src/app/api/proxy/_supabase-auth.ts');
+    const headerIndex = source.indexOf("candidates.push({ token: headerToken, source: 'header' })");
+    const cookieIndex = source.indexOf("candidates.push({ token: cookieToken, source: 'cookie' })");
+    assert.equal(headerIndex >= 0, true);
+    assert.equal(cookieIndex >= 0, true);
+    assert.equal(headerIndex < cookieIndex, true);
   });
 
   if (failed > 0) {

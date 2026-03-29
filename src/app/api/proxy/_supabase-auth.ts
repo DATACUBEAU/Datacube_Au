@@ -205,8 +205,8 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
   };
 
   const candidates: Array<{ token: string; source: 'header' | 'cookie' }> = [];
-  if (cookieToken) candidates.push({ token: cookieToken, source: 'cookie' });
   if (headerToken) candidates.push({ token: headerToken, source: 'header' });
+  if (cookieToken) candidates.push({ token: cookieToken, source: 'cookie' });
 
   if (candidates.length === 0) {
     console.warn('[proxy] no auth tokens found in request', {

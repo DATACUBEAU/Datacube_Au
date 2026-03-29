@@ -2,9 +2,20 @@ import { createClient, type Session, type SupabaseClient, type User } from '@sup
 import { safeFetch, OfflineError } from '@/lib/api/safe-fetch';
 import { extractApiError, toApiRequestError, unwrapApiSuccess } from '@/lib/api/api-contract';
 import { guardRequest } from '@/lib/api/request-guard';
-import { normalizeUsableSupabaseSession, selectUsableSupabaseSession } from '@/lib/auth/browser-session';
+import {
+  normalizeUsableSupabaseSession,
+  selectUsableSupabaseSession,
+  shouldRefreshSupabaseSession,
+  SUPABASE_SESSION_REFRESH_WINDOW_MS,
+} from '@/lib/auth/browser-session';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
-import { areAuthActionsDisabled, dispatchSessionExpired, getAuthRuntimeState } from '@/lib/auth/session-expiry-events';
+import {
+  areAuthActionsDisabled,
+  clearAuthActionsDisabled,
+  dispatchSessionExpired,
+  getAuthRuntimeState,
+  markAuthRestoring,
+} from '@/lib/auth/session-expiry-events';
 import type { SessionExpiryTriggerIntent } from '@/lib/auth/session-expiry-policy';
 import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 
@@ -166,8 +177,67 @@ export function createBrowserSupabaseClient(): SupabaseClient {
 
 export const supabase = createBrowserSupabaseClient();
 
-async function refreshBrowserSession(): Promise<Session | null> {
-  const persistedSession = normalizeUsableSupabaseSession(readPersistedSupabaseSession());
+export type BrowserSessionResolution = {
+  session: Session | null;
+  source: 'live' | 'persisted' | 'refreshed' | 'none';
+  usedCachedSession: boolean;
+  refreshed: boolean;
+  hasLiveSession: boolean;
+  hasPersistedSession: boolean;
+};
+
+function readPersistedBrowserSession(): Session | null {
+  return readPersistedSupabaseSession();
+}
+
+async function readLiveBrowserSession(): Promise<Session | null> {
+  try {
+    const { data, error } = await supabase.auth.getSession();
+    return error ? null : data.session ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveSessionSource(input: {
+  session: Session | null;
+  liveSession: Session | null;
+  persistedSession: Session | null;
+  refreshedSession: Session | null;
+}): BrowserSessionResolution['source'] {
+  if (!input.session) return 'none';
+  if (input.refreshedSession?.access_token && input.session.access_token === input.refreshedSession.access_token) {
+    return 'refreshed';
+  }
+  if (input.liveSession?.access_token && input.session.access_token === input.liveSession.access_token) {
+    return 'live';
+  }
+  if (input.persistedSession?.access_token && input.session.access_token === input.persistedSession.access_token) {
+    return 'persisted';
+  }
+  return 'none';
+}
+
+async function readCurrentUsableBrowserSession(): Promise<Session | null> {
+  const persistedSession = normalizeUsableSupabaseSession(readPersistedBrowserSession());
+
+  try {
+    const liveSession = normalizeUsableSupabaseSession(await readLiveBrowserSession());
+    const session = selectUsableSupabaseSession(liveSession, persistedSession);
+    if (session) {
+      syncServerAuthSessionCookie(session);
+    }
+    return session;
+  } catch {
+    if (persistedSession) {
+      syncServerAuthSessionCookie(persistedSession);
+    }
+    return persistedSession;
+  }
+}
+
+export async function refreshBrowserSession(): Promise<Session | null> {
+  const persistedSession = normalizeUsableSupabaseSession(readPersistedBrowserSession());
   if (!isBrowserOnline()) {
     if (persistedSession) {
       syncServerAuthSessionCookie(persistedSession);
@@ -198,6 +268,58 @@ async function refreshBrowserSession(): Promise<Session | null> {
   })();
 
   return refreshBrowserSessionPromise;
+}
+
+export async function resolveBrowserSession(options?: {
+  forceRefresh?: boolean;
+  refreshWindowMs?: number;
+}): Promise<BrowserSessionResolution> {
+  const persistedSession = normalizeUsableSupabaseSession(readPersistedBrowserSession());
+
+  if (!isBrowserOnline()) {
+    if (persistedSession) {
+      syncServerAuthSessionCookie(persistedSession);
+    }
+    return {
+      session: persistedSession,
+      source: persistedSession ? 'persisted' : 'none',
+      usedCachedSession: Boolean(persistedSession?.user),
+      refreshed: false,
+      hasLiveSession: false,
+      hasPersistedSession: Boolean(persistedSession?.user),
+    };
+  }
+
+  const liveRawSession = await readLiveBrowserSession();
+  const liveSession = normalizeUsableSupabaseSession(liveRawSession);
+  const refreshWindowMs = options?.refreshWindowMs ?? SUPABASE_SESSION_REFRESH_WINDOW_MS;
+  const refreshCandidate = liveRawSession ?? readPersistedBrowserSession();
+  const shouldAttemptRefresh =
+    options?.forceRefresh === true ||
+    shouldRefreshSupabaseSession(refreshCandidate, Date.now(), refreshWindowMs) ||
+    (!liveSession && !persistedSession && Boolean(refreshCandidate?.refresh_token));
+
+  const refreshedSession = shouldAttemptRefresh ? await refreshBrowserSession() : null;
+  const session = selectUsableSupabaseSession(refreshedSession, liveSession, persistedSession);
+  if (session) {
+    syncServerAuthSessionCookie(session);
+  }
+
+  const source = resolveSessionSource({
+    session,
+    liveSession,
+    persistedSession,
+    refreshedSession,
+  });
+
+  return {
+    session,
+    source,
+    usedCachedSession: source === 'persisted' && !liveSession,
+    refreshed: source === 'refreshed',
+    hasLiveSession: Boolean(liveSession?.user),
+    hasPersistedSession: Boolean(persistedSession?.user),
+  };
 }
 
 function supabaseProjectRefFromUrl(url: string): string | null {
@@ -320,25 +442,6 @@ async function readEdgeAuthFailureDiagnostics(response: Response): Promise<EdgeA
   }
 }
 
-async function readCurrentUsableBrowserSession(): Promise<Session | null> {
-  const persistedSession = normalizeUsableSupabaseSession(readPersistedSupabaseSession());
-
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    const liveSession = normalizeUsableSupabaseSession(error ? null : data.session ?? null);
-    const session = selectUsableSupabaseSession(liveSession, persistedSession);
-    if (session) {
-      syncServerAuthSessionCookie(session);
-    }
-    return session;
-  } catch {
-    if (persistedSession) {
-      syncServerAuthSessionCookie(persistedSession);
-    }
-    return persistedSession;
-  }
-}
-
 async function validateBrowserAccessToken(accessToken: string | null): Promise<boolean | null> {
   if (!accessToken) return false;
   if (!isBrowserOnline()) return null;
@@ -370,16 +473,10 @@ function shouldRetryWithRecoveredToken(input: {
 
 export async function getSupabaseAccessToken(): Promise<string | null> {
   try {
-    const currentSession = await readCurrentUsableBrowserSession();
-    let session = currentSession;
-    const expiresAt = session?.expires_at;
-    const isExpiredOrExpiring =
-      typeof expiresAt === 'number' && expiresAt * 1000 <= Date.now() + 5000;
-
-    if ((!session || isExpiredOrExpiring) && isBrowserOnline()) {
-      session = selectUsableSupabaseSession(await refreshBrowserSession(), currentSession);
-    }
-
+    const resolved = await resolveBrowserSession({
+      refreshWindowMs: SUPABASE_SESSION_REFRESH_WINDOW_MS,
+    });
+    const session = resolved.session;
     const token = session?.access_token ?? null;
     if (!token) return null;
 
@@ -437,6 +534,11 @@ export async function fetchEdgeFunctionResponse(
   const authIntent = options?.authIntent ?? 'interactive';
   const reauthOnAuthFailure = options?.reauthOnAuthFailure ?? (authIntent === 'interactive');
   const requestBody = resolveEdgeRequestBody(method, options?.body);
+  const restoreRecoveredAuthState = () => {
+    if (getAuthRuntimeState() === 'RESTORING') {
+      clearAuthActionsDisabled();
+    }
+  };
 
   const attemptOnce = async (accessToken: string | null) => {
     const isOnline =
@@ -495,7 +597,12 @@ export async function fetchEdgeFunctionResponse(
     });
   };
 
-  const initialToken = await getSupabaseAccessToken();
+  const initialResolution = requireAuth
+    ? await resolveBrowserSession({
+        refreshWindowMs: SUPABASE_SESSION_REFRESH_WINDOW_MS,
+      })
+    : { session: null };
+  const initialToken = initialResolution.session?.access_token ?? null;
   let lastAttemptedToken = initialToken;
   let response = await attemptOnce(lastAttemptedToken);
 
@@ -516,9 +623,17 @@ export async function fetchEdgeFunctionResponse(
     requestId: authDiagnostics.requestId,
   });
 
-  const currentSession = await readCurrentUsableBrowserSession();
-  const refreshedSession = selectUsableSupabaseSession(await refreshBrowserSession(), currentSession);
-  const refreshedToken = refreshedSession?.access_token ?? null;
+  const currentState = getAuthRuntimeState();
+  const enteredRecoveryState = reauthOnAuthFailure && isBrowserOnline() && currentState === 'AUTHENTICATED';
+  if (enteredRecoveryState) {
+    markAuthRestoring(`invokeEdgeFunction:${functionName}`);
+  }
+
+  const refreshedResolution = await resolveBrowserSession({
+    forceRefresh: true,
+    refreshWindowMs: SUPABASE_SESSION_REFRESH_WINDOW_MS,
+  });
+  const refreshedToken = refreshedResolution.session?.access_token ?? null;
 
   if (shouldRetryWithRecoveredToken({
     diagnostics: authDiagnostics,
@@ -528,12 +643,16 @@ export async function fetchEdgeFunctionResponse(
     lastAttemptedToken = refreshedToken;
     response = await attemptOnce(refreshedToken);
     if (response.status !== 401) {
+      restoreRecoveredAuthState();
       return response;
     }
     authDiagnostics = await readEdgeAuthFailureDiagnostics(response);
   }
 
-  const settledSession = await readCurrentUsableBrowserSession();
+  const settledResolution = await resolveBrowserSession({
+    refreshWindowMs: SUPABASE_SESSION_REFRESH_WINDOW_MS,
+  });
+  const settledSession = settledResolution.session;
   const settledToken = settledSession?.access_token ?? null;
   if (response.status === 401 && shouldRetryWithRecoveredToken({
     diagnostics: authDiagnostics,
@@ -543,13 +662,13 @@ export async function fetchEdgeFunctionResponse(
     lastAttemptedToken = settledToken;
     response = await attemptOnce(settledToken);
     if (response.status !== 401) {
+      restoreRecoveredAuthState();
       return response;
     }
     authDiagnostics = await readEdgeAuthFailureDiagnostics(response);
   }
 
   if (reauthOnAuthFailure && requireAuth && response.status === 401) {
-    const currentState = getAuthRuntimeState();
     const latestSession = await readCurrentUsableBrowserSession();
     const latestToken = latestSession?.access_token ?? null;
     const latestTokenValidation = await validateBrowserAccessToken(latestToken);
@@ -568,6 +687,9 @@ export async function fetchEdgeFunctionResponse(
         intent: authIntent,
       });
     } else {
+      if (enteredRecoveryState) {
+        restoreRecoveredAuthState();
+      }
       console.warn('[client] suppressed session expiry for recoverable or endpoint-scoped 401', {
         functionName,
         currentState,
