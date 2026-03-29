@@ -60,13 +60,19 @@ test('service worker cache policy keeps dashboard offline routes warm without ex
   assert.equal(workerSourceText.includes('self.fallback = async'), true);
   assert.equal(workerText.includes('SW_NETWORK_ERROR'), true);
   assert.equal(workerText.includes('Ignoring malformed request in fallback'), true);
-  assert.equal(nextConfigText.includes('hasUsableRequestUrl'), true);
+  assert.equal(nextConfigText.includes('hasUsableRequestUrl'), false);
+  assert.equal(nextConfigText.includes('describeWorkboxRequest'), false);
+  assert.equal(nextConfigText.includes('buildServiceWorkerFailureResponse'), false);
   assert.equal(nextConfigText.includes('apiGetFailurePlugin'), true);
   assert.equal(nextConfigText.includes('apiPostFailurePlugin'), true);
   assert.equal(nextConfigText.includes("url.pathname.startsWith('/api/')"), true);
-  assert.equal(nextConfigText.includes("handler: 'NetworkOnly'"), true);
-  assert.equal(swText.includes('a.pathname.startsWith("/api/"),new e.NetworkOnly') || swText.includes('e.pathname.startsWith("/api/"),new e.NetworkOnly'), true);
-  assert.equal(swText.includes('hasUsableRequestUrl({request:e,url:a})'), true);
+  assert.match(nextConfigText, /handler:\s*'NetworkOnly'/);
+  assert.match(swText, /pathname\.startsWith\("\/api\/"\).*new e\.NetworkOnly/s);
+  assert.equal(swText.includes('hasUsableRequestUrl'), false);
+  assert.equal(swText.includes('describeWorkboxRequest'), false);
+  assert.equal(swText.includes('buildServiceWorkerFailureResponse'), false);
+  assert.equal(swText.includes('Malformed request intercepted by the service worker.'), true);
+  assert.equal(swText.includes('API GET request failed while handled by the service worker.'), true);
   assert.equal(swText.includes('if(a.startsWith("/api/"))return!1'), true);
 });
 

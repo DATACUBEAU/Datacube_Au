@@ -37,6 +37,7 @@ async function main() {
     assert.match(source, /authIntent,\s*\n/);
     assert.match(source, /readEdgeAuthFailureDiagnostics/);
     assert.match(source, /shouldRetryWithRecoveredToken/);
+    assert.match(source, /shouldSuppressSessionExpiryAfterEdge401/);
     assert.match(source, /markAuthRestoring\(`invokeEdgeFunction:\$\{functionName\}`\)/);
     assert.match(source, /restoreRecoveredAuthState/);
     assert.match(source, /suppressed session expiry for recoverable or endpoint-scoped 401/);
@@ -153,6 +154,16 @@ async function main() {
     assert.equal(headerIndex >= 0, true);
     assert.equal(cookieIndex >= 0, true);
     assert.equal(headerIndex < cookieIndex, true);
+  });
+
+  await run('recoverable proxy 401s stay endpoint-scoped when browser session restore is still possible', () => {
+    const source = readRepoFile('src/lib/supabase-client/client.ts');
+    assert.match(source, /input\.refreshedResolution\.source !== 'none'/);
+    assert.match(source, /input\.settledResolution\.source !== 'none'/);
+    assert.match(source, /Boolean\(input\.latestSession\?\.refresh_token\)/);
+    assert.match(source, /refreshedSessionSource: refreshedResolution\.source/);
+    assert.match(source, /settledSessionSource: settledResolution\.source/);
+    assert.match(source, /hasLatestRefreshToken: Boolean\(latestSession\?\.refresh_token\)/);
   });
 
   if (failed > 0) {

@@ -471,6 +471,30 @@ function shouldRetryWithRecoveredToken(input: {
   return false;
 }
 
+function shouldSuppressSessionExpiryAfterEdge401(input: {
+  currentState: ReturnType<typeof getAuthRuntimeState>;
+  diagnostics: EdgeAuthFailureDiagnostics;
+  refreshedResolution: BrowserSessionResolution;
+  settledResolution: BrowserSessionResolution;
+  latestSession: Session | null;
+  latestTokenValidation: boolean | null;
+}): boolean {
+  const hasRecoverableSession =
+    Boolean(input.latestSession?.access_token) && input.latestTokenValidation !== false;
+  const hasResolvableBrowserSession =
+    input.refreshedResolution.source !== 'none' ||
+    input.settledResolution.source !== 'none' ||
+    Boolean(input.latestSession?.refresh_token);
+
+  return (
+    input.currentState !== 'AUTHENTICATED' ||
+    input.diagnostics.authStage === 'edge_function' ||
+    hasRecoverableSession ||
+    input.latestTokenValidation == null ||
+    hasResolvableBrowserSession
+  );
+}
+
 export async function getSupabaseAccessToken(): Promise<string | null> {
   try {
     const resolved = await resolveBrowserSession({
@@ -672,12 +696,14 @@ export async function fetchEdgeFunctionResponse(
     const latestSession = await readCurrentUsableBrowserSession();
     const latestToken = latestSession?.access_token ?? null;
     const latestTokenValidation = await validateBrowserAccessToken(latestToken);
-    const hasRecoverableSession = Boolean(latestToken) && latestTokenValidation !== false;
-    const shouldSuppressExpiry =
-      currentState !== 'AUTHENTICATED' ||
-      authDiagnostics.authStage === 'edge_function' ||
-      hasRecoverableSession ||
-      latestTokenValidation == null;
+    const shouldSuppressExpiry = shouldSuppressSessionExpiryAfterEdge401({
+      currentState,
+      diagnostics: authDiagnostics,
+      refreshedResolution,
+      settledResolution,
+      latestSession,
+      latestTokenValidation,
+    });
 
     if (!shouldSuppressExpiry) {
       dispatchSessionExpired({
@@ -700,6 +726,9 @@ export async function fetchEdgeFunctionResponse(
         hasAuthCookie: authDiagnostics.hasAuthCookie,
         validatedSource: authDiagnostics.validatedSource,
         latestTokenValidated: latestTokenValidation,
+        refreshedSessionSource: refreshedResolution.source,
+        settledSessionSource: settledResolution.source,
+        hasLatestRefreshToken: Boolean(latestSession?.refresh_token),
         requestId: authDiagnostics.requestId,
       });
     }

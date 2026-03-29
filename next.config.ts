@@ -9,130 +9,195 @@ type WorkboxRouteContext = {
   sameOrigin: boolean;
 };
 
-function hasUsableRequestUrl({ request, url }: Pick<WorkboxRouteContext, 'request' | 'url'>): boolean {
-  const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
-  if (!requestUrl) return false;
-  if (!/^https?:/i.test(requestUrl)) return false;
-  return url.protocol === 'http:' || url.protocol === 'https:';
-}
-
-function describeWorkboxRequest(request: Request) {
-  try {
-    return {
-      url: request.url,
-      method: request.method,
-      destination: request.destination,
-      mode: request.mode,
-      headers: Object.fromEntries(request.headers.entries()),
-    };
-  } catch {
-    return {
-      url: '',
-      method: request.method,
-      destination: request.destination,
-      mode: request.mode,
-      headers: {},
-    };
-  }
-}
-
-function buildServiceWorkerFailureResponse(request: Request, input: {
-  status?: number;
-  stage: string;
-  message: string;
-  forceJson?: boolean;
-}) {
-  const wantsJson =
-    input.forceJson === true ||
-    request.destination === '' ||
-    String(request.headers.get('accept') || '').toLowerCase().includes('application/json') ||
-    String(request.headers.get('accept') || '').toLowerCase().includes('text/event-stream') ||
-    request.url.includes('/api/');
-
-  const payload = {
-    ok: false,
-    code: 'SW_NETWORK_ERROR',
-    message: input.message,
-    offline: true,
-    url: request.url || null,
-    method: request.method || 'GET',
-    stage: input.stage,
-  };
-
-  return new Response(
-    wantsJson ? JSON.stringify(payload) : payload.message,
-    {
-      status: input.status ?? 503,
-      headers: {
-        'Content-Type': wantsJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
-        'Cache-Control': 'no-store',
-        'x-dcau-sw': 'network-failure',
-        'x-dcau-sw-stage': input.stage,
-      },
-    },
-  );
-}
+// Important: next-pwa serializes runtime matchers/plugins into sw.js.
+// Keep every callback self-contained and free of closed-over helpers.
 
 const apiGetFailurePlugin = {
   handlerDidError: async ({ request, error }: { request: Request; error: Error }) => {
-    const snapshot = describeWorkboxRequest(request);
+    let snapshot: {
+      url: string;
+      method: string;
+      destination: string;
+      mode: string;
+      headers: Record<string, string>;
+    };
+
+    try {
+      snapshot = {
+        url: typeof request?.url === 'string' ? request.url : '',
+        method: request?.method || 'GET',
+        destination: request?.destination || '',
+        mode: request?.mode || 'same-origin',
+        headers: Object.fromEntries(request?.headers?.entries?.() ?? []),
+      };
+    } catch {
+      snapshot = {
+        url: '',
+        method: request?.method || 'GET',
+        destination: request?.destination || '',
+        mode: request?.mode || 'same-origin',
+        headers: {},
+      };
+    }
+
     const isMalformed = !snapshot.url || !/^https?:/i.test(snapshot.url);
+    const accept = String(request?.headers?.get?.('accept') || '').toLowerCase();
+    const wantsJson =
+      request?.destination === '' ||
+      accept.includes('application/json') ||
+      accept.includes('text/event-stream') ||
+      snapshot.url.includes('/api/');
 
     if (isMalformed) {
       console.warn('[SW] Ignoring malformed API GET request', {
         ...snapshot,
         error: error?.message || String(error || 'unknown_error'),
       });
-      return buildServiceWorkerFailureResponse(request, {
-        stage: 'malformed_request',
-        message: 'Malformed request intercepted by the service worker.',
-        forceJson: true,
-      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          code: 'SW_NETWORK_ERROR',
+          message: 'Malformed request intercepted by the service worker.',
+          offline: true,
+          url: snapshot.url || null,
+          method: snapshot.method,
+          stage: 'malformed_request',
+        }),
+        {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'x-dcau-sw': 'network-failure',
+            'x-dcau-sw-stage': 'malformed_request',
+          },
+        },
+      );
     }
 
     console.warn('[SW] API GET request failed', {
       ...snapshot,
       error: error?.message || String(error || 'unknown_error'),
     });
-    return buildServiceWorkerFailureResponse(request, {
-      stage: 'api_get_failure',
+    const payload = {
+      ok: false,
+      code: 'SW_NETWORK_ERROR',
       message: 'API GET request failed while handled by the service worker.',
-      forceJson: true,
-    });
+      offline: true,
+      url: snapshot.url || null,
+      method: snapshot.method,
+      stage: 'api_get_failure',
+    };
+    return new Response(
+      wantsJson ? JSON.stringify(payload) : payload.message,
+      {
+        status: 503,
+        headers: {
+          'Content-Type': wantsJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'x-dcau-sw': 'network-failure',
+          'x-dcau-sw-stage': 'api_get_failure',
+        },
+      },
+    );
   },
 };
 
 const apiPostFailurePlugin = {
   handlerDidError: async ({ request, error }: { request: Request; error: Error }) => {
-    const snapshot = describeWorkboxRequest(request);
+    let snapshot: {
+      url: string;
+      method: string;
+      destination: string;
+      mode: string;
+      headers: Record<string, string>;
+    };
+
+    try {
+      snapshot = {
+        url: typeof request?.url === 'string' ? request.url : '',
+        method: request?.method || 'POST',
+        destination: request?.destination || '',
+        mode: request?.mode || 'same-origin',
+        headers: Object.fromEntries(request?.headers?.entries?.() ?? []),
+      };
+    } catch {
+      snapshot = {
+        url: '',
+        method: request?.method || 'POST',
+        destination: request?.destination || '',
+        mode: request?.mode || 'same-origin',
+        headers: {},
+      };
+    }
+
     const isMalformed = !snapshot.url || !/^https?:/i.test(snapshot.url);
+    const accept = String(request?.headers?.get?.('accept') || '').toLowerCase();
+    const wantsJson =
+      request?.destination === '' ||
+      accept.includes('application/json') ||
+      accept.includes('text/event-stream') ||
+      snapshot.url.includes('/api/');
 
     if (isMalformed) {
       console.warn('[SW] Ignoring malformed API POST request', {
         ...snapshot,
         error: error?.message || String(error || 'unknown_error'),
       });
-      return buildServiceWorkerFailureResponse(request, {
-        stage: 'malformed_request',
-        message: 'Malformed request intercepted by the service worker.',
-        forceJson: true,
-      });
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          code: 'SW_NETWORK_ERROR',
+          message: 'Malformed request intercepted by the service worker.',
+          offline: true,
+          url: snapshot.url || null,
+          method: snapshot.method,
+          stage: 'malformed_request',
+        }),
+        {
+          status: 503,
+          headers: {
+            'Content-Type': 'application/json; charset=utf-8',
+            'Cache-Control': 'no-store',
+            'x-dcau-sw': 'network-failure',
+            'x-dcau-sw-stage': 'malformed_request',
+          },
+        },
+      );
     }
 
     console.warn('[SW] API POST request failed', {
       ...snapshot,
       error: error?.message || String(error || 'unknown_error'),
     });
-    return buildServiceWorkerFailureResponse(request, {
-      stage: 'api_post_failure',
+    const payload = {
+      ok: false,
+      code: 'SW_NETWORK_ERROR',
       message: 'API POST request failed while handled by the service worker.',
-      forceJson: true,
-    });
+      offline: true,
+      url: snapshot.url || null,
+      method: snapshot.method,
+      stage: 'api_post_failure',
+    };
+    return new Response(
+      wantsJson ? JSON.stringify(payload) : payload.message,
+      {
+        status: 503,
+        headers: {
+          'Content-Type': wantsJson ? 'application/json; charset=utf-8' : 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+          'x-dcau-sw': 'network-failure',
+          'x-dcau-sw-stage': 'api_post_failure',
+        },
+      },
+    );
   },
 };
 
 const matchNextDataRoute = ({ request, url }: { request: Request; url: URL }) => {
-  if (!hasUsableRequestUrl({ request, url })) return false;
+  const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+  if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
   if (request.method !== 'GET') return false;
   if (!/\/_next\/data\/.+\/.+\.json$/i.test(url.pathname)) return false;
 
@@ -228,10 +293,12 @@ const withPWA = withPWAInit({
     clientsClaim: true,
     runtimeCaching: [
       {
-        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) =>
-          hasUsableRequestUrl({ request, url }) &&
-          sameOrigin &&
-          url.pathname.startsWith('/api/'),
+        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return sameOrigin && url.pathname.startsWith('/api/');
+        },
         method: 'GET',
         handler: 'NetworkOnly',
         options: {
@@ -240,8 +307,12 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) =>
-          hasUsableRequestUrl({ request, url }) && sameOrigin,
+        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return sameOrigin;
+        },
         method: 'POST',
         handler: 'NetworkOnly',
         options: {
@@ -250,33 +321,50 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) =>
-          hasUsableRequestUrl({ request, url }) && sameOrigin,
+        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return sameOrigin;
+        },
         method: 'PUT',
         handler: 'NetworkOnly',
         options: { cacheName: PWA_RUNTIME_CACHE_NAMES['put-no-cache'] },
       },
       {
-        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) =>
-          hasUsableRequestUrl({ request, url }) && sameOrigin,
+        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return sameOrigin;
+        },
         method: 'PATCH',
         handler: 'NetworkOnly',
         options: { cacheName: PWA_RUNTIME_CACHE_NAMES['patch-no-cache'] },
       },
       {
-        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) =>
-          hasUsableRequestUrl({ request, url }) && sameOrigin,
+        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return sameOrigin;
+        },
         method: 'DELETE',
         handler: 'NetworkOnly',
         options: { cacheName: PWA_RUNTIME_CACHE_NAMES['delete-no-cache'] },
       },
       {
-        urlPattern: ({ request, url, sameOrigin }) =>
-          hasUsableRequestUrl({ request, url }) &&
-          request.method === 'GET' &&
-          sameOrigin &&
-          request.destination !== '' &&
-          ['style', 'script', 'font', 'image', 'worker'].includes(request.destination),
+        urlPattern: ({ request, url, sameOrigin }) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return (
+            request.method === 'GET' &&
+            sameOrigin &&
+            request.destination !== '' &&
+            ['style', 'script', 'font', 'image', 'worker'].includes(request.destination)
+          );
+        },
         handler: 'StaleWhileRevalidate',
         options: {
           cacheName: PWA_RUNTIME_CACHE_NAMES['static-assets'],
@@ -287,18 +375,22 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: ({ request, url }) =>
-          hasUsableRequestUrl({ request, url }) &&
-          request.method === 'GET' &&
-          /^https:\/\/.*\.supabase\.co\/.*/i.test(url.toString()),
+        urlPattern: ({ request, url }) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return request.method === 'GET' && /^https:\/\/.*\.supabase\.co\/.*/i.test(url.toString());
+        },
         handler: 'NetworkOnly',
         options: { cacheName: PWA_RUNTIME_CACHE_NAMES['supabase-no-cache'] },
       },
       {
-        urlPattern: ({ request, url }) =>
-          hasUsableRequestUrl({ request, url }) &&
-          request.method === 'GET' &&
-          /\/api\/health$/i.test(url.pathname),
+        urlPattern: ({ request, url }) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return request.method === 'GET' && /\/api\/health$/i.test(url.pathname);
+        },
         handler: 'NetworkOnly',
         options: {
           cacheName: PWA_RUNTIME_CACHE_NAMES['health-no-cache'],
@@ -314,10 +406,12 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: ({ request, url }) =>
-          hasUsableRequestUrl({ request, url }) &&
-          request.method === 'GET' &&
-          /manifest\.webmanifest$/i.test(url.pathname),
+        urlPattern: ({ request, url }) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return request.method === 'GET' && /manifest\.webmanifest$/i.test(url.pathname);
+        },
         handler: 'StaleWhileRevalidate',
         options: {
           cacheName: PWA_RUNTIME_CACHE_NAMES['manifest-cache'],
@@ -328,18 +422,22 @@ const withPWA = withPWAInit({
         },
       },
       {
-        urlPattern: ({ request, url }) =>
-          hasUsableRequestUrl({ request, url }) &&
-          request.method === 'GET' &&
-          /^https:\/\/www\.google\.com\/images\/cleardot\.gif/i.test(url.toString()),
+        urlPattern: ({ request, url }) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return request.method === 'GET' && /^https:\/\/www\.google\.com\/images\/cleardot\.gif/i.test(url.toString());
+        },
         handler: 'NetworkOnly',
         options: { cacheName: PWA_RUNTIME_CACHE_NAMES['google-pixel-no-cache'] },
       },
       {
-        urlPattern: ({ request, url }) =>
-          hasUsableRequestUrl({ request, url }) &&
-          request.method === 'GET' &&
-          /^https:\/\/www\.googletagmanager\.com\/.*/i.test(url.toString()),
+        urlPattern: ({ request, url }) => {
+          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
+          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
+          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+          return request.method === 'GET' && /^https:\/\/www\.googletagmanager\.com\/.*/i.test(url.toString());
+        },
         handler: 'NetworkOnly',
         options: { cacheName: PWA_RUNTIME_CACHE_NAMES['gtm-no-cache'] },
       },
