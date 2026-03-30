@@ -666,6 +666,11 @@ function PracticePageContent() {
           Saved exam pack loaded. Retrying questions does not regenerate or spend extra tokens.
         </div>
       )}
+      {practiceOutput.errorMessage && (
+        <div className="text-center text-xs text-muted-foreground">
+          {practiceOutput.errorMessage}
+        </div>
+      )}
     </main>
   );
 }

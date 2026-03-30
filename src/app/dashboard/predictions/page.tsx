@@ -57,6 +57,7 @@ import { useFeatureFlags } from '@/components/feature-flag-provider';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
+import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 import { useFeatureOutput } from '@/hooks/api/use-feature-output';
 
 import { FeedbackSection } from "@/components/au-feedback";
@@ -362,7 +363,12 @@ function PredictionsPageContent() {
       );
 
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'Prediction Failed', description: `Could not retrieve document content. ${err.message}` });
+      const userFacingError = describeApiErrorForUser(err, { context: 'generation' });
+      toast({
+        variant: 'destructive',
+        title: userFacingError.title,
+        description: userFacingError.description,
+      });
     }
   };
 
@@ -546,6 +552,11 @@ function PredictionsPageContent() {
           {predictionOutput.status === 'ready' && (
             <p className="text-xs text-muted-foreground">
               Saved briefing loaded. Regeneration is locked until the source document version changes or an admin clears the cache.
+            </p>
+          )}
+          {predictionOutput.errorMessage && (
+            <p className="text-xs text-muted-foreground">
+              {predictionOutput.errorMessage}
             </p>
           )}
         </div>

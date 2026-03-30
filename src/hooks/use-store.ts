@@ -3,10 +3,13 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { GenerateKnowledgeOutput, GeneratePredictionsOutput } from '@/app/actions';
 import { toast } from '@/hooks/use-toast';
-import { safeFetch } from '@/lib/api/safe-fetch';
 import { invokeEdgeFunction } from '@/lib/supabase-client/client';
+import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const KNOWLEDGE_DOCUMENT_BUDGET = 12_000;
+const KNOWLEDGE_PAST_QUESTIONS_BUDGET = 10_000;
+const PREDICTION_DOCUMENT_BUDGET = 12_000;
+const PREDICTION_PAST_QUESTIONS_BUDGET = 12_000;
 
 interface AppState {
   // Knowledge Engine State
@@ -135,8 +138,8 @@ export const useStore = create<AppState>()(
             timeoutMs: 120_000,
             silent: false,
             body: {
-              documentContent: docContent,
-              pastQuestionsContent: pastQuestionsContent || '',
+              documentContent: String(docContent || '').slice(0, KNOWLEDGE_DOCUMENT_BUDGET),
+              pastQuestionsContent: String(pastQuestionsContent || '').slice(0, KNOWLEDGE_PAST_QUESTIONS_BUDGET),
               documentId: docId,
             },
           });
@@ -153,11 +156,12 @@ export const useStore = create<AppState>()(
           toast({ title: 'Knowledge materials generated successfully!' });
 
         } catch (error: any) {
+          const userFacingError = describeApiErrorForUser(error, { context: 'generation' });
           console.error('Failed to generate study materials:', error);
           toast({
             variant: 'destructive',
-            title: 'AU Generation Failed',
-            description: error?.message || 'Could not generate study materials for this document.',
+            title: userFacingError.title,
+            description: userFacingError.description,
           });
           set({ knowledgeData: null });
         } finally {
@@ -182,8 +186,8 @@ export const useStore = create<AppState>()(
             timeoutMs: 120_000,
             silent: false,
             body: {
-              pastQuestionsContent,
-              mainTextbookContent,
+              pastQuestionsContent: String(pastQuestionsContent || '').slice(0, PREDICTION_PAST_QUESTIONS_BUDGET),
+              mainTextbookContent: String(mainTextbookContent || '').slice(0, PREDICTION_DOCUMENT_BUDGET),
               documentId: documentId || undefined,
               mainTextbookId: documentId || undefined,
             },
@@ -196,11 +200,12 @@ export const useStore = create<AppState>()(
           
           toast({ title: 'Exam intelligence briefing generated!' });
         } catch (error: any) {
+          const userFacingError = describeApiErrorForUser(error, { context: 'generation' });
           console.error('Failed to generate exam predictions:', error);
           toast({
             variant: 'destructive',
-            title: 'AU Prediction Failed',
-            description: error?.message || 'Could not generate predictions for this document.',
+            title: userFacingError.title,
+            description: userFacingError.description,
           });
           set({ predictionData: null });
         } finally {

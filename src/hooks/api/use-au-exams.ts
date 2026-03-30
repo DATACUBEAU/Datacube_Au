@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { generatePracticeExam, generatePredictions } from '@/lib/api/exams';
-import { getDocumentText } from '@/lib/api/documents';
+import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -8,6 +8,12 @@ import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { logOnce } from '@/lib/log/dedupe';
 import { guardRequest } from '@/lib/api/request-guard';
+import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
+
+const PRACTICE_DOCUMENT_BUDGET = 12_000;
+const PRACTICE_PAST_QUESTIONS_BUDGET = 10_000;
+const PREDICTION_TEXTBOOK_BUDGET = 12_000;
+const PREDICTION_PAST_QUESTIONS_BUDGET = 12_000;
 
 export function useAuExams(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
@@ -43,16 +49,16 @@ export function useAuExams(selectedDocId: string | null) {
     setIsGenerating(true);
     try {
       // Truncate content to avoid payload size limits
-      const rawDocContent = await getDocumentText(user, selectedDocId);
-      const documentContent = rawDocContent.substring(0, 20000); // 20k chars limit
+      const rawDocContent = await getAuDocumentChunksText(user, selectedDocId);
+      const documentContent = rawDocContent.substring(0, PRACTICE_DOCUMENT_BUDGET);
       
       let pastQuestionsContent = '';
       if (pastQuestionIds.length > 0) {
         const contents = await Promise.all(
-          pastQuestionIds.map(id => getDocumentText(user, id))
+          pastQuestionIds.map(id => getAuDocumentChunksText(user, id))
         );
         // Join and truncate past questions
-        pastQuestionsContent = contents.join('\n\n---\n\n').substring(0, 15000);
+        pastQuestionsContent = contents.join('\n\n---\n\n').substring(0, PRACTICE_PAST_QUESTIONS_BUDGET);
       }
 
       const result = await generatePracticeExam(
@@ -63,10 +69,11 @@ export function useAuExams(selectedDocId: string | null) {
       setExamData(result);
       toast({ title: 'Practice exam generated!' });
     } catch (err: any) {
+      const userFacingError = describeApiErrorForUser(err, { context: 'generation' });
       toast({
         variant: 'destructive',
-        title: 'Generation failed',
-        description: err.message
+        title: userFacingError.title,
+        description: userFacingError.description,
       });
     } finally {
       setIsGenerating(false);
@@ -95,11 +102,11 @@ export function useAuExams(selectedDocId: string | null) {
     
     setIsGenerating(true);
     try {
-      const documentContent = await getDocumentText(user, selectedDocId);
+      const documentContent = (await getAuDocumentChunksText(user, selectedDocId)).substring(0, PREDICTION_TEXTBOOK_BUDGET);
       const contents = await Promise.all(
-        pastQuestionIds.map(id => getDocumentText(user, id))
+        pastQuestionIds.map(id => getAuDocumentChunksText(user, id))
       );
-      const pastQuestionsContent = contents.join('\n\n---\n\n');
+      const pastQuestionsContent = contents.join('\n\n---\n\n').substring(0, PREDICTION_PAST_QUESTIONS_BUDGET);
 
       const result = await generatePredictions(
         documentContent,
@@ -109,10 +116,11 @@ export function useAuExams(selectedDocId: string | null) {
       setPredictions(result);
       toast({ title: 'Predictions generated!' });
     } catch (err: any) {
+      const userFacingError = describeApiErrorForUser(err, { context: 'generation' });
       toast({
         variant: 'destructive',
-        title: 'Prediction failed',
-        description: err.message
+        title: userFacingError.title,
+        description: userFacingError.description,
       });
     } finally {
       setIsGenerating(false);

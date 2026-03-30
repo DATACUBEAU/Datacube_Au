@@ -66,7 +66,7 @@ const DEFAULT_FLAGS: FeatureFlagsMap = {
   stripe_live_mode: false,
 };
 
-const POLL_INTERVAL_MS = 45000;
+const POLL_INTERVAL_MS = 120_000;
 const FLAG_CACHE_ROUTE = '/feature-flags';
 const FLAG_CACHE_SOURCE = 'feature-flags-provider';
 const FLAG_CACHE_SCHEMA = 1;
@@ -152,6 +152,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const { isAuthLocked } = useSmartAuth();
   const { snapshot: accountSnapshot } = useAccountSnapshot();
   const isFetchingRef = useRef(false);
+  const [isRealtimeDegraded, setIsRealtimeDegraded] = useState(false);
 
   const readCachedRows = useCallback(async (): Promise<FeatureFlagRecord[] | null> => {
     if (!user?.id) return null;
@@ -216,6 +217,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         silent: true,
         suppressAuthError: true,
         authIntent: 'background',
+        retries: 0,
       });
 
       const payload = await res.json().catch(() => null);
@@ -271,6 +273,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (isLoadingAuth || !isOnline || isAuthLocked) return;
+    setIsRealtimeDegraded(false);
 
     const channel = supabase
       .channel('feature-flags-v2')
@@ -293,8 +296,13 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         },
       )
       .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsRealtimeDegraded(false);
+          return;
+        }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[FeatureFlagProvider] Realtime channel degraded, relying on polling fallback.');
+          setIsRealtimeDegraded(true);
         }
       });
 
@@ -304,12 +312,13 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   }, [fetchFlags, isAuthLocked, isLoadingAuth, isOnline]);
 
   useEffect(() => {
+    if (!isRealtimeDegraded) return;
     if (isLoadingAuth || !isOnline || isAuthLocked) return;
     const timer = window.setInterval(() => {
       void fetchFlags({ silent: true });
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [fetchFlags, isAuthLocked, isLoadingAuth, isOnline]);
+  }, [fetchFlags, isAuthLocked, isLoadingAuth, isOnline, isRealtimeDegraded]);
 
   const setFlag = useCallback(
     async (key: string, enabled: boolean, options?: SetFlagOptions) => {

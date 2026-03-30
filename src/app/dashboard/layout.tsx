@@ -596,7 +596,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!isUserLoading && user && !isAuthLocked) {
       updateUserActivity(user, { isOnline });
-      const activityInterval = setInterval(() => updateUserActivity(user, { isOnline }), 60 * 1000);
+      const activityInterval = setInterval(() => updateUserActivity(user, { isOnline }), 5 * 60 * 1000);
       return () => clearInterval(activityInterval);
     }
   }, [isAuthLocked, user, isUserLoading, toast, isOnline]);

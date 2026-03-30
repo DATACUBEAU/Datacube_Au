@@ -65,7 +65,7 @@ import {
 } from '@/lib/server/usage-tracking';
 import { USAGE_TRACKING_HEADER } from '@shared/usage-metrics';
 import { buildApiErrorBody, buildApiSuccessBody, extractApiError, normalizeApiErrorCode } from '@/lib/api/api-contract';
-import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
+import { classifyAuthFailure, type AuthFailureDescriptor } from '@/lib/auth/auth-error-classification';
 
 export const runtime = 'nodejs';
 export const maxDuration = 180;
@@ -191,6 +191,32 @@ function buildAuthFailureDetails(input: {
     details.upstream = input.upstreamDetails;
   }
   return details;
+}
+
+function hasValidatedRequestAuth(
+  diagnostics?: RequestAuthDiagnostics | null,
+  source?: 'header' | 'cookie' | null,
+): boolean {
+  return Boolean(source ?? diagnostics?.validatedSource);
+}
+
+function shouldTreatCaughtAuthFailureAsAmbiguousPostAuthFailure(input: {
+  failure: AuthFailureDescriptor;
+  diagnostics?: RequestAuthDiagnostics | null;
+  source?: 'header' | 'cookie' | null;
+  parsedDetails?: Record<string, unknown> | null;
+}): boolean {
+  if (!hasValidatedRequestAuth(input.diagnostics, input.source)) return false;
+  if ((input.diagnostics?.failedSources ?? []).length > 0) return false;
+  if (input.failure.status !== 401) return false;
+  if (input.parsedDetails?.auth_stage === 'edge_function') return false;
+
+  return !(
+    input.failure.reason === 'missing_token' ||
+    input.failure.reason === 'invalid_token' ||
+    input.failure.reason === 'session_expired' ||
+    input.failure.reason === 'sign_in_required'
+  );
 }
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
@@ -2331,6 +2357,32 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         source: requestAuthSource,
         upstreamDetails: parsedAuthError.details,
       });
+      const ambiguousPostAuthFailure = shouldTreatCaughtAuthFailureAsAmbiguousPostAuthFailure({
+        failure: authFailure,
+        diagnostics: requestAuthDiagnostics,
+        source: requestAuthSource,
+        parsedDetails: parsedAuthDetails,
+      });
+      if (ambiguousPostAuthFailure) {
+        console.error('[proxy] suppressing ambiguous auth failure after validated auth', {
+          requestId,
+          correlationId,
+          functionName,
+          method: requestMethod,
+          path: requestPath,
+          status: authFailure.status,
+          code: authFailure.code,
+          reason: authFailure.reason,
+          originalCode: authFailure.originalCode,
+          requestAuth: serializeRequestAuthDiagnostics(requestAuthDiagnostics, requestAuthSource),
+          message: String(error?.message || ''),
+          elapsedMs: Date.now() - startedAt,
+        });
+        const fallbackResponse = await tryLegacyChatFallbackIfEligible('unexpected_error');
+        if (fallbackResponse) {
+          return fallbackResponse;
+        }
+      } else {
       console.warn('[proxy] auth failure surfaced via catch', {
         requestId,
         correlationId,
@@ -2363,6 +2415,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
             },
         { status: authFailure.status, headers },
       );
+      }
     }
 
     if (error instanceof EffectiveLimitError) {

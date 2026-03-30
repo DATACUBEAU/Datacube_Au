@@ -10,6 +10,7 @@ import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
 import { clearDocWorkingMemory } from '@/lib/memory/working-memory';
 import { normalizeAuDocumentRow, resolveDocumentRetentionDays } from '@/lib/au/document-normalization';
+import { SAFE_DOC_COLUMNS } from '@/lib/au/documents';
 import { safeFetch } from '@/lib/api/safe-fetch';
 
 export type { AuDocumentRow, AuDocumentType };
@@ -204,7 +205,7 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
   for (const conditions of ownershipConditions) {
     const query = supabase
       .from('au_documents')
-      .select('*');
+      .select(SAFE_DOC_COLUMNS);
 
     applyOwnershipFilter(query, conditions);
     const { data, error } = await query.order('created_at', { ascending: false });

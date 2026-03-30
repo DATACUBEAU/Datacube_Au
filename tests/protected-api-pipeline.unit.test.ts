@@ -30,6 +30,13 @@ async function main() {
     assert.match(source, /authIntent = 'background'/);
   });
 
+  await run('safeFetch disables blind retries for interactive and non-idempotent traffic by default', () => {
+    const source = readRepoFile('src/lib/api/safe-fetch.ts');
+    assert.match(source, /retries\?: number \| false/);
+    assert.match(source, /authIntent === 'interactive'\s*\?\s*0/);
+    assert.match(source, /method === 'GET' \|\| method === 'HEAD' \? 1 : 0/);
+  });
+
   await run('invokeEdgeFunction owns auth escalation instead of delegating it to safeFetch', () => {
     const source = readRepoFile('src/lib/supabase-client/client.ts');
     assert.match(source, /suppressAuthError:\s*true/);
@@ -41,6 +48,7 @@ async function main() {
     assert.match(source, /markAuthRestoring\(`invokeEdgeFunction:\$\{functionName\}`\)/);
     assert.match(source, /restoreRecoveredAuthState/);
     assert.match(source, /suppressed session expiry for recoverable or endpoint-scoped 401/);
+    assert.match(source, /retries:\s*0/);
   });
 
   await run('browser auth restore reuses persisted sessions and syncs the server cookie before protected proxy calls', () => {
@@ -91,6 +99,94 @@ async function main() {
     const source = readRepoFile('src/hooks/api/use-au-documents.ts');
     assert.match(source, /isRestoringAuth/);
     assert.match(source, /if \(isRestoringAuth\) return;/);
+    assert.match(source, /docsInflightRequests/);
+    assert.match(source, /docsMemoryCache/);
+    assert.match(source, /if \(!isRealtimeDegraded\) return;/);
+  });
+
+  await run('document list queries now use the lean shared column projection instead of select star', () => {
+    const apiDocuments = readRepoFile('src/lib/api/documents.ts');
+    const auDocuments = readRepoFile('src/lib/au/documents.ts');
+    assert.match(auDocuments, /export const SAFE_DOC_COLUMNS =/);
+    assert.match(apiDocuments, /\.select\(SAFE_DOC_COLUMNS\)/);
+    assert.equal(apiDocuments.includes(".select('*')"), false);
+  });
+
+  await run('document retention resolution reuses persisted account snapshot data before attempting a live fetch', () => {
+    const source = readRepoFile('src/lib/au/document-normalization.ts');
+    assert.match(source, /persistedRetention/);
+    assert.match(source, /if \(Number\.isFinite\(persistedRetention\) && persistedRetention > 0\)/);
+    assert.match(source, /else \{\s*try \{/s);
+  });
+
+  await run('cached document text is reused in memory to avoid repeat chunk downloads during the same session', () => {
+    const source = readRepoFile('src/lib/au/documents.ts');
+    assert.match(source, /DOC_TEXT_MEMORY_TTL_MS/);
+    assert.match(source, /docTextMemoryCache/);
+    assert.match(source, /docTextInFlightRequests/);
+  });
+
+  await run('available chat models are cached and prompt starter payloads are budgeted', () => {
+    const source = readRepoFile('src/lib/api/chat.ts');
+    assert.match(source, /AVAILABLE_MODELS_CACHE_TTL_MS/);
+    assert.match(source, /availableModelsInFlight/);
+    assert.match(source, /PROMPT_STARTER_DOCUMENT_BUDGET/);
+  });
+
+  await run('chat duplicate sends are blocked while the same prompt is already in flight', () => {
+    const source = readRepoFile('src/hooks/api/use-au-chat.ts');
+    assert.match(source, /activePromptHashRef/);
+    assert.match(source, /if \(activePromptHashRef\.current === promptHash\) \{/);
+  });
+
+  await run('account snapshot refreshes are throttled and polling only runs when realtime is degraded', () => {
+    const source = readRepoFile('src/components/providers/account-snapshot-provider.tsx');
+    assert.match(source, /POLL_INTERVAL_MS = 120_000/);
+    assert.match(source, /SNAPSHOT_MIN_REFRESH_INTERVAL_MS = 15_000/);
+    assert.match(source, /const \[isRealtimeDegraded, setIsRealtimeDegraded\] = useState\(false\)/);
+    assert.match(source, /if \(!isRealtimeDegraded\) return;/);
+    assert.equal(source.includes("table: 'au_messages'"), false);
+    assert.equal(source.includes("table: 'au_model_usage'"), false);
+  });
+
+  await run('feature flag polling only activates when realtime is degraded', () => {
+    const source = readRepoFile('src/components/feature-flag-provider.tsx');
+    assert.match(source, /POLL_INTERVAL_MS = 120_000/);
+    assert.match(source, /const \[isRealtimeDegraded, setIsRealtimeDegraded\] = useState\(false\)/);
+    assert.match(source, /if \(!isRealtimeDegraded\) return;/);
+  });
+
+  await run('feature output reads are deduped, cached briefly, and mapped to user-facing errors', () => {
+    const hookSource = readRepoFile('src/hooks/api/use-feature-output.ts');
+    const routeSource = readRepoFile('src/app/api/feature-output/route.ts');
+    assert.match(hookSource, /featureOutputCache/);
+    assert.match(hookSource, /featureOutputInFlight/);
+    assert.match(hookSource, /describeApiErrorForUser/);
+    assert.match(routeSource, /SUCCESS_CACHE_CONTROL/);
+    assert.equal(routeSource.includes('cost_usd'), false);
+    assert.equal(routeSource.includes('tokens:'), false);
+    assert.equal(routeSource.includes('model:'), false);
+  });
+
+  await run('generation flows clamp heavy document payloads and use shared user-facing error messaging', () => {
+    const storeSource = readRepoFile('src/hooks/use-store.ts');
+    const examsHook = readRepoFile('src/hooks/api/use-au-exams.ts');
+    assert.match(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET/);
+    assert.match(storeSource, /PREDICTION_PAST_QUESTIONS_BUDGET/);
+    assert.match(storeSource, /describeApiErrorForUser/);
+    assert.match(examsHook, /getAuDocumentChunksText/);
+    assert.match(examsHook, /PRACTICE_DOCUMENT_BUDGET/);
+    assert.match(examsHook, /describeApiErrorForUser/);
+  });
+
+  await run('dashboard activity heartbeat is throttled so it cannot chatter every minute', () => {
+    const layoutSource = readRepoFile('src/app/dashboard/layout.tsx');
+    const clientSource = readRepoFile('src/lib/supabase-client/client.ts');
+    assert.match(layoutSource, /5 \* 60 \* 1000/);
+    assert.match(clientSource, /USER_ACTIVITY_HEARTBEAT_MS = 5 \* 60 \* 1000/);
+    assert.match(clientSource, /USER_ACTIVITY_METADATA_SYNC_MS = 15 \* 60 \* 1000/);
+    assert.match(clientSource, /userActivityHeartbeatAt/);
+    assert.match(clientSource, /userActivityMetadataSyncAt/);
   });
 
   await run('exam and generation flows no longer hard-require a local access token before protected requests', () => {
@@ -148,6 +244,14 @@ async function main() {
     assert.match(source, /\[proxy\] auth failure surfaced via catch/);
     assert.match(source, /const headers = applyRequestAuthDebugHeaders/);
     assert.match(source, /const normalizedDetails = buildAuthFailureDetails/);
+  });
+
+  await run('proxy no longer turns ambiguous post-auth chat failures into false 401 responses', () => {
+    const source = readRepoFile('src/app/api/proxy/[functionName]/route.ts');
+    assert.match(source, /shouldTreatCaughtAuthFailureAsAmbiguousPostAuthFailure/);
+    assert.match(source, /hasValidatedRequestAuth/);
+    assert.match(source, /\[proxy\] suppressing ambiguous auth failure after validated auth/);
+    assert.match(source, /tryLegacyChatFallbackIfEligible\('unexpected_error'\)/);
   });
 
   await run('proxy auth validation prefers the explicit authorization header over ambient cookies after refresh', () => {

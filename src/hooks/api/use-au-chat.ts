@@ -119,6 +119,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
   const abortControllerRef = useRef<AbortController | null>(null);
   const rateLimitCooldownUntilRef = useRef<number>(0);
   const lastSubmitRef = useRef<{ hash: string; at: number }>({ hash: '', at: 0 });
+  const activePromptHashRef = useRef<string | null>(null);
   const activeRequestRef = useRef<{
     requestId: string;
     route: '/dashboard/chat' | '/dashboard/global-chat';
@@ -340,10 +341,14 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     const normalizedPrompt = String(content || '').trim().toLowerCase();
     const promptHash = `${selectedDocId}:${normalizedPrompt}`;
     const now = Date.now();
-    if (lastSubmitRef.current.hash === promptHash && now - lastSubmitRef.current.at < 700) {
+    if (activePromptHashRef.current === promptHash) {
+      return;
+    }
+    if (lastSubmitRef.current.hash === promptHash && now - lastSubmitRef.current.at < 1500) {
       return;
     }
     lastSubmitRef.current = { hash: promptHash, at: now };
+    activePromptHashRef.current = promptHash;
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
@@ -721,6 +726,9 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       setIsResponding(false);
       abortControllerRef.current = null;
       activeRequestRef.current = null;
+      if (activePromptHashRef.current === promptHash) {
+        activePromptHashRef.current = null;
+      }
       // Delay setting back to idle to allow animation to breathe
       setTimeout(() => {
         setAuAnimationState('idle');

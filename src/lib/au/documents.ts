@@ -8,11 +8,14 @@ import {
   resolveDocumentRetentionDays,
 } from '@/lib/au/document-normalization';
 
-const SAFE_DOC_COLUMNS = 'id, owner_id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, parent_document_id, error';
+export const SAFE_DOC_COLUMNS = 'id, owner_id, user_id, file_name, file_path, document_type, status, created_at, expires_at, parent_id, parent_document_id, error';
 const DOC_TEXT_CACHE_ROUTE = '/dashboard/documents/chunks';
 const DOC_TEXT_CACHE_SOURCE = 'au_document_chunks';
 const DOC_TEXT_CACHE_SCHEMA = 1;
 const DOC_TEXT_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 14;
+const DOC_TEXT_MEMORY_TTL_MS = 60_000;
+const docTextMemoryCache = new Map<string, { text: string; cachedAt: number }>();
+const docTextInFlightRequests = new Map<string, Promise<string>>();
 
 function isMissingColumnError(error: unknown, column: string): boolean {
   const message = String((error as any)?.message || '').toLowerCase();
@@ -105,7 +108,12 @@ export async function listCompletedAuDocumentsForUser(user: User | null, documen
 }
 
 export async function getAuDocumentChunksText(user: User | null, documentId: string): Promise<string> {
+  const cacheKey = user?.id ? `${user.id}:${documentId}` : documentId;
   const readCachedText = async () => {
+    const memoryCached = docTextMemoryCache.get(cacheKey);
+    if (memoryCached && Date.now() - memoryCached.cachedAt < DOC_TEXT_MEMORY_TTL_MS) {
+      return memoryCached.text;
+    }
     if (!user?.id) return '';
     const cached = await readUserCache<{ text?: string }>({
       userId: user.id,
@@ -121,6 +129,7 @@ export async function getAuDocumentChunksText(user: User | null, documentId: str
 
   const writeCachedText = async (text: string) => {
     if (!user?.id || !text) return;
+    docTextMemoryCache.set(cacheKey, { text, cachedAt: Date.now() });
     await writeUserCache({
       userId: user.id,
       route: DOC_TEXT_CACHE_ROUTE,
@@ -144,42 +153,58 @@ export async function getAuDocumentChunksText(user: User | null, documentId: str
     return readCachedText();
   }
 
-  const ownershipConditions = await getOwnershipConditionCandidates(user);
-
-  for (const conditions of ownershipConditions) {
-    const query = supabase
-      .from('au_document_chunks')
-      .select('text, chunk_index')
-      .eq('document_id', documentId)
-      .order('chunk_index', { ascending: true });
-
-    applyOwnershipFilter(query, conditions);
-    const { data, error } = await query;
-
-    if (!error) {
-      const rows = (data ?? []) as Pick<AuDocumentChunkRow, 'text' | 'chunk_index'>[];
-      const text = rows.map(r => r.text).join('\n\n');
-      void writeCachedText(text);
-      return text;
-    }
-
-    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
-      continue;
-    }
-
-    console.error('[documents] Error getting document chunks:', {
-      message: error.message,
-      code: error.code,
-      details: error.details,
-      hint: error.hint,
-      fullError: error
-    });
-    const cachedText = await readCachedText();
-    if (cachedText) return cachedText;
-    throw error;
+  const memoryCached = docTextMemoryCache.get(cacheKey);
+  if (memoryCached && Date.now() - memoryCached.cachedAt < DOC_TEXT_MEMORY_TTL_MS) {
+    return memoryCached.text;
   }
 
-  return readCachedText();
+  const existingRequest = docTextInFlightRequests.get(cacheKey);
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const ownershipConditions = await getOwnershipConditionCandidates(user);
+  const request = (async () => {
+    for (const conditions of ownershipConditions) {
+      const query = supabase
+        .from('au_document_chunks')
+        .select('text, chunk_index')
+        .eq('document_id', documentId)
+        .order('chunk_index', { ascending: true });
+
+      applyOwnershipFilter(query, conditions);
+      const { data, error } = await query;
+
+      if (!error) {
+        const rows = (data ?? []) as Pick<AuDocumentChunkRow, 'text' | 'chunk_index'>[];
+        const text = rows.map(r => r.text).join('\n\n');
+        void writeCachedText(text);
+        return text;
+      }
+
+      if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
+        continue;
+      }
+
+      console.error('[documents] Error getting document chunks:', {
+        message: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint,
+        fullError: error
+      });
+      const cachedText = await readCachedText();
+      if (cachedText) return cachedText;
+      throw error;
+    }
+
+    return readCachedText();
+  })().finally(() => {
+    docTextInFlightRequests.delete(cacheKey);
+  });
+
+  docTextInFlightRequests.set(cacheKey, request);
+  return request;
 }
 
 export async function countPastQuestionsForParent(user: User | null, parentId: string): Promise<number> {

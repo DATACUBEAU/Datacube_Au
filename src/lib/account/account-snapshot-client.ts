@@ -104,6 +104,7 @@ export async function fetchCanonicalAccountSnapshotFromApi(
       timeout: opts.timeoutMs ?? 10_000,
       silent: opts.silent ?? true,
       suppressAuthError: opts.suppressAuthError ?? true,
+      retries: 0,
     });
   } else {
     const fetchImpl = opts.fetchImpl ?? fetch;

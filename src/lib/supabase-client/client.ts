@@ -26,6 +26,10 @@ const publicEnv = {
 } as const;
 
 let refreshBrowserSessionPromise: Promise<Session | null> | null = null;
+const USER_ACTIVITY_HEARTBEAT_MS = 5 * 60 * 1000;
+const USER_ACTIVITY_METADATA_SYNC_MS = 15 * 60 * 1000;
+const userActivityHeartbeatAt = new Map<string, number>();
+const userActivityMetadataSyncAt = new Map<string, number>();
 
 type PublicEnvKey = keyof typeof publicEnv;
 
@@ -617,6 +621,7 @@ export async function fetchEdgeFunctionResponse(
       allowOffline,
       suppressAuthError: true,
       authIntent,
+      retries: 0,
       signal: options?.signal,
     });
   };
@@ -780,6 +785,7 @@ export async function recordUserActivityRpc({
       }),
       timeout: timeoutMs,
       silent: true,
+      retries: 0,
     });
 
     if (response.ok) {
@@ -889,14 +895,23 @@ export function applyOwnershipFilter(query: any, conditions: string) {
 
 export async function updateUserActivity(
   user: User | null,
-  opts?: { isOnline?: boolean }
+  opts?: { isOnline?: boolean; force?: boolean }
 ): Promise<void> {
   try {
+    const userId = String(user?.id || '').trim();
+    if (!userId) return;
     const isStandalone = typeof window !== 'undefined' && window.matchMedia('(display-mode: standalone)').matches;
     const isInstalled = typeof window !== 'undefined' && (window.navigator as any).standalone || isStandalone;
     const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
     const isOnline = typeof opts?.isOnline === 'boolean' ? opts.isOnline : (typeof navigator !== 'undefined' ? navigator.onLine : true);
     if (!isOnline) return;
+    const now = Date.now();
+    const lastHeartbeatAt = userActivityHeartbeatAt.get(userId) ?? 0;
+    const shouldSkipHeartbeat = !opts?.force && now - lastHeartbeatAt < USER_ACTIVITY_HEARTBEAT_MS;
+    if (shouldSkipHeartbeat) {
+      return;
+    }
+    userActivityHeartbeatAt.set(userId, now);
 
     const { getDeviceInfo } = await import('@/lib/device/device-info');
     let deviceInfo: any = null;
@@ -911,70 +926,77 @@ export async function updateUserActivity(
       pwa: {
         isStandalone,
         isInstalled,
-        displayMode: isStandalone ? 'standalone' : 'browser'
+        displayMode: isStandalone ? 'standalone' : 'browser',
       },
       device: {
-        browser: userAgent,
         browserName: deviceInfo?.browserName || 'unknown',
-        browserVersion: deviceInfo?.browserVersion || '',
         platform: deviceInfo?.platform || (typeof navigator !== 'undefined' ? navigator.platform : 'unknown'),
         osName: deviceInfo?.osName || 'unknown',
-        osVersion: deviceInfo?.osVersion || '',
-        deviceModel: deviceInfo?.deviceModel || 'unknown',
         deviceType: deviceInfo?.deviceType || 'unknown',
-        language: typeof navigator !== 'undefined' ? navigator.language : 'unknown',
-        timeZone: deviceInfo?.timeZone || (typeof Intl !== 'undefined' ? Intl.DateTimeFormat().resolvedOptions().timeZone : 'unknown'),
         isMobile: deviceInfo?.deviceType ? (deviceInfo.deviceType === 'mobile' || deviceInfo.deviceType === 'tablet') : /iPhone|iPad|iPod|Android/i.test(userAgent),
-        screen: deviceInfo?.screenResolution || (typeof window !== 'undefined' ? `${window.screen.width}x${window.screen.height}` : 'unknown')
+        language: typeof navigator !== 'undefined' ? navigator.language : 'unknown',
       },
       connection: {
         isOnline,
         checked_at: new Date().toISOString(),
-        navigator_onLine: typeof navigator !== 'undefined' ? navigator.onLine : true
       },
-      updated_at: new Date().toISOString()
+      updated_at: new Date().toISOString(),
     };
 
-    if (user?.id) {
-      const accessToken = await getSupabaseAccessToken();
-      if (!accessToken) return;
+    const accessToken = await getSupabaseAccessToken();
+    if (!accessToken) return;
 
-      const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
-      const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-      const payload = { 
-        user_id: user.id, 
-        last_active_at: new Date().toISOString(),
-        user_agent: userAgent,
-        is_pwa: isStandalone,
-        metadata: metadata
-      };
+    await recordUserActivityRpc({
+      userId,
+      event: 'activity',
+      metadata: {
+        connection: metadata.connection,
+        pwa: metadata.pwa,
+      },
+      accessToken,
+      timeoutMs: 6000,
+    });
 
-      const response = await safeFetch(`${supabaseUrl}/rest/v1/au_user_activity?on_conflict=user_id`, {
-        method: 'POST',
-        headers: {
-          apikey: anonKey,
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          Prefer: 'resolution=merge-duplicates',
-        },
-        body: JSON.stringify(payload),
-        timeout: 8000,
-        silent: true,
-      });
-
-      if (!response.ok) {
-        const raw = await response.text().catch(() => '');
-        if (response.status === 406) return;
-        console.warn('[client] Activity update error:', { status: response.status, body: raw });
-      }
-
-      await recordUserActivityRpc({
-        userId: user.id,
-        event: 'activity',
-        metadata: {},
-        accessToken,
-      });
+    const lastMetadataSyncAt = userActivityMetadataSyncAt.get(userId) ?? 0;
+    const shouldSyncMetadata =
+      opts?.force ||
+      now - lastMetadataSyncAt >= USER_ACTIVITY_METADATA_SYNC_MS;
+    if (!shouldSyncMetadata) {
+      return;
     }
+
+    const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
+    const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
+    const payload = {
+      user_id: userId,
+      last_active_at: new Date().toISOString(),
+      user_agent: userAgent,
+      is_pwa: isStandalone,
+      metadata,
+    };
+
+    const response = await safeFetch(`${supabaseUrl}/rest/v1/au_user_activity?on_conflict=user_id`, {
+      method: 'POST',
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify(payload),
+      timeout: 8000,
+      silent: true,
+      retries: 0,
+    });
+
+    if (!response.ok) {
+      const raw = await response.text().catch(() => '');
+      if (response.status === 406) return;
+      console.warn('[client] Activity update error:', { status: response.status, body: raw });
+      return;
+    }
+
+    userActivityMetadataSyncAt.set(userId, now);
   } catch (e) {
     console.warn('[client] Failed to update activity:', e);
   }

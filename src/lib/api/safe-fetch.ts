@@ -20,6 +20,8 @@ interface SafeFetchOptions extends RequestInit {
   allowWhenAuthLocked?: boolean; // If true, bypasses auth-lock guard (used for login/reauth flows)
   suppressAuthError?: boolean; // If true, 401/403 errors will not trigger global session expiry events
   authIntent?: SessionExpiryTriggerIntent; // Distinguishes interactive calls from passive/bootstrap traffic
+  retries?: number | false; // Disable blind retries for interactive or non-idempotent traffic by default.
+  retryDelayMs?: number;
 }
 
 function createSafeFetchError(
@@ -60,8 +62,19 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     allowWhenAuthLocked = false,
     suppressAuthError = false,
     authIntent = 'background',
+    retries,
+    retryDelayMs = 750,
     ...fetchOptions
   } = options;
+  const method = String(fetchOptions.method || options.method || 'GET').trim().toUpperCase();
+  const maxRetries =
+    typeof retries === 'number'
+      ? Math.max(0, Math.floor(retries))
+      : retries === false
+        ? 0
+        : authIntent === 'interactive'
+          ? 0
+          : (method === 'GET' || method === 'HEAD' ? 1 : 0);
 
   if (!allowWhenAuthLocked && isAuthLocked()) {
     throw createSafeFetchError('Session expired. Sign in again.', {
@@ -83,10 +96,9 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     throw new OfflineError();
   }
 
-  const MAX_RETRIES = 2; // Retry twice on network errors
   let attempt = 0;
 
-  while (attempt <= MAX_RETRIES) {
+  while (attempt <= maxRetries) {
     const controller = new AbortController();
     const unregisterAbort = registerAuthBoundAbortController(controller);
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -205,9 +217,9 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
       }
 
       // If it's a network error or timeout, and we have retries left, retry.
-      if ((isNetworkError || isTimeoutAbort) && attempt < MAX_RETRIES) {
+      if ((isNetworkError || isTimeoutAbort) && attempt < maxRetries) {
         attempt++;
-        const delay = 1000 * attempt; // 1s, 2s
+        const delay = Math.max(250, retryDelayMs) * attempt;
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }

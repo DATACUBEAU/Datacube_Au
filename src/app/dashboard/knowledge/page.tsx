@@ -44,6 +44,7 @@ import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { FREE_PLAN_EXPIRATION_DAYS, PAID_PRO_PLAN_EXPIRATION_DAYS } from '@/lib/plans/subscription-policy';
 import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
 import { useFeatureOutput } from '@/hooks/api/use-feature-output';
+import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 import {
   clearKnowledgeGenerationLockRecord,
   readKnowledgeGenerationLockRecord,
@@ -357,11 +358,18 @@ function KnowledgePageContent() {
         }
 
     } catch (error: any) {
-      console.error('Failed to prepare for study material generation:', error);
+      const userFacingError = describeApiErrorForUser(error, { context: 'generation' });
+      console.error('Failed to prepare for study material generation:', {
+        code: userFacingError.error.code,
+        status: userFacingError.error.status,
+        message: userFacingError.description,
+        requestId: userFacingError.requestId,
+        correlationId: userFacingError.correlationId,
+      });
       toast({
         variant: 'destructive',
-        title: 'Preparation Failed',
-        description: 'Could not fetch document content to start generation.',
+        title: userFacingError.title,
+        description: userFacingError.description,
       });
     }
   };
@@ -766,7 +774,7 @@ function KnowledgePageContent() {
         )}
         {knowledgeOutput.errorMessage && (
           <div className="mt-2 text-center text-xs text-muted-foreground">
-            Could not refresh saved generation status. {knowledgeButtonState.effectiveLockStatus ? 'Keeping the last confirmed lock for this document.' : 'Retry once the connection recovers.'}
+            {knowledgeOutput.errorMessage} {knowledgeButtonState.effectiveLockStatus ? 'Keeping the last confirmed lock for this document.' : ''}
           </div>
         )}
         <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">

@@ -129,6 +129,11 @@ type ChatResponse = RagBasedQuestionAnsweringOutput & {
 };
 
 const DEFAULT_MODEL_IDS: string[] = []; 
+const AVAILABLE_MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
+const AVAILABLE_MODELS_ERROR_TTL_MS = 60 * 1000;
+const PROMPT_STARTER_DOCUMENT_BUDGET = 6000;
+let availableModelsCache: { models: string[]; expiresAt: number } | null = null;
+let availableModelsInFlight: Promise<string[]> | null = null;
 
 type EdgeErrorLike = {
   status?: number | null;
@@ -663,7 +668,7 @@ export async function generatePromptStarters(
     silent: true,
     body: {
       documentTitle,
-      documentContent: documentContent.substring(0, 10000),
+      documentContent: documentContent.substring(0, PROMPT_STARTER_DOCUMENT_BUDGET),
       userIdea,
     },
   });
@@ -677,30 +682,57 @@ export async function generatePromptStarters(
  */
 export async function getAvailableModels(): Promise<string[]> {
   if (!SUPABASE_URL) return DEFAULT_MODEL_IDS;
-
-  try {
-    const { data, error } = await invokeEdgeFunction<any>('au-chat', {
-      method: 'POST',
-      requireAuth: true,
-      silent: true,
-      body: { action: 'get_models' },
-      authIntent: 'background',
-      reauthOnAuthFailure: false,
-    });
-    if (error) return DEFAULT_MODEL_IDS;
-
-    const models = (data as any)?.models;
-    if (Array.isArray(models)) {
-      if (models.every((m) => typeof m === 'string')) return models;
-      if (models.every((m) => m && typeof m === 'object' && typeof (m as any).id === 'string')) {
-        return models.map((m) => (m as any).id);
-      }
-      if (models.every((m) => m && typeof m === 'object' && typeof (m as any).model_id === 'string')) {
-        return models.map((m) => (m as any).model_id);
-      }
-    }
-  } catch {
+  if (availableModelsCache && Date.now() < availableModelsCache.expiresAt) {
+    return availableModelsCache.models;
+  }
+  if (availableModelsInFlight) {
+    return availableModelsInFlight;
   }
 
-  return DEFAULT_MODEL_IDS;
+  availableModelsInFlight = (async () => {
+    try {
+      const { data, error } = await invokeEdgeFunction<any>('au-chat', {
+        method: 'POST',
+        requireAuth: true,
+        silent: true,
+        body: { action: 'get_models' },
+        authIntent: 'background',
+        reauthOnAuthFailure: false,
+      });
+      if (error) {
+        availableModelsCache = {
+          models: DEFAULT_MODEL_IDS,
+          expiresAt: Date.now() + AVAILABLE_MODELS_ERROR_TTL_MS,
+        };
+        return DEFAULT_MODEL_IDS;
+      }
+
+      const models = (data as any)?.models;
+      const normalizedModels = Array.isArray(models)
+        ? models.every((m) => typeof m === 'string')
+          ? models
+          : models.every((m) => m && typeof m === 'object' && typeof (m as any).id === 'string')
+            ? models.map((m) => (m as any).id)
+            : models.every((m) => m && typeof m === 'object' && typeof (m as any).model_id === 'string')
+              ? models.map((m) => (m as any).model_id)
+              : DEFAULT_MODEL_IDS
+        : DEFAULT_MODEL_IDS;
+
+      availableModelsCache = {
+        models: normalizedModels,
+        expiresAt: Date.now() + AVAILABLE_MODELS_CACHE_TTL_MS,
+      };
+      return normalizedModels;
+    } catch {
+      availableModelsCache = {
+        models: DEFAULT_MODEL_IDS,
+        expiresAt: Date.now() + AVAILABLE_MODELS_ERROR_TTL_MS,
+      };
+      return DEFAULT_MODEL_IDS;
+    } finally {
+      availableModelsInFlight = null;
+    }
+  })();
+
+  return availableModelsInFlight;
 }

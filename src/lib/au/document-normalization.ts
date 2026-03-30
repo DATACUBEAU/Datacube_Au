@@ -75,29 +75,29 @@ export async function resolveDocumentRetentionDays(userId: string | null | undef
     const persistedRetention = Number(persisted.snapshot?.entitlements?.retentionDays || 0);
     if (Number.isFinite(persistedRetention) && persistedRetention > 0) {
       retentionDays = Math.floor(persistedRetention);
-    }
-
-    try {
-      const { response, snapshot: normalized } = await fetchCanonicalAccountSnapshotFromApi({
-        userId,
-        fetchImpl: fetch,
-        useSafeFetch: false,
-      });
-      if (response.ok && normalized) {
-        const explicitRetention = Number(normalized.entitlements.retentionDays);
+    } else {
+      try {
+        const { response, snapshot: normalized } = await fetchCanonicalAccountSnapshotFromApi({
+          userId,
+          fetchImpl: fetch,
+          useSafeFetch: false,
+        });
+        if (response.ok && normalized) {
+          const explicitRetention = Number(normalized.entitlements.retentionDays);
+          retentionDays =
+            Number.isFinite(explicitRetention) && explicitRetention > 0
+              ? Math.floor(explicitRetention)
+              : resolvePlanExpirationDays({
+                  plan: normalized.entitlements.plan,
+                  entitlementSource: normalized.entitlements.entitlementSource,
+                });
+        }
+      } catch {
         retentionDays =
-          Number.isFinite(explicitRetention) && explicitRetention > 0
-            ? Math.floor(explicitRetention)
-            : resolvePlanExpirationDays({
-                plan: normalized.entitlements.plan,
-                entitlementSource: normalized.entitlements.entitlementSource,
-              });
+          Number.isFinite(persistedRetention) && persistedRetention > 0
+            ? Math.floor(persistedRetention)
+            : retentionDays;
       }
-    } catch {
-      retentionDays =
-        Number.isFinite(persistedRetention) && persistedRetention > 0
-          ? Math.floor(persistedRetention)
-          : retentionDays;
     }
   }
 

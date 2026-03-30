@@ -81,6 +81,7 @@ import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
 import { toApiRequestError, type ApiRequestError } from '@/lib/api/api-contract';
+import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 
 import { generatePromptStarters, type ChatMessage } from '@/lib/api/chat';
 import { AssistantResponseBody } from '@/components/chat/assistant-response-body';
@@ -124,49 +125,11 @@ function findPreviousUserPrompt(history: ChatMessage[], assistantIndex: number):
 
 function chatErrorTitle(error: ApiRequestError | null): string {
   if (!error) return 'Chat issue';
-  if (error.status === 401 || error.code === 'UNAUTHORIZED' || error.code === 'AUTHENTICATION_FAILED') {
-    return 'Authentication failed';
-  }
-  if (error.status === 403 || error.code === 'FORBIDDEN' || error.code === 'TIER_ACCESS_DENIED') {
-    return 'Access denied';
-  }
-  if (
-    error.status === 429 ||
-    error.code === 'LIMIT_REACHED' ||
-    error.code === 'LIMIT_EXCEEDED' ||
-    error.code === 'PRO_REQUIRED'
-  ) {
-    return 'Usage limit reached';
-  }
-  if (
-    error.code === 'MODEL_SERVICE_UNAVAILABLE' ||
-    error.code === 'UPSTREAM_TIMEOUT' ||
-    error.code === 'ROUTING_FAILED' ||
-    error.status === 503 ||
-    error.status === 504
-  ) {
-    return 'Model service unavailable';
-  }
-  if (error.status === 400 || error.code === 'INVALID_REQUEST_PAYLOAD') {
-    return 'Invalid request payload';
-  }
-  return 'Unexpected server error';
+  return describeApiErrorForUser(error, { context: 'chat' }).title;
 }
 
 function chatErrorDescription(error: ApiRequestError): string {
-  if (error.code === 'OFFLINE' || error.message.includes('Failed to fetch')) {
-    return "I can't reach the server right now. Please check your internet connection and try again.";
-  }
-
-  if (error.status === 401) {
-    return 'Authentication failed. Please refresh the page and sign in again.';
-  }
-
-  if (error.status === 403) {
-    return "You don't have permission to complete that chat request.";
-  }
-
-  return error.message;
+  return describeApiErrorForUser(error, { context: 'chat' }).description;
 }
 
 export default function ChatPage() {
@@ -757,7 +720,8 @@ export default function ChatPage() {
       setGeneratedPrompts([]);
     } catch (error: any) {
       const normalizedError = toApiRequestError(error, 'Unexpected chat error');
-      const errorDescription = chatErrorDescription(normalizedError);
+      const userFacingError = describeApiErrorForUser(normalizedError, { context: 'chat' });
+      const errorDescription = userFacingError.description;
       console.error(
         `[ChatPage] Message error: ${JSON.stringify({
           code: normalizedError.code,
@@ -776,7 +740,7 @@ export default function ChatPage() {
         return;
       }
 
-      let errorMsg = errorDescription;
+      let errorMsg = userFacingError.description;
       const correlationId = normalizedError.correlationId;
 
       const clearCacheAction = (
@@ -820,19 +784,13 @@ export default function ChatPage() {
         </ToastAction>
       );
 
-      if (normalizedError.status === 401) {
-        errorMsg = "It looks like your session has timed out for security. Please try refreshing the page or logging back in so we can continue our analysis.";
-      } else if (normalizedError.status === 403) {
-        errorMsg = "You don't have permission to use this chat action right now.";
-      } else if (normalizedError.status === 429) {
-        errorMsg = "The AU provider is rate-limiting requests right now. Please wait a moment and try again.";
-      } else if (normalizedError.code === 'FEATURE_OUTPUT_FAILED') {
+      if (normalizedError.code === 'FEATURE_OUTPUT_FAILED') {
         errorMsg = "Generation previously failed for this document. Ask an admin to clear the cache.";
       }
       
       toast({
         variant: 'destructive',
-        title: chatErrorTitle(normalizedError),
+        title: userFacingError.title,
         description: errorMsg,
         action: clearCacheAction,
       });
@@ -1281,7 +1239,7 @@ export default function ChatPage() {
                 <div className="min-w-0 space-y-1">
                   <p className="text-sm font-medium text-destructive">{chatErrorTitle(chatRequestError)}</p>
                   <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">
-                    {chatRequestError.message}
+                    {chatErrorDescription(chatRequestError)}
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">

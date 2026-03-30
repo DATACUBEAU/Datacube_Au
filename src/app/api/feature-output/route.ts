@@ -6,6 +6,7 @@ import { readFeatureOutput, resolveDocumentVersion } from '@/lib/server/ai-gover
 export const runtime = 'nodejs';
 
 const FEATURES = new Set(['knowledge_hub', 'exam_prediction', 'practice_exam_generation']);
+const SUCCESS_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=30';
 
 function normalizeFeature(value: string | null): 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation' | null {
   const normalized = String(value || '').trim().toLowerCase();
@@ -65,8 +66,9 @@ export async function GET(req: NextRequest) {
           requestId,
           doc_version_id: null,
           output: null,
+          message: 'No saved output was found for this document yet.',
         },
-        { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        { status: 200, headers: { 'Cache-Control': SUCCESS_CACHE_CONTROL } },
       );
     }
 
@@ -86,8 +88,9 @@ export async function GET(req: NextRequest) {
           requestId,
           doc_version_id: resolvedVersionId,
           output: null,
+          message: 'No saved output was found for this document yet.',
         },
-        { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        { status: 200, headers: { 'Cache-Control': SUCCESS_CACHE_CONTROL } },
       );
     }
 
@@ -100,11 +103,14 @@ export async function GET(req: NextRequest) {
         doc_version_id: resolvedVersionId,
         output: record.output ?? null,
         generatedAt: record.updatedAt || record.createdAt,
-        model: record.model,
-        tokens: record.tokens,
-        cost_usd: record.costUsd,
+        message:
+          record.status === 'running'
+            ? 'This generation is still in progress.'
+            : record.status === 'failed'
+              ? 'The last saved generation failed. Clear the cached output or upload a new version before retrying.'
+              : undefined,
       },
-      { status: 200, headers: { 'Cache-Control': 'no-store' } },
+      { status: 200, headers: { 'Cache-Control': SUCCESS_CACHE_CONTROL } },
     );
   } catch (error: any) {
     return NextResponse.json(

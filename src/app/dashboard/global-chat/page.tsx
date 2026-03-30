@@ -74,6 +74,7 @@ import {
   formatAssistantThought,
   normalizeAssistantCitations,
 } from '@/lib/chat/assistant-response';
+import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 
 const defaultGuideText = "Use this AU Guide to tell the assistant how you like to interact. For example, ask for short explanations, creative ideas, or code snippets.";
 const GLOBAL_CHAT_ID = 'global';
@@ -287,8 +288,19 @@ export default function GlobalChatPage() {
         browsingMode,
       });
     } catch (error: any) {
-      console.error("[GlobalChatPage] Message error:", error);
-      // Toast is handled by useAuChat mostly, but we can keep a fallback
+      const userFacingError = describeApiErrorForUser(error, { context: 'chat' });
+      console.error("[GlobalChatPage] Message error:", {
+        code: userFacingError.error.code,
+        status: userFacingError.error.status,
+        message: userFacingError.description,
+        requestId: userFacingError.requestId,
+        correlationId: userFacingError.correlationId,
+      });
+      toast({
+        variant: 'destructive',
+        title: userFacingError.title,
+        description: userFacingError.description,
+      });
     }
   };
 

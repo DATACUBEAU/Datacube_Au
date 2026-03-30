@@ -44,7 +44,9 @@ type AccountSnapshotContextValue = {
   refresh: () => Promise<PersistedCanonicalAccountSnapshot | null>;
 };
 
-const POLL_INTERVAL_MS = 20_000;
+const POLL_INTERVAL_MS = 120_000;
+const SNAPSHOT_MIN_REFRESH_INTERVAL_MS = 15_000;
+const SNAPSHOT_REALTIME_DEBOUNCE_MS = 500;
 
 const AccountSnapshotContext = createContext<AccountSnapshotContextValue>({
   snapshot: null,
@@ -74,6 +76,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(bootstrapState.loading);
   const [isUsingCachedData, setIsUsingCachedData] = useState(bootstrapState.isUsingCachedData);
   const [cachedAt, setCachedAt] = useState<number | null>(bootstrapState.cachedAt);
+  const [isRealtimeDegraded, setIsRealtimeDegraded] = useState(false);
   const shouldDeferBootstrap = shouldDeferAccountSnapshotBootstrap({
     hasUser: Boolean(user?.id),
     isLoadingAuth,
@@ -84,6 +87,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   const cachedAtRef = useRef<number | null>(bootstrapState.cachedAt);
   const currentUserIdRef = useRef<string | null>(user?.id ?? null);
   const isFetchingRef = useRef(false);
+  const lastNetworkFetchAtRef = useRef(0);
 
   useEffect(() => {
     snapshotRef.current = snapshot;
@@ -140,7 +144,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     writePersistedAccountSnapshotSync(next, nextCachedAt);
   }, [user?.id]);
 
-  const fetchSnapshot = useCallback(async (opts?: { silent?: boolean }) => {
+  const fetchSnapshot = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
     if (!user?.id) {
       clearSnapshot();
       return null;
@@ -151,6 +155,16 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     }
 
     if (isFetchingRef.current) {
+      return snapshotRef.current;
+    }
+
+    if (
+      !opts?.force &&
+      opts?.silent &&
+      snapshotRef.current &&
+      lastNetworkFetchAtRef.current > 0 &&
+      Date.now() - lastNetworkFetchAtRef.current < SNAPSHOT_MIN_REFRESH_INTERVAL_MS
+    ) {
       return snapshotRef.current;
     }
 
@@ -217,6 +231,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
       }
 
       const nextCachedAt = Date.now();
+      lastNetworkFetchAtRef.current = nextCachedAt;
       const successState = resolveSuccessfulAccountSnapshotState<PersistedCanonicalAccountSnapshot>(
         normalized,
         nextCachedAt,
@@ -319,7 +334,7 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
       }
 
       if (cancelled) return;
-      await fetchSnapshot();
+      await fetchSnapshot({ force: true });
     };
 
     void bootstrap();
@@ -332,12 +347,13 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     if (!user?.id || !isOnline || isAuthLocked || isRestoringAuth) return;
 
     let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
+    setIsRealtimeDegraded(false);
     const scheduleRefresh = () => {
       if (refreshTimeout) return;
       refreshTimeout = setTimeout(() => {
         refreshTimeout = null;
         void fetchSnapshot({ silent: true });
-      }, 150);
+      }, SNAPSHOT_REALTIME_DEBOUNCE_MS);
     };
 
     const channel = supabase
@@ -350,18 +366,15 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
       .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_transactions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_entitlements', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'usage_counters', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'usage_totals', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'au_plan_limit_rules' }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_worker_jobs', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_worker_jobs', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_documents', filter: `owner_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_documents', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_model_usage', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_messages', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_feature_outputs', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
       .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          setIsRealtimeDegraded(false);
+          return;
+        }
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
           console.warn('[AccountSnapshotProvider] realtime degraded; polling fallback remains active.');
+          setIsRealtimeDegraded(true);
         }
       });
 
@@ -372,12 +385,13 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   }, [fetchSnapshot, isAuthLocked, isOnline, isRestoringAuth, user?.id]);
 
   useEffect(() => {
+    if (!isRealtimeDegraded) return;
     if (!user?.id || !session?.access_token || !isOnline || isAuthLocked || isRestoringAuth) return;
     const timer = window.setInterval(() => {
       void fetchSnapshot({ silent: true });
     }, POLL_INTERVAL_MS);
     return () => window.clearInterval(timer);
-  }, [fetchSnapshot, isAuthLocked, isOnline, isRestoringAuth, session?.access_token, user?.id]);
+  }, [fetchSnapshot, isAuthLocked, isOnline, isRealtimeDegraded, isRestoringAuth, session?.access_token, user?.id]);
 
   const value = useMemo<AccountSnapshotContextValue>(() => ({
     snapshot,
