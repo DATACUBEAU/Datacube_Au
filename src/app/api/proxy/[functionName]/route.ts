@@ -114,9 +114,55 @@ function firstEnv(...keys: string[]): string | null {
 }
 
 function functionsBaseUrl(): string | null {
+  const vpsGatewayUrl = firstEnv('VPS_AI_GATEWAY_URL', 'VPS_GATEWAY_URL');
+  if (vpsGatewayUrl && vpsGatewayUrl.trim().length > 0) {
+    return vpsGatewayUrl.replace(/\/$/, '');
+  }
+  
   const supabaseUrl = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
   if (!supabaseUrl) return null;
   return `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
+}
+
+function isVpsGatewayMode(): boolean {
+  const vpsGatewayUrl = firstEnv('VPS_AI_GATEWAY_URL', 'VPS_GATEWAY_URL');
+  return Boolean(vpsGatewayUrl && vpsGatewayUrl.trim().length > 0);
+}
+
+function getVpsEndpoint(functionName: string): string | null {
+  const baseUrl = functionsBaseUrl();
+  if (!baseUrl) return null;
+  
+  const normalized = String(functionName || '').trim().toLowerCase();
+  
+  const endpointMap: Record<string, string> = {
+    'au-chat': '/chat/au-chat',
+    'global-chat': '/chat/global-chat',
+    'chat': '/chat/legacy',
+    'generate-knowledge': '/generate/knowledge',
+    'generate-exam-predictions': '/generate/exam-predictions',
+    'generate-practice-exam': '/generate/practice-exam',
+    'generate-prompt-starters': '/generate/prompt-starters',
+  };
+  
+  const endpoint = endpointMap[normalized];
+  if (!endpoint) return null;
+  
+  return `${baseUrl}${endpoint}`;
+}
+
+function isVpsEligibleFunction(functionName: string): boolean {
+  const normalized = String(functionName || '').trim().toLowerCase();
+  const vpsFunctions = new Set([
+    'au-chat',
+    'global-chat', 
+    'chat',
+    'generate-knowledge',
+    'generate-exam-predictions',
+    'generate-practice-exam',
+    'generate-prompt-starters',
+  ]);
+  return vpsFunctions.has(normalized);
 }
 
 function corsHeaders(requestId?: string): HeadersInit {
@@ -1001,14 +1047,41 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       requestAuth: serializeRequestAuthDiagnostics(auth.diagnostics, auth.source),
     });
 
+    const isVpsEligible = isVpsGatewayMode() && isVpsEligibleFunction(functionName);
+    const incomingUrl = new URL(req.url);
+    let targetUrl: URL;
+    
+    if (isVpsEligible) {
+      const vpsEndpoint = getVpsEndpoint(functionName);
+      if (!vpsEndpoint) {
+        return NextResponse.json(
+          buildApiErrorBody({
+            status: 500,
+            code: 'VPS_GATEWAY_CONFIG_ERROR',
+            message: 'VPS gateway endpoint not configured for this function.',
+            retryable: false,
+            requestId,
+            correlationId,
+          }),
+          { status: 500, headers: corsHeaders(requestId) }
+        );
+      }
+      targetUrl = new URL(vpsEndpoint);
+      console.info('[proxy] routing to VPS gateway', {
+        requestId,
+        correlationId,
+        functionName,
+        vpsEndpoint,
+      });
+    } else {
+      targetUrl = new URL(`${baseUrl}/${functionName}`);
+      incomingUrl.searchParams.forEach((value, key) => {
+        targetUrl.searchParams.append(key, value);
+      });
+    }
+
     const adminSupabase = createSupabaseAdminClient();
     reservationSupabase = adminSupabase;
-
-    const incomingUrl = new URL(req.url);
-    const targetUrl = new URL(`${baseUrl}/${functionName}`);
-    incomingUrl.searchParams.forEach((value, key) => {
-      targetUrl.searchParams.append(key, value);
-    });
 
     console.info('[proxy] request received', {
       requestId,
