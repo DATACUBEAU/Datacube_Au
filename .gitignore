@@ -46,13 +46,6 @@ yarn-error.log*
 *.iso
 
 # Backend (Ignored for Vercel/Frontend Repo)
-backend/
-rag-worker.tgz
-supabase/
-scripts/
-docs/
-docker-compose.yml
-Dockerfile
 .dockerignore
 !rag-worker/docker-compose.yml
 !rag-worker/Dockerfile

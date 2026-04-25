@@ -21,11 +21,63 @@ type FeatureOutputResponse<T> = {
 };
 
 const FEATURE_OUTPUT_CACHE_TTL_MS = 20_000;
+const FEATURE_OUTPUT_CACHE_EVENT = 'dcau:feature-output-cache-updated';
 const featureOutputCache = new Map<string, {
   payload: FeatureOutputResponse<unknown>;
   cachedAt: number;
 }>();
 const featureOutputInFlight = new Map<string, Promise<FeatureOutputResponse<unknown>>>();
+
+function buildFeatureOutputCacheKey(input: {
+  feature: FeatureOutputKey;
+  documentId?: string | null;
+  docVersionId?: string | null;
+}): string {
+  return `${input.feature}:${input.documentId || ''}:${input.docVersionId || ''}`;
+}
+
+function applyFeatureOutputPayload<T>(
+  payload: FeatureOutputResponse<T>,
+  setters: {
+    setStatus: (status: FeatureOutputStatus) => void;
+    setOutput: (output: T | null) => void;
+    setDocVersionId: (value: string | null) => void;
+    setGeneratedAt: (value: string | null) => void;
+    setErrorMessage: (value: string | null) => void;
+    setErrorInfo: (value: UserFacingErrorDescriptor | null) => void;
+  },
+): void {
+  setters.setStatus(payload.status);
+  setters.setOutput(payload.output ?? null);
+  setters.setDocVersionId(payload.doc_version_id || null);
+  setters.setGeneratedAt(payload.generatedAt || null);
+  setters.setErrorMessage(null);
+  setters.setErrorInfo(null);
+}
+
+export function writeFeatureOutputCache<T>(input: {
+  feature: FeatureOutputKey;
+  documentId?: string | null;
+  docVersionId?: string | null;
+  payload: FeatureOutputResponse<T>;
+}): void {
+  const cacheKey = buildFeatureOutputCacheKey(input);
+  featureOutputCache.set(cacheKey, {
+    payload: input.payload as FeatureOutputResponse<unknown>,
+    cachedAt: Date.now(),
+  });
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent(FEATURE_OUTPUT_CACHE_EVENT, {
+        detail: {
+          key: cacheKey,
+          payload: input.payload,
+        },
+      }),
+    );
+  }
+}
 
 export function useFeatureOutput<T>(input: {
   feature: FeatureOutputKey;
@@ -41,6 +93,7 @@ export function useFeatureOutput<T>(input: {
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [errorInfo, setErrorInfo] = useState<UserFacingErrorDescriptor | null>(null);
+  const cacheKey = buildFeatureOutputCacheKey(input);
 
   const refresh = useCallback(async () => {
     if (input.enabled === false) {
@@ -64,8 +117,7 @@ export function useFeatureOutput<T>(input: {
       return;
     }
 
-    const accessToken = session?.access_token;
-    if (!accessToken || (!input.documentId && !input.docVersionId)) {
+    if (!input.documentId && !input.docVersionId) {
       setStatus('idle');
       setOutput(null);
       setDocVersionId(null);
@@ -75,16 +127,16 @@ export function useFeatureOutput<T>(input: {
       return;
     }
 
-    const cacheKey = `${input.feature}:${input.documentId || ''}:${input.docVersionId || ''}`;
     const cached = featureOutputCache.get(cacheKey);
     if (cached && Date.now() - cached.cachedAt < FEATURE_OUTPUT_CACHE_TTL_MS) {
-      const cachedPayload = cached.payload as FeatureOutputResponse<T>;
-      setStatus(cachedPayload.status);
-      setOutput(cachedPayload.output ?? null);
-      setDocVersionId(cachedPayload.doc_version_id || null);
-      setGeneratedAt(cachedPayload.generatedAt || null);
-      setErrorMessage(null);
-      setErrorInfo(null);
+      applyFeatureOutputPayload(cached.payload as FeatureOutputResponse<T>, {
+        setStatus,
+        setOutput,
+        setDocVersionId,
+        setGeneratedAt,
+        setErrorMessage,
+        setErrorInfo,
+      });
       return;
     }
 
@@ -104,7 +156,6 @@ export function useFeatureOutput<T>(input: {
           const response = await safeFetch(url.toString(), {
             method: 'GET',
             headers: {
-              Authorization: `Bearer ${accessToken}`,
               'Content-Type': 'application/json',
             },
             credentials: 'include',
@@ -131,17 +182,20 @@ export function useFeatureOutput<T>(input: {
 
       const payload = await request;
 
-      featureOutputCache.set(cacheKey, {
-        payload: payload as FeatureOutputResponse<unknown>,
-        cachedAt: Date.now(),
+      writeFeatureOutputCache({
+        feature: input.feature,
+        documentId: input.documentId,
+        docVersionId: input.docVersionId,
+        payload,
       });
-
-      setStatus(payload.status);
-      setOutput(payload.output ?? null);
-      setDocVersionId(payload.doc_version_id || null);
-      setGeneratedAt(payload.generatedAt || null);
-      setErrorMessage(null);
-      setErrorInfo(null);
+      applyFeatureOutputPayload(payload, {
+        setStatus,
+        setOutput,
+        setDocVersionId,
+        setGeneratedAt,
+        setErrorMessage,
+        setErrorInfo,
+      });
     } catch (error: any) {
       const userFacingError = describeApiErrorForUser(error, {
         context: 'generation',
@@ -163,12 +217,34 @@ export function useFeatureOutput<T>(input: {
     isLoadingAuth,
     isRestoringAuth,
     networkState,
-    session?.access_token,
+    cacheKey,
   ]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleCacheUpdate = (event: Event) => {
+      const customEvent = event as CustomEvent<{ key?: string; payload?: FeatureOutputResponse<T> }>;
+      if (customEvent.detail?.key !== cacheKey || !customEvent.detail.payload) return;
+      applyFeatureOutputPayload(customEvent.detail.payload, {
+        setStatus,
+        setOutput,
+        setDocVersionId,
+        setGeneratedAt,
+        setErrorMessage,
+        setErrorInfo,
+      });
+    };
+
+    window.addEventListener(FEATURE_OUTPUT_CACHE_EVENT, handleCacheUpdate as EventListener);
+    return () => {
+      window.removeEventListener(FEATURE_OUTPUT_CACHE_EVENT, handleCacheUpdate as EventListener);
+    };
+  }, [cacheKey]);
 
   return {
     status,

@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  worker:
+    build: .
+    restart: always
+    environment:
+      TRANSFORMERS_FALLBACK_ENABLED: ${TRANSFORMERS_FALLBACK_ENABLED:-true}
+      TRANSFORMERS_EMBEDDING_MODEL: ${TRANSFORMERS_EMBEDDING_MODEL:-Xenova/all-MiniLM-L6-v2}
+      FASTEMBED_CACHE_DIR: /app/local_cache/fastembed
+      HF_CACHE_DIR: /app/local_cache/hf
+    # Load environment variables from .env file
+    env_file:
+      - .env
+    # Persist cache directories across restarts.
+    # In transformers-only mode the FastEmbed cache volume remains unused.
+    volumes:
+      - fastembed_cache:/app/local_cache/fastembed
+      - hf_cache:/app/local_cache/hf
+
+volumes:
+  fastembed_cache:
+  hf_cache:

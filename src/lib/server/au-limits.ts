@@ -781,6 +781,17 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
     mirroredPlanRaw === 'promo_pro' ||
     profileTierRaw === 'promo_pro';
 
+  const nowMs = Date.now();
+  const isMirroredExpired =
+    typeof mirroredExpiresAt === 'string' &&
+    new Date(mirroredExpiresAt).getTime() < nowMs;
+  const isEntitlementExpired =
+    typeof entitlementEndsAt === 'string' &&
+    new Date(entitlementEndsAt).getTime() < nowMs;
+
+  const resolvedMirroredPlan = isMirroredExpired ? 'free' : mirroredPlan;
+  const resolvedEntitlementPlan = isEntitlementExpired ? 'free' : entitlementPlan;
+
   if (profileInfo.isAdmin) {
     return {
       plan: 'pro',
@@ -803,7 +814,7 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
     };
   }
 
-  if (mirroredPlan === 'premium') {
+  if (resolvedMirroredPlan === 'premium') {
     return {
       plan: 'premium',
       isAdmin: false,
@@ -814,9 +825,9 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
     };
   }
 
-  if (hasPaidBillingPlan) {
+  if (hasPaidBillingPlan && !isEntitlementExpired) {
     return {
-      plan: entitlementPlan || 'pro',
+      plan: resolvedEntitlementPlan || 'pro',
       isAdmin: false,
       hasPro: true,
       source: 'billing',
@@ -825,13 +836,13 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
     };
   }
 
-  if (mirroredPlan) {
+  if (resolvedMirroredPlan) {
     return {
-      plan: mirroredPlan,
+      plan: resolvedMirroredPlan,
       isAdmin: false,
-      hasPro: mirroredPlan !== 'free',
+      hasPro: resolvedMirroredPlan !== 'free',
       source: 'au_user_entitlements',
-      entitlementSource: mirroredPlan === 'free' ? 'none' : (mirroredSource === 'none' ? 'paid' : mirroredSource),
+      entitlementSource: resolvedMirroredPlan === 'free' ? 'none' : (mirroredSource === 'none' ? 'paid' : mirroredSource),
       expiresAt: mirroredExpiresAt,
     };
   }

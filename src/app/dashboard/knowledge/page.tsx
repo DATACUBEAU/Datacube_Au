@@ -33,7 +33,6 @@ import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
-import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { FileNameText } from '@/components/FileNameText';
 import { DocumentSelectValue } from '@/components/document-select-value';
 import { Badge } from '@/components/ui/badge';
@@ -334,18 +333,11 @@ function KnowledgePageContent() {
     }
 
     try {
-        const documentContent = await getAuDocumentChunksText(user, selectedDocId);
-        
-        // Check for attached past questions
         const attachedPQs = apiDocuments.filter(d => d.parent_id === selectedDocId && (d.document_type === 'past_questions' || d.document_type === 'exam_questions') && d.status === 'completed');
-        
-        let pastQuestionsContent = '';
-        if (attachedPQs.length > 0) {
-          const contents = await Promise.all(attachedPQs.map(pq => getAuDocumentChunksText(user, pq.id)));
-          pastQuestionsContent = contents.join('\n\n---\n\n');
-        }
 
-        await generateKnowledge(selectedDocId, documentContent, pastQuestionsContent);
+        await generateKnowledge(selectedDocId, {
+          pastQuestionIds: attachedPQs.map((pq) => pq.id),
+        });
         if (typeof window !== 'undefined') {
           const optimisticLock: KnowledgeGenerationLockRecord = {
             documentId: selectedDocId,

@@ -264,7 +264,7 @@ export class ChatHandler {
       return fullText;
     }
 
-    const result = await response.json();
+    const result: any = await response.json();
     return result.choices?.[0]?.message?.content || '';
   }
 
@@ -334,7 +334,7 @@ export class ChatHandler {
       return fullText;
     }
 
-    const result = await response.json();
+    const result: any = await response.json();
     return result.content?.[0]?.text || '';
   }
 }

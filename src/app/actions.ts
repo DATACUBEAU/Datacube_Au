@@ -8,35 +8,6 @@ import type {
   RagBasedQuestionAnsweringOutput,
 } from '@shared/schemas';
 
-import { safeFetch } from '@/lib/api/safe-fetch';
-
-function requiredEnv(key: string): string {
-  const value = process.env[key];
-  if (!value) throw new Error(`Missing environment variable: ${key}`);
-  return value;
-}
-
-function functionsBaseUrl(): string {
-  const supabaseUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!supabaseUrl) return requiredEnv('NEXT_PUBLIC_SUPABASE_URL');
-  return `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
-}
-
-async function makeFunctionRequest<T>(functionName: string, body: any): Promise<T> {
-  const url = `${functionsBaseUrl()}/${functionName}`;
-  const options = {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  };
-
-  const response = await safeFetch(url, options);
-  if (!response.ok) {
-      throw new Error(`Function ${functionName} failed: ${response.statusText}`);
-  }
-  return response.json();
-}
-
 // Re-exporting types for client-side usage
 export type { GenerateStudyMaterialsOutput as GenerateKnowledgeOutput };
 export type { GenerateExamPredictionsOutput as GeneratePredictionsOutput };
@@ -44,34 +15,69 @@ export type { GeneratePracticeExamOutput };
 export type { PracticeQuestion };
 export type { RagBasedQuestionAnsweringOutput };
 
-// --- Server Actions that call the AU service ---
+// ---------------------------------------------------------------------------
+// ⚠️  DEPRECATED SERVER ACTIONS
+// ---------------------------------------------------------------------------
+// These functions call Supabase Edge Functions DIRECTLY, bypassing the Next.js
+// proxy layer entirely.  That means:
+//   - No auth validation
+//   - No subscription / limit enforcement
+//   - No VPS routing
+//   - No payload hydration & trimming
+//
+// All runtime callers should use the proxy routes instead:
+//   Client → /api/proxy/{functionName} → VPS → AI
+//
+// The functions are retained only for their **type exports** (above), which
+// remain in use by UI components.
+// ---------------------------------------------------------------------------
 
+/** @deprecated Use /api/proxy/generate-knowledge instead. */
 export async function generateKnowledgeMaterials(
-  { documentContent }: { documentContent: string }
+  _input: { documentContent: string }
 ): Promise<GenerateStudyMaterialsOutput> {
-  return makeFunctionRequest<GenerateStudyMaterialsOutput>('generate-knowledge', { documentContent });
+  throw new Error(
+    'DEPRECATED: generateKnowledgeMaterials server action bypasses proxy enforcement. ' +
+    'Use the /api/proxy/generate-knowledge route instead.',
+  );
 }
 
+/** @deprecated Use /api/proxy/generate-exam-predictions instead. */
 export async function generateExamPredictions(
-  { pastQuestionsContent, mainTextbookContent }: { pastQuestionsContent: string, mainTextbookContent?: string }
+  _input: { pastQuestionsContent: string; mainTextbookContent?: string }
 ): Promise<GenerateExamPredictionsOutput> {
-  return makeFunctionRequest<GenerateExamPredictionsOutput>('generate-exam-predictions', { pastQuestionsContent, mainTextbookContent });
+  throw new Error(
+    'DEPRECATED: generateExamPredictions server action bypasses proxy enforcement. ' +
+    'Use the /api/proxy/prediction-engine route instead.',
+  );
 }
 
+/** @deprecated Use /api/proxy/generate-practice-exam instead. */
 export async function generatePracticeExam(
-  { documentContent }: { documentContent: string }
+  _input: { documentContent: string }
 ): Promise<GeneratePracticeExamOutput> {
-  return makeFunctionRequest<GeneratePracticeExamOutput>('generate-practice-exam', { documentContent });
+  throw new Error(
+    'DEPRECATED: generatePracticeExam server action bypasses proxy enforcement. ' +
+    'Use the /api/proxy/exam-generator route instead.',
+  );
 }
 
+/** @deprecated Use /api/proxy/chat instead. */
 export async function ragBasedQuestionAnsweringAction(
-    { question, userId, mainTextbookId }: { question: string, userId: string, mainTextbookId: string }
+  _input: { question: string; userId: string; mainTextbookId: string }
 ): Promise<RagBasedQuestionAnsweringOutput> {
-    return makeFunctionRequest<RagBasedQuestionAnsweringOutput>('chat', { question, userId, mainTextbookId });
+  throw new Error(
+    'DEPRECATED: ragBasedQuestionAnsweringAction server action bypasses proxy enforcement. ' +
+    'Use the /api/proxy/chat route instead.',
+  );
 }
 
+/** @deprecated Use /api/proxy/generate-prompt-starters instead. */
 export async function generatePromptStartersAction(
-    { documentTitle, documentContent, userIdea }: { documentTitle: string, documentContent?: string, userIdea?: string }
+  _input: { documentTitle: string; documentContent?: string; userIdea?: string }
 ): Promise<{ prompts: string[] }> {
-    return makeFunctionRequest<{ prompts: string[] }>('generate-prompt-starters', { documentTitle, documentContent, userIdea });
+  throw new Error(
+    'DEPRECATED: generatePromptStartersAction server action bypasses proxy enforcement. ' +
+    'Use the /api/proxy/generate-prompt-starters route instead.',
+  );
 }

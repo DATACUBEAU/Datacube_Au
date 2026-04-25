@@ -49,7 +49,6 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
-import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { FileNameText } from '@/components/FileNameText';
 import { DocumentSelectValue } from '@/components/document-select-value';
@@ -313,11 +312,6 @@ function PredictionsPageContent() {
     restoreCachedPredictions(docId, pqDoc?.parent_id || docId);
   };
 
-  const getDocContent = async (docId: string) => {
-    if (!user) throw new Error('User not available');
-    return getAuDocumentChunksText(user, docId);
-  };
-
   const triggerGetPredictions = async () => {
     if (!selectedPastQuestionsId || !user || isGeneratingPredictions || upgradeBlocked) return;
 
@@ -347,20 +341,16 @@ function PredictionsPageContent() {
     }
 
     try {
-      // Get content required for the action
-      const pastQuestionsContent = await getDocContent(selectedPastQuestionsId);
-      const mainTextbookContent = selectedTextbookId ? await getDocContent(selectedTextbookId) : undefined;
-
       if (isAuthLoading || isRestoringAuth || isAuthLocked) {
         toast({ variant: 'destructive', title: 'Authentication Error', description: 'Wait for session restore to finish, then try again.' });
         return;
       }
 
-      await generatePredictions(
-        pastQuestionsContent,
-        mainTextbookContent,
-        selectedTextbookId || selectedPastQuestionsId,
-      );
+      await generatePredictions({
+        documentId: selectedTextbookId || selectedPastQuestionsId,
+        mainTextbookId: selectedTextbookId || undefined,
+        pastQuestionIds: [selectedPastQuestionsId],
+      });
 
     } catch (err: any) {
       const userFacingError = describeApiErrorForUser(err, { context: 'generation' });

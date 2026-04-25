@@ -32,12 +32,21 @@ interface AppState {
   // Actions
   setKnowledgeData: (data: GenerateKnowledgeOutput) => void;
   setPredictionData: (data: GeneratePredictionsOutput) => void;
-  generateKnowledge: (docId: string, docContent: string, pastQuestionsContent?: string) => Promise<void>;
-  generatePredictions: (
-    pastQuestionsContent: string,
-    mainTextbookContent?: string,
-    documentId?: string | null,
+  generateKnowledge: (
+    docId: string,
+    options?: {
+      documentContent?: string;
+      pastQuestionsContent?: string;
+      pastQuestionIds?: string[];
+    },
   ) => Promise<void>;
+  generatePredictions: (options: {
+    pastQuestionsContent?: string;
+    mainTextbookContent?: string;
+    documentId?: string | null;
+    mainTextbookId?: string | null;
+    pastQuestionIds?: string[];
+  }) => Promise<void>;
 
   // Utility to clear data on doc selection change
   clearKnowledgeAndPredictions: () => void;
@@ -126,10 +135,23 @@ export const useStore = create<AppState>()(
       },
 
       // Action to generate knowledge materials
-      generateKnowledge: async (docId: string, docContent: string, pastQuestionsContent?: string) => {
+      //
+      // Payload optimization: docId is always supplied so the proxy hydrates
+      // document content server-side. Raw text is only sent as fallback.
+      generateKnowledge: async (
+        docId: string,
+        options?: {
+          documentContent?: string;
+          pastQuestionsContent?: string;
+          pastQuestionIds?: string[];
+        },
+      ) => {
         if (get().isGeneratingKnowledge) return;
 
         set({ isGeneratingKnowledge: true, knowledgeData: null });
+
+        const hasDocId = Boolean(docId);
+        const hasPqIds = Array.isArray(options?.pastQuestionIds) && options!.pastQuestionIds.length > 0;
         
         try {
           const { data, error } = await invokeEdgeFunction<GenerateKnowledgeOutput>('generate-knowledge', {
@@ -138,8 +160,16 @@ export const useStore = create<AppState>()(
             timeoutMs: 120_000,
             silent: false,
             body: {
-              documentContent: String(docContent || '').slice(0, KNOWLEDGE_DOCUMENT_BUDGET),
-              pastQuestionsContent: String(pastQuestionsContent || '').slice(0, KNOWLEDGE_PAST_QUESTIONS_BUDGET),
+              // Only send raw text when no ID is available — proxy hydrates from IDs.
+              documentContent: hasDocId ? undefined
+                : (options?.documentContent
+                    ? String(options.documentContent).slice(0, KNOWLEDGE_DOCUMENT_BUDGET)
+                    : undefined),
+              pastQuestionsContent: hasPqIds ? undefined
+                : (options?.pastQuestionsContent
+                    ? String(options.pastQuestionsContent).slice(0, KNOWLEDGE_PAST_QUESTIONS_BUDGET)
+                    : undefined),
+              pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
               documentId: docId,
             },
           });
@@ -170,26 +200,39 @@ export const useStore = create<AppState>()(
       },
 
       // Action to generate exam predictions
-      generatePredictions: async (
-        pastQuestionsContent: string,
-        mainTextbookContent?: string,
-        documentId?: string | null,
-      ) => {
+      generatePredictions: async (options: {
+        pastQuestionsContent?: string;
+        mainTextbookContent?: string;
+        documentId?: string | null;
+        mainTextbookId?: string | null;
+        pastQuestionIds?: string[];
+      }) => {
         if (get().isGeneratingPredictions) return;
 
         set({ isGeneratingPredictions: true, predictionData: null });
 
         try {
+          const hasTextbookId = Boolean(options?.mainTextbookId || options?.documentId);
+          const hasPqIds = Array.isArray(options?.pastQuestionIds) && options!.pastQuestionIds.length > 0;
+
           const { data, error } = await invokeEdgeFunction<GeneratePredictionsOutput>('prediction-engine', {
             method: 'POST',
             requireAuth: true,
             timeoutMs: 120_000,
             silent: false,
             body: {
-              pastQuestionsContent: String(pastQuestionsContent || '').slice(0, PREDICTION_PAST_QUESTIONS_BUDGET),
-              mainTextbookContent: String(mainTextbookContent || '').slice(0, PREDICTION_DOCUMENT_BUDGET),
-              documentId: documentId || undefined,
-              mainTextbookId: documentId || undefined,
+              // Only send raw text when no ID is available — proxy hydrates from IDs.
+              pastQuestionsContent: hasPqIds ? undefined
+                : (options?.pastQuestionsContent
+                    ? String(options.pastQuestionsContent).slice(0, PREDICTION_PAST_QUESTIONS_BUDGET)
+                    : undefined),
+              mainTextbookContent: hasTextbookId ? undefined
+                : (options?.mainTextbookContent
+                    ? String(options.mainTextbookContent).slice(0, PREDICTION_DOCUMENT_BUDGET)
+                    : undefined),
+              pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
+              documentId: options?.documentId || options?.mainTextbookId || undefined,
+              mainTextbookId: options?.mainTextbookId || undefined,
             },
           });
           if (error) throw error;

@@ -51,8 +51,8 @@ async function buildServer() {
       return;
     }
 
-    const token = authHeader?.replace(/^Bearer\s+/i, '') || apiKey;
-    const userId = await verifySupabaseToken(token, SUPABASE_URL, SUPABASE_ANON_KEY);
+    const token = authHeader?.replace(/^Bearer\s+/i, '') || String(apiKey || '');
+    const userId = await verifySupabaseToken(token, SUPABASE_URL!, SUPABASE_ANON_KEY!);
     
     if (!userId) {
       reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired token' });
@@ -104,6 +104,41 @@ async function main() {
   logger.info(`VPS AI Gateway listening on ${HOST}:${PORT}`);
   logger.info(`Supabase URL: ${SUPABASE_URL}`);
   logger.info(`Qdrant URL: ${QDRANT_URL}`);
+  logger.info(`OpenRouter key: ${process.env.OPENROUTER_API_KEY ? '***set***' : 'NOT SET'}`);
+  logger.info(`Node ${process.version}, PID ${process.pid}`);
+
+  // ── Graceful shutdown ──────────────────────────────────────────────────
+  // PM2 sends SIGINT; Docker/systemd send SIGTERM.
+  // Give in-flight requests up to 10s to drain before force-exiting.
+  const shutdown = async (signal: string) => {
+    logger.info(`Received ${signal} — shutting down gracefully…`);
+    const forceTimer = setTimeout(() => {
+      logger.error('Graceful shutdown timed out after 10s — forcing exit');
+      process.exit(1);
+    }, 10_000);
+    try {
+      await server.close();
+      clearTimeout(forceTimer);
+      logger.info('Server closed cleanly');
+      process.exit(0);
+    } catch (err) {
+      clearTimeout(forceTimer);
+      logger.error('Error during shutdown', err);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // Catch unhandled rejections in production
+  process.on('unhandledRejection', (reason) => {
+    logger.error('Unhandled rejection', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    logger.error('Uncaught exception — exiting', err);
+    process.exit(1);
+  });
 }
 
 main().catch(err => {

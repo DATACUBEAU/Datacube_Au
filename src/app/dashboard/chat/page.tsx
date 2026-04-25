@@ -63,7 +63,6 @@ import { useOnlineStatus } from '@/hooks/use-online-status';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
-import { getAuDocumentChunksText, listAuDocumentsForUser } from '@/lib/au/documents';
 import { safeFetch } from '@/lib/api/safe-fetch';
 import { validateQuery } from '@/lib/upload/file-types';
 import { cn } from '@/lib/utils';
@@ -88,7 +87,6 @@ import { AssistantResponseBody } from '@/components/chat/assistant-response-body
 import { FollowUpSuggestions } from '@/components/chat/follow-up-suggestions';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useAuChat } from '@/hooks/api/use-au-chat';
-import { getDocumentText } from '@/lib/api/documents';
 import {
   buildFollowUpSuggestions,
   formatAssistantResponseText,
@@ -392,11 +390,6 @@ export default function ChatPage() {
     route: 'chat',
   });
 
-  const getDocumentContent = useCallback(async (docId: string): Promise<string> => {
-    if (!user) return '';
-    return getDocumentText(user, docId);
-  }, [user]);
-
   const lastLoadedUserId = useRef<string | null>(null);
   const lastLoadedDocId = useRef<string | null>(null);
 
@@ -631,9 +624,10 @@ export default function ChatPage() {
     setIsPromptStudioOpen(false);
 
     try {
-      const documentContent = await getDocumentContent(selectedDocId);
       const documentTitle = selectedDocName || 'Current Document';
-      const prompts = await generatePromptStarters(documentTitle, documentContent, promptStudioInput);
+      const prompts = await generatePromptStarters(documentTitle, '', promptStudioInput, {
+        documentId: selectedDocId,
+      });
       
       if (prompts.length > 0) {
         setGeneratedPrompts(prompts);

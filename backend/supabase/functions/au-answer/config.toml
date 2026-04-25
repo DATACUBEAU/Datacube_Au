@@ -1,0 +1,2 @@
+[functions.au-answer]
+verify_jwt = false

@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react';
 import { generatePracticeExam, generatePredictions } from '@/lib/api/exams';
-import { getAuDocumentChunksText } from '@/lib/au/documents';
 import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useToast } from '@/hooks/use-toast';
@@ -9,11 +8,6 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { logOnce } from '@/lib/log/dedupe';
 import { guardRequest } from '@/lib/api/request-guard';
 import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
-
-const PRACTICE_DOCUMENT_BUDGET = 12_000;
-const PRACTICE_PAST_QUESTIONS_BUDGET = 10_000;
-const PREDICTION_TEXTBOOK_BUDGET = 12_000;
-const PREDICTION_PAST_QUESTIONS_BUDGET = 12_000;
 
 export function useAuExams(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
@@ -48,23 +42,10 @@ export function useAuExams(selectedDocId: string | null) {
     
     setIsGenerating(true);
     try {
-      // Truncate content to avoid payload size limits
-      const rawDocContent = await getAuDocumentChunksText(user, selectedDocId);
-      const documentContent = rawDocContent.substring(0, PRACTICE_DOCUMENT_BUDGET);
-      
-      let pastQuestionsContent = '';
-      if (pastQuestionIds.length > 0) {
-        const contents = await Promise.all(
-          pastQuestionIds.map(id => getAuDocumentChunksText(user, id))
-        );
-        // Join and truncate past questions
-        pastQuestionsContent = contents.join('\n\n---\n\n').substring(0, PRACTICE_PAST_QUESTIONS_BUDGET);
-      }
-
       const result = await generatePracticeExam(
-        documentContent,
-        pastQuestionsContent,
-        { documentId: selectedDocId }
+        '',
+        '',
+        { documentId: selectedDocId, pastQuestionIds }
       );
       setExamData(result);
       toast({ title: 'Practice exam generated!' });
@@ -102,16 +83,10 @@ export function useAuExams(selectedDocId: string | null) {
     
     setIsGenerating(true);
     try {
-      const documentContent = (await getAuDocumentChunksText(user, selectedDocId)).substring(0, PREDICTION_TEXTBOOK_BUDGET);
-      const contents = await Promise.all(
-        pastQuestionIds.map(id => getAuDocumentChunksText(user, id))
-      );
-      const pastQuestionsContent = contents.join('\n\n---\n\n').substring(0, PREDICTION_PAST_QUESTIONS_BUDGET);
-
       const result = await generatePredictions(
-        documentContent,
-        pastQuestionsContent,
-        { documentId: selectedDocId, mainTextbookId: selectedDocId }
+        '',
+        '',
+        { documentId: selectedDocId, mainTextbookId: selectedDocId, pastQuestionIds }
       );
       setPredictions(result);
       toast({ title: 'Predictions generated!' });

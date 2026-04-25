@@ -1,0 +1,151 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Represents a user of the DataCube AU application.",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "User's email address.",
+          "format": "email"
+        },
+        "username": {
+          "type": "string",
+          "description": "The user's unique display name."
+        },
+        "storageQuotaBytes": {
+          "type": "number",
+          "description": "The user's storage quota in bytes."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp indicating when the user account was created.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "email",
+        "username",
+        "createdAt"
+      ]
+    },
+    "Document": {
+      "title": "Document",
+      "description": "Represents a document uploaded by a user, including its status and processed content.",
+      "type": "object",
+      "properties": {
+        "fileName": {
+          "type": "string",
+          "description": "The original filename of the uploaded document."
+        },
+        "filePath": {
+          "type": "string",
+          "description": "The full path to the file in Supabase Storage."
+        },
+        "fileSizeBytes": {
+          "type": "number",
+          "description": "The size of the file in bytes."
+        },
+        "status": {
+          "type": "string",
+          "description": "Processing status of the document.",
+          "enum": [
+            "uploading",
+            "processing",
+            "completed",
+            "error"
+          ]
+        },
+        "documentType": {
+          "type": "string",
+          "description": "The type of the document.",
+          "enum": [
+            "main_textbook",
+            "past_questions",
+            "au_guide"
+          ]
+        },
+        "parentId": {
+          "type": "string",
+          "description": "For sub-documents, the ID of the parent main_textbook."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Timestamp indicating when the document was created.",
+          "format": "date-time"
+        },
+        "expiresAt": {
+          "type": "string",
+          "description": "Timestamp indicating when the document will expire.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "fileName",
+        "filePath",
+        "status",
+        "createdAt",
+        "fileSizeBytes",
+        "documentType",
+        "expiresAt"
+      ]
+    },
+    "DocumentChunk": {
+      "title": "Document Chunk",
+      "description": "A chunk of text from a processed document with its vector embedding.",
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The text content of the chunk."
+        },
+        "embedding": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "The vector embedding of the chunk's text."
+        }
+      },
+      "required": ["text", "embedding"]
+    },
+    "CachedResponse": {
+      "title": "Cached AU Response",
+      "description": "Caches responses from the AU to avoid repeated API calls for the same question.",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string" },
+        "answer": { "type": "string" },
+        "citations": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "expiresAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["question", "answer", "createdAt", "expiresAt"]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "google.com"
+    ]
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Stores user profile information."
+    },
+    "/users/{userId}/documents/{documentId}": {
+      "schema": { "$ref": "#/entities/Document" },
+      "description": "Stores documents uploaded by the user."
+    },
+    "/users/{userId}/documents/{documentId}/chunks/{chunkId}": {
+        "schema": { "$ref": "#/entities/DocumentChunk" },
+        "description": "Stores text chunks and their embeddings for a document."
+    },
+    "/users/{userId}/cache/{cacheId}": {
+        "schema": { "$ref": "#/entities/CachedResponse" },
+        "description": "Stores user-specific cached AU responses."
+    }
+  }
+}

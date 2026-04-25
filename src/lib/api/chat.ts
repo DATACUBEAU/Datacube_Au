@@ -131,7 +131,6 @@ type ChatResponse = RagBasedQuestionAnsweringOutput & {
 const DEFAULT_MODEL_IDS: string[] = []; 
 const AVAILABLE_MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
 const AVAILABLE_MODELS_ERROR_TTL_MS = 60 * 1000;
-const PROMPT_STARTER_DOCUMENT_BUDGET = 6000;
 let availableModelsCache: { models: string[]; expiresAt: number } | null = null;
 let availableModelsInFlight: Promise<string[]> | null = null;
 
@@ -655,12 +654,18 @@ export async function sendChatMessageStream(
 
 /**
  * Generates prompt starters for a given document.
+ *
+ * Payload optimization: when documentId is supplied the proxy hydrates content
+ * server-side, so we skip sending the raw text to reduce egress.
  */
 export async function generatePromptStarters(
   documentTitle: string,
   documentContent: string,
-  userIdea?: string
+  userIdea?: string,
+  opts?: { documentId?: string | null }
 ): Promise<string[]> {
+  const hasDocId = Boolean(opts?.documentId);
+
   const { data, error } = await invokeEdgeFunction<any>('generate-prompt-starters', {
     method: 'POST',
     requireAuth: true,
@@ -668,7 +673,9 @@ export async function generatePromptStarters(
     silent: true,
     body: {
       documentTitle,
-      documentContent: documentContent.substring(0, PROMPT_STARTER_DOCUMENT_BUDGET),
+      // Only send raw text when no ID is available — proxy hydrates from ID.
+      documentContent: hasDocId ? undefined : (documentContent || undefined),
+      documentId: opts?.documentId || undefined,
       userIdea,
     },
   });

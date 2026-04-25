@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { checkRateLimit, extractClientIp } from '@/lib/server/proxy-rate-limiter';
 import { requireUserFromRequest, type RequestAuthDiagnostics } from '@/app/api/proxy/_supabase-auth';
 import {
   buildRoutingCandidates,
@@ -124,6 +126,17 @@ function functionsBaseUrl(): string | null {
   return `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
 }
 
+/**
+ * Returns the Supabase Edge Functions base URL, regardless of VPS mode.
+ * Used only for non-AI operations (e.g. document-upload) that still need
+ * Supabase Edge Functions even when the VPS gateway handles AI traffic.
+ */
+function supabaseFunctionsBaseUrl(): string | null {
+  const supabaseUrl = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
+  if (!supabaseUrl) return null;
+  return `${supabaseUrl.replace(/\/$/, '')}/functions/v1`;
+}
+
 function isVpsGatewayMode(): boolean {
   const vpsGatewayUrl = firstEnv('VPS_AI_GATEWAY_URL', 'VPS_GATEWAY_URL');
   return Boolean(vpsGatewayUrl && vpsGatewayUrl.trim().length > 0);
@@ -140,7 +153,9 @@ function getVpsEndpoint(functionName: string): string | null {
     'global-chat': '/chat/global-chat',
     'chat': '/chat/legacy',
     'generate-knowledge': '/generate/knowledge',
+    'prediction-engine': '/generate/exam-predictions',
     'generate-exam-predictions': '/generate/exam-predictions',
+    'exam-generator': '/generate/practice-exam',
     'generate-practice-exam': '/generate/practice-exam',
     'generate-prompt-starters': '/generate/prompt-starters',
   };
@@ -158,7 +173,9 @@ function isVpsEligibleFunction(functionName: string): boolean {
     'global-chat', 
     'chat',
     'generate-knowledge',
+    'prediction-engine',
     'generate-exam-predictions',
+    'exam-generator',
     'generate-practice-exam',
     'generate-prompt-starters',
   ]);
@@ -613,6 +630,235 @@ function buildFeatureSourceTexts(functionName: string, body: any): Array<string 
   return [];
 }
 
+const KNOWLEDGE_DOCUMENT_BUDGET = 12_000;
+const KNOWLEDGE_PAST_QUESTIONS_BUDGET = 10_000;
+const PRACTICE_DOCUMENT_BUDGET = 12_000;
+const PRACTICE_PAST_QUESTIONS_BUDGET = 10_000;
+const PREDICTION_DOCUMENT_BUDGET = 12_000;
+const PREDICTION_PAST_QUESTIONS_BUDGET = 12_000;
+const PROMPT_STARTER_DOCUMENT_BUDGET = 6_000;
+const FEATURE_TEXT_SEPARATOR = '\n\n---\n\n';
+
+function hasNonEmptyText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function trimTextToBudget(value: unknown, budget: number): string {
+  return hasNonEmptyText(value) ? value.slice(0, budget) : '';
+}
+
+function normalizeDocumentId(value: unknown): string | null {
+  const normalized = String(value || '').trim();
+  return normalized || null;
+}
+
+function normalizeIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return Array.from(
+    new Set(
+      value
+        .map((entry) => String(entry || '').trim())
+        .filter(Boolean),
+    ),
+  );
+}
+
+function isOwnedByUser(row: any, userId: string): boolean {
+  const ownerId = String(row?.owner_id || row?.user_id || '').trim();
+  return Boolean(ownerId && ownerId === userId);
+}
+
+async function loadOwnedDocumentText(
+  supabase: SupabaseClient,
+  userId: string,
+  documentId: string | null,
+): Promise<string> {
+  if (!documentId) return '';
+
+  try {
+    const documentRes = await supabase
+      .from('au_documents')
+      .select('id,owner_id,user_id')
+      .eq('id', documentId)
+      .maybeSingle();
+    if (documentRes.error || !documentRes.data || !isOwnedByUser(documentRes.data, userId)) {
+      return '';
+    }
+
+    const chunkRes = await supabase
+      .from('au_document_chunks')
+      .select('text,chunk_index')
+      .eq('document_id', documentId)
+      .order('chunk_index', { ascending: true });
+    if (chunkRes.error) {
+      return '';
+    }
+
+    return (chunkRes.data || [])
+      .map((entry: any) => (typeof entry?.text === 'string' ? entry.text : ''))
+      .filter(Boolean)
+      .join('\n\n');
+  } catch {
+    return '';
+  }
+}
+
+async function loadOwnedPastQuestionIdsForDocument(
+  supabase: SupabaseClient,
+  userId: string,
+  documentId: string | null,
+): Promise<string[]> {
+  if (!documentId) return [];
+
+  try {
+    const response = await supabase
+      .from('au_documents')
+      .select('id,owner_id,user_id,document_type,status,parent_id')
+      .eq('parent_id', documentId)
+      .in('document_type', ['past_questions', 'exam_questions'])
+      .eq('status', 'completed');
+    if (response.error) {
+      return [];
+    }
+
+    return Array.from(
+      new Set(
+        (response.data || [])
+          .filter((row: any) => isOwnedByUser(row, userId))
+          .map((row: any) => String(row?.id || '').trim())
+          .filter(Boolean),
+      ),
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function loadJoinedOwnedDocumentText(
+  supabase: SupabaseClient,
+  userId: string,
+  documentIds: string[],
+): Promise<string> {
+  const texts: string[] = [];
+  for (const documentId of documentIds) {
+    const text = await loadOwnedDocumentText(supabase, userId, documentId);
+    if (text) {
+      texts.push(text);
+    }
+  }
+  return texts.join(FEATURE_TEXT_SEPARATOR);
+}
+
+async function hydrateFeaturePayload(
+  functionName: string,
+  body: any,
+  supabase: SupabaseClient,
+  userId: string,
+): Promise<any> {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return body;
+  }
+
+  const normalized = String(functionName || '').trim().toLowerCase();
+  const nextBody = { ...body };
+
+  if (normalized === 'generate-knowledge') {
+    const documentId = normalizeDocumentId(nextBody.documentId || nextBody.document_id);
+    nextBody.documentContent = trimTextToBudget(nextBody.documentContent, KNOWLEDGE_DOCUMENT_BUDGET);
+    nextBody.pastQuestionsContent = trimTextToBudget(nextBody.pastQuestionsContent, KNOWLEDGE_PAST_QUESTIONS_BUDGET);
+
+    if (!nextBody.documentContent && documentId) {
+      nextBody.documentContent = trimTextToBudget(
+        await loadOwnedDocumentText(supabase, userId, documentId),
+        KNOWLEDGE_DOCUMENT_BUDGET,
+      );
+    }
+
+    let pastQuestionIds = normalizeIdList(nextBody.pastQuestionIds || nextBody.attachedPastQuestionIds);
+    if (!pastQuestionIds.length && documentId) {
+      pastQuestionIds = await loadOwnedPastQuestionIdsForDocument(supabase, userId, documentId);
+    }
+
+    if (!nextBody.pastQuestionsContent && pastQuestionIds.length > 0) {
+      nextBody.pastQuestionsContent = trimTextToBudget(
+        await loadJoinedOwnedDocumentText(supabase, userId, pastQuestionIds),
+        KNOWLEDGE_PAST_QUESTIONS_BUDGET,
+      );
+    }
+
+    return nextBody;
+  }
+
+  if (normalized === 'exam-generator' || normalized === 'generate-practice-exam') {
+    const documentId = normalizeDocumentId(nextBody.documentId || nextBody.document_id);
+    nextBody.documentContent = trimTextToBudget(nextBody.documentContent, PRACTICE_DOCUMENT_BUDGET);
+    nextBody.pastQuestionsContent = trimTextToBudget(nextBody.pastQuestionsContent, PRACTICE_PAST_QUESTIONS_BUDGET);
+
+    if (!nextBody.documentContent && documentId) {
+      nextBody.documentContent = trimTextToBudget(
+        await loadOwnedDocumentText(supabase, userId, documentId),
+        PRACTICE_DOCUMENT_BUDGET,
+      );
+    }
+
+    const pastQuestionIds = normalizeIdList(nextBody.pastQuestionIds);
+    if (!nextBody.pastQuestionsContent && pastQuestionIds.length > 0) {
+      nextBody.pastQuestionsContent = trimTextToBudget(
+        await loadJoinedOwnedDocumentText(supabase, userId, pastQuestionIds),
+        PRACTICE_PAST_QUESTIONS_BUDGET,
+      );
+    }
+
+    return nextBody;
+  }
+
+  if (normalized === 'prediction-engine' || normalized === 'generate-exam-predictions') {
+    const mainTextbookId = normalizeDocumentId(
+      nextBody.mainTextbookId ||
+      nextBody.main_textbook_id ||
+      nextBody.textbookId,
+    );
+    nextBody.mainTextbookContent = trimTextToBudget(nextBody.mainTextbookContent, PREDICTION_DOCUMENT_BUDGET);
+    nextBody.pastQuestionsContent = trimTextToBudget(nextBody.pastQuestionsContent, PREDICTION_PAST_QUESTIONS_BUDGET);
+
+    if (!nextBody.mainTextbookContent && mainTextbookId) {
+      nextBody.mainTextbookContent = trimTextToBudget(
+        await loadOwnedDocumentText(supabase, userId, mainTextbookId),
+        PREDICTION_DOCUMENT_BUDGET,
+      );
+    }
+
+    const pastQuestionIds = normalizeIdList(
+      nextBody.pastQuestionIds ||
+      (nextBody.pastQuestionId ? [nextBody.pastQuestionId] : []),
+    );
+    if (!nextBody.pastQuestionsContent && pastQuestionIds.length > 0) {
+      nextBody.pastQuestionsContent = trimTextToBudget(
+        await loadJoinedOwnedDocumentText(supabase, userId, pastQuestionIds),
+        PREDICTION_PAST_QUESTIONS_BUDGET,
+      );
+    }
+
+    return nextBody;
+  }
+
+  if (normalized === 'generate-prompt-starters') {
+    const documentId = normalizeDocumentId(nextBody.documentId || nextBody.document_id);
+    nextBody.documentContent = trimTextToBudget(nextBody.documentContent, PROMPT_STARTER_DOCUMENT_BUDGET);
+
+    if (!nextBody.documentContent && documentId) {
+      nextBody.documentContent = trimTextToBudget(
+        await loadOwnedDocumentText(supabase, userId, documentId),
+        PROMPT_STARTER_DOCUMENT_BUDGET,
+      );
+    }
+
+    return nextBody;
+  }
+
+  return nextBody;
+}
+
 async function parseJsonClone(response: Response): Promise<any | null> {
   const raw = await response.clone().text().catch(() => '');
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
@@ -788,7 +1034,8 @@ async function tryLegacyChatFallback(input: {
   headers.set('x-correlation-id', input.correlationId);
   headers.set('x-au-fallback', 'legacy-chat');
 
-  const fallbackUrl = `${input.functionsUrl.replace(/\/$/, '')}/chat`;
+  const fallbackPath = isVpsGatewayMode() ? '/chat/legacy' : '/chat';
+  const fallbackUrl = `${input.functionsUrl.replace(/\/$/, '')}${fallbackPath}`;
 
   try {
     const response = await forwardWithTimeout(
@@ -869,6 +1116,20 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
   let fallbackChatAction = '';
   let chatPlanForLog = 'unknown';
   const tryLegacyChatFallbackIfEligible = async (source: 'unexpected_error' | 'upstream_error_response') => {
+    // ── VPS routing enforcement ──────────────────────────────────────────
+    // When the VPS gateway is enabled, ALL AI traffic must flow through it.
+    // Falling back to Supabase Edge Functions would bypass VPS enforcement
+    // and leak egress.  Disable the legacy fallback entirely in VPS mode.
+    if (isVpsGatewayMode()) {
+      console.info('[proxy] legacy chat fallback skipped — VPS gateway mode active', {
+        requestId,
+        correlationId,
+        functionName,
+        source,
+      });
+      return null;
+    }
+
     const normalizedFunction = String(functionName || '').trim().toLowerCase();
     const shouldFallbackToLegacyChat =
       (normalizedFunction === 'au-chat' || normalizedFunction === 'chat') &&
@@ -1038,14 +1299,70 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     fallbackAccessToken = auth.accessToken;
     requestAuthDiagnostics = auth.diagnostics;
     requestAuthSource = auth.source;
-    console.info('[proxy] authenticated request', {
+
+    // ── Rate limiting (anti-abuse) ────────────────────────────────────────
+    const clientIp = extractClientIp(req);
+    const rateDecision = checkRateLimit(auth.userId, clientIp);
+
+    // ── Request fingerprint logging ──────────────────────────────────────
+    console.info('[proxy] request fingerprint', {
       requestId,
       correlationId,
-      functionName,
       userId: auth.userId,
+      ip: clientIp,
+      functionName,
+      method: requestMethod,
+      timestamp: new Date().toISOString(),
+      decision: rateDecision.allowed ? 'allowed' : 'blocked',
+      rateBlockedBy: rateDecision.blockedBy,
+      rateCount: rateDecision.count,
+      rateLimit: rateDecision.limit,
       authSource: auth.source,
-      requestAuth: serializeRequestAuthDiagnostics(auth.diagnostics, auth.source),
     });
+
+    if (!rateDecision.allowed) {
+      const retryAfterSec = Math.max(1, Math.ceil((rateDecision.windowResetMs - Date.now()) / 1000));
+      return NextResponse.json(
+        usesStructuredChatContract
+          ? buildApiErrorBody({
+              status: 429,
+              code: 'RATE_LIMITED',
+              message: 'Too many requests. Please slow down.',
+              details: {
+                blockedBy: rateDecision.blockedBy,
+                count: rateDecision.count,
+                limit: rateDecision.limit,
+                retryAfterSeconds: retryAfterSec,
+              },
+              retryable: true,
+              requestId,
+              correlationId,
+              retryAfter: String(retryAfterSec),
+              isThrottled: true,
+            })
+          : {
+              message: 'rate_limited',
+              error: 'rate_limited',
+              status: 429,
+              requestId,
+              correlation_id: correlationId,
+              details: {
+                blockedBy: rateDecision.blockedBy,
+                count: rateDecision.count,
+                limit: rateDecision.limit,
+                retryAfterSeconds: retryAfterSec,
+              },
+            },
+        {
+          status: 429,
+          headers: {
+            ...corsHeaders(requestId),
+            'Retry-After': String(retryAfterSec),
+            'Cache-Control': 'no-store',
+          },
+        },
+      );
+    }
 
     const isVpsEligible = isVpsGatewayMode() && isVpsEligibleFunction(functionName);
     const incomingUrl = new URL(req.url);
@@ -1257,6 +1574,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       latestUserMessage(canonicalChatPayload) ||
       String(parsedBody?.question || parsedBody?.user_input || '').trim();
     headers.set('x-correlation-id', correlationId);
+
+    if (req.method === 'POST' && isJsonContentType(contentType) && !rawBodyParseFailed) {
+      parsedBody = await hydrateFeaturePayload(normalizedFunction, parsedBody, adminSupabase, auth.userId);
+    }
 
     if (canonicalChatPayload) {
       console.info('[proxy] chat request summary', {
@@ -1802,6 +2123,10 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
     let tierContext: any = null;
     let guardedBody = parsedBody;
     let appliedGuards: string[] = [];
+    // ── Tier enforcement (fail-closed) ─────────────────────────────────
+    // If enforcement itself throws an unexpected error, we deny the request
+    // rather than letting it through without limit checks.
+    let enforcementPassed = false;
     try {
       const guard = await enforceProxyTierAccess({
         supabase,
@@ -1814,6 +2139,7 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
       tierContext = guard.tierContext;
       guardedBody = guard.body;
       appliedGuards = guard.appliedGuards;
+      enforcementPassed = true;
     } catch (error: any) {
       if (error instanceof TierAccessError) {
         const payload = error.payload || { error: 'tier_access_denied', message: error.message };
@@ -1830,7 +2156,31 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
           { status: error.status, headers: corsHeaders(requestId) },
         );
       }
-      throw error;
+      // Fail closed: unexpected enforcement error → deny request, default to FREE
+      console.error('[proxy] enforcement failed (fail-closed)', {
+        requestId,
+        correlationId,
+        userId: auth.userId,
+        functionName,
+        error: String(error?.message || error),
+      });
+      return NextResponse.json(
+        usesStructuredChatContract
+          ? chatErrorPayload({
+              status: 503,
+              code: 'ENFORCEMENT_UNAVAILABLE',
+              message: 'Limit enforcement temporarily unavailable. Please retry.',
+              retryable: true,
+            })
+          : {
+              message: 'enforcement_unavailable',
+              error: 'enforcement_unavailable',
+              status: 503,
+              requestId,
+              correlation_id: correlationId,
+            },
+        { status: 503, headers: corsHeaders(requestId) },
+      );
     }
 
     console.info('[tier-access]', JSON.stringify({
@@ -1883,6 +2233,36 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         }
         throw error;
       }
+    }
+
+    // ── Enforcement guardrail ─────────────────────────────────────────
+    // No request may reach VPS without passing through the enforcement
+    // gate.  This assertion is a safety net against future code changes
+    // that might accidentally skip the enforcement block.
+    if (!enforcementPassed && needsTierGuards) {
+      console.error('[proxy] GUARDRAIL: upstream request attempted without enforcement', {
+        requestId,
+        correlationId,
+        userId: auth.userId,
+        functionName,
+      });
+      return NextResponse.json(
+        usesStructuredChatContract
+          ? chatErrorPayload({
+              status: 500,
+              code: 'ENFORCEMENT_BYPASS_BLOCKED',
+              message: 'Internal enforcement error.',
+              retryable: false,
+            })
+          : {
+              message: 'enforcement_bypass_blocked',
+              error: 'enforcement_bypass_blocked',
+              status: 500,
+              requestId,
+              correlation_id: correlationId,
+            },
+        { status: 500, headers: corsHeaders(requestId) },
+      );
     }
 
     const forwardOnce = async (attemptHeaders: Headers, attemptBody?: BodyInit) => {
@@ -2074,12 +2454,8 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         throw error;
       }
 
-      let lastFailure: { response: Response; candidate: RoutingCandidate } | null = null;
-      const routedCandidates =
-        requestType === 'chat' || requestType === 'global_chat'
-          ? routed.candidates.slice(0, 1)
-          : routed.candidates;
-      const maxLocalAttempts = requestType === 'chat' || requestType === 'global_chat' ? 1 : 2;
+
+      const routedCandidates = routed.candidates.slice(0, 1);
 
       for (const candidate of routedCandidates) {
         try {
@@ -2125,146 +2501,127 @@ async function proxyRequest(req: NextRequest, { params }: { params: Promise<{ fu
         });
         await writeRoutingAudit(auth.userId, plan, requestType!, candidate);
 
-        for (let localAttempt = 0; localAttempt < maxLocalAttempts; localAttempt += 1) {
-          console.info('[proxy] upstream request start', {
-            requestId,
-            correlationId,
-            functionName,
-            userId: auth.userId,
-            plan,
-            model: candidate.model,
-            service: candidate.service,
-            action: fallbackChatAction || null,
-            stream: payload.stream === true,
-          });
-          const response = await forwardOnce(attemptHeaders, attemptBody);
-          const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
-          const isEventStream = contentTypeResponse.includes('text/event-stream');
-          if (response.ok || (isEventStream && response.status < 400)) {
-            try {
-              await noteRoutingSuccess(supabase, candidate);
-            } catch {
-            }
-            const parsedSuccessPayload = !isEventStream ? await parseJsonClone(response) : null;
-            if (parsedSuccessPayload && response.ok) {
-              if (featureOutputContext?.feature) {
-                await trackUsageEvent({
-                  supabase: adminSupabase,
-                  userId: auth.userId,
-                  feature: featureOutputContext.feature,
-                  source: 'next_proxy_feature_success',
-                  eventKey: buildUsageEventKey({
-                    feature: featureOutputContext.feature,
-                    requestId,
-                    correlationId,
-                    fallbackSeed: featureOutputContext.docVersionId || featureOutputContext.documentId,
-                  }),
-                  increments: buildFeatureUsageIncrements(featureOutputContext.feature),
-                  requestId,
-                  correlationId,
-                  context: {
-                    function_name: normalizedFunction,
-                    document_id: featureOutputContext.documentId,
-                    doc_version_id: featureOutputContext.docVersionId,
-                  },
-                });
-              }
-
-              if (canonicalChatPayload && chatIdempotencyStorageKey) {
-                await writeIdempotencyRecord({
-                  supabase: adminSupabase,
-                  key: chatIdempotencyStorageKey,
-                  userId: auth.userId,
-                  feature: chatRuntimeFeature,
-                  requestHash: chatRequestHash,
-                  response: parsedSuccessPayload,
-                  statusCode: response.status,
-                  correlationId,
-                });
-                if (chatAnswerCacheKey && chatNormalizedQuestion) {
-                  await writeAnswerCache({
-                    supabase: adminSupabase,
-                    cacheKey: chatAnswerCacheKey,
-                    userId: auth.userId,
-                    feature: chatRuntimeFeature,
-                    normalizedQuestion: chatNormalizedQuestion,
-                    activeDocScope: chatActiveDocScope,
-                    settingsHash: chatSettingsHash,
-                    response: parsedSuccessPayload,
-                    model: candidate.model,
-                    ttlDays: 7,
-                  });
-                }
-              }
-
-              if (featureOutputContext?.docVersionId) {
-                await markFeatureOutputReady({
-                  supabase: adminSupabase,
-                  userId: auth.userId,
-                  docVersionId: featureOutputContext.docVersionId,
-                  feature: featureOutputContext.feature,
-                  output: parsedSuccessPayload,
-                  model: candidate.model,
-                });
-                featureOutputReservation = null;
-              }
-            }
-            const relay = await relaySuccessfulResponse(response, req, requestId, candidate, usesStructuredChatContract);
-            if (proxyDebugEnabled) {
-              console.info('[proxy] upstream success', {
-                requestId,
-                correlationId,
-                method: requestMethod,
-                path: requestPath,
-                upstreamUrl: targetUrl.toString(),
-                upstreamStatus: response.status,
-                upstreamHeaders: headersToObject(response.headers),
-                forwardedHeaders: headersToObject(relay.forwardedHeaders),
-                bodyMode: relay.bodyMode,
-                elapsedMs: Date.now() - startedAt,
-              });
-            } else {
-              console.info('[proxy] upstream success', {
-                requestId,
-                correlationId,
-                method: requestMethod,
-                path: requestPath,
-                upstreamUrl: targetUrl.toString(),
-                upstreamStatus: response.status,
-                forwardedHeaderKeys: Array.from(relay.forwardedHeaders.keys()),
-                bodyMode: relay.bodyMode,
-                elapsedMs: Date.now() - startedAt,
-              });
-            }
-            return relay.response;
-          }
-
-          const status = Number(response.status || 500);
-          const retryAfter = response.headers.get('retry-after');
+        console.info('[proxy] upstream request start', {
+          requestId,
+          correlationId,
+          functionName,
+          userId: auth.userId,
+          plan,
+          model: candidate.model,
+          service: candidate.service,
+          action: fallbackChatAction || null,
+          stream: payload.stream === true,
+        });
+        const response = await forwardOnce(attemptHeaders, attemptBody);
+        const contentTypeResponse = String(response.headers.get('content-type') || '').toLowerCase();
+        const isEventStream = contentTypeResponse.includes('text/event-stream');
+        if (response.ok || (isEventStream && response.status < 400)) {
           try {
-            await noteRoutingFailure(supabase, candidate, status, retryAfter);
+            await noteRoutingSuccess(supabase, candidate);
           } catch {
           }
+          const parsedSuccessPayload = !isEventStream ? await parseJsonClone(response) : null;
+          if (parsedSuccessPayload && response.ok) {
+            if (featureOutputContext?.feature) {
+              await trackUsageEvent({
+                supabase: adminSupabase,
+                userId: auth.userId,
+                feature: featureOutputContext.feature,
+                source: 'next_proxy_feature_success',
+                eventKey: buildUsageEventKey({
+                  feature: featureOutputContext.feature,
+                  requestId,
+                  correlationId,
+                  fallbackSeed: featureOutputContext.docVersionId || featureOutputContext.documentId,
+                }),
+                increments: buildFeatureUsageIncrements(featureOutputContext.feature),
+                requestId,
+                correlationId,
+                context: {
+                  function_name: normalizedFunction,
+                  document_id: featureOutputContext.documentId,
+                  doc_version_id: featureOutputContext.docVersionId,
+                },
+              });
+            }
 
-          const retryable = maxLocalAttempts > 1 && (status === 429 || status >= 500 || status === 408);
-          if (retryable && localAttempt === 0) {
-            const waitMs = status === 429 ? 600 : 350;
-            await wait(waitMs);
-            lastFailure = { response, candidate };
-            continue;
+            if (canonicalChatPayload && chatIdempotencyStorageKey) {
+              await writeIdempotencyRecord({
+                supabase: adminSupabase,
+                key: chatIdempotencyStorageKey,
+                userId: auth.userId,
+                feature: chatRuntimeFeature,
+                requestHash: chatRequestHash,
+                response: parsedSuccessPayload,
+                statusCode: response.status,
+                correlationId,
+              });
+              if (chatAnswerCacheKey && chatNormalizedQuestion) {
+                await writeAnswerCache({
+                  supabase: adminSupabase,
+                  cacheKey: chatAnswerCacheKey,
+                  userId: auth.userId,
+                  feature: chatRuntimeFeature,
+                  normalizedQuestion: chatNormalizedQuestion,
+                  activeDocScope: chatActiveDocScope,
+                  settingsHash: chatSettingsHash,
+                  response: parsedSuccessPayload,
+                  model: candidate.model,
+                  ttlDays: 7,
+                });
+              }
+            }
+
+            if (featureOutputContext?.docVersionId) {
+              await markFeatureOutputReady({
+                supabase: adminSupabase,
+                userId: auth.userId,
+                docVersionId: featureOutputContext.docVersionId,
+                feature: featureOutputContext.feature,
+                output: parsedSuccessPayload,
+                model: candidate.model,
+              });
+              featureOutputReservation = null;
+            }
           }
-
-          if (retryable) {
-            lastFailure = { response, candidate };
-            break;
+          const relay = await relaySuccessfulResponse(response, req, requestId, candidate, usesStructuredChatContract);
+          if (proxyDebugEnabled) {
+            console.info('[proxy] upstream success', {
+              requestId,
+              correlationId,
+              method: requestMethod,
+              path: requestPath,
+              upstreamUrl: targetUrl.toString(),
+              upstreamStatus: response.status,
+              upstreamHeaders: headersToObject(response.headers),
+              forwardedHeaders: headersToObject(relay.forwardedHeaders),
+              bodyMode: relay.bodyMode,
+              elapsedMs: Date.now() - startedAt,
+            });
+          } else {
+            console.info('[proxy] upstream success', {
+              requestId,
+              correlationId,
+              method: requestMethod,
+              path: requestPath,
+              upstreamUrl: targetUrl.toString(),
+              upstreamStatus: response.status,
+              forwardedHeaderKeys: Array.from(relay.forwardedHeaders.keys()),
+              bodyMode: relay.bodyMode,
+              elapsedMs: Date.now() - startedAt,
+            });
           }
-
-          return failFromResponse(response, candidate);
+          return relay.response;
         }
-      }
 
-      if (lastFailure) {
-        return failFromResponse(lastFailure.response, lastFailure.candidate);
+        const status = Number(response.status || 500);
+        const retryAfter = response.headers.get('retry-after');
+        try {
+          await noteRoutingFailure(supabase, candidate, status, retryAfter);
+        } catch {
+        }
+
+        return failFromResponse(response, candidate);
       }
 
       return NextResponse.json(

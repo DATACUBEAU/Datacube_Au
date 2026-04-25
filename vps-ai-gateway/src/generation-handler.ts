@@ -223,7 +223,7 @@ export class GenerationHandler {
       throw new Error(`OpenRouter error: ${response.status} - ${error}`);
     }
 
-    const result = await response.json();
+    const result: any = await response.json();
     return result.choices?.[0]?.message?.content || '';
   }
 
@@ -254,7 +254,7 @@ export class GenerationHandler {
       throw new Error(`Anthropic error: ${response.status} - ${error}`);
     }
 
-    const result = await response.json();
+    const result: any = await response.json();
     return result.content?.[0]?.text || '';
   }
 }
