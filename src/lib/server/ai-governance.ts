@@ -633,6 +633,10 @@ export async function recordSyntheticUsage(input: {
   metadata?: Record<string, unknown>;
   success?: boolean;
 }): Promise<void> {
+  // Use requestId as the idempotency key — each proxy request has a unique one,
+  // and retries of the same request carry the same requestId.
+  const idempotencyKey = input.requestId || crypto.randomUUID();
+
   const payload = {
     user_id: input.userId,
     feature: input.feature,
@@ -647,6 +651,7 @@ export async function recordSyntheticUsage(input: {
     latency_ms: 0,
     request_id: input.requestId,
     correlation_id: input.correlationId,
+    idempotency_key: idempotencyKey,
     metadata: {
       cache_hit: input.cacheHit,
       saved_tokens: Number(input.savedTokens || 0) || 0,
@@ -655,7 +660,10 @@ export async function recordSyntheticUsage(input: {
     },
   };
 
-  const { error } = await input.supabase.from('au_model_usage').insert(payload);
+  // Upsert on idempotency_key — duplicate retries produce the same row.
+  const { error } = await input.supabase
+    .from('au_model_usage')
+    .upsert(payload, { onConflict: 'idempotency_key' });
   if (error && !isSchemaDriftError(error)) {
     throw error;
   }

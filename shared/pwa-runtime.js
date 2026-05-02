@@ -1,13 +1,15 @@
-export const PWA_RUNTIME_CACHE_VERSION = '20260327-2';
+export const PWA_RUNTIME_CACHE_VERSION = '20260430-1';
 
 export const PWA_RUNTIME_CACHE_BASE_NAMES = Object.freeze([
   'start-url',
+  'api-get-swr',
   'api-get-no-cache',
   'post-no-cache',
   'put-no-cache',
   'patch-no-cache',
   'delete-no-cache',
   'static-assets',
+  'supabase-swr',
   'supabase-no-cache',
   'health-no-cache',
   'manifest-cache',

@@ -22,6 +22,8 @@ interface SafeFetchOptions extends RequestInit {
   authIntent?: SessionExpiryTriggerIntent; // Distinguishes interactive calls from passive/bootstrap traffic
   retries?: number | false; // Disable blind retries for interactive or non-idempotent traffic by default.
   retryDelayMs?: number;
+  offlineQueueable?: boolean; // If true, queue write operations when offline instead of throwing
+  offlineQueueLabel?: string; // Human-readable label for the queued operation in the sync UI
 }
 
 function createSafeFetchError(
@@ -64,6 +66,8 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     authIntent = 'background',
     retries,
     retryDelayMs = 750,
+    offlineQueueable = false,
+    offlineQueueLabel,
     ...fetchOptions
   } = options;
   const method = String(fetchOptions.method || options.method || 'GET').trim().toUpperCase();
@@ -85,6 +89,59 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
   }
 
   if (!allowOffline && isOfflineNow()) {
+    // If the request is queueable and is a write method, enqueue it
+    if (
+      offlineQueueable &&
+      ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+    ) {
+      try {
+        const { enqueueWrite } = await import('@/lib/offline/write-queue');
+        const headersObj: Record<string, string> = {};
+        if (fetchOptions.headers) {
+          const h = new Headers(fetchOptions.headers);
+          h.forEach((value, key) => {
+            headersObj[key] = value;
+          });
+        }
+        const entry = await enqueueWrite({
+          url,
+          method: method as 'POST' | 'PUT' | 'PATCH' | 'DELETE',
+          body: fetchOptions.body ? JSON.parse(String(fetchOptions.body)) : undefined,
+          headers: headersObj,
+          label: offlineQueueLabel || `${method} ${url.split('/').slice(-2).join('/')}`,
+        });
+
+        if (entry) {
+          if (!options.silent) {
+            toast({
+              title: 'Saved for sync',
+              description: 'Your action will be sent when you\'re back online.',
+              duration: 3000,
+            });
+          }
+          // Return a synthetic accepted response
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              queued: true,
+              queueId: entry.id,
+              message: 'Operation queued for offline sync.',
+            }),
+            {
+              status: 202,
+              headers: {
+                'Content-Type': 'application/json; charset=utf-8',
+                'x-dcau-queued': 'true',
+                'x-dcau-queue-id': entry.id,
+              },
+            },
+          );
+        }
+      } catch (queueError) {
+        console.warn('[safeFetch] Failed to enqueue offline write:', queueError);
+      }
+    }
+
     if (!options.silent) {
         toast({
             variant: 'destructive',

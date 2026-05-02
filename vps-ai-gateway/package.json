@@ -9,19 +9,19 @@
     "dev": "tsx watch src/index.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.3",
-    "fastify": "^4.26.0",
     "@fastify/cors": "^9.0.1",
-    "jsonwebtoken": "^9.0.2",
-    "jose": "^5.2.0",
+    "@supabase/supabase-js": "^2.39.3",
     "dotenv": "^16.4.1",
+    "fastify": "^4.26.0",
+    "jose": "^5.2.0",
+    "jsonwebtoken": "^9.0.2",
     "openai": "^4.28.0",
     "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.5",
-    "@types/node": "^20.11.0",
-    "typescript": "^5.3.3",
-    "tsx": "^4.7.0"
+    "@types/node": "^20.19.39",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
   }
 }

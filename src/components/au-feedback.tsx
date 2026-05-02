@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { ThumbsUp, ThumbsDown, MessageSquare, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,10 @@ export function FeedbackSection({ sectionName }: FeedbackSectionProps) {
   const [isOther, setIsOther] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // Stable idempotency key per submission attempt — persists across retries,
+  // reset only on success so the user can submit again later.
+  const idempotencyKeyRef = useRef<string | null>(null);
+
   const reasons = feedbackType === 'positive' 
     ? ['Accurate analysis', 'Clear explanation', 'Helpful context', 'Great depth']
     : ['Inaccurate details', 'Too brief', 'Confusing explanation', 'Missing key info'];
@@ -34,19 +38,29 @@ export function FeedbackSection({ sectionName }: FeedbackSectionProps) {
     const finalReason = selectedReason || reason;
     setIsSubmitting(true);
 
+    // Generate key once per submission attempt
+    if (!idempotencyKeyRef.current) {
+      idempotencyKeyRef.current = crypto.randomUUID();
+    }
+
     try {
-      const { error } = await supabase.from('au_feedback').insert([{
+      // Upsert on idempotency_key — duplicate submissions produce the same row.
+      const { error } = await supabase.from('au_feedback').upsert([{
         user_id: user?.id || null,
         section: sectionName,
         rating: feedbackType,
         comment: finalReason,
+        idempotency_key: idempotencyKeyRef.current,
         metadata: {
           url: window.location.href,
           timestamp: new Date().toISOString()
         }
-      }]);
+      }], { onConflict: 'idempotency_key' });
 
       if (error) throw error;
+
+      // Clear key on success so user can submit new feedback later
+      idempotencyKeyRef.current = null;
 
       toast({
         title: "Feedback received",

@@ -13,6 +13,18 @@ const AttemptSchema = z.object({
   metadata: z.record(z.any()).optional(),
 });
 
+/**
+ * Extract and validate idempotency key from request.
+ * Sources (in priority order): x-idempotency-key header, body.idempotencyKey.
+ * Returns null only if neither source provides a key.
+ */
+function extractIdempotencyKey(req: NextRequest, body: any): string | null {
+  const fromHeader = req.headers.get('x-idempotency-key')?.trim();
+  if (fromHeader) return fromHeader;
+  const fromBody = typeof body?.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
+  return fromBody || null;
+}
+
 export async function POST(req: NextRequest) {
   const requestId = crypto.randomUUID();
   const auth = await requireUserFromRequest(req);
@@ -42,6 +54,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Idempotency: extract key from header or body. Generate one if not provided
+  // so that every write is always protected by a UNIQUE constraint.
+  // ---------------------------------------------------------------------------
+  const idempotencyKey = extractIdempotencyKey(req, body) || crypto.randomUUID();
+
   try {
     const supabase = createSupabaseAdminClient();
     const version = await resolveDocumentVersion({
@@ -62,13 +80,22 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { error } = await supabase.from('au_practice_attempts').insert({
-      user_id: auth.userId,
-      doc_version_id: version.versionId,
-      answers: parsed.data.answers,
-      score: parsed.data.score ?? null,
-      metadata: parsed.data.metadata || {},
-    });
+    // Upsert on idempotency_key — duplicate retries produce the same row.
+    const { data, error } = await supabase
+      .from('au_practice_attempts')
+      .upsert(
+        {
+          user_id: auth.userId,
+          doc_version_id: version.versionId,
+          answers: parsed.data.answers,
+          score: parsed.data.score ?? null,
+          metadata: parsed.data.metadata || {},
+          idempotency_key: idempotencyKey,
+        },
+        { onConflict: 'idempotency_key' },
+      )
+      .select('id')
+      .maybeSingle();
 
     if (error) {
       return NextResponse.json(
@@ -78,7 +105,7 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(
-      { ok: true, requestId, docVersionId: version.versionId },
+      { ok: true, requestId, docVersionId: version.versionId, attemptId: data?.id ?? null },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
     );
   } catch (error: any) {

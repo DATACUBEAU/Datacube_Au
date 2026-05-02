@@ -5,6 +5,8 @@ import { WifiOff } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { logEvent } from '@/lib/analytics';
 import { logOnce } from '@/lib/log/dedupe';
+import { SyncStatusIndicator } from '@/components/offline/sync-status-indicator';
+import { startSyncEngine } from '@/lib/offline/sync-engine';
 
 interface NetworkStatusContextType {
   isOnline: boolean;
@@ -178,6 +180,12 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
     };
   }, [checkHealth, commitState, scheduleNextCheck]);
 
+  // Initialize sync engine
+  useEffect(() => {
+    const cleanup = startSyncEngine();
+    return cleanup;
+  }, []);
+
   return (
     <NetworkStatusContext.Provider value={{ isOnline, networkState, lastCheckedAt, checkNow: checkHealth }}>
       {children}
@@ -198,6 +206,9 @@ export function NetworkStatusProvider({ children }: { children: React.ReactNode 
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Sync Status Indicator – shows pending/failed write queue */}
+      <SyncStatusIndicator />
     </NetworkStatusContext.Provider>
   );
 }

@@ -21,6 +21,18 @@ function toIssues(error: z.ZodError) {
   }));
 }
 
+/**
+ * Extract and validate idempotency key from request.
+ * Sources (in priority order): x-idempotency-key header, body.idempotencyKey.
+ * Returns null only if neither source provides a key.
+ */
+function extractIdempotencyKey(req: NextRequest, body: any): string | null {
+  const fromHeader = req.headers.get('x-idempotency-key')?.trim();
+  if (fromHeader) return fromHeader;
+  const fromBody = typeof body?.idempotencyKey === 'string' ? body.idempotencyKey.trim() : '';
+  return fromBody || null;
+}
+
 export async function POST(req: NextRequest) {
   const requestId = crypto.randomUUID();
   const auth = await requireUserFromRequest(req);
@@ -40,6 +52,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Idempotency: extract key from header or body. Generate one if not provided
+  // so that every write is always protected by a UNIQUE constraint.
+  // ---------------------------------------------------------------------------
+  const idempotencyKey = extractIdempotencyKey(req, body) || crypto.randomUUID();
+
   try {
     const supabase = createSupabaseAdminClient();
     const payload = {
@@ -54,11 +72,13 @@ export async function POST(req: NextRequest) {
         parsed.data.metadata && typeof parsed.data.metadata === 'object'
           ? parsed.data.metadata
           : {},
+      idempotency_key: idempotencyKey,
     };
 
+    // Upsert on idempotency_key — duplicate retries produce the same row.
     const { data, error } = await supabase
       .from('au_user_feedback')
-      .insert(payload)
+      .upsert(payload, { onConflict: 'idempotency_key' })
       .select('id,created_at,user_id,section,rating,comment,metadata')
       .maybeSingle();
     if (error) {

@@ -282,15 +282,26 @@ export function useAuDocuments(pollInterval = 0) {
     setDeletingIds(prev => new Set(prev).add(id));
 
     try {
-      // 2. Background deletion via Edge Function
-      await deleteDocument(user, id);
-      
-      toast({ 
-        title: 'Document removed', 
-        description: 'The document and all its data have been deleted.' 
-      });
+      // 2. Background deletion via Edge Function (or offline queue)
+      const result = await deleteDocument(user, id);
+
+      // Check if the delete was queued for offline sync
+      const wasQueued = result && typeof result === 'object' && (result as any).queued === true;
+
+      if (wasQueued) {
+        toast({
+          title: 'Queued for sync',
+          description: 'Document will be deleted when you\'re back online.',
+          duration: 3000,
+        });
+      } else {
+        toast({ 
+          title: 'Document removed', 
+          description: 'The document and all its data have been deleted.' 
+        });
+      }
     } catch (err: any) {
-      // 3. Rollback on failure
+      // 3. Rollback on failure (only if not an OfflineError — queued writes don't throw)
       if (docToRemove) {
         setDocuments(prev => [...prev, docToRemove]);
         void writeCachedDocuments([...documents.filter(d => d.id !== id), docToRemove]);
