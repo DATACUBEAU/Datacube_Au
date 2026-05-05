@@ -1122,7 +1122,7 @@ export async function createCheckout(input: {
   const channels: Array<'card' | 'bank_transfer'> =
     paymentMethod === 'transfer' ? ['bank_transfer'] : ['card'];
 
-  const response = await gateway.initializePayment({
+  const initPayload = {
     email,
     amountKobo: plan.amount_kobo,
     reference,
@@ -1134,7 +1134,21 @@ export async function createCheckout(input: {
         ? plan.paystack_plan_code
         : null,
     metadata,
-  });
+  };
+
+  let response;
+  try {
+    response = await gateway.initializePayment(initPayload);
+  } catch (error: any) {
+    const msg = String(error?.message || '').toLowerCase();
+    if (initPayload.planCode && (msg.includes('plan') || msg.includes('not found') || msg.includes('invalid'))) {
+      console.warn(`[billing] Paystack rejected plan code ${initPayload.planCode}. Falling back to one-time charge.`);
+      initPayload.planCode = null;
+      response = await gateway.initializePayment(initPayload);
+    } else {
+      throw error;
+    }
+  }
   const checkoutReference = String(response.reference || reference);
 
   await supabase.from('billing_customers').upsert(
@@ -1333,6 +1347,16 @@ export async function verifyCheckoutPayment(input: {
       403,
       'payment_reference_forbidden',
       'That payment reference does not belong to this account.'
+    );
+  }
+
+  const planKeyRaw = asTrimmedString(verifiedMetadata.plan_key);
+  const plan = await resolveBillingPlan(input.supabase, planKeyRaw || '');
+  if (plan && verifiedResult.verified.amountKobo !== plan.amount_kobo) {
+    throw new BillingApiError(
+      409,
+      'payment_amount_mismatch',
+      'Verified payment amount does not match the required plan amount.'
     );
   }
 
