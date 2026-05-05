@@ -713,8 +713,13 @@ async function loadPlanLimitCatalog(supabase: SupabaseClient): Promise<PlanLimit
 
   let foundLegacy = false;
   const effectiveRulesByPlan = {} as Record<EffectivePlanCode, Record<ApprovedLimitKey, EffectivePlanLimitRule>>;
-  for (const plan of DEFAULT_PLAN_ORDER) {
-    const legacy = await loadLegacyPlanRuleSet(supabase, plan);
+  const legacyResults = await Promise.all(
+    DEFAULT_PLAN_ORDER.map((plan) => loadLegacyPlanRuleSet(supabase, plan))
+  );
+
+  for (let i = 0; i < DEFAULT_PLAN_ORDER.length; i++) {
+    const plan = DEFAULT_PLAN_ORDER[i];
+    const legacy = legacyResults[i];
     foundLegacy = foundLegacy || legacy.found;
     effectiveRulesByPlan[plan] = mergePlanLimitRuleSets({
       scope: plan,

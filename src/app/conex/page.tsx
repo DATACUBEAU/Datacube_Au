@@ -597,15 +597,6 @@ const AdminBilling = ({ token }: { token: string }) => {
     }
   }, [featureFlagRecords, promoDraft, setFlag, toast]);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      void fetchConfig({ silent: true });
-    }, 45000);
-
-    return () => {
-      clearInterval(timer);
-    };
-  }, [fetchConfig]);
 
   if (loading) return <div className="flex justify-center p-8"><Loader2 className="animate-spin" /></div>;
 
