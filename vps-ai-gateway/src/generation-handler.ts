@@ -12,14 +12,22 @@ export class GenerationHandler {
 
   async handleKnowledge(body: any, headers: any, reply: FastifyReply) {
     const userId = headers['x-user-id'];
-    const { documentId, documentContent, pastQuestionsContent } = body;
+    const { documentId } = body;
+    let { documentContent, pastQuestionsContent } = body;
+
+    if (!documentContent && documentId) {
+      documentContent = await this.hydrateDocumentContent(documentId, userId);
+    }
+    if (!pastQuestionsContent && body.pastQuestionIds) {
+      pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+    }
 
     if (!documentContent) {
       return reply.code(400).send({ error: 'missing_content', message: 'Document content required' });
     }
 
     try {
-      const candidate = await this.selectModel('knowledge', userId);
+      const candidate = await this.selectModel('knowledge', userId, headers['x-user-plan']);
       const prompt = this.buildKnowledgePrompt(documentContent, pastQuestionsContent);
       const result = await this.generate(candidate, prompt);
 
@@ -36,14 +44,22 @@ export class GenerationHandler {
 
   async handleExamPredictions(body: any, headers: any, reply: FastifyReply) {
     const userId = headers['x-user-id'];
-    const { mainTextbookId, mainTextbookContent, pastQuestionsContent } = body;
+    const { mainTextbookId } = body;
+    let { mainTextbookContent, pastQuestionsContent } = body;
+
+    if (!mainTextbookContent && mainTextbookId) {
+      mainTextbookContent = await this.hydrateDocumentContent(mainTextbookId, userId);
+    }
+    if (!pastQuestionsContent && body.pastQuestionIds) {
+      pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+    }
 
     if (!mainTextbookContent) {
       return reply.code(400).send({ error: 'missing_content' });
     }
 
     try {
-      const candidate = await this.selectModel('prediction_engine', userId);
+      const candidate = await this.selectModel('prediction_engine', userId, headers['x-user-plan']);
       const prompt = this.buildPredictionsPrompt(mainTextbookContent, pastQuestionsContent);
       const result = await this.generate(candidate, prompt);
 
@@ -60,14 +76,22 @@ export class GenerationHandler {
 
   async handlePracticeExam(body: any, headers: any, reply: FastifyReply) {
     const userId = headers['x-user-id'];
-    const { documentId, documentContent, pastQuestionsContent } = body;
+    const { documentId } = body;
+    let { documentContent, pastQuestionsContent } = body;
+
+    if (!documentContent && documentId) {
+      documentContent = await this.hydrateDocumentContent(documentId, userId);
+    }
+    if (!pastQuestionsContent && body.pastQuestionIds) {
+      pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+    }
 
     if (!documentContent) {
       return reply.code(400).send({ error: 'missing_content' });
     }
 
     try {
-      const candidate = await this.selectModel('exam_generator', userId);
+      const candidate = await this.selectModel('exam_generator', userId, headers['x-user-plan']);
       const prompt = this.buildPracticeExamPrompt(documentContent, pastQuestionsContent);
       const result = await this.generate(candidate, prompt);
 
@@ -91,7 +115,7 @@ export class GenerationHandler {
     }
 
     try {
-      const candidate = await this.selectModel('chat', userId);
+      const candidate = await this.selectModel('chat', userId, headers['x-user-plan']);
       const prompt = this.buildPromptStartersPrompt(documentTitle, documentContent, userIdea);
       const result = await this.generate(candidate, prompt);
 
@@ -110,14 +134,31 @@ export class GenerationHandler {
     }
   }
 
-  private async selectModel(requestType: string, userId: string) {
-    const { data: profile } = await this.supabase
-      .from('au_user_profiles')
-      .select('tier')
+
+  private async hydrateDocumentContent(documentId: string, userId: string): Promise<string | null> {
+    const { data } = await this.supabase
+      .from('au_documents')
+      .select('content_text')
+      .eq('id', documentId)
       .eq('user_id', userId)
       .single();
+    return data?.content_text || null;
+  }
 
-    const plan = profile?.tier || 'free';
+  private async hydratePastQuestions(pastQuestionIds: string[], userId: string): Promise<string | null> {
+    if (!pastQuestionIds || pastQuestionIds.length === 0) return null;
+    const { data } = await this.supabase
+      .from('au_past_questions')
+      .select('question, answer')
+      .in('id', pastQuestionIds)
+      .eq('user_id', userId);
+    
+    if (!data || data.length === 0) return null;
+    return data.map(q => `Q: ${q.question}\nA: ${q.answer}`).join('\n\n');
+  }
+
+  private async selectModel(requestType: string, userId: string, headerPlan?: string) {
+    const plan = headerPlan || 'free';
     
     return selectProviderAndModel({
       supabase: this.supabase,

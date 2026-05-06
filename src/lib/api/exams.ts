@@ -22,19 +22,38 @@ export async function generatePracticeExam(
   const hasDocId = Boolean(opts?.documentId);
   const hasPqIds = Array.isArray(opts?.pastQuestionIds) && opts!.pastQuestionIds.length > 0;
 
-  const { data, error } = await invokeEdgeFunction<GeneratePracticeExamOutput>('exam-generator', {
+  
+  const ticketRes = await fetch('/api/au/vps-ticket', {
     method: 'POST',
-    requireAuth: true,
-    timeoutMs: 120_000,
-    silent: true,
-    body: {
-      // Only send raw text when no ID is available — proxy hydrates from IDs.
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature: 'generate-practice-exam' })
+  });
+  if (!ticketRes.ok) throw { message: 'Ticket generation failed', status: ticketRes.status };
+  
+  const ticketData = await ticketRes.json();
+  const { ticket, vpsUrl } = ticketData.data || ticketData;
+
+  const res = await fetch(`${vpsUrl}/generate/practice-exam`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ticket}`,
+    },
+    body: JSON.stringify({
       documentContent: hasDocId ? undefined : (documentContent || undefined),
       pastQuestionsContent: hasPqIds ? undefined : (pastQuestionsContent || undefined),
       documentId: opts?.documentId || undefined,
       pastQuestionIds: hasPqIds ? opts!.pastQuestionIds : undefined,
-    },
+    }),
   });
+
+  let data, error = null;
+  if (!res.ok) {
+    error = { message: await res.text(), status: res.status };
+  } else {
+    data = await res.json();
+  }
+  
   if (error) throw error;
   if (!data) throw { message: 'Exam generation failed', status: 500 };
   return data;
@@ -54,20 +73,39 @@ export async function generatePredictions(
   const hasTextbookId = Boolean(opts?.mainTextbookId || opts?.documentId);
   const hasPqIds = Array.isArray(opts?.pastQuestionIds) && opts!.pastQuestionIds.length > 0;
 
-  const { data, error } = await invokeEdgeFunction<GenerateExamPredictionsOutput>('prediction-engine', {
+  
+  const ticketRes = await fetch('/api/au/vps-ticket', {
     method: 'POST',
-    requireAuth: true,
-    timeoutMs: 120_000,
-    silent: true,
-    body: {
-      // Only send raw text when no ID is available — proxy hydrates from IDs.
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature: 'generate-exam-predictions' })
+  });
+  if (!ticketRes.ok) throw { message: 'Ticket generation failed', status: ticketRes.status };
+  
+  const ticketData = await ticketRes.json();
+  const { ticket, vpsUrl } = ticketData.data || ticketData;
+
+  const res = await fetch(`${vpsUrl}/generate/exam-predictions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ticket}`,
+    },
+    body: JSON.stringify({
       pastQuestionsContent: hasPqIds ? undefined : (pastQuestionsContent || undefined),
       mainTextbookContent: hasTextbookId ? undefined : (documentContent || undefined),
       documentId: opts?.documentId || opts?.mainTextbookId || undefined,
       mainTextbookId: opts?.mainTextbookId || undefined,
       pastQuestionIds: hasPqIds ? opts!.pastQuestionIds : undefined,
-    },
+    }),
   });
+
+  let data, error = null;
+  if (!res.ok) {
+    error = { message: await res.text(), status: res.status };
+  } else {
+    data = await res.json();
+  }
+  
   if (error) throw error;
   if (!data) throw { message: 'Prediction generation failed', status: 500 };
   return data;

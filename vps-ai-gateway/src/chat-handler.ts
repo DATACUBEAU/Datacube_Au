@@ -17,7 +17,7 @@ export class ChatHandler {
         return reply.code(400).send({ error: 'missing_question', message: 'No question provided' });
       }
 
-      const routingCandidate = await this.selectModel('chat', userId);
+      const routingCandidate = await this.selectModel('chat', userId, headers['x-user-plan']);
       
       if (stream) {
         reply.raw.writeHead(200, {
@@ -70,7 +70,7 @@ export class ChatHandler {
         return reply.code(400).send({ error: 'missing_question', message: 'No question provided' });
       }
 
-      const routingCandidate = await this.selectModel('global_chat', userId);
+      const routingCandidate = await this.selectModel('global_chat', userId, headers['x-user-plan']);
       
       if (stream) {
         reply.raw.writeHead(200, {
@@ -114,7 +114,7 @@ export class ChatHandler {
       return reply.code(400).send({ error: 'missing_question' });
     }
 
-    const routingCandidate = await this.selectModel('chat', headers['x-user-id']);
+    const routingCandidate = await this.selectModel('chat', headers['x-user-id'], headers['x-user-plan']);
     const answer = await this.generateWithRouting(routingCandidate, question, body);
 
     return reply.code(200).send({ answer });
@@ -136,14 +136,8 @@ export class ChatHandler {
     return null;
   }
 
-  private async selectModel(requestType: string, userId: string): Promise<RoutingCandidate> {
-    const { data: profile } = await this.supabase
-      .from('au_user_profiles')
-      .select('tier')
-      .eq('user_id', userId)
-      .single();
-
-    const plan = profile?.tier || 'free';
+  private async selectModel(requestType: string, userId: string, headerPlan?: string): Promise<RoutingCandidate> {
+    const plan = headerPlan || 'free';
     
     const candidate = await selectProviderAndModel({
       supabase: this.supabase,

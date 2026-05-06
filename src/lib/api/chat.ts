@@ -390,16 +390,40 @@ export async function sendChatMessage(
     clientMessageId: opts?.clientMessageId,
   });
 
-  const { data, error } = await invokeEdgeFunction<any>(endpoint, {
+  
+  const ticketRes = await fetch('/api/au/vps-ticket', {
     method: 'POST',
-    requireAuth: true,
-    timeoutMs: 120_000,
-    silent: true,
-    body: legacyPayload,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature: endpoint })
+  });
+
+  if (!ticketRes.ok) {
+    const errText = await ticketRes.text();
+    throw new Error('Ticket generation failed: ' + errText);
+  }
+
+  const ticketData = await ticketRes.json();
+  const { ticket, vpsUrl } = ticketData.data || ticketData;
+
+  const res = await fetch(`${vpsUrl}/chat/${endpoint}`, {
+    method: 'POST',
     headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ticket}`,
       'x-correlation-id': correlationId,
     },
+    body: JSON.stringify(legacyPayload),
   });
+
+  let data: any = null;
+  let error: any = null;
+
+  if (!res.ok) {
+    error = { status: res.status, message: await res.text() };
+  } else {
+    data = await res.json();
+  }
+
 
   if (error) {
     if (!isGlobal && isProviderSchemaOutage(error)) {
@@ -473,19 +497,33 @@ export async function sendChatMessageStream(
     stream: true,
   };
 
-  const res = await fetchEdgeFunctionResponse(endpoint, {
+  
+  const ticketRes = await fetch('/api/au/vps-ticket', {
     method: 'POST',
-    requireAuth: true,
-    timeoutMs: 120_000,
-    silent: true,
-    body: payload,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature: endpoint })
+  });
+
+  if (!ticketRes.ok) {
+    const errText = await ticketRes.text();
+    throw new Error('Ticket generation failed: ' + errText);
+  }
+
+  const ticketData = await ticketRes.json();
+  const { ticket, vpsUrl } = ticketData.data || ticketData;
+
+  const res = await fetch(`${vpsUrl}/chat/${endpoint}`, {
+    method: 'POST',
     headers: {
-      Accept: 'text/event-stream',
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ticket}`,
+      'Accept': 'text/event-stream',
       'x-correlation-id': correlationId,
     },
-    authIntent: 'interactive',
+    body: JSON.stringify(payload),
     signal: opts?.signal,
   });
+
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -666,19 +704,40 @@ export async function generatePromptStarters(
 ): Promise<string[]> {
   const hasDocId = Boolean(opts?.documentId);
 
-  const { data, error } = await invokeEdgeFunction<any>('generate-prompt-starters', {
+  
+  const ticketRes = await fetch('/api/au/vps-ticket', {
     method: 'POST',
-    requireAuth: true,
-    timeoutMs: 30_000,
-    silent: true,
-    body: {
-      documentTitle,
-      // Only send raw text when no ID is available — proxy hydrates from ID.
-      documentContent: hasDocId ? undefined : (documentContent || undefined),
-      documentId: opts?.documentId || undefined,
-      userIdea,
-    },
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature: 'generate-prompt-starters' })
   });
+
+  if (!ticketRes.ok) {
+    throw new Error('Ticket generation failed');
+  }
+
+  const ticketData = await ticketRes.json();
+  const { ticket, vpsUrl } = ticketData.data || ticketData;
+
+  const res = await fetch(`${vpsUrl}/generate/prompt-starters`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${ticket}`,
+    },
+    body: JSON.stringify({
+      documentTitle,
+      documentContent,
+      userIdea,
+    }),
+  });
+
+  let data, error = null;
+  if (!res.ok) {
+    error = { message: await res.text() };
+  } else {
+    data = await res.json();
+  }
+
 
   if (error) throw error;
   return (data as any)?.prompts || [];

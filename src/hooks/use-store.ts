@@ -154,25 +154,38 @@ export const useStore = create<AppState>()(
         const hasPqIds = Array.isArray(options?.pastQuestionIds) && options!.pastQuestionIds.length > 0;
         
         try {
-          const { data, error } = await invokeEdgeFunction<GenerateKnowledgeOutput>('generate-knowledge', {
+          
+          const ticketRes = await fetch('/api/au/vps-ticket', {
             method: 'POST',
-            requireAuth: true,
-            timeoutMs: 120_000,
-            silent: false,
-            body: {
-              // Only send raw text when no ID is available — proxy hydrates from IDs.
-              documentContent: hasDocId ? undefined
-                : (options?.documentContent
-                    ? String(options.documentContent).slice(0, KNOWLEDGE_DOCUMENT_BUDGET)
-                    : undefined),
-              pastQuestionsContent: hasPqIds ? undefined
-                : (options?.pastQuestionsContent
-                    ? String(options.pastQuestionsContent).slice(0, KNOWLEDGE_PAST_QUESTIONS_BUDGET)
-                    : undefined),
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ feature: 'generate-knowledge' })
+          });
+          if (!ticketRes.ok) throw new Error('Ticket generation failed');
+
+          const ticketData = await ticketRes.json();
+          const { ticket, vpsUrl } = ticketData.data || ticketData;
+
+          const res = await fetch(`${vpsUrl}/generate/knowledge`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${ticket}`,
+            },
+            body: JSON.stringify({
+              documentContent: hasDocId ? undefined : (options?.documentContent ? String(options.documentContent).slice(0, KNOWLEDGE_DOCUMENT_BUDGET) : undefined),
+              pastQuestionsContent: hasPqIds ? undefined : (options?.pastQuestionsContent ? String(options.pastQuestionsContent).slice(0, KNOWLEDGE_PAST_QUESTIONS_BUDGET) : undefined),
               pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
               documentId: docId,
-            },
+            }),
           });
+
+          let data, error = null;
+          if (!res.ok) {
+            error = { message: await res.text() };
+          } else {
+            data = await res.json();
+          }
+  
           if (error) throw error;
           if (!data) throw new Error('Failed to generate knowledge');
           const result = data;
