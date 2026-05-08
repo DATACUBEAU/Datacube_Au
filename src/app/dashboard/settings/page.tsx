@@ -18,7 +18,9 @@ import {
   Save, 
   Bot, 
   Loader2, 
-  ShieldAlert
+  ShieldAlert,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
@@ -79,6 +81,9 @@ export default function SettingsPage() {
   const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [showDeletePopup, setShowDeletePopup] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   useEffect(() => {
     if (user) {
@@ -245,6 +250,57 @@ export default function SettingsPage() {
     }
   };
 
+  const startDeleteFlow = () => {
+    setDeleteConfirmText('');
+    setShowDeletePopup(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (isDeleting || deleteConfirmText !== 'DELETE MY ACCOUNT') return;
+    setIsDeleting(true);
+
+    try {
+      const res = await fetch('/api/account/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ confirmation: deleteConfirmText }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data?.message || 'Account deletion failed.');
+      }
+
+      // Clear all local storage
+      if (typeof localStorage !== 'undefined') {
+        localStorage.clear();
+      }
+
+      toast({
+        title: 'Account Deleted',
+        description: 'Your account has been permanently removed.',
+      });
+
+      // Redirect to home
+      if (typeof window !== 'undefined') {
+        window.location.replace('/');
+        return;
+      }
+      router.replace('/');
+    } catch (error: any) {
+      toast({
+        variant: 'destructive',
+        title: 'Deletion Failed',
+        description: error?.message || 'Could not delete your account. Please try again.',
+      });
+    } finally {
+      setIsDeleting(false);
+      setShowDeletePopup(false);
+    }
+  };
+
   const handleSaveChanges = async () => {
     if (!user) return;
     
@@ -337,10 +393,16 @@ export default function SettingsPage() {
                 <Button onClick={handleSaveChanges} disabled={isSaving || displayName === currentDisplayName} className="w-full sm:w-auto">
                     {isSaving ? <><Save className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> Saving...</> : 'Save Changes'}
                 </Button>
-                <Button variant="outline" onClick={startSignOutFlow} className="w-full sm:w-auto">
-                    <LogOut className="mr-2 h-4 w-4" aria-hidden="true" />
-                    Sign Out
-                </Button>
+                <div className="flex gap-2 w-full sm:w-auto">
+                  <Button variant="outline" onClick={startSignOutFlow} className="w-full sm:w-auto">
+                      <LogOut className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Sign Out
+                  </Button>
+                  <Button variant="destructive" onClick={startDeleteFlow} className="w-full sm:w-auto" id="delete-account-btn">
+                      <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+                      Delete Account
+                  </Button>
+                </div>
                 </CardFooter>
             </Card>
           <Card>
@@ -444,6 +506,40 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          <Card className="border-destructive/50">
+            <CardHeader>
+              <CardTitle className="font-headline text-destructive flex items-center gap-2">
+                <AlertTriangle className="h-5 w-5" />
+                Danger Zone
+              </CardTitle>
+              <CardDescription>
+                Irreversible actions that permanently affect your account.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-xl border border-destructive/30 bg-destructive/5 dark:bg-destructive/10 p-5">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-1">
+                    <p className="text-sm font-semibold text-destructive">Delete Account</p>
+                    <p className="text-xs text-muted-foreground">
+                      Permanently delete your account and all associated data including documents, chat history, generated content, and billing records. This action cannot be undone.
+                    </p>
+                  </div>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={startDeleteFlow}
+                    className="shrink-0"
+                    id="danger-zone-delete-btn"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete Account
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
         </div>
       </div>
 
@@ -535,6 +631,67 @@ export default function SettingsPage() {
               {isSigningOut ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Sign out
             </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Account Deletion Confirmation */}
+      <AlertDialog open={showDeletePopup} onOpenChange={(open) => {
+        if (!isDeleting) {
+          setShowDeletePopup(open);
+          if (!open) setDeleteConfirmText('');
+        }
+      }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-headline text-xl text-destructive flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5" />
+              Delete Your Account?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p className="text-base">
+                  This will <strong>permanently</strong> delete your account and all your data:
+                </p>
+                <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+                  <li>All uploaded documents and generated content</li>
+                  <li>Chat history and conversation threads</li>
+                  <li>Knowledge hub, predictions, and practice exams</li>
+                  <li>Billing records and subscription</li>
+                  <li>Your user profile and preferences</li>
+                </ul>
+                <div className="rounded-md bg-destructive/10 border border-destructive/30 p-3 mt-3">
+                  <p className="text-sm font-semibold text-destructive">
+                    ⚠️ This action is irreversible. There is no recovery.
+                  </p>
+                </div>
+                <div className="pt-2">
+                  <label className="text-sm font-medium" htmlFor="delete-confirm-input">
+                    Type <span className="font-mono font-bold text-destructive">DELETE MY ACCOUNT</span> to confirm:
+                  </label>
+                  <Input
+                    id="delete-confirm-input"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder="DELETE MY ACCOUNT"
+                    className="mt-2 font-mono"
+                    disabled={isDeleting}
+                    autoComplete="off"
+                  />
+                </div>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeleteConfirm()}
+              disabled={isDeleting || deleteConfirmText !== 'DELETE MY ACCOUNT'}
+            >
+              {isDeleting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              {isDeleting ? 'Deleting...' : 'Permanently Delete Account'}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

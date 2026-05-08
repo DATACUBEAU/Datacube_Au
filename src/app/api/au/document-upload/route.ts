@@ -6,6 +6,8 @@ import { randomUUID } from 'crypto';
 
 export const runtime = 'nodejs';
 
+const DEFAULT_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
+
 /**
  * Local document upload handler — replaces the deleted /api/proxy/document-upload
  * which proxied to a Supabase Edge Function.
@@ -59,7 +61,6 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
   const fileSize = Number(body.fileSize || 0);
   const documentType = String(body.documentType || 'textbook').trim();
   const documentId = String(body.documentId || randomUUID()).trim();
-  const jobId = String(body.jobId || randomUUID()).trim();
   const parentId = body.parentId || null;
   const parentDocumentId = body.parentDocumentId || null;
   const metadata = body.metadata || null;
@@ -108,7 +109,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
   }
 
   // Determine storage path and bucket
-  const bucket = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'DataCube';
+  const bucket = DEFAULT_BUCKET;
   const ext = fileName.includes('.') ? fileName.split('.').pop() : 'pdf';
   const storagePath = `uploads/${userId}/${documentId}.${ext}`;
 
@@ -125,7 +126,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
     );
   }
 
-  // Insert the document row
+  // Insert the document row — only columns that exist in the schema
   const { error: insertError } = await supabase.from('au_documents').insert({
     id: documentId,
     user_id: userId,
@@ -171,7 +172,7 @@ async function handleComplete(auth: any, body: any, requestId: string, correlati
   const fileSize = Number(body.fileSize || 0);
   const mimeType = String(body.mimeType || 'application/pdf').trim();
   const path = String(body.path || '').trim();
-  const bucket = String(body.bucket || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'DataCube').trim();
+  const bucket = String(body.bucket || DEFAULT_BUCKET).trim();
 
   if (!documentId) {
     return NextResponse.json(

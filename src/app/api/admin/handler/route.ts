@@ -85,7 +85,17 @@ async function handleGetConexConfig(supabase: any, requestId: string) {
     .limit(1)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    // Table doesn't exist — return empty config so admin panel can still load
+    const code = String(error?.code || '');
+    if (code === '42P01' || String(error?.message || '').includes('schema cache')) {
+      return NextResponse.json(
+        { config: {}, _warning: 'au_config table not found — run migration', requestId },
+        { status: 200, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+    throw error;
+  }
 
   return NextResponse.json(
     { config: data || {}, requestId },
@@ -270,7 +280,16 @@ async function handleGetAlertConfig(supabase: any, requestId: string) {
     .limit(1)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
+    const code = String(error?.code || '');
+    if (code === '42P01' || String(error?.message || '').includes('schema cache')) {
+      return NextResponse.json(
+        { config: {}, _warning: 'au_config table not found', requestId },
+        { status: 200, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+    throw error;
+  }
 
   return NextResponse.json(
     { config: data?.alert_config || {}, requestId },
