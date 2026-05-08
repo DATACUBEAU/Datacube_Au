@@ -1,4 +1,4 @@
-import { supabase, invokeEdgeFunction } from '@/lib/supabase-client/client';
+import { supabase } from '@/lib/supabase-client/client';
 
 // Simple queue to prevent flooding the network with log requests
 const LOG_QUEUE: Array<{name: string, params: any, tier?: string, timestamp: string}> = [];
@@ -6,7 +6,7 @@ let isFlushing = false;
 let flushInterval: NodeJS.Timeout | null = null;
 
 const PROCESS_INTERVAL_MS = 2000;
-const BATCH_SIZE = 5; // Process up to 5 events per flush (sequentially or parallel)
+const BATCH_SIZE = 5;
 
 function isAbortLikeError(error: unknown): boolean {
   const name = String((error as any)?.name || '');
@@ -41,9 +41,7 @@ const processQueue = async () => {
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
     
-    // If no token, we can't log securely. 
-    // Option: Drop logs or keep them until login? 
-    // For now, we'll drop them to prevent memory leaks if user never logs in.
+    // If no token, we can't log securely. Drop logs to prevent memory leaks.
     if (!token) {
       LOG_QUEUE.length = 0; 
       isFlushing = false;
@@ -53,28 +51,24 @@ const processQueue = async () => {
     // Take a batch
     const batch = LOG_QUEUE.splice(0, BATCH_SIZE);
     
-    // Process batch items sequentially to avoid connection pool exhaustion
-    for (const item of batch) {
-      try {
-        await invokeEdgeFunction('log-event', {
-          method: 'POST',
-          requireAuth: true,
-          silent: true,
-          timeoutMs: 5000, // Short timeout for logs, don't hang app
-          authIntent: 'background',
-          reauthOnAuthFailure: false,
-          body: {
-            name: item.name,
-            params: item.params,
-            tier: item.tier,
-            client_timestamp: item.timestamp
-          },
-        });
-      } catch (e) {
-        // Silent fail for individual logs
-        if (!isAbortLikeError(e)) {
-          console.warn('[Analytics] Log failed', e);
-        }
+    // Insert batch directly into Supabase — no Edge Function proxy needed.
+    const rows = batch.map(item => ({
+      event_name: item.name,
+      event_params: item.params,
+      tier: item.tier || null,
+      client_timestamp: item.timestamp,
+      created_at: new Date().toISOString(),
+    }));
+
+    const { error } = await supabase
+      .from('au_activity_log')
+      .insert(rows);
+
+    if (error) {
+      // If the table doesn't exist, silently discard. Analytics should not crash the app.
+      const code = String((error as any)?.code || '');
+      if (code !== '42P01') {
+        console.warn('[Analytics] Direct insert failed:', error.message);
       }
     }
   } catch (e) {

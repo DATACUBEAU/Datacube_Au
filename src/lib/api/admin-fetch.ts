@@ -64,7 +64,7 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
     ? endpoint
     : endpoint.startsWith('/api/')
       ? endpoint
-      : `/api/proxy/${endpoint}`;
+      : endpoint === 'admin-handler' ? '/api/admin/handler' : `/api/${endpoint}`;
 
   const headers = new Headers(options.headers || {});
   const hadExplicitAuthorization = headers.has('Authorization');

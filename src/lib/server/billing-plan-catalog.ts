@@ -22,7 +22,7 @@ export type MaterializedBillingPlanRow = {
 
 export const BILLING_PLAN_CODES = {
   pro_weekly: 'PLN_h3teb0z285iuyet',
-  pro_monthly: 'PLN_bo7k3ulauwdhzjl',
+  pro_monthly: 'PLN_bo7k3ulauwdhzjli',
 } as const;
 
 export const DEFAULT_BILLING_PLAN_CATALOG: BillingPlanCatalogEntry[] = [

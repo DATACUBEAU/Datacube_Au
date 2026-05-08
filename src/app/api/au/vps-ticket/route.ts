@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
     const secret = getVpsSharedSecret();
     const jwt = await new SignJWT({ 
         sub: auth.userId, 
-        plan: limitsResult.effectivePlan,
+        plan: limitsResult.plan,
         feature,
       })
       .setProtectedHeader({ alg: 'HS256' })

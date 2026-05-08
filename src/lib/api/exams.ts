@@ -1,5 +1,5 @@
 import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '@shared/schemas';
-import { invokeEdgeFunction } from '@/lib/supabase-client/client';
+// invokeEdgeFunction removed — VPS ticket + direct fetch is the sole path.
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 

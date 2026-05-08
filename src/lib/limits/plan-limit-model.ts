@@ -103,7 +103,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage'],
     defaultResetPolicy: 'daily',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/proxy/chat', '/api/proxy/au-chat', '/api/proxy/global-chat', 'public.au_messages'],
+    enforcedBy: ['/api/au/vps-ticket', 'vps:chat/au-chat', 'vps:chat/global-chat', 'public.au_messages'],
   },
   max_uploads_total: {
     key: 'max_uploads_total',
@@ -115,7 +115,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['current', 'usage'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/proxy/document-upload', 'public.au_documents'],
+    enforcedBy: ['/api/au/document-upload', 'public.au_documents'],
   },
   max_tokens_total: {
     key: 'max_tokens_total',
@@ -127,7 +127,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage'],
     defaultResetPolicy: 'daily',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/proxy/chat', '/api/proxy/au-chat', '/api/proxy/global-chat', 'public.au_model_usage'],
+    enforcedBy: ['/api/au/vps-ticket', 'vps:chat/au-chat', 'vps:chat/global-chat', 'public.au_model_usage'],
   },
   max_file_size_mb: {
     key: 'max_file_size_mb',
@@ -139,7 +139,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['per_request'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['never'],
-    enforcedBy: ['/api/proxy/document-upload'],
+    enforcedBy: ['/api/au/document-upload'],
   },
   max_concurrent_jobs: {
     key: 'max_concurrent_jobs',
@@ -151,7 +151,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['concurrency'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['never'],
-    enforcedBy: ['/api/proxy/document-upload', 'public.au_worker_jobs'],
+    enforcedBy: ['/api/au/document-upload', 'public.au_worker_jobs'],
   },
   max_exam_predictions: {
     key: 'max_exam_predictions',
@@ -163,7 +163,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage', 'current'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/proxy/prediction-engine', '/api/proxy/generate-exam-predictions', 'public.au_feature_outputs'],
+    enforcedBy: ['/api/au/vps-ticket', 'vps:generate/exam-predictions', 'public.au_feature_outputs'],
   },
   max_practice_exams: {
     key: 'max_practice_exams',
@@ -175,7 +175,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage', 'current'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/proxy/exam-generator', '/api/proxy/generate-practice-exam', 'public.au_feature_outputs'],
+    enforcedBy: ['/api/au/vps-ticket', 'vps:generate/practice-exam', 'public.au_feature_outputs'],
   },
   max_knowledge_hub: {
     key: 'max_knowledge_hub',
@@ -187,7 +187,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['current', 'usage'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/proxy/generate-knowledge', 'public.au_feature_outputs'],
+    enforcedBy: ['/api/au/vps-ticket', 'vps:generate/knowledge', 'public.au_feature_outputs'],
   },
 };
 

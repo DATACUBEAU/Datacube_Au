@@ -1,7 +1,6 @@
 
 import {
   supabase,
-  invokeEdgeFunction,
   getEffectiveOwnershipConditions,
   applyOwnershipFilter,
   getSupabaseAccessToken,
@@ -107,32 +106,32 @@ export async function initiateUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string; token?: string; bucket?: string; contentType?: string }> {
-  const { data, error } = await invokeEdgeFunction('document-upload', {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (metadata.correlationId) headers['x-correlation-id'] = metadata.correlationId;
+
+  const res = await safeFetch('/api/au/document-upload', {
     method: 'POST',
-    requireAuth: true,
-    headers: metadata.correlationId ? { 'x-correlation-id': metadata.correlationId } : undefined,
-    body: {
-      action: 'initiate',
-      ...metadata
-    }
+    headers,
+    body: JSON.stringify({ action: 'initiate', ...metadata }),
+    credentials: 'include',
   });
 
-  if (error) {
-    const message = String(error?.message || 'Upload initiation failed');
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    const message = String(errBody?.message || 'Upload initiation failed');
     const wrapped = new Error(message);
-    (wrapped as any).status = error?.status;
-    (wrapped as any).code = extractApiErrorCode(error);
-    (wrapped as any).details = error?.details || null;
+    (wrapped as any).status = res.status;
+    (wrapped as any).code = extractApiErrorCode(errBody);
+    (wrapped as any).details = errBody?.details || null;
     console.error('[API] initiateUpload error:', {
-      status: (wrapped as any).status,
+      status: res.status,
       code: (wrapped as any).code,
       message,
-      details: (wrapped as any).details,
     });
     throw wrapped;
   }
 
-  return data;
+  return await res.json();
 }
 
 /**
@@ -154,32 +153,32 @@ export async function completeUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; jobId: string }> {
-  const { data, error } = await invokeEdgeFunction('document-upload', {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (metadata.correlationId) headers['x-correlation-id'] = metadata.correlationId;
+
+  const res = await safeFetch('/api/au/document-upload', {
     method: 'POST',
-    requireAuth: true,
-    headers: metadata.correlationId ? { 'x-correlation-id': metadata.correlationId } : undefined,
-    body: {
-      action: 'complete',
-      ...metadata
-    }
+    headers,
+    body: JSON.stringify({ action: 'complete', ...metadata }),
+    credentials: 'include',
   });
 
-  if (error) {
-    const message = String(error?.message || 'Upload completion failed');
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => ({}));
+    const message = String(errBody?.message || 'Upload completion failed');
     const wrapped = new Error(message);
-    (wrapped as any).status = error?.status;
-    (wrapped as any).code = extractApiErrorCode(error);
-    (wrapped as any).details = error?.details || null;
+    (wrapped as any).status = res.status;
+    (wrapped as any).code = extractApiErrorCode(errBody);
+    (wrapped as any).details = errBody?.details || null;
     console.error('[API] completeUpload error:', {
-      status: (wrapped as any).status,
+      status: res.status,
       code: (wrapped as any).code,
       message,
-      details: (wrapped as any).details,
     });
     throw wrapped;
   }
 
-  return data;
+  return await res.json();
 }
 
 /**

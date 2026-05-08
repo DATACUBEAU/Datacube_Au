@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import type { GenerateKnowledgeOutput, GeneratePredictionsOutput } from '@/app/actions';
 import { toast } from '@/hooks/use-toast';
-import { invokeEdgeFunction } from '@/lib/supabase-client/client';
+// invokeEdgeFunction removed — VPS ticket + direct fetch is the sole path.
 import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 
 const KNOWLEDGE_DOCUMENT_BUDGET = 12_000;
@@ -228,13 +228,24 @@ export const useStore = create<AppState>()(
           const hasTextbookId = Boolean(options?.mainTextbookId || options?.documentId);
           const hasPqIds = Array.isArray(options?.pastQuestionIds) && options!.pastQuestionIds.length > 0;
 
-          const { data, error } = await invokeEdgeFunction<GeneratePredictionsOutput>('prediction-engine', {
+          // Get VPS ticket
+          const ticketRes = await fetch('/api/au/vps-ticket', {
             method: 'POST',
-            requireAuth: true,
-            timeoutMs: 120_000,
-            silent: false,
-            body: {
-              // Only send raw text when no ID is available — proxy hydrates from IDs.
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ feature: 'generate-exam-predictions' }),
+          });
+          if (!ticketRes.ok) throw new Error('Ticket generation failed: ' + await ticketRes.text());
+
+          const ticketData = await ticketRes.json();
+          const { ticket, vpsUrl } = ticketData.data || ticketData;
+
+          const res = await fetch(`${vpsUrl}/generate/exam-predictions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${ticket}`,
+            },
+            body: JSON.stringify({
               pastQuestionsContent: hasPqIds ? undefined
                 : (options?.pastQuestionsContent
                     ? String(options.pastQuestionsContent).slice(0, PREDICTION_PAST_QUESTIONS_BUDGET)
@@ -246,11 +257,15 @@ export const useStore = create<AppState>()(
               pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
               documentId: options?.documentId || options?.mainTextbookId || undefined,
               mainTextbookId: options?.mainTextbookId || undefined,
-            },
+            }),
           });
-          if (error) throw error;
-          if (!data) throw new Error('Failed to generate predictions');
-          const result = data;
+
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(errText || 'Prediction generation failed');
+          }
+
+          const result = await res.json() as GeneratePredictionsOutput;
 
           set({ predictionData: result });
           

@@ -18,66 +18,62 @@ export type { RagBasedQuestionAnsweringOutput };
 // ---------------------------------------------------------------------------
 // ⚠️  DEPRECATED SERVER ACTIONS
 // ---------------------------------------------------------------------------
-// These functions call Supabase Edge Functions DIRECTLY, bypassing the Next.js
-// proxy layer entirely.  That means:
-//   - No auth validation
-//   - No subscription / limit enforcement
-//   - No VPS routing
-//   - No payload hydration & trimming
+// These functions previously called Supabase Edge Functions directly,
+// bypassing auth and billing enforcement. The proxy layer (/api/proxy/*)
+// was also removed. All runtime callers now use the VPS ticket architecture:
 //
-// All runtime callers should use the proxy routes instead:
-//   Client → /api/proxy/{functionName} → VPS → AI
+//   Client → /api/au/vps-ticket → VPS AI Gateway
 //
 // The functions are retained only for their **type exports** (above), which
 // remain in use by UI components.
 // ---------------------------------------------------------------------------
 
-/** @deprecated Use /api/proxy/generate-knowledge instead. */
+/** @deprecated Use VPS ticket + direct VPS gateway call instead. */
 export async function generateKnowledgeMaterials(
   _input: { documentContent: string }
 ): Promise<GenerateStudyMaterialsOutput> {
   throw new Error(
-    'DEPRECATED: generateKnowledgeMaterials server action bypasses proxy enforcement. ' +
-    'Use the /api/proxy/generate-knowledge route instead.',
+    'DEPRECATED: generateKnowledgeMaterials server action is removed. ' +
+    'Use the VPS ticket architecture (/api/au/vps-ticket → VPS gateway).',
   );
 }
 
-/** @deprecated Use /api/proxy/generate-exam-predictions instead. */
+/** @deprecated Use VPS ticket + direct VPS gateway call instead. */
 export async function generateExamPredictions(
   _input: { pastQuestionsContent: string; mainTextbookContent?: string }
 ): Promise<GenerateExamPredictionsOutput> {
   throw new Error(
-    'DEPRECATED: generateExamPredictions server action bypasses proxy enforcement. ' +
-    'Use the /api/proxy/prediction-engine route instead.',
+    'DEPRECATED: generateExamPredictions server action is removed. ' +
+    'Use the VPS ticket architecture (/api/au/vps-ticket → VPS gateway).',
   );
 }
 
-/** @deprecated Use /api/proxy/generate-practice-exam instead. */
+/** @deprecated Use VPS ticket + direct VPS gateway call instead. */
 export async function generatePracticeExam(
   _input: { documentContent: string }
 ): Promise<GeneratePracticeExamOutput> {
   throw new Error(
-    'DEPRECATED: generatePracticeExam server action bypasses proxy enforcement. ' +
-    'Use the /api/proxy/exam-generator route instead.',
+    'DEPRECATED: generatePracticeExam server action is removed. ' +
+    'Use the VPS ticket architecture (/api/au/vps-ticket → VPS gateway).',
   );
 }
 
-/** @deprecated Use /api/proxy/chat instead. */
+/** @deprecated Use VPS ticket + direct VPS gateway call instead. */
 export async function ragBasedQuestionAnsweringAction(
   _input: { question: string; userId: string; mainTextbookId: string }
 ): Promise<RagBasedQuestionAnsweringOutput> {
   throw new Error(
-    'DEPRECATED: ragBasedQuestionAnsweringAction server action bypasses proxy enforcement. ' +
-    'Use the /api/proxy/chat route instead.',
+    'DEPRECATED: ragBasedQuestionAnsweringAction server action is removed. ' +
+    'Use the VPS ticket architecture (/api/au/vps-ticket → VPS gateway).',
   );
 }
 
-/** @deprecated Use /api/proxy/generate-prompt-starters instead. */
+/** @deprecated Use VPS ticket + direct VPS gateway call instead. */
 export async function generatePromptStartersAction(
   _input: { documentTitle: string; documentContent?: string; userIdea?: string }
 ): Promise<{ prompts: string[] }> {
   throw new Error(
-    'DEPRECATED: generatePromptStartersAction server action bypasses proxy enforcement. ' +
-    'Use the /api/proxy/generate-prompt-starters route instead.',
+    'DEPRECATED: generatePromptStartersAction server action is removed. ' +
+    'Use the VPS ticket architecture (/api/au/vps-ticket → VPS gateway).',
   );
 }

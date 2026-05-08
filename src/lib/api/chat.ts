@@ -7,7 +7,7 @@ import {
   type ApiErrorShape,
 } from '@/lib/api/api-contract';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
-import { fetchEdgeFunctionResponse, invokeEdgeFunction } from '@/lib/supabase-client/client';
+// Legacy Edge Function imports removed — VPS ticket path is the sole path.
 import {
   validateAndNormalizeChatPayload,
   toLegacyEdgePayload,
@@ -129,19 +129,7 @@ type ChatResponse = RagBasedQuestionAnsweringOutput & {
 };
 
 const DEFAULT_MODEL_IDS: string[] = []; 
-const AVAILABLE_MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
-const AVAILABLE_MODELS_ERROR_TTL_MS = 60 * 1000;
-let availableModelsCache: { models: string[]; expiresAt: number } | null = null;
-let availableModelsInFlight: Promise<string[]> | null = null;
-
-type EdgeErrorLike = {
-  status?: number | null;
-  message?: string | null;
-  details?: any;
-};
-
-const AU_CHAT_SCHEMA_OUTAGE_TTL_MS = 5 * 60 * 1000;
-let auChatSchemaOutageUntil = 0;
+// Legacy model cache and schema outage state removed — no longer needed.
 
 function extractLatestUserInput(request: ChatRequest): string {
   if (typeof request.user_input === 'string' && request.user_input.trim()) {
@@ -155,55 +143,7 @@ function extractLatestUserInput(request: ChatRequest): string {
   return '';
 }
 
-function isProviderSchemaOutage(error: EdgeErrorLike | null | undefined): boolean {
-  const message = String(error?.message || '').toLowerCase();
-  const details =
-    typeof error?.details === 'string'
-      ? error.details.toLowerCase()
-      : JSON.stringify(error?.details || {}).toLowerCase();
-
-  return (
-    message.includes('ai_provider_keys') ||
-    details.includes('ai_provider_keys') ||
-    (message.includes('schema cache') && message.includes('provider')) ||
-    (details.includes('schema cache') && details.includes('provider'))
-  );
-}
-
-function shouldFallbackToLegacyAuChat(error: EdgeErrorLike | null | undefined): boolean {
-  if (classifyAuthFailure(error)) {
-    return false;
-  }
-
-  const status = Number(error?.status || 0);
-  const message = String(error?.message || '').toLowerCase();
-  const details =
-    typeof error?.details === 'string'
-      ? error.details.toLowerCase()
-      : JSON.stringify(error?.details || {}).toLowerCase();
-
-  return (
-    status === 404 ||
-    status === 408 ||
-    status >= 500 ||
-    message.includes('internal_server_error') ||
-    details.includes('internal_server_error') ||
-    message.includes('upstream_timeout') ||
-    details.includes('upstream_timeout')
-  );
-}
-
-function markAuChatSchemaOutage(): void {
-  auChatSchemaOutageUntil = Date.now() + AU_CHAT_SCHEMA_OUTAGE_TTL_MS;
-}
-
-function clearAuChatSchemaOutage(): void {
-  auChatSchemaOutageUntil = 0;
-}
-
-function shouldBypassAuChatForSchemaOutage(): boolean {
-  return Date.now() < auChatSchemaOutageUntil;
-}
+// Legacy proxy fallback utilities removed — VPS-first architecture.
 
 function buildAuGuide(request: ChatRequest): AuGuideInput | undefined {
   if (request.auGuide) return request.auGuide;
@@ -299,45 +239,7 @@ function buildCanonicalPayload(
   };
 }
 
-async function invokeLegacyAuChatFallback(
-  request: ChatRequest,
-): Promise<ChatResponse> {
-  const question = extractLatestUserInput(request);
-  if (!question) {
-    throw toApiRequestError({
-      code: 'INVALID_REQUEST_PAYLOAD',
-      message: 'Missing user input for fallback chat request.',
-      status: 400,
-      retryable: false,
-    });
-  }
-
-  const { data, error } = await invokeEdgeFunction<any>('chat', {
-    method: 'POST',
-    requireAuth: true,
-    timeoutMs: 120_000,
-    silent: true,
-    body: {
-      question,
-    },
-  });
-
-  if (error) throw error;
-  if (!data) {
-    throw toApiRequestError({
-      code: 'FALLBACK_CHAT_FAILED',
-      message: 'Fallback chat request failed.',
-      status: 500,
-      retryable: true,
-    });
-  }
-
-  return {
-    answer: String(data.answer || ''),
-    thought: typeof data.thought === 'string' ? data.thought : undefined,
-    citations: normalizeAssistantCitations(data.citations),
-  } as ChatResponse;
-}
+// invokeLegacyAuChatFallback removed — dead code that called deleted /api/proxy/chat.
 
 function normalizeChatResponse(data: any): ChatResponse {
   const payload = unwrapApiSuccess(data);
@@ -382,9 +284,7 @@ export async function sendChatMessage(
       endpoint = 'global-chat';
   }
 
-  if (!isGlobal && shouldBypassAuChatForSchemaOutage()) {
-    return invokeLegacyAuChatFallback(request);
-  }
+  // Legacy schema outage bypass removed — VPS is the sole path.
 
   const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
     clientMessageId: opts?.clientMessageId,
@@ -426,22 +326,7 @@ export async function sendChatMessage(
 
 
   if (error) {
-    if (!isGlobal && isProviderSchemaOutage(error)) {
-      markAuChatSchemaOutage();
-      console.warn('[chat] AU chat routing schema mismatch detected; falling back to legacy chat endpoint.');
-      return invokeLegacyAuChatFallback(request);
-    }
-    if (!isGlobal && shouldFallbackToLegacyAuChat(error)) {
-      console.warn('[chat] AU chat request failed; falling back to legacy chat endpoint.', {
-        status: error?.status ?? null,
-        message: error?.message ?? null,
-      });
-      return invokeLegacyAuChatFallback(request);
-    }
     throw error;
-  }
-  if (!isGlobal && endpoint === 'au-chat') {
-    clearAuChatSchemaOutage();
   }
   if (!data) {
     throw toApiRequestError({
@@ -477,17 +362,7 @@ export async function sendChatMessageStream(
   const isGlobal = request.selectedDocId === 'global' || request.chat_type === 'global';
   const endpoint = isGlobal ? 'global-chat' : 'au-chat';
 
-  if (!isGlobal && shouldBypassAuChatForSchemaOutage()) {
-    const fallback = await invokeLegacyAuChatFallback(request);
-    const doneEvent: ChatStreamDoneEvent = {
-      type: 'done',
-      answer: String((fallback as any)?.answer || ''),
-      thought: typeof (fallback as any)?.thought === 'string' ? (fallback as any).thought : undefined,
-      citations: Array.isArray((fallback as any)?.citations) ? (fallback as any).citations : [],
-    };
-    handlers.onEvent(doneEvent);
-    return doneEvent;
-  }
+  // Legacy schema outage bypass removed — VPS is the sole path.
 
   const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
     clientMessageId: request.clientMessageId,
@@ -543,35 +418,7 @@ export async function sendChatMessageStream(
     );
     const message = normalizedError.message;
 
-    if (!isGlobal && endpoint === 'au-chat' && isProviderSchemaOutage({ status: res.status, message, details })) {
-      markAuChatSchemaOutage();
-      console.warn('[chat-stream] AU chat routing schema mismatch detected; falling back to non-stream legacy chat endpoint.');
-      const fallback = await invokeLegacyAuChatFallback(request);
-      const doneEvent: ChatStreamDoneEvent = {
-        type: 'done',
-        answer: String((fallback as any)?.answer || ''),
-        thought: typeof (fallback as any)?.thought === 'string' ? (fallback as any).thought : undefined,
-        citations: Array.isArray((fallback as any)?.citations) ? (fallback as any).citations : [],
-      };
-      handlers.onEvent(doneEvent);
-      return doneEvent;
-    }
-
-    if (!isGlobal && endpoint === 'au-chat' && shouldFallbackToLegacyAuChat({ status: res.status, message, details })) {
-      console.warn('[chat-stream] AU chat stream failed; falling back to non-stream legacy chat endpoint.', {
-        status: res.status,
-        message,
-      });
-      const fallback = await invokeLegacyAuChatFallback(request);
-      const doneEvent: ChatStreamDoneEvent = {
-        type: 'done',
-        answer: String((fallback as any)?.answer || ''),
-        thought: typeof (fallback as any)?.thought === 'string' ? (fallback as any).thought : undefined,
-        citations: Array.isArray((fallback as any)?.citations) ? (fallback as any).citations : [],
-      };
-      handlers.onEvent(doneEvent);
-      return doneEvent;
-    }
+    // Legacy proxy fallback removed — VPS is the sole path. Throw the error directly.
 
     throw toApiRequestError(
       {
@@ -616,9 +463,7 @@ export async function sendChatMessageStream(
       retryable: true,
     });
   }
-  if (!isGlobal && endpoint === 'au-chat') {
-    clearAuChatSchemaOutage();
-  }
+  // Legacy schema outage tracking removed.
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -744,61 +589,11 @@ export async function generatePromptStarters(
 }
 
 /**
- * Fetches the list of available models from the backend.
+ * Returns the list of available models.
+ * Previously fetched from the au-chat Edge Function via proxy; that path was removed.
+ * Now returns the default model list. Model routing is handled server-side
+ * by the VPS AI Gateway based on the user's plan tier.
  */
 export async function getAvailableModels(): Promise<string[]> {
-  if (!SUPABASE_URL) return DEFAULT_MODEL_IDS;
-  if (availableModelsCache && Date.now() < availableModelsCache.expiresAt) {
-    return availableModelsCache.models;
-  }
-  if (availableModelsInFlight) {
-    return availableModelsInFlight;
-  }
-
-  availableModelsInFlight = (async () => {
-    try {
-      const { data, error } = await invokeEdgeFunction<any>('au-chat', {
-        method: 'POST',
-        requireAuth: true,
-        silent: true,
-        body: { action: 'get_models' },
-        authIntent: 'background',
-        reauthOnAuthFailure: false,
-      });
-      if (error) {
-        availableModelsCache = {
-          models: DEFAULT_MODEL_IDS,
-          expiresAt: Date.now() + AVAILABLE_MODELS_ERROR_TTL_MS,
-        };
-        return DEFAULT_MODEL_IDS;
-      }
-
-      const models = (data as any)?.models;
-      const normalizedModels = Array.isArray(models)
-        ? models.every((m) => typeof m === 'string')
-          ? models
-          : models.every((m) => m && typeof m === 'object' && typeof (m as any).id === 'string')
-            ? models.map((m) => (m as any).id)
-            : models.every((m) => m && typeof m === 'object' && typeof (m as any).model_id === 'string')
-              ? models.map((m) => (m as any).model_id)
-              : DEFAULT_MODEL_IDS
-        : DEFAULT_MODEL_IDS;
-
-      availableModelsCache = {
-        models: normalizedModels,
-        expiresAt: Date.now() + AVAILABLE_MODELS_CACHE_TTL_MS,
-      };
-      return normalizedModels;
-    } catch {
-      availableModelsCache = {
-        models: DEFAULT_MODEL_IDS,
-        expiresAt: Date.now() + AVAILABLE_MODELS_ERROR_TTL_MS,
-      };
-      return DEFAULT_MODEL_IDS;
-    } finally {
-      availableModelsInFlight = null;
-    }
-  })();
-
-  return availableModelsInFlight;
+  return DEFAULT_MODEL_IDS;
 }

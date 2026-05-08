@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { hasConexAccess } from '@/lib/conex-rbac';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
 
 function firstEnv(...keys: string[]): string | null {
   for (const key of keys) {

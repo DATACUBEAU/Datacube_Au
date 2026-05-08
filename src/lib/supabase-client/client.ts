@@ -549,10 +549,16 @@ function resolveEdgeRequestBody(method: 'POST' | 'GET', body: unknown): BodyInit
   return JSON.stringify(body ?? {});
 }
 
+/**
+ * @deprecated All callers have been migrated to VPS ticket + direct fetch.
+ * This function routes to /api/proxy/{functionName} which no longer exists.
+ * Retained temporarily for type-export compatibility. DO NOT add new callers.
+ */
 export async function fetchEdgeFunctionResponse(
   functionName: string,
   options?: EdgeFunctionRequestOptions,
 ): Promise<Response> {
+  console.warn(`[DEPRECATED] fetchEdgeFunctionResponse('${functionName}') called — this route no longer exists. Migrate to VPS ticket architecture.`);
   const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   const method = options?.method ?? 'POST';
   const timeoutMs = options?.timeoutMs ?? 10000;
