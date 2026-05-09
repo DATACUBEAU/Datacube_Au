@@ -82,6 +82,184 @@ export async function GET(req: NextRequest) {
   }
 }
 
+/**
+ * POST — Admin billing cleanup actions.
+ *
+ * Supported actions:
+ *   - delete_transaction    { reference: string }
+ *   - delete_subscription   { user_id: string, plan_key: string }
+ *   - delete_entitlement    { user_id: string, trace_id?: string, created_at?: string }
+ *   - clear_transactions    { confirmation: 'CONFIRM' }
+ *   - clear_subscriptions   { confirmation: 'CONFIRM' }
+ *   - clear_entitlements    { confirmation: 'CONFIRM' }
+ *   - clear_all             { confirmation: 'CONFIRM DELETE ALL BILLING DATA' }
+ */
+export async function POST(req: NextRequest) {
+  const requestId = crypto.randomUUID();
+  const adminResult = await requireConexAdmin(req);
+  if (!adminResult.ok) return adminResult.response;
+
+  const supabase = adminResult.supabase;
+  const body = await req.json().catch(() => ({}));
+  const action = String((body as any)?.action || '').trim();
+
+  if (!action) {
+    return NextResponse.json(
+      { ok: false, error: 'missing_action', message: 'Action is required.', requestId },
+      { status: 400, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  try {
+    switch (action) {
+      case 'delete_transaction': {
+        const reference = String((body as any)?.reference || '').trim();
+        if (!reference) {
+          return NextResponse.json(
+            { ok: false, error: 'missing_reference', message: 'Transaction reference is required.', requestId },
+            { status: 400, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        const { error } = await supabase
+          .from('billing_transactions')
+          .delete()
+          .eq('reference', reference);
+        if (error) throw error;
+        return NextResponse.json(
+          { ok: true, action, reference, requestId },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      case 'delete_subscription': {
+        const userId = String((body as any)?.user_id || '').trim();
+        const planKey = String((body as any)?.plan_key || '').trim();
+        if (!userId) {
+          return NextResponse.json(
+            { ok: false, error: 'missing_user_id', message: 'User ID is required.', requestId },
+            { status: 400, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        let query = supabase.from('billing_subscriptions').delete().eq('user_id', userId);
+        if (planKey) query = query.eq('plan_key', planKey);
+        const { error } = await query;
+        if (error) throw error;
+        return NextResponse.json(
+          { ok: true, action, user_id: userId, plan_key: planKey || null, requestId },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      case 'delete_entitlement': {
+        const userId = String((body as any)?.user_id || '').trim();
+        const traceId = String((body as any)?.trace_id || '').trim();
+        const createdAt = String((body as any)?.created_at || '').trim();
+        if (!userId) {
+          return NextResponse.json(
+            { ok: false, error: 'missing_user_id', message: 'User ID is required.', requestId },
+            { status: 400, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        let query = supabase.from('entitlement_audit').delete().eq('user_id', userId);
+        if (traceId) query = query.eq('trace_id', traceId);
+        if (createdAt) query = query.eq('created_at', createdAt);
+        const { error } = await query;
+        if (error) throw error;
+        return NextResponse.json(
+          { ok: true, action, user_id: userId, requestId },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      case 'clear_transactions': {
+        if (String((body as any)?.confirmation || '') !== 'CONFIRM') {
+          return NextResponse.json(
+            { ok: false, error: 'confirmation_required', message: 'Set confirmation to "CONFIRM" to proceed.', requestId },
+            { status: 400, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        // Delete all rows — neq on a UUID guarantees all rows match
+        const { error } = await supabase
+          .from('billing_transactions')
+          .delete()
+          .neq('reference', '00000000-never-matches');
+        if (error) throw error;
+        return NextResponse.json(
+          { ok: true, action, requestId },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      case 'clear_subscriptions': {
+        if (String((body as any)?.confirmation || '') !== 'CONFIRM') {
+          return NextResponse.json(
+            { ok: false, error: 'confirmation_required', message: 'Set confirmation to "CONFIRM" to proceed.', requestId },
+            { status: 400, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        const { error } = await supabase
+          .from('billing_subscriptions')
+          .delete()
+          .neq('user_id', '00000000-0000-0000-0000-000000000000');
+        if (error) throw error;
+        return NextResponse.json(
+          { ok: true, action, requestId },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      case 'clear_entitlements': {
+        if (String((body as any)?.confirmation || '') !== 'CONFIRM') {
+          return NextResponse.json(
+            { ok: false, error: 'confirmation_required', message: 'Set confirmation to "CONFIRM" to proceed.', requestId },
+            { status: 400, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        const { error } = await supabase
+          .from('entitlement_audit')
+          .delete()
+          .neq('user_id', '00000000-0000-0000-0000-000000000000');
+        if (error) throw error;
+        return NextResponse.json(
+          { ok: true, action, requestId },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      case 'clear_all': {
+        if (String((body as any)?.confirmation || '') !== 'CONFIRM DELETE ALL BILLING DATA') {
+          return NextResponse.json(
+            { ok: false, error: 'confirmation_required', message: 'Set confirmation to "CONFIRM DELETE ALL BILLING DATA".', requestId },
+            { status: 400, headers: { 'Cache-Control': 'no-store' } },
+          );
+        }
+        const results: Record<string, boolean> = {};
+        const txnRes = await supabase.from('billing_transactions').delete().neq('reference', '00000000-never-matches');
+        results.transactions = !txnRes.error;
+        const subRes = await supabase.from('billing_subscriptions').delete().neq('user_id', '00000000-0000-0000-0000-000000000000');
+        results.subscriptions = !subRes.error;
+        const auditRes = await supabase.from('entitlement_audit').delete().neq('user_id', '00000000-0000-0000-0000-000000000000');
+        results.entitlements = !auditRes.error;
+        return NextResponse.json(
+          { ok: true, action, results, requestId },
+          { status: 200, headers: { 'Cache-Control': 'no-store' } },
+        );
+      }
+
+      default:
+        return NextResponse.json(
+          { ok: false, error: 'unknown_action', message: `Unknown action: ${action}`, requestId },
+          { status: 400, headers: { 'Cache-Control': 'no-store' } },
+        );
+    }
+  } catch (error: any) {
+    return NextResponse.json(
+      { ok: false, error: 'billing_action_failed', message: String(error?.message || 'Operation failed.'), requestId },
+      { status: 500, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+}
+
 export async function DELETE(req: NextRequest) {
   const requestId = crypto.randomUUID();
   const adminResult = await requireConexAdmin(req);

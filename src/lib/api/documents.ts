@@ -118,16 +118,21 @@ export async function initiateUpload(
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
-    const message = String(errBody?.message || 'Upload initiation failed');
-    const wrapped = new Error(message);
-    (wrapped as any).status = res.status;
-    (wrapped as any).code = extractApiErrorCode(errBody);
-    (wrapped as any).details = errBody?.details || null;
-    console.error('[API] initiateUpload error:', {
+    const message = String(errBody?.message || errBody?.error || `Upload initiation failed (HTTP ${res.status})`);
+    const code = extractApiErrorCode(errBody) || errBody?.error || 'initiate_failed';
+    const requestId = errBody?.requestId || null;
+    console.error('[API] initiateUpload failed:', {
       status: res.status,
-      code: (wrapped as any).code,
+      code,
       message,
+      requestId,
+      details: errBody?.details || null,
     });
+    const wrapped: any = new Error(message);
+    wrapped.status = res.status;
+    wrapped.code = code;
+    wrapped.details = errBody?.details || null;
+    wrapped.requestId = requestId;
     throw wrapped;
   }
 
@@ -165,16 +170,21 @@ export async function completeUpload(
 
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
-    const message = String(errBody?.message || 'Upload completion failed');
-    const wrapped = new Error(message);
-    (wrapped as any).status = res.status;
-    (wrapped as any).code = extractApiErrorCode(errBody);
-    (wrapped as any).details = errBody?.details || null;
-    console.error('[API] completeUpload error:', {
+    const message = String(errBody?.message || errBody?.error || `Upload completion failed (HTTP ${res.status})`);
+    const code = extractApiErrorCode(errBody) || errBody?.error || 'complete_failed';
+    const requestId = errBody?.requestId || null;
+    console.error('[API] completeUpload failed:', {
       status: res.status,
-      code: (wrapped as any).code,
+      code,
       message,
+      requestId,
+      details: errBody?.details || null,
     });
+    const wrapped: any = new Error(message);
+    wrapped.status = res.status;
+    wrapped.code = code;
+    wrapped.details = errBody?.details || null;
+    wrapped.requestId = requestId;
     throw wrapped;
   }
 

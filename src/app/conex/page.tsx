@@ -1090,6 +1090,10 @@ const AdminManualPayments = (_props: { token: string }) => {
     const [entitlementAudit, setEntitlementAudit] = useState<any[]>([]);
     const [cancellationFeedback, setCancellationFeedback] = useState<any[]>([]);
     const [deletingFeedbackId, setDeletingFeedbackId] = useState<string | null>(null);
+    const [deletingTxnRef, setDeletingTxnRef] = useState<string | null>(null);
+    const [deletingSubKey, setDeletingSubKey] = useState<string | null>(null);
+    const [deletingEntKey, setDeletingEntKey] = useState<string | null>(null);
+    const [clearingTable, setClearingTable] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const { toast } = useToast();
 
@@ -1159,6 +1163,73 @@ const AdminManualPayments = (_props: { token: string }) => {
         }
     }, [toast]);
 
+    const adminBillingAction = useCallback(async (action: string, payload: any) => {
+        const accessToken = await getSupabaseAccessToken();
+        if (!accessToken) throw new Error('Missing access token');
+        const res = await fetch('/api/admin/billing/overview', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ action, ...payload }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.message || `Action failed (${res.status})`);
+        return data;
+    }, []);
+
+    const handleDeleteTransaction = useCallback(async (reference: string) => {
+        if (!confirm(`Delete transaction ${reference}?`)) return;
+        setDeletingTxnRef(reference);
+        try {
+            await adminBillingAction('delete_transaction', { reference });
+            setTransactions(rows => rows.filter(r => r.reference !== reference));
+            toast({ title: 'Deleted', description: 'Transaction removed.' });
+        } catch (e: any) {
+            toast({ title: 'Delete failed', description: e?.message, variant: 'destructive' });
+        } finally { setDeletingTxnRef(null); }
+    }, [adminBillingAction, toast]);
+
+    const handleDeleteSubscription = useCallback(async (userId: string, planKey: string) => {
+        if (!confirm(`Delete subscription ${planKey} for ${userId}?`)) return;
+        const key = `${userId}:${planKey}`;
+        setDeletingSubKey(key);
+        try {
+            await adminBillingAction('delete_subscription', { user_id: userId, plan_key: planKey });
+            setSubscriptions(rows => rows.filter(r => `${r.user_id}:${r.plan_key}` !== key));
+            toast({ title: 'Deleted', description: 'Subscription removed.' });
+        } catch (e: any) {
+            toast({ title: 'Delete failed', description: e?.message, variant: 'destructive' });
+        } finally { setDeletingSubKey(null); }
+    }, [adminBillingAction, toast]);
+
+    const handleDeleteEntitlement = useCallback(async (userId: string, traceId: string, createdAt: string) => {
+        if (!confirm(`Delete entitlement audit entry for ${userId}?`)) return;
+        const key = `${traceId || createdAt}:${userId}`;
+        setDeletingEntKey(key);
+        try {
+            await adminBillingAction('delete_entitlement', { user_id: userId, trace_id: traceId, created_at: createdAt });
+            setEntitlementAudit(rows => rows.filter(r => `${r.trace_id || r.created_at}:${r.user_id}` !== key));
+            toast({ title: 'Deleted', description: 'Entitlement audit entry removed.' });
+        } catch (e: any) {
+            toast({ title: 'Delete failed', description: e?.message, variant: 'destructive' });
+        } finally { setDeletingEntKey(null); }
+    }, [adminBillingAction, toast]);
+
+    const handleClearTable = useCallback(async (table: 'transactions' | 'subscriptions' | 'entitlements') => {
+        const label = table.charAt(0).toUpperCase() + table.slice(1);
+        if (!confirm(`⚠️ CLEAR ALL ${label.toUpperCase()}?\n\nThis is irreversible. All ${table} data will be permanently deleted.`)) return;
+        setClearingTable(table);
+        try {
+            await adminBillingAction(`clear_${table}`, { confirmation: 'CONFIRM' });
+            if (table === 'transactions') setTransactions([]);
+            if (table === 'subscriptions') setSubscriptions([]);
+            if (table === 'entitlements') setEntitlementAudit([]);
+            toast({ title: `${label} Cleared`, description: `All ${table} have been removed.` });
+        } catch (e: any) {
+            toast({ title: 'Clear failed', description: e?.message, variant: 'destructive' });
+        } finally { setClearingTable(null); }
+    }, [adminBillingAction, toast]);
+
     const renderStatus = (statusRaw: string) => {
         const status = String(statusRaw || '').toLowerCase();
         if (status === 'success' || status === 'active') {
@@ -1206,11 +1277,12 @@ const AdminManualPayments = (_props: { token: string }) => {
                                             <th className="p-3 text-left">Amount</th>
                                             <th className="p-3 text-left">Channel</th>
                                             <th className="p-3 text-left">Status</th>
+                                            <th className="p-3 text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {transactions.length === 0 ? (
-                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No transactions found.</td></tr>
+                                            <tr><td colSpan={7} className="p-8 text-center text-muted-foreground">No transactions found.</td></tr>
                                         ) : (
                                             transactions.map((payment) => {
                                                 return (
@@ -1221,6 +1293,19 @@ const AdminManualPayments = (_props: { token: string }) => {
                                                         <td className="p-3 font-bold">N{Math.round(Number(payment.amount_kobo || 0) / 100).toLocaleString()}</td>
                                                         <td className="p-3">{payment.channel || '-'}</td>
                                                         <td className="p-3">{renderStatus(String(payment.status || 'pending'))}</td>
+                                                        <td className="p-3 text-right">
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="text-destructive hover:text-destructive"
+                                                                onClick={() => void handleDeleteTransaction(payment.reference)}
+                                                                disabled={deletingTxnRef === payment.reference}
+                                                            >
+                                                                {deletingTxnRef === payment.reference
+                                                                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                                                                    : <Trash2 className="h-4 w-4" />}
+                                                            </Button>
+                                                        </td>
                                                     </tr>
                                                 );
                                             })
@@ -1228,6 +1313,19 @@ const AdminManualPayments = (_props: { token: string }) => {
                                     </tbody>
                                 </table>
                             </div>
+                            {transactions.length > 0 && (
+                                <div className="flex justify-end mt-3">
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() => void handleClearTable('transactions')}
+                                        disabled={!!clearingTable}
+                                    >
+                                        {clearingTable === 'transactions' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                                        Clear All Transactions
+                                    </Button>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>
@@ -1248,11 +1346,12 @@ const AdminManualPayments = (_props: { token: string }) => {
                                             <th className="p-3 text-left">Plan</th>
                                             <th className="p-3 text-left">Period</th>
                                             <th className="p-3 text-left">Status</th>
+                                            <th className="p-3 text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {subscriptions.length === 0 ? (
-                                            <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No subscriptions found.</td></tr>
+                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No subscriptions found.</td></tr>
                                         ) : (
                                             subscriptions.map((subscription) => {
                                                 return (
@@ -1265,6 +1364,19 @@ const AdminManualPayments = (_props: { token: string }) => {
                                                           {subscription.ends_at || '-'}
                                                         </td>
                                                         <td className="p-3">{renderStatus(String(subscription.status || 'active'))}</td>
+                                                        <td className="p-3 text-right">
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="text-destructive hover:text-destructive"
+                                                                onClick={() => void handleDeleteSubscription(subscription.user_id, subscription.plan_key)}
+                                                                disabled={deletingSubKey === `${subscription.user_id}:${subscription.plan_key}`}
+                                                            >
+                                                                {deletingSubKey === `${subscription.user_id}:${subscription.plan_key}`
+                                                                    ? <Loader2 className="h-4 w-4 animate-spin" />
+                                                                    : <Trash2 className="h-4 w-4" />}
+                                                            </Button>
+                                                        </td>
                                                     </tr>
                                                 );
                                             })
@@ -1272,6 +1384,19 @@ const AdminManualPayments = (_props: { token: string }) => {
                                     </tbody>
                                 </table>
                             </div>
+                            {subscriptions.length > 0 && (
+                                <div className="flex justify-end mt-3">
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() => void handleClearTable('subscriptions')}
+                                        disabled={!!clearingTable}
+                                    >
+                                        {clearingTable === 'subscriptions' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                                        Clear All Subscriptions
+                                    </Button>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>
@@ -1292,11 +1417,12 @@ const AdminManualPayments = (_props: { token: string }) => {
                                             <th className="p-3 text-left">Action</th>
                                             <th className="p-3 text-left">Source</th>
                                             <th className="p-3 text-left">Trace</th>
+                                            <th className="p-3 text-right">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         {entitlementAudit.length === 0 ? (
-                                            <tr><td colSpan={5} className="p-8 text-center text-muted-foreground">No entitlement audit rows found.</td></tr>
+                                            <tr><td colSpan={6} className="p-8 text-center text-muted-foreground">No entitlement audit rows found.</td></tr>
                                         ) : (
                                             entitlementAudit.map((row) => (
                                                 <tr key={`${row.trace_id || row.created_at}-${row.user_id}`} className="border-t hover:bg-muted/30">
@@ -1305,12 +1431,38 @@ const AdminManualPayments = (_props: { token: string }) => {
                                                     <td className="p-3">{row.action}</td>
                                                     <td className="p-3">{row.source}</td>
                                                     <td className="p-3 font-mono text-xs">{row.trace_id || '-'}</td>
+                                                    <td className="p-3 text-right">
+                                                        <Button
+                                                            variant="outline"
+                                                            size="sm"
+                                                            className="text-destructive hover:text-destructive"
+                                                            onClick={() => void handleDeleteEntitlement(row.user_id, row.trace_id || '', row.created_at)}
+                                                            disabled={deletingEntKey === `${row.trace_id || row.created_at}:${row.user_id}`}
+                                                        >
+                                                            {deletingEntKey === `${row.trace_id || row.created_at}:${row.user_id}`
+                                                                ? <Loader2 className="h-4 w-4 animate-spin" />
+                                                                : <Trash2 className="h-4 w-4" />}
+                                                        </Button>
+                                                    </td>
                                                 </tr>
                                             ))
                                         )}
                                     </tbody>
                                 </table>
                             </div>
+                            {entitlementAudit.length > 0 && (
+                                <div className="flex justify-end mt-3">
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() => void handleClearTable('entitlements')}
+                                        disabled={!!clearingTable}
+                                    >
+                                        {clearingTable === 'entitlements' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                                        Clear All Entitlements
+                                    </Button>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </TabsContent>
