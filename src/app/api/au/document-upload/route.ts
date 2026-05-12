@@ -23,7 +23,7 @@ const DEFAULT_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
  *
  *   au_worker_jobs:  id, user_id, owner_id, document_id, upload_id, correlation_id,
  *                    file_name, mime_type, file_size_bytes, bucket, object_path,
- *                    status, progress, worker_id, metadata, job_type,
+ *                    status, progress, worker_id, metadata,
  *                    created_at, updated_at
  */
 export async function POST(req: NextRequest) {
@@ -295,7 +295,6 @@ async function handleComplete(auth: any, body: any, requestId: string, correlati
     user_id: userId,
     owner_id: userId,
     document_id: documentId,
-    job_type: 'ingest',
     status: 'queued',
     progress: 0,
     file_name: fileName,
