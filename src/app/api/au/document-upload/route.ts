@@ -132,7 +132,9 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
   // Determine storage path and bucket
   const bucket = DEFAULT_BUCKET;
   const ext = fileName.includes('.') ? fileName.split('.').pop() : 'pdf';
-  const storagePath = `uploads/${userId}/${documentId}.${ext}`;
+  // Use a collision-safe path: uploads/userId/documentId/randomUUID.ext
+  // This ensures every initiation attempt gets a fresh, unique path in storage.
+  const storagePath = `uploads/${userId}/${documentId}/${randomUUID()}.${ext}`;
 
   // Create a signed upload URL
   const { data: signedData, error: signedError } = await supabase.storage
@@ -182,7 +184,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
     insertPayload.parent_document_id = parentDocumentId;
   }
 
-  const { error: insertError } = await supabase.from('au_documents').insert(insertPayload);
+  const { error: insertError } = await supabase.from('au_documents').upsert(insertPayload, { onConflict: 'id' });
 
   if (insertError) {
     console.error('[document-upload] Document insert error:', {
@@ -203,7 +205,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
       console.warn('[document-upload] Retrying insert without parent_id due to trigger error');
       delete insertPayload.parent_id;
       delete insertPayload.parent_document_id;
-      const { error: retryError } = await supabase.from('au_documents').insert(insertPayload);
+      const { error: retryError } = await supabase.from('au_documents').upsert(insertPayload, { onConflict: 'id' });
       if (retryError) {
         console.error('[document-upload] Retry insert also failed:', {
           message: retryError.message,
@@ -286,8 +288,8 @@ async function handleComplete(auth: any, body: any, requestId: string, correlati
     // Non-fatal: continue to create the worker job
   }
 
-  // Create a worker job for RAG processing — use correct column names
-  const { error: jobError } = await supabase.from('au_worker_jobs').insert({
+  // Create or update a worker job for RAG processing — use upsert for idempotency
+  const { error: jobError } = await supabase.from('au_worker_jobs').upsert({
     id: jobId,
     upload_id: uploadId,
     user_id: userId,
@@ -306,7 +308,7 @@ async function handleComplete(auth: any, body: any, requestId: string, correlati
     metadata: JSON.stringify({ requestId }),
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  });
+  }, { onConflict: 'id' });
 
   if (jobError) {
     console.error('[document-upload] Worker job insert error:', {
