@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
       .setExpirationTime('1m') // 60 seconds short-lived
       .sign(secret);
 
-    const vpsUrl = process.env.VPS_AI_GATEWAY_URL || process.env.NEXT_PUBLIC_VPS_GATEWAY_URL || 'https://vps.datacube.au';
+    const vpsUrl = (process.env.VPS_AI_GATEWAY_URL || process.env.NEXT_PUBLIC_VPS_GATEWAY_URL || 'https://vps.datacube.au').replace(/\/+$/, '');
 
     return NextResponse.json(buildApiSuccessBody({ ticket: jwt, vpsUrl }));
   } catch (error: any) {
