@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
       })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuedAt()
-      .setExpirationTime('1m') // 60 seconds short-lived
+      .setExpirationTime('5m') // 5 minutes validity to absorb skew and network latency
       .sign(secret);
 
     const vpsUrl = (process.env.VPS_AI_GATEWAY_URL || process.env.NEXT_PUBLIC_VPS_GATEWAY_URL || 'https://vps.datacube.au').replace(/\/+$/, '');
