@@ -97,6 +97,7 @@ export async function clearUserScopedClientCaches(userId: string | null | undefi
   await Promise.allSettled([
     clearUserCache(userId),
     clearUserLocalWorkingMemory(userId),
+    purgeEmergencyPwaCaches(),
   ]);
 }
 
@@ -132,6 +133,20 @@ function removeMatchingStorageKeys(store: Storage): void {
     } catch {
       // Ignore per-key storage failures.
     }
+  }
+}
+
+export async function purgeEmergencyPwaCaches(): Promise<void> {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) return;
+  try {
+    const keys = await caches.keys();
+    await Promise.all(keys.map(key => caches.delete(key)));
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    for (const reg of registrations) {
+      await reg.unregister();
+    }
+  } catch {
+    // Ignore PWA purge failures
   }
 }
 

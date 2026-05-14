@@ -281,8 +281,8 @@ const withPWA = withPWAInit({
   dest: 'public',
   disable: process.env.NODE_ENV === 'development',
   register: false,
-  cacheOnFrontEndNav: true,
-  aggressiveFrontEndNavCaching: true,
+  cacheOnFrontEndNav: false,
+  aggressiveFrontEndNavCaching: false,
   dynamicStartUrlRedirect: '/dashboard',
   fallbacks: {
     document: '/~offline',
@@ -300,10 +300,13 @@ const withPWA = withPWAInit({
           // Exclude health check (stays NetworkOnly below) and auth session endpoints
           if (/\/api\/health$/i.test(url.pathname)) return false;
           if (/\/api\/auth\//i.test(url.pathname)) return false;
+          if (/\/api\/billing\//i.test(url.pathname)) return false;
+          if (/\/api\/webhooks\//i.test(url.pathname)) return false;
+          if (/\/socket\.io\//i.test(url.pathname)) return false;
           return sameOrigin && url.pathname.startsWith('/api/');
         },
         method: 'GET',
-        handler: 'StaleWhileRevalidate',
+        handler: 'NetworkFirst',
         options: {
           cacheName: PWA_RUNTIME_CACHE_NAMES['api-get-swr'],
           plugins: [
