@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js';
 import { ChatHandler } from './chat-handler.js';
 import { GenerationHandler } from './generation-handler.js';
 import fastifyRateLimit from '@fastify/rate-limit';
-import { verifySupabaseToken, verifyVpsTicket } from './auth.js';
+import { verifyVpsTicket } from './auth.js';
 import { logger } from './utils.js';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
