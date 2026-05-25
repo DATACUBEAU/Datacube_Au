@@ -4,9 +4,6 @@ exports.GenerationHandler = void 0;
 const utils_js_1 = require("./utils.js");
 const ai_routing_js_1 = require("./ai-routing.js");
 class GenerationHandler {
-    supabase;
-    qdrantUrl;
-    qdrantApiKey;
     constructor(supabase, qdrantUrl, qdrantApiKey) {
         this.supabase = supabase;
         this.qdrantUrl = qdrantUrl;
@@ -14,12 +11,19 @@ class GenerationHandler {
     }
     async handleKnowledge(body, headers, reply) {
         const userId = headers['x-user-id'];
-        const { documentId, documentContent, pastQuestionsContent } = body;
+        const { documentId } = body;
+        let { documentContent, pastQuestionsContent } = body;
+        if (!documentContent && documentId) {
+            documentContent = await this.hydrateDocumentContent(documentId, userId);
+        }
+        if (!pastQuestionsContent && body.pastQuestionIds) {
+            pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+        }
         if (!documentContent) {
             return reply.code(400).send({ error: 'missing_content', message: 'Document content required' });
         }
         try {
-            const candidate = await this.selectModel('knowledge', userId);
+            const candidate = await this.selectModel('knowledge', userId, headers['x-user-plan']);
             const prompt = this.buildKnowledgePrompt(documentContent, pastQuestionsContent);
             const result = await this.generate(candidate, prompt);
             return reply.code(200).send({
@@ -35,12 +39,19 @@ class GenerationHandler {
     }
     async handleExamPredictions(body, headers, reply) {
         const userId = headers['x-user-id'];
-        const { mainTextbookId, mainTextbookContent, pastQuestionsContent } = body;
+        const { mainTextbookId } = body;
+        let { mainTextbookContent, pastQuestionsContent } = body;
+        if (!mainTextbookContent && mainTextbookId) {
+            mainTextbookContent = await this.hydrateDocumentContent(mainTextbookId, userId);
+        }
+        if (!pastQuestionsContent && body.pastQuestionIds) {
+            pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+        }
         if (!mainTextbookContent) {
             return reply.code(400).send({ error: 'missing_content' });
         }
         try {
-            const candidate = await this.selectModel('prediction_engine', userId);
+            const candidate = await this.selectModel('prediction_engine', userId, headers['x-user-plan']);
             const prompt = this.buildPredictionsPrompt(mainTextbookContent, pastQuestionsContent);
             const result = await this.generate(candidate, prompt);
             return reply.code(200).send({
@@ -56,12 +67,19 @@ class GenerationHandler {
     }
     async handlePracticeExam(body, headers, reply) {
         const userId = headers['x-user-id'];
-        const { documentId, documentContent, pastQuestionsContent } = body;
+        const { documentId } = body;
+        let { documentContent, pastQuestionsContent } = body;
+        if (!documentContent && documentId) {
+            documentContent = await this.hydrateDocumentContent(documentId, userId);
+        }
+        if (!pastQuestionsContent && body.pastQuestionIds) {
+            pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+        }
         if (!documentContent) {
             return reply.code(400).send({ error: 'missing_content' });
         }
         try {
-            const candidate = await this.selectModel('exam_generator', userId);
+            const candidate = await this.selectModel('exam_generator', userId, headers['x-user-plan']);
             const prompt = this.buildPracticeExamPrompt(documentContent, pastQuestionsContent);
             const result = await this.generate(candidate, prompt);
             return reply.code(200).send({
@@ -82,7 +100,7 @@ class GenerationHandler {
             return reply.code(400).send({ error: 'missing_content' });
         }
         try {
-            const candidate = await this.selectModel('chat', userId);
+            const candidate = await this.selectModel('chat', userId, headers['x-user-plan']);
             const prompt = this.buildPromptStartersPrompt(documentTitle, documentContent, userIdea);
             const result = await this.generate(candidate, prompt);
             try {
@@ -100,13 +118,29 @@ class GenerationHandler {
             return reply.code(500).send({ error: 'generation_failed', message: err.message });
         }
     }
-    async selectModel(requestType, userId) {
-        const { data: profile } = await this.supabase
-            .from('au_user_profiles')
-            .select('tier')
+    async hydrateDocumentContent(documentId, userId) {
+        const { data } = await this.supabase
+            .from('au_documents')
+            .select('content_text')
+            .eq('id', documentId)
             .eq('user_id', userId)
             .single();
-        const plan = profile?.tier || 'free';
+        return data?.content_text || null;
+    }
+    async hydratePastQuestions(pastQuestionIds, userId) {
+        if (!pastQuestionIds || pastQuestionIds.length === 0)
+            return null;
+        const { data } = await this.supabase
+            .from('au_past_questions')
+            .select('question, answer')
+            .in('id', pastQuestionIds)
+            .eq('user_id', userId);
+        if (!data || data.length === 0)
+            return null;
+        return data.map(q => `Q: ${q.question}\nA: ${q.answer}`).join('\n\n');
+    }
+    async selectModel(requestType, userId, headerPlan) {
+        const plan = headerPlan || 'free';
         return (0, ai_routing_js_1.selectProviderAndModel)({
             supabase: this.supabase,
             userId,

@@ -15,6 +15,7 @@ echo "=== Creating distribution archive ==="
 cd ..
 tar -czf vps-ai-gateway.tar.gz \
   vps-ai-gateway/package.json \
+  vps-ai-gateway/package-lock.json \
   vps-ai-gateway/dist \
   vps-ai-gateway/Dockerfile
 
