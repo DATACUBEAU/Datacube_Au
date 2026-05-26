@@ -65,13 +65,14 @@ run('knowledge hub allows pro users when enabled', () => {
   assert.equal(access.code, null);
 });
 
-run('practice exam remains available to free users when enabled', () => {
+run('practice exam requires paid access when enabled', () => {
   const access = getDashboardFeatureAccess('practice_exam_generation', freeEntitlements, {
     enable_practice_exam_generation: { enabled: true },
   } as any);
 
-  assert.equal(access.allowed, true);
-  assert.equal(access.proRequired, false);
+  assert.equal(access.allowed, false);
+  assert.equal(access.proRequired, true);
+  assert.equal(access.code, 'PRO_REQUIRED');
 });
 
 run('feature-disabled access returns disabled code and keeps upgrade source stable', () => {

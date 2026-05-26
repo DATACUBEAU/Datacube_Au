@@ -1,4 +1,17 @@
-export const PWA_CACHE_EXCLUDED_PREFIXES = ['/conex'];
+export const PWA_CACHE_EXCLUDED_PREFIXES = [
+  '/conex',
+  '/dashboard',
+  '/api/account',
+  '/api/admin',
+  '/api/au',
+  '/api/billing',
+  '/api/chat',
+  '/api/entitlements',
+  '/api/feature-output',
+  '/api/feedback',
+  '/api/limits',
+  '/api/payments',
+];
 
 export const PWA_OFFLINE_WARMUP_ROUTES = [
   '/',
@@ -6,20 +19,9 @@ export const PWA_OFFLINE_WARMUP_ROUTES = [
   '/features',
   '/policy',
   '/login',
-  '/dashboard',
-  '/dashboard/documents',
-  '/dashboard/chat',
-  '/dashboard/global-chat',
-  '/dashboard/knowledge',
-  '/dashboard/messages',
-  '/dashboard/predictions',
-  '/dashboard/practice',
-  '/dashboard/settings',
-  '/dashboard/settings/subscription',
   '/offline',
   '/~offline',
   '/403',
-  '/conex',
 ];
 
 export function normalizePwaPathname(pathname) {

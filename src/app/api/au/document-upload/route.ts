@@ -1,12 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
-import { resolveCanonicalEffectiveLimits } from '@/lib/server/au-limits';
+import {
+  EffectiveLimitError,
+  resolveCanonicalEffectiveLimits,
+  throwIngestLimitIfNeeded,
+  throwUploadLimitIfNeeded,
+} from '@/lib/server/au-limits';
+import {
+  accessControlResponse,
+  isAccessControlError,
+  requireEntitlement,
+} from '@/lib/server/authorization';
+import type { AuthorizedRequest } from '@/lib/server/authorization';
 import { randomUUID } from 'crypto';
 
 export const runtime = 'nodejs';
 
 const DEFAULT_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
+
+function jsonNoStore(body: unknown, init: ResponseInit = {}): NextResponse {
+  const headers = new Headers(init.headers);
+  headers.set('Cache-Control', 'no-store, private');
+  return NextResponse.json(body, { ...init, headers });
+}
 
 /**
  * Local document upload handler — replaces the deleted /api/proxy/document-upload.
@@ -31,28 +46,31 @@ export async function POST(req: NextRequest) {
   const correlationId = req.headers.get('x-correlation-id') || requestId;
 
   try {
-    const auth = await requireUserFromRequest(req);
-    if (!auth.ok) {
-      return NextResponse.json(
-        { error: 'unauthorized', message: 'Authentication required.', requestId },
-        { status: 401 },
-      );
-    }
+    const authorization = await requireEntitlement(req, 'document_upload');
 
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || '').trim();
 
     if (action === 'initiate') {
-      return await handleInitiate(auth, body, requestId, correlationId);
+      return await handleInitiate(authorization, body, requestId, correlationId);
     } else if (action === 'complete') {
-      return await handleComplete(auth, body, requestId, correlationId);
+      return await handleComplete(authorization, body, requestId, correlationId);
     } else {
-      return NextResponse.json(
+      return jsonNoStore(
         { error: 'invalid_action', message: `Unknown action: ${action}`, requestId },
         { status: 400 },
       );
     }
   } catch (error: any) {
+    if (isAccessControlError(error)) {
+      return accessControlResponse(error, requestId);
+    }
+    if (error instanceof EffectiveLimitError) {
+      return jsonNoStore(error.payload, {
+        status: error.status,
+        headers: error.headers,
+      });
+    }
     console.error(`[document-upload] Unhandled error:`, {
       message: error?.message,
       code: error?.code,
@@ -62,16 +80,16 @@ export async function POST(req: NextRequest) {
     });
     const status = error?.status || 500;
     const code = error?.code || 'upload_failed';
-    return NextResponse.json(
+    return jsonNoStore(
       { error: code, message: String(error?.message || 'Upload failed.'), requestId },
       { status },
     );
   }
 }
 
-async function handleInitiate(auth: any, body: any, requestId: string, correlationId: string) {
-  const supabase = createSupabaseAdminClient();
-  const userId = auth.userId;
+async function handleInitiate(authorization: AuthorizedRequest, body: any, requestId: string, correlationId: string) {
+  const supabase = authorization.supabase;
+  const userId = authorization.auth.userId;
 
   const fileName = String(body.fileName || '').trim();
   const fileSize = Number(body.fileSize || 0);
@@ -81,53 +99,18 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
   const parentDocumentId = body.parentDocumentId || null;
 
   if (!fileName) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: 'missing_filename', message: 'File name is required.', requestId },
       { status: 400 },
     );
   }
 
-  // Check limits — wrapped in try/catch so limits infrastructure failures
-  // don't block uploads entirely
-  try {
-    const limitsResult = await resolveCanonicalEffectiveLimits({ supabase, userId });
-    const maxUploads = limitsResult.limitRules?.max_uploads_total?.value;
-    const maxFileSize = limitsResult.limitRules?.max_file_size_mb?.value;
-
-    if (maxFileSize && fileSize > maxFileSize * 1024 * 1024) {
-      return NextResponse.json(
-        {
-          error: 'file_too_large',
-          message: `File size exceeds ${maxFileSize}MB limit for your plan.`,
-          details: { maxFileSize, fileSize },
-          requestId,
-        },
-        { status: 413 },
-      );
-    }
-
-    if (maxUploads) {
-      const { count } = await supabase
-        .from('au_documents')
-        .select('id', { count: 'exact', head: true })
-        .eq('user_id', userId);
-
-      if (count != null && count >= maxUploads) {
-        return NextResponse.json(
-          {
-            error: 'upload_limit_reached',
-            message: `You have reached your upload limit of ${maxUploads} documents.`,
-            details: { maxUploads, currentCount: count },
-            requestId,
-          },
-          { status: 429 },
-        );
-      }
-    }
-  } catch (limitsErr: any) {
-    // Log but don't block — limits tables may not exist yet
-    console.warn('[document-upload] Limits check failed (non-blocking):', limitsErr?.message);
-  }
+  const limitsResult = await resolveCanonicalEffectiveLimits({ supabase, userId });
+  throwUploadLimitIfNeeded({
+    limits: limitsResult,
+    fileSizeBytes: fileSize,
+    correlationId,
+  });
 
   // Determine storage path and bucket
   const bucket = DEFAULT_BUCKET;
@@ -148,7 +131,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
       storagePath,
       requestId,
     });
-    return NextResponse.json(
+    return jsonNoStore(
       {
         error: 'signed_url_failed',
         message: `Failed to create upload URL: ${signedError.message}`,
@@ -212,7 +195,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
           code: retryError.code,
           requestId,
         });
-        return NextResponse.json(
+        return jsonNoStore(
           {
             error: 'insert_failed',
             message: `Failed to register document: ${retryError.message}`,
@@ -222,7 +205,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
         );
       }
     } else {
-      return NextResponse.json(
+      return jsonNoStore(
         {
           error: 'insert_failed',
           message: `Failed to register document: ${insertError.message}`,
@@ -233,7 +216,7 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
     }
   }
 
-  return NextResponse.json({
+  return jsonNoStore({
     ok: true,
     uploadUrl: signedData.signedUrl,
     documentId,
@@ -244,9 +227,9 @@ async function handleInitiate(auth: any, body: any, requestId: string, correlati
   });
 }
 
-async function handleComplete(auth: any, body: any, requestId: string, correlationId: string) {
-  const supabase = createSupabaseAdminClient();
-  const userId = auth.userId;
+async function handleComplete(authorization: AuthorizedRequest, body: any, requestId: string, correlationId: string) {
+  const supabase = authorization.supabase;
+  const userId = authorization.auth.userId;
 
   const documentId = String(body.documentId || '').trim();
   const jobId = String(body.jobId || randomUUID()).trim();
@@ -258,11 +241,14 @@ async function handleComplete(auth: any, body: any, requestId: string, correlati
   const bucket = String(body.bucket || DEFAULT_BUCKET).trim();
 
   if (!documentId) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: 'missing_document_id', message: 'Document ID is required.', requestId },
       { status: 400 },
     );
   }
+
+  const limitsResult = await resolveCanonicalEffectiveLimits({ supabase, userId });
+  throwIngestLimitIfNeeded({ limits: limitsResult, correlationId });
 
   // Update document status — use correct column names
   const updatePayload: Record<string, any> = {
@@ -317,7 +303,7 @@ async function handleComplete(auth: any, body: any, requestId: string, correlati
       hint: jobError.hint,
       requestId,
     });
-    return NextResponse.json(
+    return jsonNoStore(
       {
         error: 'job_creation_failed',
         message: `Failed to create processing job: ${jobError.message}`,
@@ -327,7 +313,7 @@ async function handleComplete(auth: any, body: any, requestId: string, correlati
     );
   }
 
-  return NextResponse.json({
+  return jsonNoStore({
     ok: true,
     jobId,
     documentId,

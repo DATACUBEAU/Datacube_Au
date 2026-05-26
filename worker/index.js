@@ -197,6 +197,7 @@ async function warmOfflinePages() {
 
   // Keep warmup sequential to avoid saturating bandwidth and slowing active navigation.
   for (const route of PWA_OFFLINE_WARMUP_ROUTES) {
+    if (isPwaCacheExcludedPathname(route)) continue;
     try {
       const requestUrl = new URL(route, self.location.origin).toString();
       const request = new Request(requestUrl, {
@@ -206,6 +207,7 @@ async function warmOfflinePages() {
 
       const response = await fetch(request, { cache: "reload" });
       if (!response || (!response.ok && response.type !== "opaqueredirect")) continue;
+      if (String(response.headers.get("Cache-Control") || "").toLowerCase().includes("no-store")) continue;
 
       const cacheable =
         response.type === "opaqueredirect"

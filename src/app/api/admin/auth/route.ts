@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { hasConexAccess } from '@/lib/conex-rbac';
+import {
+  accessControlResponse,
+  isAccessControlError,
+  requireAdmin,
+} from '@/lib/server/authorization';
 
 export const runtime = 'nodejs';
 
@@ -17,7 +19,6 @@ export async function POST(req: NextRequest) {
   try {
     const SUPABASE_URL = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
     const SUPABASE_ANON_KEY = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
-    const SUPABASE_SERVICE_ROLE_KEY = firstEnv('SUPABASE_SERVICE_ROLE_KEY', 'SERVICE_ROLE_KEY');
 
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
       return NextResponse.json(
@@ -26,37 +27,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Use Service Role if available to manage admin logs, otherwise fallback (may be RLS-restricted)
-    const supabaseAdmin = createClient(
-      SUPABASE_URL,
-      SUPABASE_SERVICE_ROLE_KEY || SUPABASE_ANON_KEY
-    );
-
-    const auth = await requireUserFromRequest(req);
-    if (!auth.ok) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    }
-
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from('au_user_profiles')
-      .select('user_id,tier')
-      .eq('user_id', auth.userId)
-      .maybeSingle();
-
-    if (profileError) {
-      console.error('[API /api/admin/auth] Failed to read au_user_profiles:', profileError);
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-    }
-
-    const allowed = hasConexAccess({
-      userId: auth.userId,
-      email: auth.email ?? null,
-      tier: profile?.tier ?? null,
-    });
-
-    if (!allowed) {
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-    }
+    const authorization = await requireAdmin(req);
+    const auth = authorization.auth;
+    const supabaseAdmin = authorization.supabase;
 
     const ip = req.headers.get('x-forwarded-for') || 'unknown';
     const body = await req.json();
@@ -158,6 +131,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(data);
 
   } catch (error: any) {
+    if (isAccessControlError(error)) {
+      return accessControlResponse(error);
+    }
     console.error('[API /api/admin/auth] Error:', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

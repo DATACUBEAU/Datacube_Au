@@ -6,6 +6,10 @@ exports.noteRoutingFailure = noteRoutingFailure;
 exports.noteRoutingSuccess = noteRoutingSuccess;
 const utils_js_1 = require("./utils.js");
 const DEFAULT_PROVIDER_TYPE = 'openrouter';
+const PAID_PLAN_CODES = new Set(['pro', 'premium', 'promo_pro', 'paid', 'weekly', 'monthly', 'admin']);
+function isPaidPlanCode(plan) {
+    return PAID_PLAN_CODES.has(String(plan || '').trim().toLowerCase());
+}
 function parsePositiveInt(raw, fallback) {
     const parsed = Number(raw ?? '');
     if (!Number.isFinite(parsed) || parsed < 0)
@@ -19,7 +23,7 @@ function getActiveProviderKey(supabase, providerType) {
 }
 async function selectProviderAndModel(input) {
     const { supabase, plan, requestType } = input;
-    const isPaidPlan = plan === 'pro' || plan === 'weekly' || plan === 'monthly';
+    const isPaidPlan = isPaidPlanCode(plan);
     let providerType = DEFAULT_PROVIDER_TYPE;
     if (requestType === 'knowledge' || requestType === 'prediction_engine' || requestType === 'exam_generator') {
         providerType = 'openrouter';
@@ -44,7 +48,7 @@ async function selectProviderAndModel(input) {
     };
 }
 function buildRoutingCandidates(supabase, plan) {
-    const isPaidPlan = plan === 'pro' || plan === 'weekly' || plan === 'monthly';
+    const isPaidPlan = isPaidPlanCode(plan);
     const openRouterKey = (0, utils_js_1.firstEnv)('OPENROUTER_API_KEY');
     const anthropicKey = (0, utils_js_1.firstEnv)('ANTHROPIC_API_KEY');
     const candidates = [];

@@ -36,22 +36,25 @@ function shouldDeleteStalePwaCacheName(cacheName: string, version: string): bool
   return normalized !== versionPwaCacheName('pages', version);
 }
 
-test('service worker cache policy keeps dashboard offline routes warm without excluding app pages', async () => {
+test('service worker cache policy excludes protected app pages and APIs', async () => {
   const nextConfigText = readFileSync(path.join(process.cwd(), 'next.config.ts'), 'utf8');
   const policyText = readFileSync(path.join(process.cwd(), 'shared', 'pwa-cache-policy.js'), 'utf8');
   const workerSourceText = readFileSync(path.join(process.cwd(), 'worker', 'index.js'), 'utf8');
   const serviceWorkerClientText = readFileSync(path.join(process.cwd(), 'src', 'lib', 'pwa', 'service-worker-client.ts'), 'utf8');
-  assert.equal(policyText.includes("'/dashboard/documents'"), true);
-  assert.equal(policyText.includes("'/dashboard/settings/subscription'"), true);
-  assert.equal(policyText.includes("['/conex']"), true);
+  assert.equal(policyText.includes("'/dashboard'"), true);
+  assert.equal(policyText.includes("'/api/entitlements'"), true);
+  assert.equal(policyText.includes("'/api/feature-output'"), true);
+  assert.equal(policyText.includes("'/dashboard/documents'"), false);
+  assert.equal(policyText.includes("'/dashboard/settings/subscription'"), false);
+  assert.equal(nextConfigText.includes('app\\/dashboard'), true);
 
   const swText = readFileSync(path.join(process.cwd(), 'public', 'sw.js'), 'utf8');
   const workerFileName = readImportedWorkerFileName(swText);
   const workerText = readFileSync(path.join(process.cwd(), 'public', workerFileName!), 'utf8');
   const runtimeVersion = readRuntimeVersion();
 
-  assert.equal(swText.includes('"/dashboard"===a||a.startsWith("/dashboard/")'), false);
-  assert.equal(swText.includes('"/dashboard"===s||s.startsWith("/dashboard/")'), false);
+  assert.equal(workerSourceText.includes('isPwaCacheExcludedPathname(route)'), true);
+  assert.equal(workerSourceText.includes('Cache-Control'), true);
   assert.equal(swText.includes('_pwacachepolicy'), false);
   assert.equal(workerText.includes('self._pwacachepolicy'), true);
   assert.equal(workerText.includes('__DCAU_PWA_RUNTIME_VERSION__'), true);

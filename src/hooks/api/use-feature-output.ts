@@ -22,6 +22,7 @@ type FeatureOutputResponse<T> = {
 
 const FEATURE_OUTPUT_CACHE_TTL_MS = 20_000;
 const FEATURE_OUTPUT_CACHE_EVENT = 'dcau:feature-output-cache-updated';
+const USER_SCOPED_CACHE_CLEAR_EVENT = 'dcau:user-scoped-caches-cleared';
 const featureOutputCache = new Map<string, {
   payload: FeatureOutputResponse<unknown>;
   cachedAt: number;
@@ -240,9 +241,22 @@ export function useFeatureOutput<T>(input: {
       });
     };
 
+    const handleUserScopedCacheClear = () => {
+      featureOutputCache.clear();
+      featureOutputInFlight.clear();
+      setStatus('idle');
+      setOutput(null);
+      setDocVersionId(null);
+      setGeneratedAt(null);
+      setErrorMessage(null);
+      setErrorInfo(null);
+    };
+
     window.addEventListener(FEATURE_OUTPUT_CACHE_EVENT, handleCacheUpdate as EventListener);
+    window.addEventListener(USER_SCOPED_CACHE_CLEAR_EVENT, handleUserScopedCacheClear);
     return () => {
       window.removeEventListener(FEATURE_OUTPUT_CACHE_EVENT, handleCacheUpdate as EventListener);
+      window.removeEventListener(USER_SCOPED_CACHE_CLEAR_EVENT, handleUserScopedCacheClear);
     };
   }, [cacheKey]);
 

@@ -365,23 +365,13 @@ function shouldSkipQuotaForBody(functionName: string, body: any): boolean {
 }
 
 function shouldBypassLegacyFeatureGate(featureKey: TierFeatureKey): boolean {
-  return (
-    featureKey === 'knowledge_generation' ||
-    featureKey === 'practice_exam_generation' ||
-    featureKey === 'exam_predictions' ||
-    featureKey === 'document_upload'
-  );
+  void featureKey;
+  return false;
 }
 
 function shouldBypassLegacyQuota(featureKey: TierFeatureKey): boolean {
-  return (
-    featureKey === 'au_chat' ||
-    featureKey === 'global_chat' ||
-    featureKey === 'knowledge_generation' ||
-    featureKey === 'practice_exam_generation' ||
-    featureKey === 'exam_predictions' ||
-    featureKey === 'document_upload'
-  );
+  void featureKey;
+  return false;
 }
 
 export async function enforceProxyTierAccess(input: ProxyTierGuardInput): Promise<ProxyTierGuardResult> {

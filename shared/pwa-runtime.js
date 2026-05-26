@@ -1,4 +1,4 @@
-export const PWA_RUNTIME_CACHE_VERSION = '20260514-1';
+export const PWA_RUNTIME_CACHE_VERSION = '20260525-authz-1';
 
 export const PWA_RUNTIME_CACHE_BASE_NAMES = Object.freeze([
   'start-url',

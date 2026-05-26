@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 import { resolveDocumentVersion } from '@/lib/server/ai-governance';
+import {
+  accessControlResponse,
+  isAccessControlError,
+  requireEntitlement,
+} from '@/lib/server/authorization';
 
 export const runtime = 'nodejs';
 
@@ -27,13 +30,14 @@ function extractIdempotencyKey(req: NextRequest, body: any): string | null {
 
 export async function POST(req: NextRequest) {
   const requestId = crypto.randomUUID();
-  const auth = await requireUserFromRequest(req);
-  if (!auth.ok) {
-    return NextResponse.json(
-      { ok: false, code: 'unauthorized', message: 'Sign in required.', requestId },
-      { status: 401, headers: { 'Cache-Control': 'no-store' } },
-    );
+  let authorization: Awaited<ReturnType<typeof requireEntitlement>>;
+  try {
+    authorization = await requireEntitlement(req, 'practice_exam_generation');
+  } catch (error) {
+    if (isAccessControlError(error)) return accessControlResponse(error, requestId);
+    throw error;
   }
+  const auth = authorization.auth;
 
   const body = await req.json().catch(() => null);
   const parsed = AttemptSchema.safeParse(body);
@@ -61,7 +65,7 @@ export async function POST(req: NextRequest) {
   const idempotencyKey = extractIdempotencyKey(req, body) || crypto.randomUUID();
 
   try {
-    const supabase = createSupabaseAdminClient();
+    const supabase = authorization.supabase;
     const version = await resolveDocumentVersion({
       supabase,
       userId: auth.userId,

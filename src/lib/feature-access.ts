@@ -37,7 +37,13 @@ function isFlagEnabled(
 }
 
 export function hasPaidFeatureAccess(entitlements: EffectiveEntitlementsLike): boolean {
-  return entitlements.plan === 'admin' || Boolean(entitlements.hasPro);
+  return (
+    entitlements.plan === 'admin' ||
+    entitlements.plan === 'premium' ||
+    entitlements.plan === 'pro' ||
+    entitlements.plan === 'promo_pro' ||
+    Boolean(entitlements.hasPro)
+  );
 }
 
 export function getDashboardFeatureAccess(
@@ -96,15 +102,17 @@ export function getDashboardFeatureAccess(
   }
 
   const enabled = isFlagEnabled(records, 'enable_practice_exam_generation', true);
+  const proRequired = true;
+  const allowed = enabled && (paidAccess || entitlements.plan === 'admin');
   return {
     key,
     label: 'Practice Exam Center',
     enabled,
-    proRequired: false,
+    proRequired,
     paidAccess,
-    allowed: enabled,
-    code: enabled ? null : 'FEATURE_DISABLED',
-    message: enabled ? 'Practice Exam Center is available.' : 'Practice Exam Center is currently disabled.',
+    allowed,
+    code: enabled ? (allowed ? null : 'PRO_REQUIRED') : 'FEATURE_DISABLED',
+    message: enabled ? 'Practice Exam Center requires Pro.' : 'Practice Exam Center is currently disabled.',
   };
 }
 

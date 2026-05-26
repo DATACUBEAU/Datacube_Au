@@ -2,23 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { hasConexAccess } from '@/lib/conex-rbac';
+import {
+  ACCESS_NO_STORE_HEADERS,
+  evaluateAccess,
+  findApiAccessRule,
+  findPageAccessRule,
+  type AccessDecision,
+  type AccessRule,
+  type EntitlementSubject,
+} from '@/lib/authz/access-control';
 
-const CONEX_USERS_PATH_PREFIX = '/conex/users';
-const CONEX_PATH_PREFIX = '/conex';
-const DASHBOARD_PATH_PREFIX = '/dashboard';
 const FRAME_ANCESTORS_POLICY = "frame-ancestors 'none'";
-
-function isConexUsersApi(pathname: string): boolean {
-  return pathname === CONEX_USERS_PATH_PREFIX || pathname.startsWith(`${CONEX_USERS_PATH_PREFIX}/`);
-}
-
-function isDashboardRoute(pathname: string): boolean {
-  return pathname === DASHBOARD_PATH_PREFIX || pathname.startsWith(`${DASHBOARD_PATH_PREFIX}/`);
-}
-
-function isConexRoute(pathname: string): boolean {
-  return pathname === CONEX_PATH_PREFIX || pathname.startsWith(`${CONEX_PATH_PREFIX}/`);
-}
 
 function mergeFrameAncestorsDirective(cspHeader: string | null): string {
   if (!cspHeader) return FRAME_ANCESTORS_POLICY;
@@ -46,27 +40,64 @@ function applyClickjackingHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
+function applyProtectedHeaders(response: NextResponse): NextResponse {
+  applyClickjackingHeaders(response);
+  for (const [key, value] of Object.entries(ACCESS_NO_STORE_HEADERS)) {
+    response.headers.set(key, value);
+  }
+  response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  return response;
+}
+
+function isApiLikeRoute(pathname: string): boolean {
+  return pathname.startsWith('/api/') || pathname === '/conex/users' || pathname.startsWith('/conex/users/');
+}
+
 function loginRedirect(req: NextRequest): NextResponse {
   const loginUrl = new URL('/login', req.url);
   const redirectTarget = `${req.nextUrl.pathname}${req.nextUrl.search}`;
   loginUrl.searchParams.set('redirectTo', redirectTarget);
-  return applyClickjackingHeaders(NextResponse.redirect(loginUrl));
+  return applyProtectedHeaders(NextResponse.redirect(loginUrl));
 }
 
 function forbiddenRedirect(req: NextRequest): NextResponse {
-  return applyClickjackingHeaders(NextResponse.redirect(new URL('/403', req.url)));
+  return applyProtectedHeaders(NextResponse.redirect(new URL('/403', req.url)));
 }
 
-function unauthorizedResponse(req: NextRequest): NextResponse {
-  if (isConexUsersApi(req.nextUrl.pathname)) {
-    return applyClickjackingHeaders(NextResponse.json({ error: 'unauthorized' }, { status: 401 }));
+function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse {
+  if (isApiLikeRoute(req.nextUrl.pathname)) {
+    return applyProtectedHeaders(
+      NextResponse.json(
+        {
+          ok: false,
+          code: 'UNAUTHORIZED',
+          error: 'unauthorized',
+          message: 'Authentication required.',
+          routeId: rule.id,
+        },
+        { status: 401 },
+      ),
+    );
   }
   return loginRedirect(req);
 }
 
-function forbiddenResponse(req: NextRequest): NextResponse {
-  if (isConexUsersApi(req.nextUrl.pathname)) {
-    return applyClickjackingHeaders(NextResponse.json({ error: 'forbidden' }, { status: 403 }));
+function forbiddenResponse(req: NextRequest, decision: AccessDecision): NextResponse {
+  if (isApiLikeRoute(req.nextUrl.pathname)) {
+    return applyProtectedHeaders(
+      NextResponse.json(
+        {
+          ok: false,
+          code: decision.code || 'FORBIDDEN',
+          error: 'forbidden',
+          message: decision.reason || 'Access denied.',
+          feature: decision.feature || null,
+          routeId: decision.routeId || null,
+          upgradeUrl: decision.upgradeUrl || null,
+        },
+        { status: decision.status === 401 ? 401 : 403 },
+      ),
+    );
   }
   return forbiddenRedirect(req);
 }
@@ -85,47 +116,146 @@ function getServiceClient() {
   });
 }
 
-export async function middleware(req: NextRequest) {
-  const pathname = req.nextUrl.pathname;
+async function maybeSingle<T>(promise: PromiseLike<{ data: T | null; error: any }>): Promise<T | null> {
+  const result = await promise;
+  if (result.error) {
+    const code = String(result.error?.code || '');
+    const message = String(result.error?.message || '').toLowerCase();
+    if (code === '42P01' || code === '42703' || message.includes('does not exist') || message.includes('schema cache')) {
+      return null;
+    }
+    throw result.error;
+  }
+  return result.data || null;
+}
 
-  if (isDashboardRoute(pathname)) {
-    return applyClickjackingHeaders(NextResponse.next());
+async function loadMiddlewareSubject(
+  supabase: ReturnType<typeof getServiceClient>,
+  auth: Extract<Awaited<ReturnType<typeof requireUserFromRequest>>, { ok: true }>,
+): Promise<EntitlementSubject> {
+  if (!supabase) {
+    return {
+      userId: auth.userId,
+      email: auth.email,
+      plan: 'free',
+      profileTier: null,
+      hasPro: false,
+      entitlementSource: 'none',
+      entitlementEndsAt: null,
+      adminOverride: hasConexAccess({ userId: auth.userId, email: auth.email, tier: null }),
+    };
   }
 
-  if (!isConexRoute(pathname)) {
+  const nowIso = new Date().toISOString();
+  const [profile, entitlement, grant] = await Promise.all([
+    maybeSingle(
+      supabase
+        .from('au_user_profiles')
+        .select('tier')
+        .eq('user_id', auth.userId)
+        .maybeSingle(),
+    ),
+    maybeSingle(
+      supabase
+        .from('au_user_entitlements')
+        .select('plan,source,expires_at')
+        .eq('user_id', auth.userId)
+        .maybeSingle(),
+    ),
+    maybeSingle(
+      supabase
+        .from('entitlement_grants')
+        .select('ends_at')
+        .eq('user_id', auth.userId)
+        .eq('entitlement', 'pro')
+        .eq('status', 'active')
+        .lte('starts_at', nowIso)
+        .gte('ends_at', nowIso)
+        .order('ends_at', { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+    ),
+  ]);
+
+  const profileTier = typeof (profile as any)?.tier === 'string' ? String((profile as any).tier) : null;
+  const entitlementPlan = typeof (entitlement as any)?.plan === 'string' ? String((entitlement as any).plan) : null;
+  const entitlementSource = typeof (entitlement as any)?.source === 'string' ? String((entitlement as any).source) : null;
+  const entitlementEndsAt = typeof (entitlement as any)?.expires_at === 'string'
+    ? String((entitlement as any).expires_at)
+    : typeof (grant as any)?.ends_at === 'string'
+      ? String((grant as any).ends_at)
+      : null;
+  const plan = entitlementPlan || (grant ? 'pro' : profileTier) || 'free';
+  const adminOverride = hasConexAccess({
+    userId: auth.userId,
+    email: auth.email,
+    tier: profileTier,
+  });
+
+  return {
+    userId: auth.userId,
+    email: auth.email,
+    plan,
+    profileTier,
+    hasPro: adminOverride || Boolean(grant) || ['admin', 'premium', 'pro', 'paid', 'weekly', 'monthly', 'promo_pro'].includes(plan.toLowerCase()),
+    entitlementSource: entitlementSource || (grant ? 'paid' : ['admin', 'premium', 'pro'].includes(String(profileTier || '').toLowerCase()) ? 'paid' : 'none'),
+    entitlementEndsAt,
+    adminOverride,
+  };
+}
+
+export async function middleware(req: NextRequest) {
+  const pathname = req.nextUrl.pathname;
+  const rule = findApiAccessRule(pathname) || findPageAccessRule(pathname);
+
+  if (!rule) {
     return applyClickjackingHeaders(NextResponse.next());
   }
 
   const auth = await requireUserFromRequest(req);
-  if (!auth.ok) return unauthorizedResponse(req);
+  if (!auth.ok) return unauthorizedResponse(req, rule);
 
-  // Fast-path: known root admin identity can pass without DB lookup.
-  if (hasConexAccess({ userId: auth.userId, email: auth.email, tier: null })) {
-    return applyClickjackingHeaders(NextResponse.next());
+  if (rule.requirement === 'auth') {
+    return applyProtectedHeaders(NextResponse.next());
   }
 
   const supabase = getServiceClient();
-  if (!supabase) return forbiddenResponse(req);
-
-  const { data: profile, error } = await supabase
-    .from('au_user_profiles')
-    .select('user_id,tier')
-    .eq('user_id', auth.userId)
-    .maybeSingle();
-
-  if (error) {
-    console.error('[middleware:/conex] Failed to read au_user_profiles:', error.message);
-    return forbiddenResponse(req);
+  if (!supabase && !hasConexAccess({ userId: auth.userId, email: auth.email, tier: null })) {
+    const decision = evaluateAccess(
+      {
+        userId: auth.userId,
+        email: auth.email,
+        plan: 'free',
+        adminOverride: false,
+      },
+      rule,
+    );
+    return forbiddenResponse(req, decision);
   }
 
-  const allowed = hasConexAccess({
-    userId: auth.userId,
-    email: auth.email,
-    tier: profile?.tier ?? null,
-  });
-
-  if (!allowed) return forbiddenResponse(req);
-  return applyClickjackingHeaders(NextResponse.next());
+  try {
+    const subject = await loadMiddlewareSubject(supabase, auth);
+    const decision = evaluateAccess(subject, rule);
+    if (!decision.allowed) return forbiddenResponse(req, decision);
+    return applyProtectedHeaders(NextResponse.next());
+  } catch (error: any) {
+    console.error('[middleware:authz] Failed to evaluate protected access:', {
+      pathname,
+      routeId: rule.id,
+      message: String(error?.message || error),
+      code: error?.code || null,
+    });
+    const decision = evaluateAccess(
+      {
+        userId: auth.userId,
+        email: auth.email,
+        plan: 'free',
+        adminOverride: hasConexAccess({ userId: auth.userId, email: auth.email, tier: null }),
+      },
+      rule,
+    );
+    return forbiddenResponse(req, decision);
+  }
 }
 
 export const config = {

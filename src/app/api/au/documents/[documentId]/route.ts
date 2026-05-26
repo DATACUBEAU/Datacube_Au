@@ -4,13 +4,19 @@ import { deleteOwnedDocumentNow } from '@/lib/server/retention';
 
 export const runtime = 'nodejs';
 
+function jsonNoStore(body: unknown, init: ResponseInit = {}): NextResponse {
+  const headers = new Headers(init.headers);
+  headers.set('Cache-Control', 'no-store, private');
+  return NextResponse.json(body, { ...init, headers });
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ documentId: string }> },
 ) {
   const auth = await requireUserFromRequest(req);
   if (!auth.ok) {
-    return NextResponse.json(
+    return jsonNoStore(
       { error: 'unauthorized', message: 'unauthorized' },
       { status: 401 },
     );
@@ -23,7 +29,7 @@ export async function DELETE(
   });
 
   if (!result.ok && result.status === 404) {
-    return NextResponse.json(
+    return jsonNoStore(
       {
         ok: true,
         alreadyDeleted: true,
@@ -34,7 +40,7 @@ export async function DELETE(
   }
 
   if (!result.ok) {
-    return NextResponse.json(
+    return jsonNoStore(
       {
         error: result.message,
         message: result.message,
@@ -44,5 +50,5 @@ export async function DELETE(
     );
   }
 
-  return NextResponse.json(result, { status: 200 });
+  return jsonNoStore(result, { status: 200 });
 }

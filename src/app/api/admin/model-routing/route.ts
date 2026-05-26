@@ -1,33 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { hasConexAccess } from '@/lib/conex-rbac';
-import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 import { getModelRoutingFlags } from '@/lib/server/ai-routing';
+import {
+  accessControlResponse,
+  isAccessControlError,
+  requireAdmin,
+} from '@/lib/server/authorization';
 
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await requireUserFromRequest(req);
-    if (!auth.ok) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    }
-
-    const supabase = createSupabaseAdminClient();
-    const { data: profile } = await supabase
-      .from('au_user_profiles')
-      .select('tier')
-      .eq('user_id', auth.userId)
-      .maybeSingle();
-
-    const allowed = hasConexAccess({
-      userId: auth.userId,
-      email: auth.email,
-      tier: profile?.tier || null,
-    });
-    if (!allowed) {
-      return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-    }
+    const { supabase } = await requireAdmin(req);
 
     const flags = await getModelRoutingFlags(supabase);
     const { data: latest } = await supabase
@@ -45,10 +28,12 @@ export async function GET(req: NextRequest) {
       { status: 200 }
     );
   } catch (error: any) {
+    if (isAccessControlError(error)) {
+      return accessControlResponse(error);
+    }
     return NextResponse.json(
       { error: 'model_routing_debug_failed', message: String(error?.message || 'Failed to load routing debug state.') },
       { status: 500 }
     );
   }
 }
-

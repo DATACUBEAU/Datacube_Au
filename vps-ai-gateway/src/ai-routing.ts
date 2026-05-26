@@ -12,6 +12,11 @@ export type RoutingCandidate = {
 };
 
 const DEFAULT_PROVIDER_TYPE = 'openrouter';
+const PAID_PLAN_CODES = new Set(['pro', 'premium', 'promo_pro', 'paid', 'weekly', 'monthly', 'admin']);
+
+function isPaidPlanCode(plan: string | null | undefined): boolean {
+  return PAID_PLAN_CODES.has(String(plan || '').trim().toLowerCase());
+}
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw ?? '');
@@ -33,7 +38,7 @@ export async function selectProviderAndModel(input: {
   requestedModel?: string | null;
 }): Promise<RoutingCandidate> {
   const { supabase, plan, requestType } = input;
-  const isPaidPlan = plan === 'pro' || plan === 'weekly' || plan === 'monthly';
+  const isPaidPlan = isPaidPlanCode(plan);
   
   let providerType = DEFAULT_PROVIDER_TYPE;
   
@@ -64,7 +69,7 @@ export async function selectProviderAndModel(input: {
 }
 
 export function buildRoutingCandidates(supabase: SupabaseClient, plan: string | null): RoutingCandidate[] {
-  const isPaidPlan = plan === 'pro' || plan === 'weekly' || plan === 'monthly';
+  const isPaidPlan = isPaidPlanCode(plan);
   const openRouterKey = firstEnv('OPENROUTER_API_KEY');
   const anthropicKey = firstEnv('ANTHROPIC_API_KEY');
   

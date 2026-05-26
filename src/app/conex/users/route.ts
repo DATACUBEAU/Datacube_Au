@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { hasConexAccess } from '@/lib/conex-rbac';
+import {
+  accessControlResponse,
+  isAccessControlError,
+  requireAdmin,
+} from '@/lib/server/authorization';
 import {
   ConexAccessError,
   buildConexDashboardUsers,
@@ -90,6 +93,9 @@ function createConexUsersRepo(accessToken?: string): ConexUsersRepository {
 }
 
 function toErrorResponse(error: unknown): NextResponse {
+  if (isAccessControlError(error)) {
+    return accessControlResponse(error);
+  }
   if (error instanceof ConexAccessError) {
     return NextResponse.json({ error: error.code, message: error.message }, { status: error.status });
   }
@@ -100,22 +106,25 @@ function toErrorResponse(error: unknown): NextResponse {
 async function requireActor(req: NextRequest): Promise<
   { ok: true; actor: { userId: string; email: string | null; accessToken: string } } | { ok: false; response: NextResponse }
 > {
-  const auth = await requireUserFromRequest(req);
-  if (!auth.ok) {
+  try {
+    const { auth } = await requireAdmin(req);
     return {
-      ok: false,
-      response: NextResponse.json({ error: 'unauthorized' }, { status: 401 }),
+      ok: true,
+      actor: {
+        userId: auth.userId,
+        email: auth.email ?? null,
+        accessToken: auth.accessToken,
+      },
     };
+  } catch (error) {
+    if (isAccessControlError(error)) {
+      return {
+        ok: false,
+        response: accessControlResponse(error),
+      };
+    }
+    throw error;
   }
-
-  return {
-    ok: true,
-    actor: {
-      userId: auth.userId,
-      email: auth.email ?? null,
-      accessToken: auth.accessToken,
-    },
-  };
 }
 
 export async function GET(req: NextRequest) {
@@ -125,25 +134,7 @@ export async function GET(req: NextRequest) {
   try {
     const mode = req.nextUrl.searchParams.get('mode');
     if (mode === 'access') {
-      // Fast-path: root admin by known identity.
-      if (hasConexAccess({ userId: actorResult.actor.userId, email: actorResult.actor.email, tier: null })) {
-        return NextResponse.json({ ok: true, access: true });
-      }
-
-      // Fallback: check tier from profile when service role is available.
-      try {
-        const repo = createConexUsersRepo(actorResult.actor.accessToken);
-        const profile = await repo.getProfileByUserId(actorResult.actor.userId);
-        const allowed = hasConexAccess({
-          userId: actorResult.actor.userId,
-          email: actorResult.actor.email,
-          tier: profile?.tier ?? null,
-        });
-        if (allowed) return NextResponse.json({ ok: true, access: true });
-      } catch {
-      }
-
-      return NextResponse.json({ error: 'forbidden', access: false }, { status: 403 });
+      return NextResponse.json({ ok: true, access: true }, { headers: { 'Cache-Control': 'no-store' } });
     }
 
     const repo = createConexUsersRepo(actorResult.actor.accessToken);

@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
 import { readFeatureOutput, resolveDocumentVersion } from '@/lib/server/ai-governance';
+import { featureFromFeatureOutput } from '@/lib/authz/access-control';
+import {
+  accessControlResponse,
+  isAccessControlError,
+  requireEntitlement,
+} from '@/lib/server/authorization';
 
 export const runtime = 'nodejs';
 
 const FEATURES = new Set(['knowledge_hub', 'exam_prediction', 'practice_exam_generation']);
-const SUCCESS_CACHE_CONTROL = 'private, max-age=15, stale-while-revalidate=30';
+const SUCCESS_CACHE_CONTROL = 'no-store, private';
 
 function normalizeFeature(value: string | null): 'knowledge_hub' | 'exam_prediction' | 'practice_exam_generation' | null {
   const normalized = String(value || '').trim().toLowerCase();
@@ -18,14 +22,6 @@ function normalizeFeature(value: string | null): 'knowledge_hub' | 'exam_predict
 
 export async function GET(req: NextRequest) {
   const requestId = crypto.randomUUID();
-  const auth = await requireUserFromRequest(req);
-  if (!auth.ok) {
-    return NextResponse.json(
-      { ok: false, code: 'unauthorized', message: 'Sign in required.', requestId },
-      { status: 401, headers: { 'Cache-Control': 'no-store' } },
-    );
-  }
-
   const feature = normalizeFeature(req.nextUrl.searchParams.get('feature'));
   const documentId = String(req.nextUrl.searchParams.get('documentId') || '').trim();
   const docVersionId = String(req.nextUrl.searchParams.get('docVersionId') || '').trim();
@@ -45,7 +41,16 @@ export async function GET(req: NextRequest) {
   }
 
   try {
-    const supabase = createSupabaseAdminClient();
+    const featureKey = featureFromFeatureOutput(feature);
+    if (!featureKey) {
+      return NextResponse.json(
+        { ok: false, code: 'invalid_feature', message: 'Unsupported feature.', requestId },
+        { status: 400, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
+
+    const authorization = await requireEntitlement(req, featureKey);
+    const { auth, supabase } = authorization;
     const resolvedVersionId =
       docVersionId ||
       (
@@ -113,6 +118,9 @@ export async function GET(req: NextRequest) {
       { status: 200, headers: { 'Cache-Control': SUCCESS_CACHE_CONTROL } },
     );
   } catch (error: any) {
+    if (isAccessControlError(error)) {
+      return accessControlResponse(error, requestId);
+    }
     return NextResponse.json(
       { ok: false, code: 'internal_server_error', message: String(error?.message || error), requestId },
       { status: 500, headers: { 'Cache-Control': 'no-store' } },

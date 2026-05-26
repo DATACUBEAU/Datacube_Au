@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
-import { hasConexAccess } from '@/lib/conex-rbac';
-import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
+import {
+  accessControlResponse,
+  isAccessControlError,
+  requireAdmin,
+} from '@/lib/server/authorization';
 
 export const runtime = 'nodejs';
 
@@ -35,58 +37,7 @@ function isSchemaDriftError(error: any): boolean {
 export async function POST(req: NextRequest) {
   const requestId = crypto.randomUUID();
   try {
-    const auth = await requireUserFromRequest(req);
-    if (!auth.ok) {
-      return NextResponse.json(
-        {
-          code: 'unauthorized',
-          message: 'Unauthorized request.',
-          requestId,
-          details: { reason: auth.reason },
-        },
-        { status: 401, headers: { 'Cache-Control': 'no-store' } },
-      );
-    }
-
-    const supabase = createSupabaseAdminClient();
-    const { data: profile, error: profileError } = await supabase
-      .from('au_user_profiles')
-      .select('tier')
-      .eq('user_id', auth.userId)
-      .maybeSingle();
-
-    if (profileError) {
-      console.error('[api/admin/feature-flags] profile lookup failed', {
-        requestId,
-        userId: auth.userId,
-        code: profileError.code,
-        message: profileError.message,
-      });
-      return NextResponse.json(
-        {
-          code: 'forbidden',
-          message: 'Conex admin access required.',
-          requestId,
-        },
-        { status: 403, headers: { 'Cache-Control': 'no-store' } },
-      );
-    }
-
-    const allowed = hasConexAccess({
-      userId: auth.userId,
-      email: auth.email,
-      tier: (profile as any)?.tier ?? null,
-    });
-    if (!allowed) {
-      return NextResponse.json(
-        {
-          code: 'forbidden',
-          message: 'Conex admin access required.',
-          requestId,
-        },
-        { status: 403, headers: { 'Cache-Control': 'no-store' } },
-      );
-    }
+    const { supabase } = await requireAdmin(req);
 
     const body = await req.json().catch(() => ({}));
     const key = String((body as any)?.key || '').trim();
@@ -176,6 +127,9 @@ export async function POST(req: NextRequest) {
       }
     );
   } catch (error: any) {
+    if (isAccessControlError(error)) {
+      return accessControlResponse(error, requestId);
+    }
     console.error('[api/admin/feature-flags] unexpected error', {
       requestId,
       stack: String(error?.stack || ''),

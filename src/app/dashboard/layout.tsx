@@ -54,7 +54,7 @@ import { useToast } from '@/hooks/use-toast';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import PageLoader from '@/components/page-loader';
 import { useStore } from '@/hooks/use-store';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
@@ -77,11 +77,7 @@ import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
-import {
-  buildUpgradeContext,
-  getDashboardFeatureAccess,
-  type DashboardFeatureAccess,
-} from '@/lib/feature-access';
+import { getDashboardFeatureAccess } from '@/lib/feature-access';
 
 type NavItem = {
   href: string;
@@ -124,7 +120,7 @@ const SidebarNavMenu = ({ navItems, pathname, isProUnlocked }: { navItems: NavIt
                 ) : null}
               </button>
             ) : (
-              <Link href={item.href} prefetch={item.prefetch !== false} className="flex items-center gap-2 w-full h-full">
+              <Link href={item.href} prefetch={item.prefetch === true} className="flex items-center gap-2 w-full h-full">
                 {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
                 <span className="flex-1">{item.label}</span>
                 {item.proOnly && !isProUnlocked ? (
@@ -182,7 +178,7 @@ const SidebarFooterMenu = ({
         <SidebarMenuItem key={item.key}>
           {item.href ? (
             <SidebarMenuButton asChild>
-              <Link href={item.href} prefetch>
+              <Link href={item.href} prefetch={false}>
                 <item.icon />
                 <span>{item.label}</span>
               </Link>
@@ -237,7 +233,7 @@ const SidebarFooterMenu = ({
       {/* User Avatar */}
       <SidebarMenuItem>
         <SidebarMenuButton asChild size="lg" className="h-auto py-2">
-          <Link href="/dashboard/settings" prefetch>
+          <Link href="/dashboard/settings" prefetch={false}>
             <Avatar className="size-8">
               <AvatarImage src={''} alt="User Avatar" />
               <AvatarFallback>{userInitial}</AvatarFallback>
@@ -268,7 +264,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
-  const hasWarmedRoutesRef = useRef(false);
 
   const [user, , isUserLoading] = useSupabaseUser();
   const { isAuthLocked } = useSmartAuth();
@@ -361,9 +356,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive, hasResolvedPlanState]);
 
   const isProUnlocked = useMemo(() => {
-    if (!hasResolvedPlanState) return true;
+    if (!hasResolvedPlanState) return false;
     return (
       entitlements.plan === 'admin' ||
+      entitlements.plan === 'premium' ||
+      entitlements.plan === 'pro' ||
+      entitlements.plan === 'promo_pro' ||
       entitlements.entitlementSource === 'paid' ||
       entitlements.entitlementSource === 'promo' ||
       entitlements.promoActive
@@ -476,68 +474,51 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     }
   }, [isSigningOut, router, user?.id]);
 
-  const handleBlockedFeatureClick = useCallback((access: DashboardFeatureAccess) => {
-    if (!access.enabled) {
-      toast({
-        title: 'Feature unavailable',
-        description: access.message,
-        variant: 'destructive',
-      });
-      return;
-    }
-
-    setUpgradeModalOpen(true, buildUpgradeContext(access));
-  }, [setUpgradeModalOpen, toast]);
-
   const navItems = useMemo(() => {
     const items: NavItem[] = [
       { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { href: '/dashboard/documents', icon: FileTextIcon, label: 'Documents', tourId: 'upload-section' },
       { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
-      globalChatAccess.enabled ? {
+      globalChatAccess.enabled && globalChatAccess.allowed ? {
         href: '/dashboard/global-chat',
         icon: Globe,
         label: 'Global Chat',
         proOnly: globalChatAccess.proRequired,
-        onClick: globalChatAccess.allowed ? undefined : () => handleBlockedFeatureClick(globalChatAccess),
-        prefetch: globalChatAccess.allowed,
+        prefetch: false,
       } : null,
-      knowledgeAccess.enabled ? {
+      knowledgeAccess.enabled && knowledgeAccess.allowed ? {
         href: '/dashboard/knowledge',
         icon: BrainCircuit,
         label: 'Knowledge',
         isLoading: isGeneratingKnowledge,
         proOnly: knowledgeAccess.proRequired,
-        onClick: knowledgeAccess.allowed ? undefined : () => handleBlockedFeatureClick(knowledgeAccess),
-        prefetch: knowledgeAccess.allowed,
+        prefetch: false,
       } : null,
       { href: '/dashboard/messages', icon: Inbox, label: 'Messages', badge: unreadCount > 0 ? unreadCount : undefined },
-      predictionsAccess.enabled ? {
+      predictionsAccess.enabled && predictionsAccess.allowed ? {
         href: '/dashboard/predictions',
         icon: ClipboardCheck,
         label: 'Predictions',
         isLoading: isGeneratingPredictions,
         tourId: 'predictions-section',
         proOnly: predictionsAccess.proRequired,
-        onClick: predictionsAccess.allowed ? undefined : () => handleBlockedFeatureClick(predictionsAccess),
-        prefetch: predictionsAccess.allowed,
+        prefetch: false,
       } : null,
-      practiceAccess.enabled ? {
+      practiceAccess.enabled && practiceAccess.allowed ? {
         href: '/dashboard/practice',
         icon: SquarePen,
         label: 'Practice',
         tourId: 'practice-section',
-        onClick: practiceAccess.allowed ? undefined : () => handleBlockedFeatureClick(practiceAccess),
-        prefetch: practiceAccess.allowed,
+        proOnly: practiceAccess.proRequired,
+        prefetch: false,
       } : null,
       { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
-      { href: '/dashboard/settings/subscription', icon: CreditCard, label: 'Subscription' },
+      { href: '/dashboard/settings/subscription', icon: CreditCard, label: 'Subscription', prefetch: false },
     ].filter(Boolean) as NavItem[];
 
     return items;
   }, [
     globalChatAccess,
-    handleBlockedFeatureClick,
     isGeneratingKnowledge,
     isGeneratingPredictions,
     knowledgeAccess,
@@ -545,19 +526,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     predictionsAccess,
     unreadCount,
   ]);
-
-  const prefetchRoutes = useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...navItems.filter((item) => item.prefetch !== false && !item.onClick).map((item) => item.href),
-          '/dashboard/settings',
-          '/dashboard/settings/subscription',
-          '/conex',
-        ]),
-      ),
-    [navItems],
-  );
 
   const footerItems = useMemo(() => {
     const items = [
@@ -600,54 +568,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       return () => clearInterval(activityInterval);
     }
   }, [isAuthLocked, user, isUserLoading, toast, isOnline]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !isOnline || isAuthLocked || hasWarmedRoutesRef.current) return;
-
-    const prefetchAll = () => {
-      for (const route of prefetchRoutes) {
-        if (route === pathname) continue;
-        router.prefetch(route);
-      }
-      hasWarmedRoutesRef.current = true;
-    };
-
-    const idleWindow = window as Window & {
-      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
-      cancelIdleCallback?: (handle: number) => void;
-    };
-
-    let timeoutId: number | null = null;
-    let idleId: number | null = null;
-
-    if (typeof idleWindow.requestIdleCallback === 'function') {
-      idleId = idleWindow.requestIdleCallback(() => {
-        prefetchAll();
-      }, { timeout: 1200 });
-    } else {
-      timeoutId = window.setTimeout(prefetchAll, 200);
-    }
-
-    return () => {
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId);
-      }
-      if (idleId !== null && typeof idleWindow.cancelIdleCallback === 'function') {
-        idleWindow.cancelIdleCallback(idleId);
-      }
-    };
-  }, [isAuthLocked, isAuthenticated, isOnline, pathname, prefetchRoutes, router]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !isOnline || isAuthLocked || !('serviceWorker' in navigator)) return;
-
-    navigator.serviceWorker.ready
-      .then((registration) => {
-        registration.active?.postMessage({ type: 'PWA_WARM_ROUTES' });
-      })
-      .catch(() => {});
-  }, [isAuthLocked, isAuthenticated, isOnline]);
-
 
   useEffect(() => {
     const handler = (event: any) => {

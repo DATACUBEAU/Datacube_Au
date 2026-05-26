@@ -204,7 +204,10 @@ const matchNextDataRoute = ({ request, url }: { request: Request; url: URL }) =>
   const matchedRoute = url.pathname.match(/^\/_next\/data\/[^/]+(\/.+)\.json$/i)?.[1] || '';
   if (!matchedRoute) return false;
 
-  const excludedPrefixes = ['/conex'];
+  const excludedPrefixes = [
+    '/conex',
+    '/dashboard',
+  ];
   return !excludedPrefixes.some((prefix) => {
     return matchedRoute === prefix || matchedRoute.startsWith(`${prefix}/`);
   });
@@ -227,7 +230,10 @@ const matchPrefetchedRscRoute = ({
   if (pathname.startsWith('/api/')) return false;
 
   const normalizedPath = typeof pathname === 'string' && pathname.trim() ? pathname : '/';
-  const excludedPrefixes = ['/conex'];
+  const excludedPrefixes = [
+    '/conex',
+    '/dashboard',
+  ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
   });
@@ -249,7 +255,10 @@ const matchRscRoute = ({
   if (pathname.startsWith('/api/')) return false;
 
   const normalizedPath = typeof pathname === 'string' && pathname.trim() ? pathname : '/';
-  const excludedPrefixes = ['/conex'];
+  const excludedPrefixes = [
+    '/conex',
+    '/dashboard',
+  ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
   });
@@ -271,7 +280,10 @@ const matchNavigationRoute = ({
   if (pathname.startsWith('/api/')) return false;
 
   const normalizedPath = typeof pathname === 'string' && pathname.trim() ? pathname : '/';
-  const excludedPrefixes = ['/conex'];
+  const excludedPrefixes = [
+    '/conex',
+    '/dashboard',
+  ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
   });
@@ -283,7 +295,7 @@ const withPWA = withPWAInit({
   register: false,
   cacheOnFrontEndNav: false,
   aggressiveFrontEndNavCaching: false,
-  dynamicStartUrlRedirect: '/dashboard',
+  dynamicStartUrlRedirect: '/',
   fallbacks: {
     document: '/~offline',
   },
@@ -291,16 +303,24 @@ const withPWA = withPWAInit({
   workboxOptions: {
     skipWaiting: true,
     clientsClaim: true,
+    exclude: [
+      /\/_next\/static\/chunks\/app\/dashboard\//,
+      /\/_next\/static\/chunks\/app\/conex\//,
+      /\/_next\/static\/chunks\/app\/api\/(account|admin|au|billing|chat|entitlements|feature-output|feedback|limits|payments)\//,
+      /\/dashboard$/,
+    ],
     runtimeCaching: [
       {
         urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
           const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
           if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
           if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-          // Exclude health check (stays NetworkOnly below) and auth session endpoints
+          // Exclude protected/session-scoped APIs. Entitlement, billing, admin,
+          // upload, chat, and generated-output reads must never be served stale.
           if (/\/api\/health$/i.test(url.pathname)) return false;
-          if (/\/api\/auth\//i.test(url.pathname)) return false;
-          if (/\/api\/billing\//i.test(url.pathname)) return false;
+          if (/\/api\/(account|admin|au|auth|billing|chat|entitlements|feedback|limits|payments)(\/|$)/i.test(url.pathname)) return false;
+          if (/\/api\/feature-output$/i.test(url.pathname)) return false;
+          if (/\/api\/feature-flags$/i.test(url.pathname)) return false;
           if (/\/api\/webhooks\//i.test(url.pathname)) return false;
           if (/\/socket\.io\//i.test(url.pathname)) return false;
           return sameOrigin && url.pathname.startsWith('/api/');
@@ -475,7 +495,8 @@ const withPWA = withPWAInit({
         options: { cacheName: PWA_RUNTIME_CACHE_NAMES['gtm-no-cache'] },
       },
       {
-        // Keep Next.js data payloads around longer so already-visited pages reopen offline.
+        // Cache only public Next.js data payloads. Protected dashboard/admin/billing
+        // routes are excluded in matchNextDataRoute.
         urlPattern: matchNextDataRoute,
         handler: 'StaleWhileRevalidate',
         options: {
@@ -487,7 +508,8 @@ const withPWA = withPWAInit({
         },
       },
       {
-        // Cache dashboard route payload shells so previously visited pages can reopen offline.
+        // Cache only public route prefetch payloads. Protected routes are excluded
+        // before Workbox sees the request.
         urlPattern: matchPrefetchedRscRoute,
         handler: 'NetworkFirst',
         options: {

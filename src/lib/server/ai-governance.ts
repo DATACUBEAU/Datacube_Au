@@ -743,7 +743,7 @@ export async function getFeatureGateDecision(
 
   return {
     enabled: flags.get('enable_practice_exam_generation')?.enabled !== false,
-    proRequired: false,
+    proRequired: true,
     reason: null,
   };
 }

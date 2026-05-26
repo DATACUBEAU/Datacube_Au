@@ -35,6 +35,7 @@ import {
   resolveSuccessfulAccountSnapshotState,
   shouldDeferAccountSnapshotBootstrap,
 } from '@/lib/account/account-snapshot-state';
+import { clearUserScopedClientCaches } from '@/lib/auth/session-storage';
 
 type AccountSnapshotContextValue = {
   snapshot: PersistedCanonicalAccountSnapshot | null;
@@ -60,6 +61,28 @@ type CachedSnapshotResult = {
   snapshot: PersistedCanonicalAccountSnapshot | null;
   cachedAt: number | null;
 };
+
+function hasActivePaidSnapshotAccess(snapshot: PersistedCanonicalAccountSnapshot | null): boolean {
+  const entitlements = snapshot?.entitlements as any;
+  if (!entitlements) return false;
+  const plan = String(entitlements.plan || '').trim().toLowerCase();
+  const endsAt = typeof entitlements.entitlementEndsAt === 'string'
+    ? entitlements.entitlementEndsAt
+    : typeof entitlements.entitlement_ends_at === 'string'
+      ? entitlements.entitlement_ends_at
+      : null;
+  const expiresMs = endsAt ? new Date(endsAt).getTime() : null;
+  const expired = Number.isFinite(expiresMs) && Number(expiresMs) <= Date.now();
+  if (expired) return false;
+  return (
+    entitlements.hasPro === true ||
+    entitlements.promoActive === true ||
+    plan === 'admin' ||
+    plan === 'premium' ||
+    plan === 'pro' ||
+    plan === 'promo_pro'
+  );
+}
 
 export function AccountSnapshotProvider({ children }: { children: React.ReactNode }) {
   const [user] = useSupabaseUser();
@@ -101,13 +124,23 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     cachedAt?: number | null;
     fromCache?: boolean;
   }) => {
+    const previous = snapshotRef.current;
+    const userId = next.userId || user?.id || null;
+    if (
+      userId &&
+      previous?.userId === userId &&
+      hasActivePaidSnapshotAccess(previous) &&
+      !hasActivePaidSnapshotAccess(next)
+    ) {
+      void clearUserScopedClientCaches(userId);
+    }
     snapshotRef.current = next;
     cachedAtRef.current = options?.cachedAt ?? Date.now();
     setSnapshot(next);
     setLoading(false);
     setIsUsingCachedData(Boolean(options?.fromCache));
     setCachedAt(options?.cachedAt ?? Date.now());
-  }, []);
+  }, [user?.id]);
 
   const clearSnapshot = useCallback(() => {
     snapshotRef.current = null;

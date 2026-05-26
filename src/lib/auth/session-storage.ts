@@ -92,13 +92,53 @@ export function readPersistedSupabaseSession(): Session | null {
 }
 
 export async function clearUserScopedClientCaches(userId: string | null | undefined): Promise<void> {
-  if (!userId) return;
-  clearPersistedAccountSnapshotSync(userId);
-  await Promise.allSettled([
-    clearUserCache(userId),
-    clearUserLocalWorkingMemory(userId),
-    purgeEmergencyPwaCaches(),
-  ]);
+  clearUserScopedLocalStorageArtifacts();
+  if (userId) {
+    clearPersistedAccountSnapshotSync(userId);
+    notifyUserScopedCachesCleared(userId);
+    await Promise.allSettled([
+      clearUserCache(userId),
+      clearUserLocalWorkingMemory(userId),
+      purgeEmergencyPwaCaches(),
+    ]);
+    return;
+  }
+  await purgeEmergencyPwaCaches();
+}
+
+function clearUserScopedLocalStorageArtifacts(): void {
+  if (typeof window === 'undefined') return;
+  const prefixes = [
+    'au_answer_cache_',
+    'knowledge_history_user_',
+    'practice_exam_history_',
+    'prediction_history_',
+  ];
+  const exact = new Set(['au-app-storage']);
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < window.localStorage.length; index += 1) {
+      const key = window.localStorage.key(index);
+      if (!key) continue;
+      if (exact.has(key) || prefixes.some((prefix) => key.startsWith(prefix))) {
+        keys.push(key);
+      }
+    }
+    for (const key of keys) {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function notifyUserScopedCachesCleared(userId: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.dispatchEvent(new CustomEvent('dcau:user-scoped-caches-cleared', { detail: { userId } }));
+  } catch {
+    // Ignore event dispatch failures.
+  }
 }
 
 const AUTH_STORAGE_EXACT_KEYS = new Set<string>([
