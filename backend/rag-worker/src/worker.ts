@@ -4,6 +4,7 @@ import { logger, deterministicChunking, computeHash } from './utils';
 import { UploadJob } from './types';
 import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
+import { isProtectedOwnerUserId } from './protected-owner';
 
 type WorkerJobMutationClassification = 'schema_mismatch' | 'transient_db' | 'logic_error';
 
@@ -353,6 +354,16 @@ export class RAGWorker {
   }
 
   private async cleanupSourceFileAfterSuccess(job: UploadJob): Promise<void> {
+    const ownerId = String(job.owner_id || job.user_id || '').trim();
+    if (isProtectedOwnerUserId(ownerId)) {
+      logger.info('Skipping automatic source cleanup for protected owner document', {
+        jobId: job.id,
+        documentId: job.document_id,
+        ownerId,
+      });
+      return;
+    }
+
     const bucket = this.normalizeBucketName(job.bucket, {
       jobId: job.id,
       documentId: job.document_id,
@@ -1103,6 +1114,20 @@ export class RAGWorker {
 
     for (const log of logs) {
       try {
+        if (isProtectedOwnerUserId(log.owner_id)) {
+          await this.supabase
+            .from('au_deletion_log')
+            .update({ processed: true, processed_at: new Date().toISOString() })
+            .eq('id', log.id);
+
+          logger.warn('Skipped deletion log for protected owner document', {
+            logId: log.id,
+            documentId: log.document_id,
+            ownerId: log.owner_id,
+          });
+          continue;
+        }
+
         await this.ingestion.deleteDocument(log.document_id, log.owner_id || undefined);
 
         if (log.file_path) {
@@ -1245,8 +1270,9 @@ export class RAGWorker {
       }
     }
 
-    let fallbackRetentionDays = 14;
-    if (!Number.isFinite(currentExpiryMs) && !inheritedParentExpiryMs) {
+    const protectedOwnerJob = isProtectedOwnerUserId(ownerId);
+    let fallbackRetentionDays = protectedOwnerJob ? 36500 : 14;
+    if (!protectedOwnerJob && !Number.isFinite(currentExpiryMs) && !inheritedParentExpiryMs) {
       const { data: entitlementRow } = await this.supabase
         .from('au_user_entitlements')
         .select('plan,source')
@@ -1260,7 +1286,9 @@ export class RAGWorker {
           : (entitlementPlan === 'premium' || entitlementPlan === 'pro' ? 30 : 14);
     }
 
-    const effectiveExpiryMs = Number.isFinite(currentExpiryMs)
+    const effectiveExpiryMs = protectedOwnerJob
+      ? Number.NaN
+      : Number.isFinite(currentExpiryMs)
       ? currentExpiryMs
       : inheritedParentExpiryMs;
     const expiresAt = effectiveExpiryMs

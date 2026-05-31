@@ -16,6 +16,7 @@ import {
   type RetentionScope,
   type RetentionTargetType,
 } from '@/lib/server/retention-policy';
+import { isProtectedOwnerUserId } from '@/lib/admin/protected-owner';
 
 const DEFAULT_BUCKET = firstEnv('BUCKET', 'NEXT_PUBLIC_SUPABASE_BUCKET') || 'documents';
 const DEFAULT_PREVIEW_LIMIT = 50;
@@ -657,13 +658,15 @@ function buildUserSnapshots(
       user.last_sign_in_at,
       user.created_at,
     ]);
-    const lifecycleState = deriveRetentionLifecycleState({
-      lastSeenAt,
-      documentsRemaining: userDocuments.length,
-      latestActionStatus: latestAction?.status || null,
-      latestActionScope: latestAction?.scope || null,
-      latestActionError: latestAction?.last_error || null,
-    });
+    const lifecycleState = isProtectedOwnerUserId(user.id)
+      ? 'active'
+      : deriveRetentionLifecycleState({
+          lastSeenAt,
+          documentsRemaining: userDocuments.length,
+          latestActionStatus: latestAction?.status || null,
+          latestActionScope: latestAction?.scope || null,
+          latestActionError: latestAction?.last_error || null,
+        });
 
     return {
       userId: user.id,
@@ -737,6 +740,7 @@ function buildDocumentCandidates(users: UserSnapshot[]): DocumentCandidate[] {
 
   const nowMs = Date.now();
   for (const user of users) {
+    if (isProtectedOwnerUserId(user.userId)) continue;
     const fullDeletionDue = isFullDeletionDue(user.lastSeenAt, new Date());
     const fileCleanupDue =
       user.documents.length > 0 && !fullDeletionDue && user.lastSeenAt
@@ -2054,6 +2058,10 @@ export async function deleteUserAccountWithRetention(
   userId: string,
   input?: { email?: string | null; initiatedBy?: string | null; supabase?: SupabaseAdmin },
 ): Promise<void> {
+  if (isProtectedOwnerUserId(userId)) {
+    throw new Error('protected_owner_account_cannot_be_deleted');
+  }
+
   const supabase = input?.supabase || createSupabaseAdminClient();
   const overview = await buildOverview(supabase, 10);
   const existingUser = overview.userSnapshots.find((row) => row.userId === userId) || null;

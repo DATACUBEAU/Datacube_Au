@@ -158,7 +158,7 @@ async function loadMiddlewareSubject(
     maybeSingle(
       supabase
         .from('au_user_entitlements')
-        .select('plan,source,expires_at')
+        .select('plan,source,expires_at,admin_override_plan')
         .eq('user_id', auth.userId)
         .maybeSingle(),
     ),
@@ -180,6 +180,9 @@ async function loadMiddlewareSubject(
   const profileTier = typeof (profile as any)?.tier === 'string' ? String((profile as any).tier) : null;
   const entitlementPlan = typeof (entitlement as any)?.plan === 'string' ? String((entitlement as any).plan) : null;
   const entitlementSource = typeof (entitlement as any)?.source === 'string' ? String((entitlement as any).source) : null;
+  const adminOverridePlan = typeof (entitlement as any)?.admin_override_plan === 'string'
+    ? String((entitlement as any).admin_override_plan)
+    : null;
   const entitlementEndsAt = typeof (entitlement as any)?.expires_at === 'string'
     ? String((entitlement as any).expires_at)
     : typeof (grant as any)?.ends_at === 'string'
@@ -200,6 +203,7 @@ async function loadMiddlewareSubject(
     hasPro: adminOverride || Boolean(grant) || ['admin', 'premium', 'pro', 'paid', 'weekly', 'monthly', 'promo_pro'].includes(plan.toLowerCase()),
     entitlementSource: entitlementSource || (grant ? 'paid' : ['admin', 'premium', 'pro'].includes(String(profileTier || '').toLowerCase()) ? 'paid' : 'none'),
     entitlementEndsAt,
+    adminOverridePlan: adminOverridePlan as any,
     adminOverride,
   };
 }

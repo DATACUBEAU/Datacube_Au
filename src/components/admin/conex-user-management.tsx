@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
+import { ADMIN_OVERRIDE_PLANS, PLATFORM_OWNER_USER_ID, adminOverridePlanLabel, type AdminOverridePlan } from '@/lib/admin/protected-owner';
 
 type AccountStatus = 'active' | 'inactive' | 'suspended';
 type UserRole = 'admin' | 'free' | 'weekly' | 'monthly' | 'pro' | 'user';
@@ -32,6 +33,8 @@ type ManagedUser = {
   permissions: string[];
   is_suspended: boolean;
   is_authorized: boolean;
+  is_protected_owner?: boolean;
+  admin_override_plan?: AdminOverridePlan | null;
 };
 
 type ActivityLog = {
@@ -148,6 +151,8 @@ export function ConexUserManagement() {
   const [savingUser, setSavingUser] = useState(false);
   const [deletingUser, setDeletingUser] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
+  const [adminOverridePlan, setAdminOverridePlan] = useState<AdminOverridePlan>('pro_monthly');
+  const [savingAdminOverride, setSavingAdminOverride] = useState(false);
 
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
@@ -284,6 +289,7 @@ export function ConexUserManagement() {
     setStatus(selectedUser.account_status);
     setRole(selectedUser.role);
     setPermissionsText((selectedUser.permissions || []).join(', '));
+    setAdminOverridePlan(selectedUser.admin_override_plan || 'pro_monthly');
     fetchActivity(selectedUser.user_id).catch(() => {});
   }, [fetchActivity, selectedUser]);
 
@@ -301,17 +307,25 @@ export function ConexUserManagement() {
 
   const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
   const selectedCount = selectedIds.size;
+  const selectableUserIds = useMemo(
+    () => users.filter((user) => user.user_id !== PLATFORM_OWNER_USER_ID).map((user) => user.user_id),
+    [users],
+  );
   const isReadOnlyMode = sourceMode === 'au_users_fallback';
   const onlineNowCount = useMemo(
     () => users.filter((user) => isOnlineNow(user.last_active_at)).length,
     [users]
   );
   const offlineCount = Math.max(0, users.length - onlineNowCount);
+  const selectedUserIsProtectedOwner = Boolean(
+    selectedUser?.is_protected_owner || selectedUser?.user_id === PLATFORM_OWNER_USER_ID,
+  );
 
   const canRunBulk = selectedCount > 0 && !runningBulk;
   const hasBulkPatch = Boolean(bulkStatus || bulkRole || bulkPermissions.trim());
 
   const toggleSelectUser = useCallback((userId: string, checked: boolean) => {
+    if (userId === PLATFORM_OWNER_USER_ID) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (checked) next.add(userId);
@@ -321,9 +335,9 @@ export function ConexUserManagement() {
   }, []);
 
   const toggleSelectAllOnPage = useCallback((checked: boolean) => {
-    if (checked) setSelectedIds(new Set(users.map((user) => user.user_id)));
+    if (checked) setSelectedIds(new Set(selectableUserIds));
     else setSelectedIds(new Set());
-  }, [users]);
+  }, [selectableUserIds]);
 
   const onSaveUser = useCallback(async () => {
     if (!selectedUser?.user_id) return;
@@ -422,6 +436,37 @@ export function ConexUserManagement() {
       setResettingPassword(false);
     }
   }, [selectedUser?.email, selectedUser?.user_id, toast]);
+
+  const onSaveAdminOverride = useCallback(async () => {
+    if (!selectedUserIsProtectedOwner || !selectedUser?.user_id) return;
+    setSavingAdminOverride(true);
+    try {
+      const res = await authedFetch('/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'set_owner_admin_override_plan',
+          userId: selectedUser.user_id,
+          adminOverridePlan,
+        }),
+      });
+      if (!res.ok) throw await parseError(res, 'Failed to update admin test override.');
+
+      toast({
+        title: 'Override updated',
+        description: `Owner test plan is now ${adminOverridePlanLabel(adminOverridePlan)}.`,
+      });
+      await fetchUsers({ silent: true });
+      await fetchActivity(selectedUser.user_id);
+    } catch (error: any) {
+      toast({
+        title: 'Override failed',
+        description: error?.message || 'Could not update owner test plan.',
+        variant: 'destructive',
+      });
+    } finally {
+      setSavingAdminOverride(false);
+    }
+  }, [adminOverridePlan, fetchActivity, fetchUsers, selectedUser?.user_id, selectedUserIsProtectedOwner, toast]);
 
   const onRunBulkUpdate = useCallback(async () => {
     if (!canRunBulk || !hasBulkPatch) return;
@@ -759,6 +804,7 @@ export function ConexUserManagement() {
                         <Checkbox
                           checked={selectedIds.has(user.user_id)}
                           onCheckedChange={(value) => toggleSelectUser(user.user_id, Boolean(value))}
+                          disabled={user.user_id === PLATFORM_OWNER_USER_ID}
                           aria-label={`Select ${user.email || user.user_id}`}
                         />
                       </div>
@@ -776,6 +822,8 @@ export function ConexUserManagement() {
                         {user.account_status}
                       </Badge>
                       <Badge variant="outline">{user.role}</Badge>
+                      {user.user_id === PLATFORM_OWNER_USER_ID ? <Badge variant="secondary">owner</Badge> : null}
+                      {user.admin_override_plan ? <Badge variant="outline">{adminOverridePlanLabel(user.admin_override_plan)}</Badge> : null}
                       <span className="text-[11px] text-muted-foreground">
                         Last seen: {formatLastSeen(user.last_active_at)} ({formatDate(user.last_active_at)})
                       </span>
@@ -791,8 +839,9 @@ export function ConexUserManagement() {
                   <tr>
                     <th className="p-2 text-left w-10">
                       <Checkbox
-                        checked={users.length > 0 && selectedIds.size === users.length}
+                        checked={selectableUserIds.length > 0 && selectedIds.size === selectableUserIds.length}
                         onCheckedChange={(value) => toggleSelectAllOnPage(Boolean(value))}
+                        disabled={selectableUserIds.length === 0}
                         aria-label="Select all users on page"
                       />
                     </th>
@@ -821,6 +870,7 @@ export function ConexUserManagement() {
                           <Checkbox
                             checked={selectedIds.has(user.user_id)}
                             onCheckedChange={(value) => toggleSelectUser(user.user_id, Boolean(value))}
+                            disabled={user.user_id === PLATFORM_OWNER_USER_ID}
                             aria-label={`Select ${user.email || user.user_id}`}
                           />
                         </td>
@@ -845,6 +895,8 @@ export function ConexUserManagement() {
                         </td>
                         <td className="p-2">
                           <Badge variant="outline">{user.role}</Badge>
+                          {user.user_id === PLATFORM_OWNER_USER_ID ? <Badge variant="secondary" className="ml-1">owner</Badge> : null}
+                          {user.admin_override_plan ? <Badge variant="outline" className="ml-1">{adminOverridePlanLabel(user.admin_override_plan)}</Badge> : null}
                         </td>
                         <td className="p-2 text-xs text-muted-foreground">
                           <div className="flex flex-col">
@@ -922,7 +974,7 @@ export function ConexUserManagement() {
                         <SelectContent>
                           <SelectItem value="active">Active</SelectItem>
                           <SelectItem value="inactive">Inactive</SelectItem>
-                          <SelectItem value="suspended">Suspended</SelectItem>
+                          <SelectItem value="suspended" disabled={selectedUserIsProtectedOwner}>Suspended</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -934,7 +986,11 @@ export function ConexUserManagement() {
                         </SelectTrigger>
                         <SelectContent>
                           {ROLE_OPTIONS.filter((option) => option.value !== 'all').map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
+                            <SelectItem
+                              key={option.value}
+                              value={option.value}
+                              disabled={selectedUserIsProtectedOwner && option.value !== 'admin'}
+                            >
                               {option.label}
                             </SelectItem>
                           ))}
@@ -951,6 +1007,39 @@ export function ConexUserManagement() {
                       className="min-h-[72px]"
                     />
                   </div>
+                  {selectedUserIsProtectedOwner ? (
+                    <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                      <div className="mb-2">
+                        <Label>Owner Test Entitlement</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Simulates plan access for this owner account only. Payment, subscription, transaction, and webhook rows are not changed.
+                        </p>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                        <Select value={adminOverridePlan} onValueChange={(value) => setAdminOverridePlan(value as AdminOverridePlan)}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {ADMIN_OVERRIDE_PLANS.map((plan) => (
+                              <SelectItem key={plan} value={plan}>
+                                {adminOverridePlanLabel(plan)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={onSaveAdminOverride}
+                          disabled={savingAdminOverride || isReadOnlyMode}
+                        >
+                          {savingAdminOverride ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                          Apply
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="grid gap-2 sm:grid-cols-3">
                     <Button onClick={onSaveUser} disabled={savingUser || isReadOnlyMode}>
                       {savingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
@@ -960,7 +1049,7 @@ export function ConexUserManagement() {
                       {resettingPassword ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <KeyRound className="h-4 w-4 mr-2" />}
                       Reset Password
                     </Button>
-                    <Button variant="destructive" onClick={onDeleteUser} disabled={deletingUser || isReadOnlyMode}>
+                    <Button variant="destructive" onClick={onDeleteUser} disabled={deletingUser || isReadOnlyMode || selectedUserIsProtectedOwner}>
                       {deletingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Trash2 className="h-4 w-4 mr-2" />}
                       Delete
                     </Button>

@@ -8,6 +8,44 @@ Datacube AU now uses a centralized entitlement model instead of scattered client
 
 Client UI gates remain useful for navigation and upgrade flows, but they are not treated as security controls.
 
+## Protected Owner/Admin Test Account
+
+Protected user ID: `05ad2f16-b3ce-48eb-bf24-41b407556ffd`
+
+This account is the platform owner/admin test account. It must remain active, admin-owned, and recoverable regardless of normal entitlement expiration, retention, cleanup, bulk admin actions, billing reconciliation, or account deletion flows.
+
+Implemented safeguards:
+
+- `src/lib/admin/protected-owner.ts` defines the canonical protected owner ID and supported testing override plans.
+- Account deletion returns 403 for this user before Supabase auth deletion is attempted.
+- Conex single-user edits cannot suspend this user, remove the admin role, or downgrade the account tier.
+- Conex bulk update/delete skips this user and records a per-user failure instead of mutating it.
+- Retention and account deletion helpers reject deletion of this user and skip owner-owned document cleanup candidates.
+- Billing checkout, verification, cancel/resume, webhook processing, and reconciliation skip or reject mutations for this user.
+- RAG Worker success cleanup, failed-job cleanup, stale upload cleanup, and deletion-log processing skip protected owner documents.
+- The SQL migration adds database triggers to block owner auth deletion, profile suspension/downgrade, entitlement base-field changes, protected owner row deletion, and owner billing-row mutations.
+
+### Testing entitlement override
+
+Admin settings expose a testing-only entitlement override for the protected owner account only:
+
+- `FREE`
+- `PRO_WEEKLY`
+- `PRO_MONTHLY`
+
+The override is visible only in Conex user management when an admin selects the protected owner user. It writes only `au_user_entitlements.admin_override_plan` and `admin_entitlement_override_audit`.
+
+It does not create or update Paystack subscriptions, payment transactions, billing history, webhook records, or production payment data.
+
+Effective entitlement resolution now follows:
+
+1. `admin_override_plan`
+2. active billing subscription
+3. active legacy entitlement grant/profile/admin fallback where applicable
+4. promo/default free fallback
+
+For the protected owner, `FREE` intentionally simulates free-user feature access while preserving Conex/admin access through the profile/admin path.
+
 ## Protected Route Inventory
 
 This inventory was discovered from the `src/app` route tree, route labels, feature policies, and premium/admin keywords.
@@ -128,12 +166,52 @@ Expected gateway failure text for bad tickets is `invalid_token: Invalid or expi
 
 ## Required Deploy/Restart Steps
 
-1. Redeploy the Next/Vercel frontend so middleware, dynamic layouts, route-handler enforcement, and the new service worker are live.
-2. Invalidate old service-worker clients by serving the rebuilt `/sw.js` and `worker-*.js`; users with stuck old workers may need a hard refresh or service-worker unregister.
-3. Redeploy the VPS AI Gateway from `vps-ai-gateway`.
-4. Restart or reload the gateway PM2 process, for example `pm2 restart datacube-ai-gateway` or the actual PM2 process name on the VPS.
-5. Confirm the frontend and VPS share the same `VPS_SHARED_SECRET` and gateway URL environment variables.
-6. After deploy, test a free user and a Pro/Premium user against Global Chat, Knowledge, Practice, Predictions, Upload, Billing, and Conex.
+### Requires Vercel redeploy
+
+- Centralized route/API authorization enforcement.
+- Dynamic/no-store dashboard and Conex layouts.
+- Admin owner override UI and `/api/admin/users` override action.
+- Owner protections in account deletion, Conex user management, billing APIs, middleware, entitlement resolution, account snapshots, and limit resolution.
+- Service worker and Workbox precache/runtime cache hardening.
+
+### Requires VPS AI Gateway redeploy
+
+- Required for the prior VPS ticket-only gateway auth changes and removal of legacy Supabase JWT/JWKS runtime verification.
+- The owner test override does not add new VPS gateway code by itself, but the VPS must be redeployed if the production gateway still returns old `INVALID_OR_EXPIRED_TOKEN`/Supabase wording.
+
+### Requires RAG Worker redeploy
+
+- Protected owner skip logic in `backend/rag-worker/src/worker.ts`.
+- Protected owner skip logic in `backend/rag-worker/src/cleanup.ts`.
+
+### Requires PM2 restart
+
+- Restart/reload the VPS AI Gateway PM2 process after gateway redeploy.
+- Restart/reload the RAG Worker PM2 process after worker redeploy.
+
+### Requires Supabase SQL migration
+
+- Apply `supabase/migrations/20260531120000_owner_admin_override_plan.sql`.
+- This migration adds `admin_override_plan`, override audit logging, effective-entitlement RPC behavior, and database-level protected-owner guards.
+
+### Requires new environment variables
+
+- None.
+- Existing frontend/VPS values still must match, especially `VPS_SHARED_SECRET` and gateway URL variables.
+
+### Requires service worker invalidation
+
+- Yes. Serve the rebuilt `/sw.js` and generated `worker-*.js` files.
+- Old clients with stale workers may need a hard refresh or manual service-worker unregister.
+
+### Post-deploy tests
+
+1. Free user: blocked from Global Chat, Knowledge, Practice, Predictions, premium models, and paid-only upload limits.
+2. Paid user: allowed through premium features and VPS ticket minting.
+3. Protected owner with `FREE`: premium features should behave like free-user access while Conex remains accessible.
+4. Protected owner with `PRO_WEEKLY` and `PRO_MONTHLY`: premium features should unlock instantly without billing records changing.
+5. Protected owner account deletion, suspension, bulk delete, billing checkout, billing verify, cancel/resume, retention, and worker cleanup should be rejected or skipped.
+6. VPS `POST /chat/au-chat` should reject only invalid VPS tickets with the new ticket-auth wording, not Supabase JWT/JWKS errors.
 
 ## Verification
 
@@ -142,4 +220,3 @@ Expected gateway failure text for bad tickets is `invalid_token: Invalid or expi
 - `node .tmp-tests/tests/pwa-offline.unit.test.js`
 - `node .tmp-tests/tests/feature-access.unit.test.js`
 - `npm run build` inside `vps-ai-gateway`
-

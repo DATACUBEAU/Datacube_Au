@@ -5,6 +5,7 @@ import {
   type TierFeatureKey,
   type TierId,
 } from '@/lib/tier/policy';
+import { isPaidAdminOverridePlan, normalizeAdminOverridePlan, type AdminOverridePlan } from '@/lib/admin/protected-owner';
 
 export type AccessRequirement = 'auth' | 'feature' | 'paid' | 'admin';
 export type AccessSurface = 'page' | 'api' | 'server_action' | 'vps' | 'navigation' | 'worker';
@@ -44,6 +45,7 @@ export type EntitlementSubject = {
   promoActive?: boolean | null;
   promoEndsAtUtc?: string | null;
   adminOverride?: boolean | null;
+  adminOverridePlan?: AdminOverridePlan | null;
   suspended?: boolean | null;
 };
 
@@ -450,6 +452,8 @@ export function featureFromVpsTicketRequest(value: unknown): TierFeatureKey | nu
 
 export function normalizeAccessPlan(subject: EntitlementSubject | null | undefined): TierId {
   if (!subject?.userId) return 'FREE';
+  const adminOverridePlan = normalizeAdminOverridePlan(subject.adminOverridePlan);
+  if (adminOverridePlan) return isPaidAdminOverridePlan(adminOverridePlan) ? 'PRO' : 'FREE';
   const plan = normalizeToken(subject.plan);
   const profileTier = normalizeToken(subject.profileTier);
 
@@ -484,6 +488,8 @@ export function normalizeAccessPlan(subject: EntitlementSubject | null | undefin
 export function hasActivePaidAccess(subject: EntitlementSubject | null | undefined): boolean {
   if (!subject?.userId) return false;
   if (subject.suspended) return false;
+  const adminOverridePlan = normalizeAdminOverridePlan(subject.adminOverridePlan);
+  if (adminOverridePlan) return isPaidAdminOverridePlan(adminOverridePlan);
   if (subject.adminOverride || normalizeToken(subject.plan) === 'admin' || normalizeToken(subject.profileTier) === 'admin') {
     return true;
   }
@@ -506,6 +512,7 @@ export function evaluateAccess(
 ): AccessDecision {
   const plan = normalizeAccessPlan(subject);
   const labels = rule.labels ?? [];
+  const hasAdminTestingOverride = Boolean(normalizeAdminOverridePlan(subject?.adminOverridePlan));
   const base = {
     requirement: rule.requirement,
     feature: rule.feature,
@@ -575,7 +582,7 @@ export function evaluateAccess(
     };
   }
 
-  if (isAdminSubject(subject) || isFeatureAllowedForTier(rule.feature, plan)) {
+  if ((!hasAdminTestingOverride && isAdminSubject(subject)) || isFeatureAllowedForTier(rule.feature, plan)) {
     return { ...base, allowed: true, status: 200, code: null, reason: null };
   }
 

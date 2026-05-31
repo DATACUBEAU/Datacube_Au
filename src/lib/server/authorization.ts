@@ -78,6 +78,7 @@ export async function loadEntitlementSubject(input: {
     entitlementEndsAt: snapshot.entitlementEndsAt,
     promoActive: snapshot.promoActive,
     promoEndsAtUtc: snapshot.promoEndsAtUtc,
+    adminOverridePlan: snapshot.adminOverridePlan,
     adminOverride: hasConexAccess({
       userId: input.auth.userId,
       email: input.auth.email,

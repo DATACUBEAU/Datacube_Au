@@ -2,6 +2,7 @@
 import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from './utils';
+import { isProtectedOwnerUserId } from './protected-owner';
 
 function resolveBucket(): string {
   return process.env.BUCKET || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
@@ -145,7 +146,7 @@ async function cleanup() {
   // 1. Failed Jobs Cleanup
   const { data: failedJobs, error } = await supabase
     .from('au_worker_jobs')
-    .select('id,document_id,object_path,bucket,updated_at')
+    .select('id,document_id,owner_id,user_id,object_path,bucket,updated_at')
     .eq('status', 'failed')
     .lt('updated_at', oneDayAgo);
     
@@ -155,6 +156,14 @@ async function cleanup() {
     logger.info(`Found ${failedJobs?.length || 0} failed jobs to cleanup`);
 
     for (const job of failedJobs || []) {
+        if (isProtectedOwnerUserId((job as any).owner_id || (job as any).user_id)) {
+          logger.warn('Skipping failed-job cleanup for protected owner document', {
+            jobId: job.id,
+            documentId: job.document_id,
+            ownerId: (job as any).owner_id || (job as any).user_id,
+          });
+          continue;
+        }
         if (!job.object_path) continue;
         try {
             logger.info(`Cleaning up storage for job ${job.id}`, { path: job.object_path });
@@ -204,7 +213,7 @@ async function cleanup() {
 
   const { data: pendingCleanup, error: pendingCleanupError } = await supabase
     .from('au_documents')
-    .select('id,file_path,storage_deleted_at,cleanup_attempts')
+    .select('id,owner_id,user_id,file_path,storage_deleted_at,cleanup_attempts')
     .eq('cleanup_pending', true)
     .eq('status', 'completed')
     .is('storage_deleted_at', null)
@@ -214,6 +223,14 @@ async function cleanup() {
     logger.error('Failed to fetch cleanup_pending documents', pendingCleanupError);
   } else if (pendingCleanup && pendingCleanup.length > 0) {
     for (const doc of pendingCleanup) {
+      if (isProtectedOwnerUserId((doc as any).owner_id || (doc as any).user_id)) {
+        logger.warn('Skipping pending source cleanup for protected owner document', {
+          documentId: doc.id,
+          ownerId: (doc as any).owner_id || (doc as any).user_id,
+        });
+        continue;
+      }
+
       const storageTarget = await resolveDocumentStorageTarget(doc.id, doc.file_path);
       if (!storageTarget.objectPath) continue;
       try {
@@ -274,6 +291,14 @@ async function cleanup() {
   if (staleDocs && staleDocs.length > 0) {
       logger.info(`Found ${staleDocs.length} stale pending uploads`);
       for (const doc of staleDocs) {
+          if (isProtectedOwnerUserId((doc as any).owner_id || (doc as any).user_id)) {
+            logger.warn('Skipping stale pending upload cleanup for protected owner document', {
+              documentId: doc.id,
+              ownerId: (doc as any).owner_id || (doc as any).user_id,
+            });
+            continue;
+          }
+
           let deleted = false;
           let deletionError: string | null = null;
           let sourceCleanupResult: string = 'no_source';

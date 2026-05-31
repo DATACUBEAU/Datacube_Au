@@ -61,6 +61,10 @@ import {
 } from '@/lib/server/account-plan-authority';
 import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
 import { applyPlanTransition } from '@/lib/server/plan-sync';
+import {
+  PLATFORM_OWNER_USER_ID,
+  isProtectedOwnerUserId,
+} from '@/lib/admin/protected-owner';
 
 export type BillingInterval = 'weekly' | 'monthly';
 export type PaymentMethod = 'subscription' | 'transfer';
@@ -244,6 +248,40 @@ function normalizeGatewayId(raw: unknown): PaymentGatewayId {
 
 function asTrimmedString(raw: unknown): string {
   return String(raw || '').trim();
+}
+
+function assertOwnerBillingMutationAllowed(userId: string) {
+  if (!isProtectedOwnerUserId(userId)) return;
+  throw new BillingApiError(
+    403,
+    'protected_owner_billing_disabled',
+    'The protected owner test account uses admin entitlement overrides only. Billing mutations are disabled for this account.',
+  );
+}
+
+async function webhookTargetsProtectedOwner(
+  supabase: SupabaseClient,
+  payload: any,
+): Promise<boolean> {
+  const data = payload?.data || {};
+  const metadata = data?.metadata || payload?.metadata || {};
+  const candidateUserIds = [
+    metadata?.user_id,
+    metadata?.userId,
+    data?.user_id,
+    data?.userId,
+    payload?.user_id,
+    payload?.userId,
+  ];
+
+  if (candidateUserIds.some(isProtectedOwnerUserId)) {
+    return true;
+  }
+
+  const email = String(data?.customer?.email || payload?.customer?.email || '').trim().toLowerCase();
+  if (!email) return false;
+  const userId = await resolveUserIdFromEmail(supabase, email);
+  return isProtectedOwnerUserId(userId);
 }
 
 function buildGatewayVerificationOrder(
@@ -672,6 +710,14 @@ async function applyVerifiedPaymentEffects(input: {
     transactionMetadata,
   } = input;
 
+  if (
+    isProtectedOwnerUserId(userId) ||
+    isProtectedOwnerUserId(transactionMetadata.user_id) ||
+    isProtectedOwnerUserId((payload?.data?.metadata || {}).user_id)
+  ) {
+    return;
+  }
+
   await markTransaction({
     supabase,
     userId,
@@ -869,6 +915,10 @@ async function applyRenewalFailureEffects(input: {
   currentMetadata: Record<string, unknown>;
   currentEndsAt: string | null;
 }) {
+  if (isProtectedOwnerUserId(input.userId)) {
+    return;
+  }
+
   const nowIso = new Date().toISOString();
   const nextMetadata = {
     ...input.currentMetadata,
@@ -998,6 +1048,7 @@ export async function createCheckout(input: {
   origin: string;
 }): Promise<CheckoutResult> {
   const { supabase, userId, email, planKeyRaw, paymentMethodRaw, origin } = input;
+  assertOwnerBillingMutationAllowed(userId);
   await ensurePlanCatalog(supabase);
   const effectiveEntitlements = await getEffectiveEntitlementsSnapshot(supabase, userId);
   if (!effectiveEntitlements.billingEnabled) {
@@ -1194,6 +1245,8 @@ export async function verifyCheckoutPayment(input: {
   success: boolean;
   amountKobo: number;
 }> {
+  assertOwnerBillingMutationAllowed(input.userId);
+
   const reference = asTrimmedString(input.reference);
   const verificationTarget = asTrimmedString(input.verificationTarget) || reference;
   if (!verificationTarget) {
@@ -1418,8 +1471,9 @@ export async function getBillingStatus(
     .maybeSingle();
   const profileTierRaw = (profileRow as any)?.tier;
   const currentTier = normalizeEffectiveEntitlementPlan(profileTierRaw);
+  const isOwnerTestAccount = isProtectedOwnerUserId(userId);
 
-  if (currentTier !== 'admin' && effectiveEntitlements.plan !== 'admin') {
+  if (!isOwnerTestAccount && currentTier !== 'admin' && effectiveEntitlements.plan !== 'admin') {
     await applyPlanTransition(supabase, {
       userId,
       targetPlan: authority.effectivePlan.plan,
@@ -1479,7 +1533,7 @@ export async function getBillingStatus(
     subscriptionEndsAtMs <= Date.now() &&
     (subscriptionStatus === 'active' || subscriptionStatus === 'trialing' || subscriptionStatus === 'non_renewing');
 
-  if (shouldMarkSubscriptionExpired) {
+  if (shouldMarkSubscriptionExpired && !isOwnerTestAccount) {
     const updatedAt = new Date().toISOString();
     const { error: expireError } = await supabase
       .from('billing_subscriptions')
@@ -1507,11 +1561,19 @@ export async function getBillingStatus(
     latestPaymentPlanKey: resolveLatestTransactionPlanKey(txs || []),
   });
   const gateway = resolvePaymentGateway();
-  const checkout = buildCheckoutCapability({
+  const checkoutCapability = buildCheckoutCapability({
     billingEnabled: effectiveEntitlements.billingEnabled,
     promoActive: effectiveEntitlements.promoActive,
     gateway: gateway.gateway,
   });
+  const checkout = isOwnerTestAccount
+    ? {
+        ...checkoutCapability,
+        enabled: false,
+        code: 'protected_owner_billing_disabled',
+        message: 'The protected owner test account uses admin entitlement overrides instead of checkout.',
+      }
+    : checkoutCapability;
   const payments = (txs || []).map((row: any) => ({
     reference: row.reference,
     status: row.status,
@@ -1563,6 +1625,8 @@ export async function cancelUserSubscription(
   outcome: 'scheduled' | 'already_scheduled' | 'no_subscription';
   message: string;
 }> {
+  assertOwnerBillingMutationAllowed(userId);
+
   const cancellationReason = normalizeCancellationReason(options?.reason);
   if (cancellationReason.length < CANCELLATION_REASON_MIN_LENGTH) {
     throw new BillingApiError(
@@ -1695,6 +1759,8 @@ export async function resumeUserSubscription(
   outcome: 'resumed' | 'already_renewing' | 'not_resumable' | 'no_subscription';
   message: string;
 }> {
+  assertOwnerBillingMutationAllowed(userId);
+
   const { data: subscription, error } = await supabase
     .from('billing_subscriptions')
     .select('id,plan_key,paystack_subscription_code,paystack_email_token,status,metadata,cancel_at_period_end')
@@ -1843,6 +1909,9 @@ async function handleSuccessfulPayment(input: {
   const customerEmail = String(verified.customerEmail || '').trim().toLowerCase();
   const userIdFromCustomer = await resolveUserIdFromEmail(supabase, customerEmail);
   const userId = userIdFromMetadata || userIdFromCustomer || null;
+  if (isProtectedOwnerUserId(userId)) {
+    return;
+  }
   const transactionId = String(verified.gatewayTransactionId || reference);
   const requestedPaymentMethod = normalizePaymentMethod(metadata.payment_method) || 'subscription';
   const effectivePaymentMethod = coercePaymentMethodForGateway(gateway, requestedPaymentMethod);
@@ -1911,9 +1980,11 @@ async function processFailedCharge(input: {
   const amount = gateway === 'flutterwave' ? Math.round(amountRaw * 100) : amountRaw;
   const channel = String(payload?.data?.channel || payload?.data?.payment_type || 'unknown');
   const email = String(payload?.data?.customer?.email || '').trim().toLowerCase();
-  const userId = await resolveUserIdFromEmail(supabase, email);
+  const metadataUserId = String(payload?.data?.metadata?.user_id || '').trim();
+  const userId = metadataUserId || (await resolveUserIdFromEmail(supabase, email));
 
   if (!reference) return;
+  if (isProtectedOwnerUserId(userId)) return;
 
   await markTransaction({
     supabase,
@@ -1943,6 +2014,7 @@ async function processSubscriptionEvent(input: {
   const customerEmail = String(data?.customer?.email || '').trim().toLowerCase();
   const userId = (await resolveUserIdFromEmail(supabase, customerEmail)) || String(data?.metadata?.user_id || '').trim();
   if (!userId) return;
+  if (isProtectedOwnerUserId(userId)) return;
 
   const { data: existingSubscription, error: existingSubscriptionError } = await supabase
     .from('billing_subscriptions')
@@ -2047,6 +2119,10 @@ export async function processPaystackWebhook(input: {
 }): Promise<{ duplicate: boolean; event: string }> {
   const { supabase, payload, traceId } = input;
   const event = String(payload?.event || 'unknown');
+  if (await webhookTargetsProtectedOwner(supabase, payload)) {
+    return { duplicate: false, event };
+  }
+
   const inserted = await insertWebhookEvent(supabase, payload);
   if (inserted.isDuplicate) {
     return { duplicate: true, event };
@@ -2115,6 +2191,10 @@ export async function processFlutterwaveWebhook(input: {
   const { supabase, payload, traceId } = input;
   const normalizedPayload = normalizeFlutterwaveWebhookPayload(payload);
   const event = String(normalizedPayload?.event || 'unknown');
+  if (await webhookTargetsProtectedOwner(supabase, normalizedPayload)) {
+    return { duplicate: false, event };
+  }
+
   const inserted = await insertWebhookEvent(supabase, normalizedPayload);
   if (inserted.isDuplicate) {
     return { duplicate: true, event };
@@ -2172,7 +2252,7 @@ export async function reconcileBilling(
   const pendingCutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const { data: pendingTx, error: pendingErr } = await supabase
     .from('billing_transactions')
-    .select('reference,metadata')
+    .select('reference,user_id,metadata')
     .in('status', ['pending', 'initiated'])
     .lt('created_at', pendingCutoff)
     .order('created_at', { ascending: true })
@@ -2184,6 +2264,9 @@ export async function reconcileBilling(
     if (!reference) continue;
     try {
       const metadata = ((row as any).metadata || {}) as Record<string, unknown>;
+      if (isProtectedOwnerUserId((row as any).user_id) || isProtectedOwnerUserId(metadata.user_id)) {
+        continue;
+      }
       const gateway = resolveGatewayFromMetadata(metadata);
       const verified = await getPaymentGatewayById(gateway).verifyPayment(reference);
       if (verified.success) {
@@ -2227,6 +2310,7 @@ export async function reconcileBilling(
     .from('entitlement_grants')
     .update({ status: 'expired' })
     .eq('status', 'active')
+    .neq('user_id', PLATFORM_OWNER_USER_ID)
     .lt('ends_at', nowIso)
     .select('user_id');
   if (expiredErr) throw expiredErr;
@@ -2237,6 +2321,7 @@ export async function reconcileBilling(
     .update({ status: 'expired', updated_at: nowIso })
     .in('status', ['active', 'non_renewing'])
     .eq('cancel_at_period_end', true)
+    .neq('user_id', PLATFORM_OWNER_USER_ID)
     .lt('ends_at', nowIso);
 
   let downgradedUsers = 0;
@@ -2245,12 +2330,14 @@ export async function reconcileBilling(
     const { data: proProfiles, error: profileErr } = await supabase
       .from('au_user_profiles')
       .select('user_id')
-      .eq('tier', 'pro');
+      .eq('tier', 'pro')
+      .neq('user_id', PLATFORM_OWNER_USER_ID);
     if (profileErr) throw profileErr;
 
     for (const row of proProfiles || []) {
       const userId = String((row as any).user_id || '').trim();
       if (!userId) continue;
+      if (isProtectedOwnerUserId(userId)) continue;
       const effectiveEntitlements = await getEffectiveEntitlementsSnapshot(supabase, userId);
       if (!effectiveEntitlements.hasPro) {
         await applyPlanTransition(supabase, {

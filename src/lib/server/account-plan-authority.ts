@@ -12,6 +12,7 @@ import {
   getEffectiveEntitlementsSnapshot,
   type EffectiveEntitlementsSnapshot,
 } from '@/lib/server/effective-entitlements';
+import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 
 export type CanonicalAccountPlanAuthority = {
   validatedAt: string;
@@ -47,14 +48,21 @@ export function buildCanonicalSubscriptionState(input: {
   subscriptionStatus?: unknown;
   latestPaymentPlanKey?: unknown;
 }): NormalizedSubscriptionState {
+  const adminOverridePlan = normalizeAdminOverridePlan(input.authority.entitlements.adminOverridePlan);
+  const overrideSubscriptionStatus = adminOverridePlan && adminOverridePlan !== 'free' ? 'active' : null;
+  const overrideLegacyTier = adminOverridePlan
+    ? adminOverridePlan === 'free'
+      ? 'free'
+      : 'pro'
+    : null;
   return deriveNormalizedSubscriptionState({
     effectivePlan: input.authority.entitlements.plan,
     entitlementSource: input.authority.entitlements.entitlementSource,
     promoActive: input.authority.entitlements.promoActive,
-    subscriptionPlanKey: input.subscriptionPlanKey,
-    subscriptionStatus: input.subscriptionStatus,
-    latestPaymentPlanKey: input.latestPaymentPlanKey,
-    legacyTier: input.profileTier ?? input.authority.effectivePlan.plan,
+    subscriptionPlanKey: adminOverridePlan || input.subscriptionPlanKey,
+    subscriptionStatus: overrideSubscriptionStatus || input.subscriptionStatus,
+    latestPaymentPlanKey: adminOverridePlan ? null : input.latestPaymentPlanKey,
+    legacyTier: overrideLegacyTier ?? input.profileTier ?? input.authority.effectivePlan.plan,
   });
 }
 

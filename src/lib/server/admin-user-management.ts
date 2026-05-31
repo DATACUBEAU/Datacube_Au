@@ -19,6 +19,8 @@ export type ManagedUserRecord = {
   permissions: string[];
   is_suspended: boolean;
   is_authorized: boolean;
+  is_protected_owner?: boolean;
+  admin_override_plan?: 'free' | 'pro_weekly' | 'pro_monthly' | null;
 };
 
 export type ManagedUserFilter = {

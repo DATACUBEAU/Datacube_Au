@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
+import { isProtectedOwnerUserId } from '@/lib/admin/protected-owner';
 import { randomUUID } from 'crypto';
 
 export const runtime = 'nodejs';
@@ -32,6 +33,16 @@ export async function POST(req: NextRequest) {
 
     const userId = auth.userId;
     const userEmail = auth.email || 'unknown';
+    if (isProtectedOwnerUserId(userId)) {
+      return NextResponse.json(
+        {
+          error: 'protected_owner_account',
+          message: 'The protected platform owner account cannot be deleted.',
+          requestId,
+        },
+        { status: 403, headers: { 'Cache-Control': 'no-store' } },
+      );
+    }
 
     // Parse body for confirmation token
     const body = await req.json().catch(() => ({}));

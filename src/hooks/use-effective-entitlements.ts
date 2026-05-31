@@ -20,6 +20,7 @@ export type EffectiveEntitlements = {
   promoEndsAtUtc: string | null;
   promoEndsAtLagos: string | null;
   retentionDays: number;
+  adminOverridePlan: 'free' | 'pro_weekly' | 'pro_monthly' | null;
   asOf: string | null;
   source: string;
 };
@@ -39,6 +40,7 @@ const SIGNED_OUT_ENTITLEMENTS: EffectiveEntitlements = {
   promoEndsAtUtc: null,
   promoEndsAtLagos: null,
   retentionDays: FREE_PLAN_EXPIRATION_DAYS,
+  adminOverridePlan: null,
   asOf: null,
   source: 'signed_out',
 };

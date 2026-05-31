@@ -34,6 +34,7 @@ export type AccountEntitlementsSnapshot = {
   promoEndsAtUtc: string | null;
   promoEndsAtLagos: string | null;
   retentionDays: number;
+  adminOverridePlan: 'free' | 'pro_weekly' | 'pro_monthly' | null;
   asOf: string | null;
   source: string;
 };
@@ -183,6 +184,7 @@ export function buildUnknownAccountEntitlements(userId?: string | null): Account
     promoEndsAtUtc: null,
     promoEndsAtLagos: null,
     retentionDays: FREE_PLAN_EXPIRATION_DAYS,
+    adminOverridePlan: null,
     asOf: null,
     source: 'unknown',
   };
@@ -221,6 +223,10 @@ function normalizeEntitlements(
     promoEndsAtUtc: asString(row.promoEndsAtUtc),
     promoEndsAtLagos: asString(row.promoEndsAtLagos),
     retentionDays: Math.max(1, Math.floor(asNumber(row.retentionDays, FREE_PLAN_EXPIRATION_DAYS))),
+    adminOverridePlan: (() => {
+      const raw = asString(row.adminOverridePlan);
+      return raw === 'free' || raw === 'pro_weekly' || raw === 'pro_monthly' ? raw : null;
+    })(),
     asOf: asString(row.asOf),
     source: asString(row.source) || 'api',
   };

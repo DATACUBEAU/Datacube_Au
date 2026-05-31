@@ -38,6 +38,7 @@ import {
 import { LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 import { safeSelectDocuments, type DocumentUsageRow } from '@/lib/server/document-usage-query';
 import { loadUsageCounterSnapshots, resolveUsageMetricForRule } from '@/lib/server/usage-tracking';
+import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 
 const ONE_MB_BYTES = 1024 * 1024;
 
@@ -149,7 +150,7 @@ export type EffectivePlan = {
   plan: EffectivePlanCode;
   isAdmin: boolean;
   hasPro: boolean;
-  source: 'au_user_entitlements' | 'profile' | 'billing' | 'default';
+  source: 'admin_override' | 'au_user_entitlements' | 'profile' | 'billing' | 'default';
   entitlementSource: 'paid' | 'promo' | 'none';
   expiresAt: string | null;
 };
@@ -159,6 +160,7 @@ type EffectivePlanResolutionInput = {
   mirroredPlan?: unknown;
   mirroredSource?: unknown;
   mirroredExpiresAt?: string | null;
+  adminOverridePlan?: unknown;
   entitlementPlan?: unknown;
   entitlementSource?: unknown;
   entitlementEndsAt?: string | null;
@@ -340,7 +342,7 @@ function asTrimmedString(value: unknown, fallback: string): string {
 function normalizePlan(value: unknown): EffectivePlanCode {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'premium') return 'premium';
-  if (raw === 'pro' || raw === 'promo_pro' || raw === 'weekly' || raw === 'monthly' || raw === 'paid') return 'pro';
+  if (raw === 'pro' || raw === 'promo_pro' || raw === 'weekly' || raw === 'monthly' || raw === 'pro_weekly' || raw === 'pro_monthly' || raw === 'paid') return 'pro';
   return 'free';
 }
 
@@ -746,7 +748,7 @@ export async function resolveEffectivePlan(
   userId: string,
 ): Promise<EffectivePlan> {
   const [entitlementRes, profileRes, entitlements] = await Promise.all([
-    supabase.from('au_user_entitlements').select('plan,source,expires_at').eq('user_id', userId).maybeSingle(),
+    supabase.from('au_user_entitlements').select('plan,source,expires_at,admin_override_plan').eq('user_id', userId).maybeSingle(),
     supabase.from('au_user_profiles').select('tier').eq('user_id', userId).maybeSingle(),
     getEffectiveEntitlementsSnapshot(supabase, userId).catch(() => null),
   ]);
@@ -758,6 +760,9 @@ export async function resolveEffectivePlan(
     mirroredExpiresAt: typeof (entitlementRes.data as any)?.expires_at === 'string'
       ? String((entitlementRes.data as any).expires_at)
       : null,
+    adminOverridePlan: !entitlementRes.error
+      ? (entitlementRes.data as any)?.admin_override_plan
+      : entitlements?.adminOverridePlan ?? null,
     entitlementPlan: entitlements?.plan ?? null,
     entitlementSource: entitlements?.entitlementSource ?? null,
     entitlementEndsAt: entitlements?.entitlementEndsAt ?? null,
@@ -769,6 +774,7 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
   const profileInfo = normalizeProfileTier(input.profileTier);
   const mirroredPlanRaw = String(input.mirroredPlan || '').trim().toLowerCase();
   const mirroredPlan = mirroredPlanRaw && mirroredPlanRaw !== 'promo_pro' ? normalizePlan(mirroredPlanRaw) : null;
+  const adminOverridePlan = normalizeAdminOverridePlan(input.adminOverridePlan);
   const mirroredSource = normalizeEntitlementSource(
     typeof input.mirroredSource === 'string' ? input.mirroredSource : null,
   );
@@ -796,6 +802,18 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
 
   const resolvedMirroredPlan = isMirroredExpired ? 'free' : mirroredPlan;
   const resolvedEntitlementPlan = isEntitlementExpired ? 'free' : entitlementPlan;
+
+  if (adminOverridePlan) {
+    const plan = adminOverridePlan === 'free' ? 'free' : 'pro';
+    return {
+      plan,
+      isAdmin: profileInfo.isAdmin,
+      hasPro: plan !== 'free',
+      source: 'admin_override',
+      entitlementSource: plan === 'free' ? 'none' : 'paid',
+      expiresAt: null,
+    };
+  }
 
   if (profileInfo.isAdmin) {
     return {

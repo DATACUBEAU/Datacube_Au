@@ -18,6 +18,13 @@ import {
   type UserRole,
 } from '@/lib/server/admin-user-management';
 import { deleteUserAccountWithRetention } from '@/lib/server/retention';
+import {
+  ADMIN_OVERRIDE_PLANS,
+  PLATFORM_OWNER_USER_ID,
+  isProtectedOwnerUserId,
+  normalizeAdminOverridePlan,
+  type AdminOverridePlan,
+} from '@/lib/admin/protected-owner';
 
 export const runtime = 'nodejs';
 
@@ -38,6 +45,18 @@ class ApiError extends Error {
     this.status = status;
     this.details = details;
   }
+}
+
+function isSchemaDriftError(error: any): boolean {
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    code === '42P01' ||
+    code === '42703' ||
+    (message.includes('relation') && message.includes('does not exist')) ||
+    (message.includes('column') && message.includes('does not exist')) ||
+    message.includes('schema cache')
+  );
 }
 
 function getSupabaseUrl() {
@@ -258,10 +277,36 @@ async function fetchActivityMap(
   return map;
 }
 
+async function fetchAdminOverrideMap(
+  supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
+  userIds: string[]
+): Promise<Map<string, AdminOverridePlan | null>> {
+  const map = new Map<string, AdminOverridePlan | null>();
+  if (userIds.length === 0 || !userIds.includes(PLATFORM_OWNER_USER_ID)) return map;
+
+  const { data, error } = await supabaseAdmin
+    .from('au_user_entitlements')
+    .select('user_id,admin_override_plan')
+    .eq('user_id', PLATFORM_OWNER_USER_ID)
+    .maybeSingle();
+
+  if (error) {
+    if (isSchemaDriftError(error)) return map;
+    throw new ApiError(500, 'admin_override_lookup_failed', error.message);
+  }
+
+  if (data) {
+    map.set(PLATFORM_OWNER_USER_ID, normalizeAdminOverridePlan((data as any).admin_override_plan));
+  }
+
+  return map;
+}
+
 function mapAuthUserToManagedRecord(
   user: User,
   profile: { tier: string | null; full_name: string | null; avatar_url: string | null } | undefined,
-  activity: { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null } | undefined
+  activity: { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null } | undefined,
+  adminOverridePlan: AdminOverridePlan | null | undefined,
 ): ManagedUserRecord {
   const appMeta = (user.app_metadata ?? {}) as Record<string, unknown>;
   const userMeta = (user.user_metadata ?? {}) as Record<string, unknown>;
@@ -302,13 +347,16 @@ function mapAuthUserToManagedRecord(
     permissions,
     is_suspended: accountStatus === 'suspended',
     is_authorized: isAuthorized,
+    is_protected_owner: isProtectedOwnerUserId(user.id),
+    admin_override_plan: isProtectedOwnerUserId(user.id) ? adminOverridePlan ?? null : null,
   };
 }
 
 function mapAuUsersToManagedRecord(
   user: AuUsersRow,
   profile: { tier: string | null; full_name: string | null; avatar_url: string | null } | undefined,
-  activity: { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null } | undefined
+  activity: { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null } | undefined,
+  adminOverridePlan: AdminOverridePlan | null | undefined,
 ): ManagedUserRecord {
   const role = normalizeUserRole(profile?.tier ?? 'user');
   const tier = profile?.tier ?? roleToTier(role) ?? 'free';
@@ -333,11 +381,38 @@ function mapAuUsersToManagedRecord(
     permissions,
     is_suspended: accountStatus === 'suspended',
     is_authorized: isAuthorized,
+    is_protected_owner: isProtectedOwnerUserId(user.id),
+    admin_override_plan: isProtectedOwnerUserId(user.id) ? adminOverridePlan ?? null : null,
   };
 }
 
 function temporaryPassword() {
   return `DcAu#${crypto.randomUUID().replace(/-/g, '').slice(0, 18)}`;
+}
+
+function assertProtectedOwnerMutationAllowed(
+  userId: string,
+  patch: {
+    status?: (typeof ACCOUNT_STATUSES)[number];
+    role?: UserRole;
+    tier?: 'admin' | 'free' | 'weekly' | 'monthly';
+  },
+) {
+  if (!isProtectedOwnerUserId(userId)) return;
+  if (patch.status && patch.status !== 'active') {
+    throw new ApiError(403, 'protected_owner_status', 'The protected owner account must remain active.');
+  }
+  if (patch.role && patch.role !== 'admin') {
+    throw new ApiError(403, 'protected_owner_role', 'The protected owner account must keep the admin role.');
+  }
+  if (patch.tier && patch.tier !== 'admin') {
+    throw new ApiError(403, 'protected_owner_tier', 'The protected owner account must keep the admin tier.');
+  }
+}
+
+function assertProtectedOwnerDeletionAllowed(userId: string) {
+  if (!isProtectedOwnerUserId(userId)) return;
+  throw new ApiError(403, 'protected_owner_delete', 'The protected platform owner account cannot be deleted.');
 }
 
 const querySchema = z.object({
@@ -401,6 +476,12 @@ const activitySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional().default(30),
 });
 
+const setOwnerAdminOverrideSchema = z.object({
+  action: z.literal('set_owner_admin_override_plan'),
+  userId: z.literal(PLATFORM_OWNER_USER_ID),
+  adminOverridePlan: z.enum(ADMIN_OVERRIDE_PLANS),
+});
+
 const actionsSchema = z.discriminatedUnion('action', [
   createUserSchema,
   updateUserSchema,
@@ -409,6 +490,7 @@ const actionsSchema = z.discriminatedUnion('action', [
   bulkUpdateSchema,
   bulkDeleteSchema,
   activitySchema,
+  setOwnerAdminOverrideSchema,
 ]);
 
 async function listManagedUsers(req: NextRequest) {
@@ -431,26 +513,28 @@ async function listManagedUsers(req: NextRequest) {
   if (serviceClient) {
     const { users: authUsers, total } = await listAllAuthUsers(serviceClient);
     const userIds = authUsers.map((user) => user.id);
-    const [profilesMap, activityMap] = await Promise.all([
+    const [profilesMap, activityMap, overrideMap] = await Promise.all([
       fetchProfilesMap(serviceClient, userIds),
       fetchActivityMap(serviceClient, userIds),
+      fetchAdminOverrideMap(serviceClient, userIds),
     ]);
 
     merged = authUsers.map((user) =>
-      mapAuthUserToManagedRecord(user, profilesMap.get(user.id), activityMap.get(user.id))
+      mapAuthUserToManagedRecord(user, profilesMap.get(user.id), activityMap.get(user.id), overrideMap.get(user.id))
     );
     totalUsers = total;
   } else {
     const scopedClient = createScopedRlsClient(actor.accessToken);
     const { rows, total } = await listAllAuUsers(scopedClient);
     const userIds = rows.map((row) => row.id);
-    const [profilesMap, activityMap] = await Promise.all([
+    const [profilesMap, activityMap, overrideMap] = await Promise.all([
       fetchProfilesMap(scopedClient, userIds),
       fetchActivityMap(scopedClient, userIds),
+      fetchAdminOverrideMap(scopedClient, userIds),
     ]);
 
     merged = rows.map((row) =>
-      mapAuUsersToManagedRecord(row, profilesMap.get(row.id), activityMap.get(row.id))
+      mapAuUsersToManagedRecord(row, profilesMap.get(row.id), activityMap.get(row.id), overrideMap.get(row.id))
     );
     totalUsers = total;
   }
@@ -491,6 +575,8 @@ async function updateSingleUser(
     tier?: 'admin' | 'free' | 'weekly' | 'monthly';
   }
 ) {
+  assertProtectedOwnerMutationAllowed(userId, patch);
+
   const userRes = await supabaseAdmin.auth.admin.getUserById(userId);
   if (userRes.error || !userRes.data.user) {
     throw new ApiError(404, 'user_not_found', userRes.error?.message ?? 'User not found.');
@@ -603,6 +689,7 @@ async function handleDeleteUser(
   supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
   initiatedBy?: string | null,
 ) {
+  assertProtectedOwnerDeletionAllowed(userId);
   const lookup = await supabaseAdmin.auth.admin.getUserById(userId);
   const email = lookup.error ? null : lookup.data.user?.email ?? null;
 
@@ -612,6 +699,92 @@ async function handleDeleteUser(
     supabase: supabaseAdmin as any,
   });
   return NextResponse.json({ ok: true, userId });
+}
+
+async function handleSetOwnerAdminOverridePlan(
+  payload: z.infer<typeof setOwnerAdminOverrideSchema>,
+  supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
+  actor: AuthorizedActor,
+) {
+  const overridePlan = normalizeAdminOverridePlan(payload.adminOverridePlan);
+  if (!overridePlan || !isProtectedOwnerUserId(payload.userId)) {
+    throw new ApiError(400, 'invalid_owner_override', 'Override is only available for the protected owner account.');
+  }
+
+  const beforeRes = await supabaseAdmin
+    .from('au_user_entitlements')
+    .select('admin_override_plan,metadata')
+    .eq('user_id', payload.userId)
+    .maybeSingle();
+  if (beforeRes.error && !isSchemaDriftError(beforeRes.error)) {
+    throw new ApiError(500, 'admin_override_read_failed', beforeRes.error.message);
+  }
+  if (beforeRes.error && isSchemaDriftError(beforeRes.error)) {
+    throw new ApiError(503, 'admin_override_migration_required', 'Run the admin override SQL migration before using test overrides.');
+  }
+
+  const previousOverride = normalizeAdminOverridePlan((beforeRes.data as any)?.admin_override_plan);
+  const changed = previousOverride !== overridePlan;
+  const nowIso = new Date().toISOString();
+
+  const overridePatch = {
+    admin_override_plan: overridePlan,
+    metadata: {
+      ...(((beforeRes.data as any)?.metadata || {}) as Record<string, unknown>),
+      admin_override_actor_id: actor.userId,
+      admin_override_actor_email: actor.email,
+      admin_override_updated_at: nowIso,
+      admin_override_reason: 'owner_plan_testing',
+    },
+    updated_at: nowIso,
+  } as any;
+  const writeRes = beforeRes.data
+    ? await supabaseAdmin
+        .from('au_user_entitlements')
+        .update(overridePatch)
+        .eq('user_id', payload.userId)
+    : await supabaseAdmin
+        .from('au_user_entitlements')
+        .insert({
+          user_id: payload.userId,
+          plan: 'free',
+          source: 'none',
+          expires_at: null,
+          ...overridePatch,
+        } as any);
+  if (writeRes.error) {
+    throw new ApiError(500, 'admin_override_write_failed', writeRes.error.message);
+  }
+
+  const auditRes = await supabaseAdmin.from('admin_entitlement_override_audit').insert({
+    user_id: payload.userId,
+    actor_user_id: actor.userId,
+    actor_email: actor.email,
+    previous_override_plan: previousOverride,
+    next_override_plan: overridePlan,
+    reason: 'owner_plan_testing',
+    metadata: {
+      changed,
+      source: 'conex_user_management',
+    },
+  } as any);
+  if (auditRes.error) {
+    if (isSchemaDriftError(auditRes.error)) {
+      throw new ApiError(503, 'admin_override_audit_migration_required', 'Run the admin override SQL migration before using test overrides.');
+    }
+    throw new ApiError(500, 'admin_override_audit_failed', auditRes.error.message);
+  }
+
+  return NextResponse.json(
+    {
+      ok: true,
+      userId: payload.userId,
+      adminOverridePlan: overridePlan,
+      previousAdminOverridePlan: previousOverride,
+      changed,
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
 }
 
 async function handleResetPassword(userId: string, supabaseAdmin: ReturnType<typeof createServiceRoleClient>) {
@@ -713,6 +886,10 @@ export async function POST(req: NextRequest) {
 
     const supabaseAdmin = createServiceRoleClient();
 
+    if (payload.action === 'set_owner_admin_override_plan') {
+      return await handleSetOwnerAdminOverridePlan(payload, supabaseAdmin, actor);
+    }
+
     if (payload.action === 'create_user') {
       return await handleCreateUser(payload, supabaseAdmin);
     }
@@ -742,6 +919,10 @@ export async function POST(req: NextRequest) {
       let successCount = 0;
 
       for (const userId of payload.userIds) {
+        if (isProtectedOwnerUserId(userId)) {
+          failures.push({ userId, error: 'protected_owner_skipped' });
+          continue;
+        }
         try {
           await updateSingleUser(supabaseAdmin, userId, {
             status: payload.status,
@@ -762,6 +943,10 @@ export async function POST(req: NextRequest) {
       let successCount = 0;
 
       for (const userId of payload.userIds) {
+        if (isProtectedOwnerUserId(userId)) {
+          failures.push({ userId, error: 'protected_owner_skipped' });
+          continue;
+        }
         try {
             await handleDeleteUser(userId, supabaseAdmin, actor.userId);
           successCount += 1;
