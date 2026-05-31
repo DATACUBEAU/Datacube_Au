@@ -289,6 +289,27 @@ const matchNavigationRoute = ({
   });
 };
 
+const PWA_PROTECTED_PRECACHE_PREFIXES = [
+  '/_next/static/chunks/app/dashboard/',
+  '/_next/static/chunks/app/conex/',
+  '/_next/static/chunks/app/api/account/',
+  '/_next/static/chunks/app/api/admin/',
+  '/_next/static/chunks/app/api/au/',
+  '/_next/static/chunks/app/api/auth/',
+  '/_next/static/chunks/app/api/billing/',
+  '/_next/static/chunks/app/api/chat/',
+  '/_next/static/chunks/app/api/entitlements/',
+  '/_next/static/chunks/app/api/feature-output/',
+  '/_next/static/chunks/app/api/feedback/',
+  '/_next/static/chunks/app/api/limits/',
+  '/_next/static/chunks/app/api/payments/',
+];
+
+const shouldExcludeProtectedPrecacheUrl = (url: string) => {
+  const normalized = typeof url === 'string' && url.startsWith('/') ? url : `/${url}`;
+  return PWA_PROTECTED_PRECACHE_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+};
+
 const withPWA = withPWAInit({
   dest: 'public',
   disable: process.env.NODE_ENV === 'development',
@@ -305,9 +326,20 @@ const withPWA = withPWAInit({
     clientsClaim: true,
     exclude: [
       /\/_next\/static\/chunks\/app\/dashboard\//,
+      /^_next\/static\/chunks\/app\/dashboard\//,
       /\/_next\/static\/chunks\/app\/conex\//,
-      /\/_next\/static\/chunks\/app\/api\/(account|admin|au|billing|chat|entitlements|feature-output|feedback|limits|payments)\//,
+      /^_next\/static\/chunks\/app\/conex\//,
+      /\/_next\/static\/chunks\/app\/api\/(account|admin|au|auth|billing|chat|entitlements|feature-output|feedback|limits|payments)\//,
+      /^_next\/static\/chunks\/app\/api\/(account|admin|au|auth|billing|chat|entitlements|feature-output|feedback|limits|payments)\//,
       /\/dashboard$/,
+    ],
+    manifestTransforms: [
+      async (manifestEntries: Array<{ url: string; revision?: string | null }>) => {
+        return {
+          manifest: manifestEntries.filter((entry) => !shouldExcludeProtectedPrecacheUrl(entry.url)),
+          warnings: [],
+        };
+      },
     ],
     runtimeCaching: [
       {

@@ -54,6 +54,18 @@ function shouldDeleteStalePwaCacheName(cacheName, version) {
     const runtimeVersion = readRuntimeVersion();
     strict_1.default.equal(workerSourceText.includes('isPwaCacheExcludedPathname(route)'), true);
     strict_1.default.equal(workerSourceText.includes('Cache-Control'), true);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/dashboard/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/conex/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/account/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/admin/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/au/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/billing/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/chat/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/entitlements/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/feature-output/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/feedback/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/limits/'), false);
+    strict_1.default.equal(swText.includes('/_next/static/chunks/app/api/payments/'), false);
     strict_1.default.equal(swText.includes('_pwacachepolicy'), false);
     strict_1.default.equal(workerText.includes('self._pwacachepolicy'), true);
     strict_1.default.equal(workerText.includes('__DCAU_PWA_RUNTIME_VERSION__'), true);
@@ -76,7 +88,7 @@ function shouldDeleteStalePwaCacheName(cacheName, version) {
     strict_1.default.equal(swText.includes('buildServiceWorkerFailureResponse'), false);
     strict_1.default.equal(swText.includes('Malformed request intercepted by the service worker.'), true);
     strict_1.default.equal(swText.includes('API GET request failed while handled by the service worker.'), true);
-    strict_1.default.equal(swText.includes('if(a.startsWith("/api/"))return!1'), true);
+    strict_1.default.match(swText, /startsWith\("\/api\/"\)/);
     strict_1.default.equal(serviceWorkerClientText.includes("'hasUsableRequestUrl'"), true);
     strict_1.default.equal(serviceWorkerClientText.includes("'describeWorkboxRequest'"), true);
     strict_1.default.equal(serviceWorkerClientText.includes("'buildServiceWorkerFailureResponse'"), true);

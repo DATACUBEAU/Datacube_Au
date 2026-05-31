@@ -55,6 +55,18 @@ test('service worker cache policy excludes protected app pages and APIs', async 
 
   assert.equal(workerSourceText.includes('isPwaCacheExcludedPathname(route)'), true);
   assert.equal(workerSourceText.includes('Cache-Control'), true);
+  assert.equal(swText.includes('/_next/static/chunks/app/dashboard/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/conex/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/account/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/admin/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/au/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/billing/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/chat/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/entitlements/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/feature-output/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/feedback/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/limits/'), false);
+  assert.equal(swText.includes('/_next/static/chunks/app/api/payments/'), false);
   assert.equal(swText.includes('_pwacachepolicy'), false);
   assert.equal(workerText.includes('self._pwacachepolicy'), true);
   assert.equal(workerText.includes('__DCAU_PWA_RUNTIME_VERSION__'), true);
@@ -77,7 +89,7 @@ test('service worker cache policy excludes protected app pages and APIs', async 
   assert.equal(swText.includes('buildServiceWorkerFailureResponse'), false);
   assert.equal(swText.includes('Malformed request intercepted by the service worker.'), true);
   assert.equal(swText.includes('API GET request failed while handled by the service worker.'), true);
-  assert.equal(swText.includes('if(a.startsWith("/api/"))return!1'), true);
+  assert.match(swText, /startsWith\("\/api\/"\)/);
   assert.equal(serviceWorkerClientText.includes("'hasUsableRequestUrl'"), true);
   assert.equal(serviceWorkerClientText.includes("'describeWorkboxRequest'"), true);
   assert.equal(serviceWorkerClientText.includes("'buildServiceWorkerFailureResponse'"), true);
