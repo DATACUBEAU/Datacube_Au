@@ -498,6 +498,13 @@ BEGIN
     IF to_regclass('public.' || v_table) IS NOT NULL
        AND EXISTS (
          SELECT 1
+         FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = v_table
+           AND table_type = 'BASE TABLE'
+       )
+       AND EXISTS (
+         SELECT 1
          FROM information_schema.columns
          WHERE table_schema = 'public'
            AND table_name = v_table
@@ -551,6 +558,13 @@ BEGIN
     'entitlement_audit'
   ] LOOP
     IF to_regclass('public.' || v_table) IS NOT NULL
+       AND EXISTS (
+         SELECT 1
+         FROM information_schema.tables
+         WHERE table_schema = 'public'
+           AND table_name = v_table
+           AND table_type = 'BASE TABLE'
+       )
        AND EXISTS (
          SELECT 1
          FROM information_schema.columns

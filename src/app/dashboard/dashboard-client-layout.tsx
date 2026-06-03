@@ -17,6 +17,7 @@ import {
   BookOpen,
   Bell,
   Inbox,
+  Lock,
 } from 'lucide-react';
 import {
   Dialog,
@@ -77,7 +78,19 @@ import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
-import { getDashboardFeatureAccess } from '@/lib/feature-access';
+import { getDashboardFeatureAccess, buildUpgradeContext } from '@/lib/feature-access';
+import { trackLockedClick } from '@/lib/analytics/premium-nav-events';
+
+/**
+ * Value propositions shown in sidebar tooltips for locked nav items.
+ * These are visible to free users to communicate feature value before upgrading.
+ */
+const LOCKED_ITEM_TOOLTIPS: Record<string, string> = {
+  global_chat: 'Chat across all your uploaded documents.',
+  knowledge_hub: 'Generate study notes and AI summaries.',
+  exam_prediction: 'See likely exam topics before test day.',
+  practice_exam_generation: 'Generate and mark custom practice papers.',
+};
 
 type NavItem = {
   href: string;
@@ -89,55 +102,100 @@ type NavItem = {
   badge?: number | string;
   proOnly?: boolean;
   prefetch?: boolean;
+  /** Set when the item is a pro feature the current user cannot access. */
+  isLocked?: boolean;
+  /** The DashboardFeatureKey used to build upgrade context and analytics. */
+  featureKey?: string;
+  /** One-line value proposition shown in the sidebar tooltip when locked. */
+  tooltip?: string;
 };
 
 // --- Memoized Sidebar Nav Menu ---
-const SidebarNavMenu = ({ navItems, pathname, isProUnlocked }: { navItems: NavItem[]; pathname: string; isProUnlocked: boolean }) => (
+const SidebarNavMenu = ({
+  navItems,
+  pathname,
+  isProUnlocked,
+  onLockedClick,
+}: {
+  navItems: NavItem[];
+  pathname: string;
+  isProUnlocked: boolean;
+  onLockedClick: (item: NavItem) => void;
+}) => (
   <SidebarContent className="p-2">
     <SidebarMenu>
-      {navItems.map((item: NavItem) => (
-        <SidebarMenuItem key={item.href}>
-          <SidebarMenuButton
-            asChild={!item.onClick}
-            isActive={pathname === item.href}
-            tooltip={{ children: item.label }}
-            data-tour={item.tourId}
-            onClick={item.onClick}
-          >
-            {item.onClick ? (
-              <button className="flex items-center gap-2 w-full h-full">
-                {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
-                <span>{item.label}</span>
-                {item.proOnly && !isProUnlocked ? (
-                    <span className="ml-auto rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
-                      PRO
-                    </span>
-                ) : null}
-                {item.badge ? (
+      {navItems.map((item: NavItem) => {
+        /**
+         * Locked state: item is visible but not navigable.
+         * Clicking opens the upgrade modal. Direct URL access is
+         * still blocked by server-side middleware (untouched).
+         */
+        if (item.isLocked) {
+          return (
+            <SidebarMenuItem key={item.href}>
+              <SidebarMenuButton
+                tooltip={{
+                  children: item.tooltip || `Upgrade to Pro to unlock ${item.label}`,
+                }}
+                data-tour={item.tourId}
+                data-testid={`locked-nav-${item.featureKey}`}
+                onClick={() => onLockedClick(item)}
+                className="opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
+              >
+                <button className="flex items-center gap-2 w-full h-full" type="button">
+                  {/* Pulsing icon — draws the eye subtly */}
+                  <span className="locked-icon-pulse">
+                    {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
+                  </span>
+                  <span className="flex-1 text-left">{item.label}</span>
+                  {/* Shimmer badge */}
+                  <span
+                    className="pro-badge-shimmer ml-auto flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-semibold text-primary"
+                    aria-label="Pro feature — upgrade required"
+                  >
+                    <Lock className="h-2.5 w-2.5" />
+                    <span>Pro</span>
+                  </span>
+                </button>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          );
+        }
+
+        return (
+          <SidebarMenuItem key={item.href}>
+            <SidebarMenuButton
+              asChild={!item.onClick}
+              isActive={pathname === item.href}
+              tooltip={{ children: item.label }}
+              data-tour={item.tourId}
+              onClick={item.onClick}
+            >
+              {item.onClick ? (
+                <button className="flex items-center gap-2 w-full h-full">
+                  {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
+                  <span>{item.label}</span>
+                  {item.badge ? (
                     <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
-                        {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
+                      {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
                     </span>
-                ) : null}
-              </button>
-            ) : (
-              <Link href={item.href} prefetch={item.prefetch === true} className="flex items-center gap-2 w-full h-full">
-                {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
-                <span className="flex-1">{item.label}</span>
-                {item.proOnly && !isProUnlocked ? (
-                    <span className="ml-auto rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
-                      PRO
-                    </span>
-                ) : null}
-                {item.badge ? (
+                  ) : null}
+                </button>
+              ) : (
+                <Link href={item.href} prefetch={item.prefetch === true} className="flex items-center gap-2 w-full h-full">
+                  {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
+                  <span className="flex-1">{item.label}</span>
+                  {item.badge ? (
                     <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
-                        {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
+                      {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
                     </span>
-                ) : null}
-              </Link>
-            )}
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      ))}
+                  ) : null}
+                </Link>
+              )}
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        );
+      })}
     </SidebarMenu>
   </SidebarContent>
 );
@@ -475,43 +533,63 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   }, [isSigningOut, router, user?.id]);
 
   const navItems = useMemo(() => {
+    /**
+     * Helper to build a locked nav item when the user lacks access.
+     * The item is always rendered — clicking opens the upgrade modal.
+     * Server-side middleware prevents direct URL access regardless.
+     */
+    const lockedItem = (
+      href: string,
+      icon: React.ComponentType<any>,
+      label: string,
+      featureKey: string,
+      extras?: Partial<NavItem>,
+    ): NavItem => ({
+      href,
+      icon,
+      label,
+      featureKey,
+      isLocked: true,
+      tooltip: LOCKED_ITEM_TOOLTIPS[featureKey],
+      prefetch: false,
+      ...extras,
+    });
+
     const items: NavItem[] = [
       { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
       { href: '/dashboard/documents', icon: FileTextIcon, label: 'Documents', tourId: 'upload-section' },
       { href: '/dashboard/chat', icon: MessageCircle, label: 'AU Chat', tourId: 'chat-section' },
-      globalChatAccess.enabled && globalChatAccess.allowed ? {
-        href: '/dashboard/global-chat',
-        icon: Globe,
-        label: 'Global Chat',
-        proOnly: globalChatAccess.proRequired,
-        prefetch: false,
-      } : null,
-      knowledgeAccess.enabled && knowledgeAccess.allowed ? {
-        href: '/dashboard/knowledge',
-        icon: BrainCircuit,
-        label: 'Knowledge',
-        isLoading: isGeneratingKnowledge,
-        proOnly: knowledgeAccess.proRequired,
-        prefetch: false,
-      } : null,
+
+      // Global Chat — always visible; locked for free users
+      globalChatAccess.enabled
+        ? (globalChatAccess.allowed
+          ? { href: '/dashboard/global-chat', icon: Globe, label: 'Global Chat', prefetch: false }
+          : lockedItem('/dashboard/global-chat', Globe, 'Global Chat', 'global_chat'))
+        : null,
+
+      // Knowledge Hub — always visible; locked for free users
+      knowledgeAccess.enabled
+        ? (knowledgeAccess.allowed
+          ? { href: '/dashboard/knowledge', icon: BrainCircuit, label: 'Knowledge', isLoading: isGeneratingKnowledge, prefetch: false }
+          : lockedItem('/dashboard/knowledge', BrainCircuit, 'Knowledge', 'knowledge_hub', { isLoading: isGeneratingKnowledge }))
+        : null,
+
       { href: '/dashboard/messages', icon: Inbox, label: 'Messages', badge: unreadCount > 0 ? unreadCount : undefined },
-      predictionsAccess.enabled && predictionsAccess.allowed ? {
-        href: '/dashboard/predictions',
-        icon: ClipboardCheck,
-        label: 'Predictions',
-        isLoading: isGeneratingPredictions,
-        tourId: 'predictions-section',
-        proOnly: predictionsAccess.proRequired,
-        prefetch: false,
-      } : null,
-      practiceAccess.enabled && practiceAccess.allowed ? {
-        href: '/dashboard/practice',
-        icon: SquarePen,
-        label: 'Practice',
-        tourId: 'practice-section',
-        proOnly: practiceAccess.proRequired,
-        prefetch: false,
-      } : null,
+
+      // Exam Predictions — always visible; locked for free users
+      predictionsAccess.enabled
+        ? (predictionsAccess.allowed
+          ? { href: '/dashboard/predictions', icon: ClipboardCheck, label: 'Predictions', isLoading: isGeneratingPredictions, tourId: 'predictions-section', prefetch: false }
+          : lockedItem('/dashboard/predictions', ClipboardCheck, 'Predictions', 'exam_prediction', { isLoading: isGeneratingPredictions, tourId: 'predictions-section' }))
+        : null,
+
+      // Practice Exams — always visible; locked for free users
+      practiceAccess.enabled
+        ? (practiceAccess.allowed
+          ? { href: '/dashboard/practice', icon: SquarePen, label: 'Practice', tourId: 'practice-section', prefetch: false }
+          : lockedItem('/dashboard/practice', SquarePen, 'Practice', 'practice_exam_generation', { tourId: 'practice-section' }))
+        : null,
+
       { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
       { href: '/dashboard/settings/subscription', icon: CreditCard, label: 'Subscription', prefetch: false },
     ].filter(Boolean) as NavItem[];
@@ -526,6 +604,29 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     predictionsAccess,
     unreadCount,
   ]);
+
+  /**
+   * Fired when a free user clicks a locked nav item.
+   * Opens the upgrade modal with per-feature copy and fires analytics.
+   * Navigation is NOT performed — server middleware still blocks direct URL access.
+   */
+  const handleLockedNavClick = useCallback((item: NavItem) => {
+    const featureKey = (item.featureKey || 'unknown') as any;
+    // Map back to access object to build the correct upgrade context
+    const accessMap: Record<string, typeof globalChatAccess> = {
+      global_chat: globalChatAccess,
+      knowledge_hub: knowledgeAccess,
+      exam_prediction: predictionsAccess,
+      practice_exam_generation: practiceAccess,
+    };
+    const access = accessMap[featureKey];
+    const upgradeCtx = access
+      ? buildUpgradeContext(access)
+      : { code: 'PRO_REQUIRED', reason: `${item.label} requires Pro.`, message: `${item.label} requires Pro.`, key: featureKey, limit: featureKey, used: 0, cta: 'Upgrade to Pro', upgradeUrl: '/pricing' };
+
+    trackLockedClick(featureKey, planStatusLabel, 'sidebar_nav');
+    setUpgradeModalOpen(true, upgradeCtx);
+  }, [globalChatAccess, knowledgeAccess, predictionsAccess, practiceAccess, planStatusLabel, setUpgradeModalOpen]);
 
   const footerItems = useMemo(() => {
     const items = [
@@ -765,7 +866,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               </Link>
             </SidebarHeader>
 
-            <SidebarNavMenu navItems={navItems} pathname={pathname} isProUnlocked={isProUnlocked} />
+            <SidebarNavMenu navItems={navItems} pathname={pathname} isProUnlocked={isProUnlocked} onLockedClick={handleLockedNavClick} />
             <SidebarFooterMenu
               footerItems={footerItems}
               isOnline={isOnline}

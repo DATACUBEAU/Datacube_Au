@@ -205,4 +205,53 @@
       box-shadow: 0 0 0 0 rgba(63, 81, 181, 0);
     }
   }
+
+  /* ── Premium Nav: locked state animations ── */
+
+  /**
+   * Shimmer sweep used on the "🔒 Pro" badge for locked nav items.
+   * Applied via the .pro-badge-shimmer class.
+   */
+  @keyframes shimmer {
+    0% {
+      background-position: -200% center;
+    }
+    100% {
+      background-position: 200% center;
+    }
+  }
+
+  .pro-badge-shimmer {
+    background: linear-gradient(
+      105deg,
+      hsl(var(--primary) / 0.15) 0%,
+      hsl(var(--primary) / 0.35) 30%,
+      hsl(var(--primary) / 0.7) 50%,
+      hsl(var(--primary) / 0.35) 70%,
+      hsl(var(--primary) / 0.15) 100%
+    );
+    background-size: 200% auto;
+    animation: shimmer 2.4s linear infinite;
+    border: 1px solid hsl(var(--primary) / 0.4);
+  }
+
+  /**
+   * Subtle icon glow-pulse for locked nav items.
+   * Draws the eye without being distracting.
+   */
+  @keyframes locked-icon-glow {
+    0%, 100% {
+      opacity: 1;
+      filter: drop-shadow(0 0 0px hsl(var(--primary) / 0));
+    }
+    50% {
+      opacity: 0.7;
+      filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.6));
+    }
+  }
+
+  .locked-icon-pulse {
+    animation: locked-icon-glow 2.8s ease-in-out infinite;
+    display: inline-flex;
+  }
 }
