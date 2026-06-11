@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { Icons } from '@/components/icons';
 import { CompanyFooter } from '@/components/company-footer';
 import { Button } from '@/components/ui/button';
-import { Home, Menu } from 'lucide-react';
+import { Home, Menu, UserRound } from 'lucide-react';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -144,46 +144,56 @@ export default function AboutPage() {
 
         {/* Ownership Section */}
         <section className="my-20">
-            <div className="relative rounded-lg border border-primary/20 bg-card p-8 shadow-lg transition-all duration-300 hover:shadow-primary/20">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
-                    <div className="md:col-span-1 flex justify-center">
-                      <div className="relative">
+            <div className="relative overflow-hidden rounded-lg border border-primary/20 bg-card shadow-lg transition-all duration-300 hover:shadow-primary/20">
+                <div className="grid grid-cols-1 md:grid-cols-[minmax(13rem,16rem)_1fr]">
+                    <div className="flex justify-center bg-background/45 p-6 sm:p-8 md:border-r md:border-primary/10">
+                      <div className="relative w-full max-w-[13.5rem]">
                         <button
                           type="button"
+                          aria-label={showFounderInfo ? 'Hide founder profile details' : 'Show founder profile details'}
                           aria-expanded={showFounderInfo}
                           aria-controls="founder-info-panel"
                           onClick={() => setShowFounderInfo((prev) => !prev)}
-                          className="group relative block rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+                          className="group relative block w-full rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/80 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                         >
                           <span
                             aria-hidden
-                            className={`pointer-events-none absolute inset-0 rounded-full ring-2 transition ${
+                            className={`pointer-events-none absolute -inset-1 rounded-lg ring-2 transition ${
                               showFounderInfo
                                 ? 'ring-primary/70'
                                 : 'ring-primary/40 group-hover:ring-primary/70 group-focus-visible:ring-primary/80'
                             }`}
                           />
-                          <div className="relative h-48 w-48 rounded-full overflow-hidden border-2 border-primary">
+                          <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg border border-primary/30 bg-white shadow-xl shadow-black/20">
                             <Image 
                                 src="/avater.png"
-                                alt="Datacube AU ownership representative"
+                                alt="Chikezie Fabian Onyebuchi, founder of Datacube AU"
                                 fill
-                                sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                                style={{ objectFit: 'cover' }}
+                                sizes="(max-width: 768px) 13.5rem, 13.5rem"
+                                className="object-contain object-center transition-transform duration-300 group-hover:scale-[1.015]"
                             />
                           </div>
                         </button>
-                        <span className="pointer-events-none absolute -bottom-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-primary/40 bg-background/90 px-3 py-1 text-[11px] font-medium text-primary animate-pulse">
-                          {showFounderInfo ? 'Click to hide founder info' : 'Click to view founder info'}
-                        </span>
                       </div>
                     </div>
-                    <div className="md:col-span-2">
+                    <div className="flex flex-col justify-center p-6 sm:p-8 md:p-10">
                         <h2 className="font-headline text-3xl font-bold text-primary">Company Ownership</h2>
                         <h3 className="text-2xl font-semibold mt-1">Zahed Investment Ltd</h3>
                         <p className="mt-4 text-muted-foreground leading-relaxed">
                           Datacube AU is a product of Zahed Investment Ltd (RC 8127949), built to give every student a personal learning companion that understands their notes, extracts key concepts, predicts exam patterns, and provides academically-precise answers.
                         </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          aria-expanded={showFounderInfo}
+                          aria-controls="founder-info-panel"
+                          onClick={() => setShowFounderInfo((prev) => !prev)}
+                          className="mt-6 w-fit gap-2"
+                        >
+                          <UserRound className="h-4 w-4" />
+                          {showFounderInfo ? 'Hide profile' : 'Founder profile'}
+                        </Button>
                     </div>
                 </div>
                 <AnimatePresence initial={false}>
@@ -194,9 +204,9 @@ export default function AboutPage() {
                       animate={{ opacity: 1, y: 0, height: 'auto' }}
                       exit={{ opacity: 0, y: -10, height: 0 }}
                       transition={{ duration: 0.3, ease: 'easeInOut' }}
-                      className="mt-10 overflow-hidden"
+                      className="overflow-hidden border-t border-primary/10"
                     >
-                      <div className="rounded-lg border border-primary/30 bg-background/60 p-5 sm:p-6 backdrop-blur-sm">
+                      <div className="bg-background/60 p-5 backdrop-blur-sm sm:p-6">
                         <p className="text-xs uppercase tracking-[0.2em] text-primary/80">Founder Profile</p>
                         <h3 className="mt-2 text-2xl font-semibold">Chikezie Fabian Onyebuchi</h3>
                         <p className="mt-1 text-sm font-medium text-primary">
@@ -262,5 +272,3 @@ export default function AboutPage() {
     </div>
   );
 }
-
-
