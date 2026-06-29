@@ -21,6 +21,10 @@ import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useAccountSnapshot } from '@/components/providers/account-snapshot-provider';
 import { buildSnapshotFallbackFlags } from '@/lib/feature-flags/client-fallback';
+import {
+  recordClientEgressMetric,
+  recordRealtimeChannelSnapshot,
+} from '@/lib/observability/egress-metrics';
 
 export type FeatureFlagScope = 'global' | 'org' | 'user';
 
@@ -66,7 +70,6 @@ const DEFAULT_FLAGS: FeatureFlagsMap = {
   stripe_live_mode: false,
 };
 
-const POLL_INTERVAL_MS = 120_000;
 const FLAG_CACHE_ROUTE = '/feature-flags';
 const FLAG_CACHE_SOURCE = 'feature-flags-provider';
 const FLAG_CACHE_SCHEMA = 1;
@@ -88,6 +91,17 @@ const FeatureFlagContext = createContext<FeatureFlagContextType>({
   refreshFlags: async () => {},
   setFlag: async () => {},
 });
+
+type CachedFeatureFlags = {
+  rows: FeatureFlagRecord[];
+  cachedAt: number | null;
+  etag: string | null;
+};
+
+type FeatureFlagCacheEnvelope = {
+  rows: FeatureFlagRecord[];
+  etag?: string | null;
+};
 
 function normalizeFlagRow(row: any): FeatureFlagRecord | null {
   const key = typeof row?.key === 'string' ? row.key.trim() : '';
@@ -138,10 +152,6 @@ function mergeRow(prevRows: FeatureFlagRecord[], row: FeatureFlagRecord): Featur
   return next;
 }
 
-function removeRow(prevRows: FeatureFlagRecord[], key: string): FeatureFlagRecord[] {
-  return prevRows.filter((item) => item.key !== key);
-}
-
 export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const [rows, setRows] = useState<FeatureFlagRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -151,12 +161,13 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const { loading: isLoadingAuth } = useSupabaseSession();
   const { isAuthLocked } = useSmartAuth();
   const { snapshot: accountSnapshot } = useAccountSnapshot();
-  const isFetchingRef = useRef(false);
-  const [isRealtimeDegraded, setIsRealtimeDegraded] = useState(false);
+  const inflightFetchRef = useRef<Promise<void> | null>(null);
+  const lastFetchAtRef = useRef(0);
+  const lastEtagRef = useRef<string | null>(null);
 
-  const readCachedRows = useCallback(async (): Promise<FeatureFlagRecord[] | null> => {
+  const readCachedRows = useCallback(async (): Promise<CachedFeatureFlags | null> => {
     if (!user?.id) return null;
-    const cached = await readUserCache<{ rows: FeatureFlagRecord[] }>({
+    const cached = await readUserCache<FeatureFlagCacheEnvelope>({
       userId: user.id,
       route: FLAG_CACHE_ROUTE,
       source: FLAG_CACHE_SOURCE,
@@ -166,12 +177,17 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
     });
     const cachedRows = cached.data?.rows;
     if (!Array.isArray(cachedRows)) return null;
-    return cachedRows
+    const rows = cachedRows
       .map((row) => normalizeFlagRow(row))
       .filter((row): row is FeatureFlagRecord => row !== null);
+    return {
+      rows,
+      cachedAt: cached.cachedAt,
+      etag: typeof cached.data?.etag === 'string' ? cached.data.etag : null,
+    };
   }, [user?.id]);
 
-  const writeCachedRows = useCallback(async (nextRows: FeatureFlagRecord[]) => {
+  const writeCachedRows = useCallback(async (nextRows: FeatureFlagRecord[], etag?: string | null) => {
     if (!user?.id) return;
     await writeUserCache({
       userId: user.id,
@@ -180,82 +196,149 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       endpoint: 'list',
       schemaVersion: FLAG_CACHE_SCHEMA,
       ttlMs: FLAG_CACHE_TTL_MS,
-      data: { rows: nextRows },
+      data: { rows: nextRows, etag: etag || null },
     });
   }, [user?.id]);
 
-  const fetchFlags = useCallback(async (opts?: { silent?: boolean }) => {
+  const fetchFlags = useCallback((opts?: {
+    silent?: boolean;
+    force?: boolean;
+    reason?: string;
+  }): Promise<void> => {
     if (isAuthLocked) {
       setLoading(false);
-      return;
+      return Promise.resolve();
     }
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+
+    if (inflightFetchRef.current) {
+      recordClientEgressMetric('feature_flags.request_deduped', {
+        reason: opts?.reason || null,
+      });
+      return inflightFetchRef.current;
+    }
+
+    if (
+      !opts?.force &&
+      rows.length > 0 &&
+      lastFetchAtRef.current > 0 &&
+      Date.now() - lastFetchAtRef.current < FLAG_CACHE_TTL_MS
+    ) {
+      recordClientEgressMetric('feature_flags.cache_hit', {
+        source: 'memory',
+        reason: opts?.reason || 'fresh-cache',
+      });
+      setLoading(false);
+      return Promise.resolve();
+    }
+
     if (!opts?.silent) setLoading(true);
 
-    try {
-      if (!isOnline) {
-        const cachedRows = await readCachedRows();
-        if (cachedRows) {
-          setRows(cachedRows);
+    const requestPromise = (async () => {
+      try {
+        const cached = await readCachedRows();
+        if (!opts?.force && cached?.rows.length) {
+          recordClientEgressMetric('feature_flags.cache_hit', {
+            source: 'user-cache',
+            reason: opts?.reason || 'fresh-cache',
+          });
+          lastFetchAtRef.current = cached.cachedAt ?? Date.now();
+          lastEtagRef.current = cached.etag;
+          setRows(cached.rows);
+          setLoading(false);
+          return;
         }
+
+        if (!isOnline) {
+          if (cached?.rows.length) {
+            setRows(cached.rows);
+          }
+          setLoading(false);
+          return;
+        }
+
+        const headers = new Headers();
+        const accessToken = await getSupabaseAccessToken();
+        if (accessToken) {
+          headers.set('Authorization', `Bearer ${accessToken}`);
+        }
+        const etag = lastEtagRef.current || cached?.etag || null;
+        if (etag) {
+          headers.set('If-None-Match', etag);
+        }
+
+        recordClientEgressMetric('feature_flags.fetch_started', {
+          reason: opts?.reason || (opts?.force ? 'forced' : 'cache-miss'),
+        });
+        const res = await safeFetch('/api/feature-flags', {
+          method: 'GET',
+          headers,
+          credentials: 'include',
+          timeout: 15000,
+          silent: true,
+          suppressAuthError: true,
+          authIntent: 'background',
+          retries: 0,
+        });
+
+        if (res.status === 304) {
+          if (cached?.rows.length) {
+            setRows(cached.rows);
+            lastFetchAtRef.current = Date.now();
+            recordClientEgressMetric('feature_flags.not_modified', {
+              reason: opts?.reason || null,
+            });
+          }
+          setLoading(false);
+          return;
+        }
+
+        const payload = await res.json().catch(() => null);
+        if (!res.ok) {
+          const requestId =
+            payload?.requestId ||
+            payload?.request_id ||
+            payload?.details?.requestId ||
+            null;
+          const reason =
+            payload?.message ||
+            payload?.error ||
+            payload?.code ||
+            `feature flag fetch failed (${res.status})`;
+          throw new Error(requestId ? `${String(reason)} [requestId=${String(requestId)}]` : String(reason));
+        }
+
+        const sourceRows = Array.isArray(payload?.rows) ? payload.rows : [];
+
+        const normalized = sourceRows
+          .map((row: unknown) => normalizeFlagRow(row))
+          .filter((row: FeatureFlagRecord | null): row is FeatureFlagRecord => row !== null);
+
+        setRows(normalized);
+        const nextEtag = res.headers.get('ETag');
+        lastEtagRef.current = nextEtag;
+        lastFetchAtRef.current = Date.now();
+        void writeCachedRows(normalized, nextEtag);
+        recordClientEgressMetric('feature_flags.fetch_completed', {
+          flagCount: normalized.length,
+          reason: opts?.reason || null,
+        });
+      } catch (error) {
+        console.warn('[FeatureFlagProvider] Failed to fetch feature flags.', error);
+        const cached = await readCachedRows();
+        if (cached?.rows.length) {
+          setRows(cached.rows);
+        } else {
+          setRows((prev) => prev);
+        }
+      } finally {
         setLoading(false);
-        return;
+        inflightFetchRef.current = null;
       }
+    })();
 
-      const headers = new Headers();
-      const accessToken = await getSupabaseAccessToken();
-      if (accessToken) {
-        headers.set('Authorization', `Bearer ${accessToken}`);
-      }
-
-      const res = await safeFetch('/api/feature-flags', {
-        method: 'GET',
-        headers,
-        credentials: 'include',
-        timeout: 15000,
-        silent: true,
-        suppressAuthError: true,
-        authIntent: 'background',
-        retries: 0,
-      });
-
-      const payload = await res.json().catch(() => null);
-      if (!res.ok) {
-        const requestId =
-          payload?.requestId ||
-          payload?.request_id ||
-          payload?.details?.requestId ||
-          null;
-        const reason =
-          payload?.message ||
-          payload?.error ||
-          payload?.code ||
-          `feature flag fetch failed (${res.status})`;
-        throw new Error(requestId ? `${String(reason)} [requestId=${String(requestId)}]` : String(reason));
-      }
-
-      const sourceRows = Array.isArray(payload?.rows) ? payload.rows : [];
-
-      const normalized = sourceRows
-        .map((row: unknown) => normalizeFlagRow(row))
-        .filter((row: FeatureFlagRecord | null): row is FeatureFlagRecord => row !== null);
-
-      setRows(normalized);
-      void writeCachedRows(normalized);
-    } catch (error) {
-      console.warn('[FeatureFlagProvider] Failed to fetch feature flags.', error);
-      const cachedRows = await readCachedRows();
-      if (cachedRows) {
-        setRows(cachedRows);
-      } else {
-        setRows((prev) => prev);
-      }
-    } finally {
-      setLoading(false);
-      isFetchingRef.current = false;
-    }
-  }, [isAuthLocked, isOnline, readCachedRows, writeCachedRows]);
+    inflightFetchRef.current = requestPromise;
+    return requestPromise;
+  }, [isAuthLocked, isOnline, readCachedRows, rows.length, writeCachedRows]);
 
   useEffect(() => {
     if (isLoadingAuth) return;
@@ -263,7 +346,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       setLoading(false);
       return;
     }
-    void fetchFlags();
+    void fetchFlags({ reason: 'startup' });
   }, [fetchFlags, isAuthLocked, isLoadingAuth]);
 
   useEffect(() => {
@@ -272,53 +355,14 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   }, [isAuthLocked, isLoadingAuth, user?.id]);
 
   useEffect(() => {
-    if (isLoadingAuth || !isOnline || isAuthLocked) return;
-    setIsRealtimeDegraded(false);
-
-    const channel = supabase
-      .channel('feature-flags-v2')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'feature_flags' },
-        (payload: any) => {
-          const incoming = normalizeFlagRow(payload?.new ?? payload?.old);
-          if (!incoming) {
-            void fetchFlags({ silent: true });
-            return;
-          }
-
-          setRows((prev) => {
-            if (payload?.eventType === 'DELETE') {
-              return removeRow(prev, incoming.key);
-            }
-            return mergeRow(prev, incoming);
-          });
-        },
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          setIsRealtimeDegraded(false);
-          return;
-        }
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('[FeatureFlagProvider] Realtime channel degraded, relying on polling fallback.');
-          setIsRealtimeDegraded(true);
-        }
-      });
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
-  }, [fetchFlags, isAuthLocked, isLoadingAuth, isOnline]);
+    recordRealtimeChannelSnapshot('feature-flags', supabase.getChannels());
+  }, []);
 
   useEffect(() => {
-    if (!isRealtimeDegraded) return;
     if (isLoadingAuth || !isOnline || isAuthLocked) return;
-    const timer = window.setInterval(() => {
-      void fetchFlags({ silent: true });
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [fetchFlags, isAuthLocked, isLoadingAuth, isOnline, isRealtimeDegraded]);
+    if (!accountSnapshot?.validatedAt) return;
+    void fetchFlags({ silent: true, reason: 'account-snapshot-refresh' });
+  }, [accountSnapshot?.validatedAt, fetchFlags, isAuthLocked, isLoadingAuth, isOnline]);
 
   const setFlag = useCallback(
     async (key: string, enabled: boolean, options?: SetFlagOptions) => {
@@ -497,16 +541,21 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
 
       const record = normalizeFlagRow(data);
       if (record) {
-        setRows((prev) => mergeRow(prev, record));
+        setRows((prev) => {
+          const next = mergeRow(prev, record);
+          void writeCachedRows(next, lastEtagRef.current);
+          return next;
+        });
+        void fetchFlags({ silent: true, force: true, reason: 'admin-flag-update' });
       } else {
-        void fetchFlags({ silent: true });
+        void fetchFlags({ silent: true, force: true, reason: 'admin-flag-update' });
       }
     },
-    [fetchFlags, isAuthLocked, pathname, rows],
+    [fetchFlags, isAuthLocked, pathname, rows, writeCachedRows],
   );
 
   const refreshFlags = useCallback(async () => {
-    await fetchFlags();
+    await fetchFlags({ force: true, reason: 'manual-refresh' });
   }, [fetchFlags]);
 
   const value = useMemo<FeatureFlagContextType>(() => {

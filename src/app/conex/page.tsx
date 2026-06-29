@@ -232,7 +232,7 @@ const AdminBilling = ({ token }: { token: string }) => {
   const [modelRoutingDebug, setModelRoutingDebug] = useState<any>(null);
   const [promoDraft, setPromoDraft] = useState<PromoContentDraft>(() => toPromoContentDraft(DEFAULT_PROMO_CONTENT_CONFIG));
   const { toast } = useToast();
-  const { records: featureFlagRecords, setFlag, refreshFlags } = useFeatureFlags();
+  const { records: featureFlagRecords, setFlag } = useFeatureFlags();
   const isFetchingRef = useRef(false);
   const planMetadataDirtyRef = useRef(false);
   const promoDirtyRef = useRef(false);
@@ -374,19 +374,6 @@ const AdminBilling = ({ token }: { token: string }) => {
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'feature_flags' },
-        () => {
-          scheduleRefresh();
-          void refreshFlags();
-        },
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_plan_limit_rules' },
-        scheduleRefresh,
-      )
-      .on(
-        'postgres_changes',
         { event: '*', schema: 'public', table: 'au_plan_metadata' },
         scheduleRefresh,
       )
@@ -408,7 +395,7 @@ const AdminBilling = ({ token }: { token: string }) => {
       }
       void supabase.removeChannel(channel);
     };
-  }, [fetchConfig, refreshFlags]);
+  }, [fetchConfig]);
 
   const setFeatureFlag = useCallback(async (key: string, nextEnabled: boolean) => {
     const row = featureFlagRecords[key];

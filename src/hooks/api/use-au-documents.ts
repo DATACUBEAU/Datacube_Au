@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase-client/client';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { readUserCache, writeUserCache } from '@/lib/cache/user-cache';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
+import { recordRealtimeChannelSnapshot } from '@/lib/observability/egress-metrics';
 
 let hasWarnedDocumentsRealtime = false;
 let hasWarnedDocumentsFetch = false;
@@ -234,13 +235,14 @@ export function useAuDocuments(pollInterval = 0) {
     setIsRealtimeDegraded(false);
 
     const channel = supabase
-      .channel('au_documents_changes')
+      .channel(`au_documents_changes:${user.id}`)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'au_documents',
+          filter: `user_id=eq.${user.id}`,
         },
         (payload) => {
           const row = (payload as any).new || (payload as any).old || null;
@@ -256,6 +258,7 @@ export function useAuDocuments(pollInterval = 0) {
       .subscribe((status) => {
         if (status === 'SUBSCRIBED') {
           setIsRealtimeDegraded(false);
+          recordRealtimeChannelSnapshot('au-documents', supabase.getChannels());
         }
         if ((status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') && !hasWarnedDocumentsRealtime) {
           console.warn('[useAuDocuments] Realtime unavailable. Falling back to manual refresh/polling.');
@@ -270,6 +273,7 @@ export function useAuDocuments(pollInterval = 0) {
         realtimeRefreshTimeoutRef.current = null;
       }
       supabase.removeChannel(channel);
+      recordRealtimeChannelSnapshot('au-documents', supabase.getChannels());
     };
   }, [fetchDocs, isAuthLocked, isLoadingAuth, isOnline, isRestoringAuth, session?.access_token, user]);
 

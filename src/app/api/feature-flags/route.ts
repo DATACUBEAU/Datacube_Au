@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import {
@@ -12,16 +13,18 @@ export const runtime = 'nodejs';
 type FeatureFlagScope = 'global' | 'org' | 'user';
 
 type FeatureFlagApiRow = {
-  id: string;
   key: string;
   enabled: boolean;
   category: string;
   description: string;
   scope: FeatureFlagScope;
-  org_id: string | null;
-  user_id: string | null;
   config: Record<string, unknown>;
   updated_at: string;
+};
+
+const SUCCESS_CACHE_HEADERS = {
+  'Cache-Control': 'private, max-age=120, stale-while-revalidate=1080',
+  Vary: 'Authorization, Cookie',
 };
 
 function isSchemaDriftError(error: any): boolean {
@@ -52,14 +55,11 @@ function normalizeCanonicalRow(row: any): FeatureFlagApiRow | null {
   if (!key) return null;
 
   return {
-    id: String(row?.id || key),
     key,
     enabled: row?.enabled === true || row?.is_enabled === true,
     category: String(row?.category || 'billing').trim() || 'billing',
     description: typeof row?.description === 'string' ? row.description : '',
     scope: normalizeScope(row?.scope),
-    org_id: typeof row?.org_id === 'string' ? row.org_id : null,
-    user_id: typeof row?.user_id === 'string' ? row.user_id : null,
     config: normalizeConfig(row?.config),
     updated_at: typeof row?.updated_at === 'string'
       ? row.updated_at
@@ -72,14 +72,11 @@ function normalizeLegacyRow(row: any): FeatureFlagApiRow | null {
   if (!key) return null;
 
   return {
-    id: `legacy-${key}`,
     key,
     enabled: row?.enabled === true || row?.is_enabled === true,
     category: 'billing',
     description: typeof row?.description === 'string' ? row.description : '',
     scope: 'global',
-    org_id: null,
-    user_id: null,
     config: normalizeConfig(row?.value),
     updated_at: typeof row?.updated_at === 'string'
       ? row.updated_at
@@ -90,7 +87,7 @@ function normalizeLegacyRow(row: any): FeatureFlagApiRow | null {
 async function loadFeatureFlagRows(supabase: SupabaseClient) {
   const { data, error } = await supabase
     .from('feature_flags')
-    .select('id,key,enabled,category,description,scope,org_id,user_id,config,updated_at')
+    .select('key,enabled,category,description,scope,config,updated_at')
     .order('updated_at', { ascending: false });
 
   if (!error) {
@@ -118,6 +115,31 @@ async function loadFeatureFlagRows(supabase: SupabaseClient) {
     .filter((row): row is FeatureFlagApiRow => row !== null);
 }
 
+function buildFeatureFlagsEtag(rows: FeatureFlagApiRow[]): string {
+  const stableRows = rows
+    .map((row) => ({
+      key: row.key,
+      enabled: row.enabled,
+      category: row.category,
+      description: row.description,
+      scope: row.scope,
+      config: row.config,
+      updated_at: row.updated_at,
+    }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+  const hash = createHash('sha256').update(JSON.stringify(stableRows)).digest('base64url');
+  return `"feature-flags:${hash}"`;
+}
+
+function etagMatches(req: NextRequest, etag: string): boolean {
+  const header = req.headers.get('if-none-match');
+  if (!header) return false;
+  return header
+    .split(',')
+    .map((entry) => entry.trim())
+    .some((entry) => entry === etag || entry === '*');
+}
+
 export async function GET(req: NextRequest) {
   const requestId = crypto.randomUUID();
 
@@ -134,12 +156,28 @@ export async function GET(req: NextRequest) {
         });
 
     const rows = await loadFeatureFlagRows(supabase);
+    const etag = buildFeatureFlagsEtag(rows);
+
+    if (etagMatches(req, etag)) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: {
+          ...SUCCESS_CACHE_HEADERS,
+          ETag: etag,
+          'X-DCAU-Feature-Flag-Count': String(rows.length),
+        },
+      });
+    }
 
     return NextResponse.json(
       { rows, requestId },
       {
         status: 200,
-        headers: { 'Cache-Control': 'no-store' },
+        headers: {
+          ...SUCCESS_CACHE_HEADERS,
+          ETag: etag,
+          'X-DCAU-Feature-Flag-Count': String(rows.length),
+        },
       },
     );
   } catch (error: any) {

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { deriveNormalizedSubscriptionState } from '../src/lib/billing/subscription-state.js';
 import {
   classifyAccountSnapshotFailure,
+  isAccountSnapshotCacheFresh,
+  resolveAccountSnapshotRefreshDecision,
   resolveBootstrapAccountSnapshotState,
   resolveFailedAccountSnapshotState,
   resolveSuccessfulAccountSnapshotState,
@@ -179,6 +181,30 @@ async function main() {
         runtimeAuthState: 'AUTHENTICATED',
       }),
       false,
+    );
+  });
+
+  await run('snapshot refresh decisions are cache-first, bounded by TTL, and force-aware', () => {
+    const nowMs = 1711000000000;
+    const ttlMs = 30 * 60 * 1000;
+
+    assert.equal(isAccountSnapshotCacheFresh({ cachedAt: nowMs - 1000, ttlMs, nowMs }), true);
+    assert.equal(isAccountSnapshotCacheFresh({ cachedAt: nowMs - ttlMs - 1, ttlMs, nowMs }), false);
+    assert.deepEqual(
+      resolveAccountSnapshotRefreshDecision({ cachedAt: nowMs - 1000, ttlMs, nowMs }),
+      { shouldFetch: false, reason: 'fresh-cache' },
+    );
+    assert.deepEqual(
+      resolveAccountSnapshotRefreshDecision({ cachedAt: nowMs - ttlMs - 1, ttlMs, nowMs }),
+      { shouldFetch: true, reason: 'expired-cache' },
+    );
+    assert.deepEqual(
+      resolveAccountSnapshotRefreshDecision({ cachedAt: nowMs - 1000, ttlMs, nowMs, force: true }),
+      { shouldFetch: true, reason: 'forced' },
+    );
+    assert.deepEqual(
+      resolveAccountSnapshotRefreshDecision({ cachedAt: null, ttlMs, nowMs }),
+      { shouldFetch: true, reason: 'missing-cache' },
     );
   });
 

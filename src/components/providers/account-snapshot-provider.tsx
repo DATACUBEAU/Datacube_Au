@@ -30,12 +30,18 @@ import {
   type PersistedCanonicalAccountSnapshot,
 } from '@/lib/account/account-snapshot-cache';
 import {
+  isAccountSnapshotCacheFresh,
+  resolveAccountSnapshotRefreshDecision,
   resolveBootstrapAccountSnapshotState,
   resolveFailedAccountSnapshotState,
   resolveSuccessfulAccountSnapshotState,
   shouldDeferAccountSnapshotBootstrap,
 } from '@/lib/account/account-snapshot-state';
 import { clearUserScopedClientCaches } from '@/lib/auth/session-storage';
+import {
+  recordClientEgressMetric,
+  recordRealtimeChannelSnapshot,
+} from '@/lib/observability/egress-metrics';
 
 type AccountSnapshotContextValue = {
   snapshot: PersistedCanonicalAccountSnapshot | null;
@@ -45,9 +51,7 @@ type AccountSnapshotContextValue = {
   refresh: () => Promise<PersistedCanonicalAccountSnapshot | null>;
 };
 
-const POLL_INTERVAL_MS = 120_000;
 const SNAPSHOT_MIN_REFRESH_INTERVAL_MS = 15_000;
-const SNAPSHOT_REALTIME_DEBOUNCE_MS = 500;
 
 const AccountSnapshotContext = createContext<AccountSnapshotContextValue>({
   snapshot: null,
@@ -63,14 +67,12 @@ type CachedSnapshotResult = {
 };
 
 function hasActivePaidSnapshotAccess(snapshot: PersistedCanonicalAccountSnapshot | null): boolean {
-  const entitlements = snapshot?.entitlements as any;
+  const entitlements = snapshot?.entitlements;
   if (!entitlements) return false;
   const plan = String(entitlements.plan || '').trim().toLowerCase();
   const endsAt = typeof entitlements.entitlementEndsAt === 'string'
     ? entitlements.entitlementEndsAt
-    : typeof entitlements.entitlement_ends_at === 'string'
-      ? entitlements.entitlement_ends_at
-      : null;
+    : null;
   const expiresMs = endsAt ? new Date(endsAt).getTime() : null;
   const expired = Number.isFinite(expiresMs) && Number(expiresMs) <= Date.now();
   if (expired) return false;
@@ -99,7 +101,6 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   const [loading, setLoading] = useState(bootstrapState.loading);
   const [isUsingCachedData, setIsUsingCachedData] = useState(bootstrapState.isUsingCachedData);
   const [cachedAt, setCachedAt] = useState<number | null>(bootstrapState.cachedAt);
-  const [isRealtimeDegraded, setIsRealtimeDegraded] = useState(false);
   const shouldDeferBootstrap = shouldDeferAccountSnapshotBootstrap({
     hasUser: Boolean(user?.id),
     isLoadingAuth,
@@ -109,7 +110,9 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   const snapshotRef = useRef<PersistedCanonicalAccountSnapshot | null>(bootstrapState.snapshot);
   const cachedAtRef = useRef<number | null>(bootstrapState.cachedAt);
   const currentUserIdRef = useRef<string | null>(user?.id ?? null);
-  const isFetchingRef = useRef(false);
+  const inflightFetchRef = useRef<Promise<PersistedCanonicalAccountSnapshot | null> | null>(null);
+  const fetchSequenceRef = useRef(0);
+  const latestAppliedFetchSequenceRef = useRef(0);
   const lastNetworkFetchAtRef = useRef(0);
 
   useEffect(() => {
@@ -177,18 +180,25 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     writePersistedAccountSnapshotSync(next, nextCachedAt);
   }, [user?.id]);
 
-  const fetchSnapshot = useCallback(async (opts?: { silent?: boolean; force?: boolean }) => {
+  const fetchSnapshot = useCallback((opts?: {
+    silent?: boolean;
+    force?: boolean;
+    reason?: string;
+  }): Promise<PersistedCanonicalAccountSnapshot | null> => {
     if (!user?.id) {
       clearSnapshot();
-      return null;
+      return Promise.resolve(null);
     }
 
     if (isAuthLocked || isRestoringAuth) {
-      return snapshotRef.current;
+      return Promise.resolve(snapshotRef.current);
     }
 
-    if (isFetchingRef.current) {
-      return snapshotRef.current;
+    if (inflightFetchRef.current) {
+      recordClientEgressMetric('account_snapshot.request_deduped', {
+        reason: opts?.reason || null,
+      });
+      return inflightFetchRef.current;
     }
 
     if (
@@ -198,112 +208,184 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
       lastNetworkFetchAtRef.current > 0 &&
       Date.now() - lastNetworkFetchAtRef.current < SNAPSHOT_MIN_REFRESH_INTERVAL_MS
     ) {
-      return snapshotRef.current;
+      recordClientEgressMetric('account_snapshot.refresh_throttled', {
+        reason: opts?.reason || null,
+      });
+      return Promise.resolve(snapshotRef.current);
+    }
+
+    const refreshDecision = resolveAccountSnapshotRefreshDecision({
+      cachedAt: cachedAtRef.current,
+      ttlMs: ACCOUNT_SNAPSHOT_CACHE_TTL_MS,
+      force: opts?.force,
+    });
+
+    if (!refreshDecision.shouldFetch && snapshotRef.current) {
+      recordClientEgressMetric('account_snapshot.cache_hit', {
+        source: 'memory',
+        reason: opts?.reason || refreshDecision.reason,
+      });
+      setLoading(false);
+      setIsUsingCachedData(true);
+      return Promise.resolve(snapshotRef.current);
     }
 
     if (!opts?.silent && !snapshotRef.current) {
       setLoading(true);
     }
 
-    if (!session?.access_token || !isOnline) {
+    const requestPromise = (async () => {
       const cached = await readCachedSnapshot();
-      const fallback = resolveCachedAccountSnapshotFallback({
-        cachedSnapshot: cached.snapshot,
-        cachedAt: cached.cachedAt,
-        previousSnapshot: snapshotRef.current,
-        previousCachedAt: cachedAtRef.current,
-      });
-      if (fallback.snapshot) {
-        applySnapshot(fallback.snapshot, { cachedAt: fallback.cachedAt, fromCache: fallback.fromCache });
-        return fallback.snapshot;
-      }
-      setLoading(false);
-      return null;
-    }
 
-    isFetchingRef.current = true;
-    try {
-      let snapshotResponse = await fetchCanonicalAccountSnapshotFromApi({
-        userId: user.id,
-        accessToken: session.access_token,
-        timeoutMs: 10_000,
-        silent: true,
-        suppressAuthError: true,
-      });
-      if (snapshotResponse.response.status === 401) {
-        const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
-        if (!refreshError && refreshed.session?.access_token) {
-          snapshotResponse = await fetchCanonicalAccountSnapshotFromApi({
-            userId: user.id,
-            accessToken: refreshed.session.access_token,
-            timeoutMs: 10_000,
-            silent: true,
-            suppressAuthError: true,
-          });
+      if (
+        !opts?.force &&
+        cached.snapshot &&
+        isAccountSnapshotCacheFresh({
+          cachedAt: cached.cachedAt,
+          ttlMs: ACCOUNT_SNAPSHOT_CACHE_TTL_MS,
+        })
+      ) {
+        recordClientEgressMetric('account_snapshot.cache_hit', {
+          source: 'user-cache',
+          reason: opts?.reason || 'fresh-cache',
+        });
+        applySnapshot(cached.snapshot, { cachedAt: cached.cachedAt, fromCache: true });
+        return cached.snapshot;
+      }
+
+      if (!cached.snapshot) {
+        recordClientEgressMetric('account_snapshot.cache_miss', {
+          reason: opts?.reason || refreshDecision.reason,
+        });
+      }
+
+      if (!session?.access_token || !isOnline) {
+        const fallback = resolveCachedAccountSnapshotFallback({
+          cachedSnapshot: cached.snapshot,
+          cachedAt: cached.cachedAt,
+          previousSnapshot: snapshotRef.current,
+          previousCachedAt: cachedAtRef.current,
+        });
+        if (fallback.snapshot) {
+          applySnapshot(fallback.snapshot, { cachedAt: fallback.cachedAt, fromCache: fallback.fromCache });
+          return fallback.snapshot;
         }
-      }
-
-      const { response, payload, snapshot: normalized } = snapshotResponse;
-      if (response.status === 401 || response.status === 403) {
-        const authError: Error & { status?: number } = new Error(
-          `${ACCOUNT_SNAPSHOT_ROUTE} failed (${response.status})`,
-        );
-        authError.status = response.status;
-        throw authError;
-      }
-      if (!response.ok || !normalized) {
-        const requestError: Error & { status?: number } = new Error(
-          String(
-            (payload as any)?.message ||
-            (payload as any)?.error ||
-            `${ACCOUNT_SNAPSHOT_ROUTE} failed (${response.status})`,
-          ),
-        );
-        requestError.status = response.status;
-        throw requestError;
-      }
-
-      const nextCachedAt = Date.now();
-      lastNetworkFetchAtRef.current = nextCachedAt;
-      const successState = resolveSuccessfulAccountSnapshotState<PersistedCanonicalAccountSnapshot>(
-        normalized,
-        nextCachedAt,
-      );
-      applySnapshot(normalized, {
-        cachedAt: successState.cachedAt,
-        fromCache: successState.isUsingCachedData,
-      });
-      void writeCachedSnapshot(normalized, nextCachedAt);
-      return normalized;
-    } catch (error) {
-      console.warn('[AccountSnapshotProvider] Failed to fetch account snapshot.', error);
-      const cached = await readCachedSnapshot();
-      const fallback = resolveFailedAccountSnapshotState({
-        error,
-        cachedSnapshot: cached.snapshot,
-        cachedAt: cached.cachedAt,
-        currentSnapshot: snapshotRef.current,
-        currentCachedAt: cachedAtRef.current,
-      });
-      if (fallback.clearPersistedSnapshot) {
-        clearPersistedAccountSnapshotSync(user.id);
-        clearSnapshot();
+        setLoading(false);
         return null;
       }
-      if (fallback.snapshot) {
-        applySnapshot(fallback.snapshot, {
-          cachedAt: fallback.cachedAt,
-          fromCache: fallback.isUsingCachedData,
+
+      const fetchSequence = fetchSequenceRef.current + 1;
+      fetchSequenceRef.current = fetchSequence;
+      const requestUserId = user.id;
+      recordClientEgressMetric('account_snapshot.fetch_started', {
+        reason: opts?.reason || refreshDecision.reason,
+      });
+
+      try {
+        let snapshotResponse = await fetchCanonicalAccountSnapshotFromApi({
+          userId: user.id,
+          accessToken: session.access_token,
+          timeoutMs: 10_000,
+          silent: true,
+          suppressAuthError: true,
         });
-        return fallback.snapshot;
+        if (snapshotResponse.response.status === 401) {
+          const { data: refreshed, error: refreshError } = await supabase.auth.refreshSession();
+          if (!refreshError && refreshed.session?.access_token) {
+            snapshotResponse = await fetchCanonicalAccountSnapshotFromApi({
+              userId: user.id,
+              accessToken: refreshed.session.access_token,
+              timeoutMs: 10_000,
+              silent: true,
+              suppressAuthError: true,
+            });
+          }
+        }
+
+        const { response, payload, snapshot: normalized } = snapshotResponse;
+        if (response.status === 401 || response.status === 403) {
+          const authError: Error & { status?: number } = new Error(
+            `${ACCOUNT_SNAPSHOT_ROUTE} failed (${response.status})`,
+          );
+          authError.status = response.status;
+          throw authError;
+        }
+        if (!response.ok || !normalized) {
+          const payloadRecord = payload && typeof payload === 'object' && !Array.isArray(payload)
+            ? payload as Record<string, unknown>
+            : {};
+          const requestError: Error & { status?: number } = new Error(
+            String(
+              payloadRecord.message ||
+              payloadRecord.error ||
+              `${ACCOUNT_SNAPSHOT_ROUTE} failed (${response.status})`,
+            ),
+          );
+          requestError.status = response.status;
+          throw requestError;
+        }
+
+        if (
+          currentUserIdRef.current !== requestUserId ||
+          fetchSequence < latestAppliedFetchSequenceRef.current
+        ) {
+          recordClientEgressMetric('account_snapshot.stale_response_ignored', {
+            reason: opts?.reason || null,
+          });
+          return snapshotRef.current;
+        }
+
+        const nextCachedAt = Date.now();
+        lastNetworkFetchAtRef.current = nextCachedAt;
+        latestAppliedFetchSequenceRef.current = fetchSequence;
+        const successState = resolveSuccessfulAccountSnapshotState<PersistedCanonicalAccountSnapshot>(
+          normalized,
+          nextCachedAt,
+        );
+        applySnapshot(normalized, {
+          cachedAt: successState.cachedAt,
+          fromCache: successState.isUsingCachedData,
+        });
+        void writeCachedSnapshot(normalized, nextCachedAt);
+        recordClientEgressMetric('account_snapshot.fetch_completed', {
+          reason: opts?.reason || refreshDecision.reason,
+          responseBytes: Number(response.headers.get('X-DCAU-Snapshot-Bytes')) || null,
+        });
+        return normalized;
+      } catch (error) {
+        console.warn('[AccountSnapshotProvider] Failed to fetch account snapshot.', error);
+        const fallbackCached = await readCachedSnapshot();
+        const fallback = resolveFailedAccountSnapshotState({
+          error,
+          cachedSnapshot: fallbackCached.snapshot,
+          cachedAt: fallbackCached.cachedAt,
+          currentSnapshot: snapshotRef.current,
+          currentCachedAt: cachedAtRef.current,
+        });
+        if (fallback.clearPersistedSnapshot) {
+          clearPersistedAccountSnapshotSync(user.id);
+          clearSnapshot();
+          return null;
+        }
+        if (fallback.snapshot) {
+          applySnapshot(fallback.snapshot, {
+            cachedAt: fallback.cachedAt,
+            fromCache: fallback.isUsingCachedData,
+          });
+          return fallback.snapshot;
+        }
+        setLoading(fallback.loading);
+        setIsUsingCachedData(fallback.isUsingCachedData);
+        setCachedAt(fallback.cachedAt);
+        return null;
       }
-      setLoading(fallback.loading);
-      setIsUsingCachedData(fallback.isUsingCachedData);
-      setCachedAt(fallback.cachedAt);
-      return null;
-    } finally {
-      isFetchingRef.current = false;
-    }
+    })();
+
+    inflightFetchRef.current = requestPromise.finally(() => {
+      inflightFetchRef.current = null;
+    });
+
+    return inflightFetchRef.current;
   }, [
     applySnapshot,
     clearSnapshot,
@@ -367,7 +449,10 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
       }
 
       if (cancelled) return;
-      await fetchSnapshot({ force: true });
+      await fetchSnapshot({
+        silent: Boolean(cached.snapshot),
+        reason: cached.snapshot ? 'bootstrap-cache-expiry' : 'bootstrap-cache-miss',
+      });
     };
 
     void bootstrap();
@@ -377,61 +462,15 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
   }, [applySnapshot, clearSnapshot, fetchSnapshot, readCachedSnapshot, shouldDeferBootstrap, user?.id]);
 
   useEffect(() => {
-    if (!user?.id || !isOnline || isAuthLocked || isRestoringAuth) return;
-
-    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
-    setIsRealtimeDegraded(false);
-    const scheduleRefresh = () => {
-      if (refreshTimeout) return;
-      refreshTimeout = setTimeout(() => {
-        refreshTimeout = null;
-        void fetchSnapshot({ silent: true });
-      }, SNAPSHOT_REALTIME_DEBOUNCE_MS);
-    };
-
-    const channel = supabase
-      .channel(`account-snapshot:${user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'feature_flags' }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_profiles', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'entitlement_grants', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_plan_transitions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_subscriptions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'billing_transactions', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_user_entitlements', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'usage_counters', filter: `user_id=eq.${user.id}` }, scheduleRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'au_plan_limit_rules' }, scheduleRefresh)
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          setIsRealtimeDegraded(false);
-          return;
-        }
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('[AccountSnapshotProvider] realtime degraded; polling fallback remains active.');
-          setIsRealtimeDegraded(true);
-        }
-      });
-
-    return () => {
-      if (refreshTimeout) clearTimeout(refreshTimeout);
-      void supabase.removeChannel(channel);
-    };
-  }, [fetchSnapshot, isAuthLocked, isOnline, isRestoringAuth, user?.id]);
-
-  useEffect(() => {
-    if (!isRealtimeDegraded) return;
-    if (!user?.id || !session?.access_token || !isOnline || isAuthLocked || isRestoringAuth) return;
-    const timer = window.setInterval(() => {
-      void fetchSnapshot({ silent: true });
-    }, POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [fetchSnapshot, isAuthLocked, isOnline, isRealtimeDegraded, isRestoringAuth, session?.access_token, user?.id]);
+    recordRealtimeChannelSnapshot('account-snapshot', supabase.getChannels());
+  }, [user?.id]);
 
   const value = useMemo<AccountSnapshotContextValue>(() => ({
     snapshot,
     loading,
     isUsingCachedData,
     cachedAt,
-    refresh: async () => fetchSnapshot(),
+    refresh: async () => fetchSnapshot({ force: true, reason: 'manual-refresh' }),
   }), [cachedAt, fetchSnapshot, isUsingCachedData, loading, snapshot]);
 
   return (

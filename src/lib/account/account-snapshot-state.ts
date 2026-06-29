@@ -21,6 +21,11 @@ export type ResolvedAccountSnapshotFailure<TSnapshot = PersistedCanonicalAccount
     reason: AccountSnapshotFailureKind;
   };
 
+export type AccountSnapshotRefreshDecision = {
+  shouldFetch: boolean;
+  reason: 'forced' | 'missing-cache' | 'expired-cache' | 'fresh-cache';
+};
+
 function normalizeErrorMessage(error: unknown): string {
   return String((error as any)?.message || '').trim().toLowerCase();
 }
@@ -66,6 +71,42 @@ export function shouldDeferAccountSnapshotBootstrap(input: {
   if (!input.hasUser) return false;
   if (input.isLoadingAuth) return true;
   return input.runtimeAuthState === 'RESTORING';
+}
+
+export function isAccountSnapshotCacheFresh(input: {
+  cachedAt: number | null | undefined;
+  ttlMs: number;
+  nowMs?: number;
+}): boolean {
+  const cachedAt = Number(input.cachedAt);
+  if (!Number.isFinite(cachedAt) || cachedAt <= 0) return false;
+
+  const ttlMs = Number(input.ttlMs);
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) return false;
+
+  const nowMs = Number.isFinite(Number(input.nowMs)) ? Number(input.nowMs) : Date.now();
+  return nowMs - cachedAt < ttlMs;
+}
+
+export function resolveAccountSnapshotRefreshDecision(input: {
+  cachedAt: number | null | undefined;
+  ttlMs: number;
+  force?: boolean;
+  nowMs?: number;
+}): AccountSnapshotRefreshDecision {
+  if (input.force) {
+    return { shouldFetch: true, reason: 'forced' };
+  }
+
+  if (!Number.isFinite(Number(input.cachedAt)) || Number(input.cachedAt) <= 0) {
+    return { shouldFetch: true, reason: 'missing-cache' };
+  }
+
+  if (isAccountSnapshotCacheFresh(input)) {
+    return { shouldFetch: false, reason: 'fresh-cache' };
+  }
+
+  return { shouldFetch: true, reason: 'expired-cache' };
 }
 
 export function resolveSuccessfulAccountSnapshotState<TSnapshot>(

@@ -139,21 +139,25 @@ async function main() {
     assert.match(source, /if \(activePromptHashRef\.current === promptHash\) \{/);
   });
 
-  await run('account snapshot refreshes are throttled and polling only runs when realtime is degraded', () => {
+  await run('account snapshot refreshes are cache-first and no longer mount normal-user realtime', () => {
     const source = readRepoFile('src/components/providers/account-snapshot-provider.tsx');
-    assert.match(source, /POLL_INTERVAL_MS = 120_000/);
     assert.match(source, /SNAPSHOT_MIN_REFRESH_INTERVAL_MS = 15_000/);
-    assert.match(source, /const \[isRealtimeDegraded, setIsRealtimeDegraded\] = useState\(false\)/);
-    assert.match(source, /if \(!isRealtimeDegraded\) return;/);
-    assert.equal(source.includes("table: 'au_messages'"), false);
-    assert.equal(source.includes("table: 'au_model_usage'"), false);
+    assert.match(source, /resolveAccountSnapshotRefreshDecision/);
+    assert.match(source, /inflightFetchRef/);
+    assert.match(source, /stale_response_ignored/);
+    assert.equal(source.includes("channel(`account-snapshot:"), false);
+    assert.equal(source.includes("table: 'feature_flags'"), false);
+    assert.equal(source.includes("table: 'usage_counters'"), false);
+    assert.equal(source.includes("table: 'au_plan_limit_rules'"), false);
   });
 
-  await run('feature flag polling only activates when realtime is degraded', () => {
+  await run('feature flags are fetched with cache and etag instead of normal-user realtime', () => {
     const source = readRepoFile('src/components/feature-flag-provider.tsx');
-    assert.match(source, /POLL_INTERVAL_MS = 120_000/);
-    assert.match(source, /const \[isRealtimeDegraded, setIsRealtimeDegraded\] = useState\(false\)/);
-    assert.match(source, /if \(!isRealtimeDegraded\) return;/);
+    assert.match(source, /If-None-Match/);
+    assert.match(source, /res\.status === 304/);
+    assert.match(source, /inflightFetchRef/);
+    assert.equal(source.includes("channel('feature-flags-v2')"), false);
+    assert.equal(source.includes("table: 'feature_flags'"), false);
   });
 
   await run('feature output reads are deduped, cached briefly, and mapped to user-facing errors', () => {
