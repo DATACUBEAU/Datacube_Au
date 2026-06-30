@@ -8,7 +8,6 @@ import {
 } from '@/lib/billing/plans';
 import {
   isPaidAdminOverridePlan,
-  isProtectedOwnerUserId,
   normalizeAdminOverridePlan,
   type AdminOverridePlan,
 } from '@/lib/admin/protected-owner';
@@ -77,6 +76,7 @@ function hasPaidAccess(plan: EffectiveEntitlementPlan, entitlementSource: Canoni
 }
 
 function overrideToEffectivePlan(overridePlan: AdminOverridePlan): EffectiveEntitlementPlan {
+  if (overridePlan === 'premium') return 'premium';
   return isPaidAdminOverridePlan(overridePlan) ? 'pro' : 'free';
 }
 
@@ -231,9 +231,7 @@ async function buildFallbackSnapshot(
   let entitlementEndsAt: string | null = null;
 
   const entitlementRow = await readEntitlementRow(supabase, userId);
-  const adminOverridePlan = isProtectedOwnerUserId(userId)
-    ? normalizeAdminOverridePlan(entitlementRow?.admin_override_plan)
-    : null;
+  const adminOverridePlan = normalizeAdminOverridePlan(entitlementRow?.admin_override_plan);
   if (adminOverridePlan) {
     return buildOverrideSnapshot({
       userId,

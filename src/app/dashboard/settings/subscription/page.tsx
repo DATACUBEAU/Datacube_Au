@@ -194,6 +194,7 @@ export default function SubscriptionPage() {
     snapshot: accountSnapshot,
     isUsingCachedData: isUsingCachedAccountSnapshot,
     cachedAt: accountSnapshotCachedAt,
+    refresh: refreshAccountSnapshot,
   } = useAccountSnapshot();
   const paymentReturnState = useMemo(
     () => extractBillingReturnState(new URLSearchParams(searchParamsKey)),
@@ -778,11 +779,12 @@ export default function SubscriptionPage() {
 
           const data = await fetchBillingStatus();
           if (data?.currentPlan?.hasPaidEntitlement === true && data?.currentPlan?.managedPlan !== 'free') {
+              await refreshAccountSnapshot();
               setPaymentState('success');
               stopPolling();
           }
       }, 3000);
-  }, [fetchBillingStatus, stopPolling]);
+  }, [fetchBillingStatus, refreshAccountSnapshot, stopPolling]);
 
   const verifyPayment = useCallback(async (paymentReturn?: Pick<BillingReturnState, 'reference' | 'verificationTarget' | 'transactionId' | 'gatewayHint'>) => {
       if (!canPerformNetworkMutations) return;
@@ -820,6 +822,7 @@ export default function SubscriptionPage() {
               const verifyBody = await verifyRes.json().catch(() => ({} as any));
               if (verifyRes.ok && verifyBody?.success === true) {
                   await fetchBillingStatus();
+                  await refreshAccountSnapshot();
                   setPaymentState('success');
                   return;
               }
@@ -837,6 +840,7 @@ export default function SubscriptionPage() {
 
           const data = await fetchBillingStatus();
           if (data?.currentPlan?.hasPaidEntitlement === true && data?.currentPlan?.managedPlan !== 'free') {
+              await refreshAccountSnapshot();
               setPaymentState('success');
               return;
           }
@@ -846,7 +850,7 @@ export default function SubscriptionPage() {
           }
       }
        startPolling();
-  }, [canPerformNetworkMutations, fetchBillingStatus, planSnapshot?.checksum, session?.access_token, startPolling]);
+  }, [canPerformNetworkMutations, fetchBillingStatus, planSnapshot?.checksum, refreshAccountSnapshot, session?.access_token, startPolling]);
   const fetchBillingStatusRef = useRef(fetchBillingStatus);
   const verifyPaymentRef = useRef(verifyPayment);
   const startPollingRef = useRef(startPolling);
@@ -1174,7 +1178,8 @@ export default function SubscriptionPage() {
           });
           setCancelReason('');
           setIsCancelDialogOpen(false);
-          fetchBillingStatus();
+          await fetchBillingStatus();
+          await refreshAccountSnapshot();
 
       } catch (e: any) {
           toast({ variant: 'destructive', title: 'Error', description: e.message });
@@ -1200,6 +1205,7 @@ export default function SubscriptionPage() {
       }
       if (!billingRequestTokenRef.current) {
           await fetchBillingStatus();
+          await refreshAccountSnapshot();
       }
 
       setIsResubscribing(true);

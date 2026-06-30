@@ -20,7 +20,7 @@ export type ManagedUserRecord = {
   is_suspended: boolean;
   is_authorized: boolean;
   is_protected_owner?: boolean;
-  admin_override_plan?: 'free' | 'pro_weekly' | 'pro_monthly' | null;
+  admin_override_plan?: 'free' | 'pro_weekly' | 'pro_monthly' | 'premium' | null;
 };
 
 export type ManagedUserFilter = {
@@ -81,6 +81,43 @@ export function roleToTier(role: unknown): 'admin' | 'free' | 'weekly' | 'monthl
   if (normalized === 'monthly') return 'monthly';
   if (normalized === 'pro') return 'monthly';
   return null;
+}
+
+export const ADMIN_ASSIGNABLE_PLAN_KEYS = ['free', 'pro_monthly', 'premium'] as const;
+export type AdminAssignablePlanKey = (typeof ADMIN_ASSIGNABLE_PLAN_KEYS)[number];
+export type AdminPlanChangeType = 'upgrade' | 'downgrade' | 'reassignment';
+
+const ADMIN_ASSIGNABLE_PLAN_SET = new Set<string>(ADMIN_ASSIGNABLE_PLAN_KEYS);
+
+function planRank(plan: AdminAssignablePlanKey): number {
+  if (plan === 'premium') return 2;
+  if (plan === 'pro_monthly') return 1;
+  return 0;
+}
+
+export function normalizeAdminAssignablePlan(value: unknown): AdminAssignablePlanKey | null {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'free') return 'free';
+  if (normalized === 'premium') return 'premium';
+  if (normalized === 'pro' || normalized === 'monthly' || normalized === 'pro_monthly') return 'pro_monthly';
+  return ADMIN_ASSIGNABLE_PLAN_SET.has(normalized) ? (normalized as AdminAssignablePlanKey) : null;
+}
+
+export function adminAssignablePlanLabel(value: AdminAssignablePlanKey | null | undefined): string {
+  if (value === 'premium') return 'Premium';
+  if (value === 'pro_monthly') return 'Pro';
+  return 'Free';
+}
+
+export function resolveAdminPlanChangeType(input: {
+  previousPlan: unknown;
+  targetPlan: unknown;
+}): AdminPlanChangeType {
+  const target = normalizeAdminAssignablePlan(input.targetPlan);
+  if (!target) return 'reassignment';
+  const previous = normalizeAdminAssignablePlan(input.previousPlan) ?? 'free';
+  if (previous === target) return 'reassignment';
+  return planRank(target) > planRank(previous) ? 'upgrade' : 'downgrade';
 }
 
 export function buildAppMetadataPatch(

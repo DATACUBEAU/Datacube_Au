@@ -164,6 +164,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   const inflightFetchRef = useRef<Promise<void> | null>(null);
   const lastFetchAtRef = useRef(0);
   const lastEtagRef = useRef<string | null>(null);
+  const currentUserIdRef = useRef<string | null>(user?.id ?? null);
 
   const readCachedRows = useCallback(async (): Promise<CachedFeatureFlags | null> => {
     if (!user?.id) return null;
@@ -207,6 +208,14 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
   }): Promise<void> => {
     if (isAuthLocked) {
       setLoading(false);
+      return Promise.resolve();
+    }
+
+    if (!user?.id) {
+      setRows([]);
+      setLoading(false);
+      lastFetchAtRef.current = 0;
+      lastEtagRef.current = null;
       return Promise.resolve();
     }
 
@@ -261,7 +270,9 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         if (accessToken) {
           headers.set('Authorization', `Bearer ${accessToken}`);
         }
-        const etag = lastEtagRef.current || cached?.etag || null;
+        const etag = cached?.rows.length
+          ? lastEtagRef.current || cached.etag || null
+          : null;
         if (etag) {
           headers.set('If-None-Match', etag);
         }
@@ -338,7 +349,18 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
 
     inflightFetchRef.current = requestPromise;
     return requestPromise;
-  }, [isAuthLocked, isOnline, readCachedRows, rows.length, writeCachedRows]);
+  }, [isAuthLocked, isOnline, readCachedRows, rows.length, user?.id, writeCachedRows]);
+
+  useEffect(() => {
+    const nextUserId = user?.id ?? null;
+    if (currentUserIdRef.current === nextUserId) return;
+    currentUserIdRef.current = nextUserId;
+    inflightFetchRef.current = null;
+    lastFetchAtRef.current = 0;
+    lastEtagRef.current = null;
+    setRows([]);
+    setLoading(Boolean(nextUserId));
+  }, [user?.id]);
 
   useEffect(() => {
     if (isLoadingAuth) return;

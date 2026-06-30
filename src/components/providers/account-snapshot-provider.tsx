@@ -52,6 +52,7 @@ type AccountSnapshotContextValue = {
 };
 
 const SNAPSHOT_MIN_REFRESH_INTERVAL_MS = 15_000;
+const ACCOUNT_SNAPSHOT_INVALIDATED_EVENT = 'dcau:account-snapshot-invalidated';
 
 const AccountSnapshotContext = createContext<AccountSnapshotContextValue>({
   snapshot: null,
@@ -465,6 +466,33 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
     recordRealtimeChannelSnapshot('account-snapshot', supabase.getChannels());
   }, [user?.id]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !user?.id) return undefined;
+
+    const clearForUser = (event: Event) => {
+      const detail = (event as CustomEvent<{ userId?: string | null }>).detail;
+      if (detail?.userId && detail.userId !== user.id) return;
+      clearSnapshot();
+    };
+
+    const refreshForUser = (event: Event) => {
+      const detail = (event as CustomEvent<{ userId?: string | null; reason?: string | null }>).detail;
+      if (detail?.userId && detail.userId !== user.id) return;
+      clearPersistedAccountSnapshotSync(user.id);
+      void fetchSnapshot({
+        force: true,
+        reason: detail?.reason || 'local-cache-invalidation',
+      });
+    };
+
+    window.addEventListener('dcau:user-scoped-caches-cleared', clearForUser);
+    window.addEventListener(ACCOUNT_SNAPSHOT_INVALIDATED_EVENT, refreshForUser);
+    return () => {
+      window.removeEventListener('dcau:user-scoped-caches-cleared', clearForUser);
+      window.removeEventListener(ACCOUNT_SNAPSHOT_INVALIDATED_EVENT, refreshForUser);
+    };
+  }, [clearSnapshot, fetchSnapshot, user?.id]);
+
   const value = useMemo<AccountSnapshotContextValue>(() => ({
     snapshot,
     loading,
@@ -482,4 +510,12 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
 
 export function useAccountSnapshot() {
   return useContext(AccountSnapshotContext);
+}
+
+export function dispatchAccountSnapshotInvalidated(input?: {
+  userId?: string | null;
+  reason?: string | null;
+}) {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent(ACCOUNT_SNAPSHOT_INVALIDATED_EVENT, { detail: input || {} }));
 }

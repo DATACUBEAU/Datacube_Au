@@ -804,7 +804,11 @@ export function resolveEffectivePlanFromInputs(input: EffectivePlanResolutionInp
   const resolvedEntitlementPlan = isEntitlementExpired ? 'free' : entitlementPlan;
 
   if (adminOverridePlan) {
-    const plan = adminOverridePlan === 'free' ? 'free' : 'pro';
+    const plan = adminOverridePlan === 'free'
+      ? 'free'
+      : adminOverridePlan === 'premium'
+        ? 'premium'
+        : 'pro';
     return {
       plan,
       isAdmin: profileInfo.isAdmin,

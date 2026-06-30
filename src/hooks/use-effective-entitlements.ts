@@ -20,7 +20,7 @@ export type EffectiveEntitlements = {
   promoEndsAtUtc: string | null;
   promoEndsAtLagos: string | null;
   retentionDays: number;
-  adminOverridePlan: 'free' | 'pro_weekly' | 'pro_monthly' | null;
+  adminOverridePlan: 'free' | 'pro_weekly' | 'pro_monthly' | 'premium' | null;
   asOf: string | null;
   source: string;
 };
@@ -57,19 +57,21 @@ function buildUnknownEntitlements(userId: string | null): EffectiveEntitlements 
 export function useEffectiveEntitlements() {
   const [user] = useSupabaseUser();
   const { snapshot, loading, isUsingCachedData, cachedAt, refresh } = useAccountSnapshot();
+  const snapshotEntitlements = snapshot?.entitlements ?? null;
+  const userId = user?.id ?? null;
 
   const entitlements = useMemo<EffectiveEntitlements>(() => {
-    if (snapshot?.entitlements) {
+    if (snapshotEntitlements) {
       return {
-        ...snapshot.entitlements,
-        plan: snapshot.entitlements.plan,
+        ...snapshotEntitlements,
+        plan: snapshotEntitlements.plan,
       };
     }
-    if (!user?.id) {
+    if (!userId) {
       return SIGNED_OUT_ENTITLEMENTS;
     }
-    return buildUnknownEntitlements(user.id);
-  }, [snapshot?.entitlements, user?.id]);
+    return buildUnknownEntitlements(userId);
+  }, [snapshotEntitlements, userId]);
 
   return useMemo(
     () => ({

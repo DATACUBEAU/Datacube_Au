@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
+import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 import { hasConexAccess } from '@/lib/conex-rbac';
 import {
   ACCESS_NO_STORE_HEADERS,
@@ -183,12 +184,20 @@ async function loadMiddlewareSubject(
   const adminOverridePlan = typeof (entitlement as any)?.admin_override_plan === 'string'
     ? String((entitlement as any).admin_override_plan)
     : null;
+  const normalizedAdminOverridePlan = normalizeAdminOverridePlan(adminOverridePlan);
+  const overrideEffectivePlan = normalizedAdminOverridePlan
+    ? normalizedAdminOverridePlan === 'free'
+      ? 'free'
+      : normalizedAdminOverridePlan === 'premium'
+        ? 'premium'
+        : 'pro'
+    : null;
   const entitlementEndsAt = typeof (entitlement as any)?.expires_at === 'string'
     ? String((entitlement as any).expires_at)
     : typeof (grant as any)?.ends_at === 'string'
       ? String((grant as any).ends_at)
       : null;
-  const plan = entitlementPlan || (grant ? 'pro' : profileTier) || 'free';
+  const plan = overrideEffectivePlan || entitlementPlan || (grant ? 'pro' : profileTier) || 'free';
   const adminOverride = hasConexAccess({
     userId: auth.userId,
     email: auth.email,
@@ -201,9 +210,11 @@ async function loadMiddlewareSubject(
     plan,
     profileTier,
     hasPro: adminOverride || Boolean(grant) || ['admin', 'premium', 'pro', 'paid', 'weekly', 'monthly', 'promo_pro'].includes(plan.toLowerCase()),
-    entitlementSource: entitlementSource || (grant ? 'paid' : ['admin', 'premium', 'pro'].includes(String(profileTier || '').toLowerCase()) ? 'paid' : 'none'),
+    entitlementSource: normalizedAdminOverridePlan
+      ? (normalizedAdminOverridePlan === 'free' ? 'none' : 'paid')
+      : entitlementSource || (grant ? 'paid' : ['admin', 'premium', 'pro'].includes(String(profileTier || '').toLowerCase()) ? 'paid' : 'none'),
     entitlementEndsAt,
-    adminOverridePlan: adminOverridePlan as any,
+    adminOverridePlan: normalizedAdminOverridePlan,
     adminOverride,
   };
 }

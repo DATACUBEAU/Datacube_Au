@@ -53,7 +53,9 @@ export function buildCanonicalSubscriptionState(input: {
   const overrideLegacyTier = adminOverridePlan
     ? adminOverridePlan === 'free'
       ? 'free'
-      : 'pro'
+      : adminOverridePlan === 'premium'
+        ? 'premium'
+        : 'pro'
     : null;
   return deriveNormalizedSubscriptionState({
     effectivePlan: input.authority.entitlements.plan,

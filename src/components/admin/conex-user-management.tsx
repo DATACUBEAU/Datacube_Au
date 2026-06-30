@@ -2,6 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { KeyRound, Loader2, RefreshCw, Search, ShieldPlus, Trash2, UserPlus, Users } from 'lucide-react';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,7 +22,16 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
-import { ADMIN_OVERRIDE_PLANS, PLATFORM_OWNER_USER_ID, adminOverridePlanLabel, type AdminOverridePlan } from '@/lib/admin/protected-owner';
+import { dispatchAccountSnapshotInvalidated } from '@/components/providers/account-snapshot-provider';
+import { PLATFORM_OWNER_USER_ID, adminOverridePlanLabel, type AdminOverridePlan } from '@/lib/admin/protected-owner';
+import {
+  ADMIN_ASSIGNABLE_PLAN_KEYS,
+  adminAssignablePlanLabel,
+  normalizeAdminAssignablePlan,
+  resolveAdminPlanChangeType,
+  type AdminAssignablePlanKey,
+  type AdminPlanChangeType,
+} from '@/lib/server/admin-user-management';
 
 type AccountStatus = 'active' | 'inactive' | 'suspended';
 type UserRole = 'admin' | 'free' | 'weekly' | 'monthly' | 'pro' | 'user';
@@ -151,8 +170,12 @@ export function ConexUserManagement() {
   const [savingUser, setSavingUser] = useState(false);
   const [deletingUser, setDeletingUser] = useState(false);
   const [resettingPassword, setResettingPassword] = useState(false);
-  const [adminOverridePlan, setAdminOverridePlan] = useState<AdminOverridePlan>('pro_monthly');
+  const [adminOverridePlan, setAdminOverridePlan] = useState<AdminAssignablePlanKey>('pro_monthly');
   const [savingAdminOverride, setSavingAdminOverride] = useState(false);
+  const [pendingPlanChange, setPendingPlanChange] = useState<{
+    targetPlan: AdminAssignablePlanKey;
+    changeType: AdminPlanChangeType;
+  } | null>(null);
 
   const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
   const [loadingActivity, setLoadingActivity] = useState(false);
@@ -289,7 +312,9 @@ export function ConexUserManagement() {
     setStatus(selectedUser.account_status);
     setRole(selectedUser.role);
     setPermissionsText((selectedUser.permissions || []).join(', '));
-    setAdminOverridePlan(selectedUser.admin_override_plan || 'pro_monthly');
+    setAdminOverridePlan(
+      normalizeAdminAssignablePlan(selectedUser.admin_override_plan || selectedUser.tier || selectedUser.role) || 'free',
+    );
     fetchActivity(selectedUser.user_id).catch(() => {});
   }, [fetchActivity, selectedUser]);
 
@@ -319,6 +344,17 @@ export function ConexUserManagement() {
   const offlineCount = Math.max(0, users.length - onlineNowCount);
   const selectedUserIsProtectedOwner = Boolean(
     selectedUser?.is_protected_owner || selectedUser?.user_id === PLATFORM_OWNER_USER_ID,
+  );
+  const selectedUserCurrentPlan = useMemo<AdminAssignablePlanKey>(() => {
+    if (!selectedUser) return 'free';
+    return normalizeAdminAssignablePlan(selectedUser.admin_override_plan || selectedUser.tier || selectedUser.role) || 'free';
+  }, [selectedUser]);
+  const selectedPlanChangeType = useMemo(
+    () => resolveAdminPlanChangeType({
+      previousPlan: selectedUserCurrentPlan,
+      targetPlan: adminOverridePlan,
+    }),
+    [adminOverridePlan, selectedUserCurrentPlan],
   );
 
   const canRunBulk = selectedCount > 0 && !runningBulk;
@@ -437,36 +473,56 @@ export function ConexUserManagement() {
     }
   }, [selectedUser?.email, selectedUser?.user_id, toast]);
 
-  const onSaveAdminOverride = useCallback(async () => {
-    if (!selectedUserIsProtectedOwner || !selectedUser?.user_id) return;
+  const applyAdminPlanChange = useCallback(async (targetPlan: AdminAssignablePlanKey) => {
+    if (!selectedUser?.user_id) return;
     setSavingAdminOverride(true);
     try {
       const res = await authedFetch('/api/admin/users', {
         method: 'POST',
         body: JSON.stringify({
-          action: 'set_owner_admin_override_plan',
+          action: 'set_user_plan',
           userId: selectedUser.user_id,
-          adminOverridePlan,
+          targetPlan,
+          reason: 'conex_user_management',
         }),
       });
-      if (!res.ok) throw await parseError(res, 'Failed to update admin test override.');
+      if (!res.ok) throw await parseError(res, 'Failed to update user plan.');
+      const payload = await res.json().catch(() => null);
+      const changeType = String(payload?.changeType || selectedPlanChangeType);
+      dispatchAccountSnapshotInvalidated({
+        userId: String(payload?.cacheInvalidation?.userId || selectedUser.user_id),
+        reason: 'admin-plan-assignment',
+      });
 
       toast({
-        title: 'Override updated',
-        description: `Owner test plan is now ${adminOverridePlanLabel(adminOverridePlan)}.`,
+        title: changeType === 'reassignment' ? 'Plan refreshed' : 'Plan updated',
+        description: `${selectedUser.email || selectedUser.user_id} is now on ${adminAssignablePlanLabel(targetPlan)}. Billing-provider records were not changed.`,
       });
       await fetchUsers({ silent: true });
       await fetchActivity(selectedUser.user_id);
     } catch (error: any) {
       toast({
-        title: 'Override failed',
-        description: error?.message || 'Could not update owner test plan.',
+        title: 'Plan update failed',
+        description: error?.message || 'Could not update user plan.',
         variant: 'destructive',
       });
     } finally {
       setSavingAdminOverride(false);
     }
-  }, [adminOverridePlan, fetchActivity, fetchUsers, selectedUser?.user_id, selectedUserIsProtectedOwner, toast]);
+  }, [fetchActivity, fetchUsers, selectedPlanChangeType, selectedUser?.email, selectedUser?.user_id, toast]);
+
+  const onRequestAdminPlanChange = useCallback(() => {
+    if (!selectedUser?.user_id) return;
+    const changeType = resolveAdminPlanChangeType({
+      previousPlan: selectedUserCurrentPlan,
+      targetPlan: adminOverridePlan,
+    });
+    if (changeType === 'downgrade') {
+      setPendingPlanChange({ targetPlan: adminOverridePlan, changeType });
+      return;
+    }
+    void applyAdminPlanChange(adminOverridePlan);
+  }, [adminOverridePlan, applyAdminPlanChange, selectedUser?.user_id, selectedUserCurrentPlan]);
 
   const onRunBulkUpdate = useCallback(async () => {
     if (!canRunBulk || !hasBulkPatch) return;
@@ -1007,39 +1063,46 @@ export function ConexUserManagement() {
                       className="min-h-[72px]"
                     />
                   </div>
-                  {selectedUserIsProtectedOwner ? (
-                    <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
-                      <div className="mb-2">
-                        <Label>Owner Test Entitlement</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Simulates plan access for this owner account only. Payment, subscription, transaction, and webhook rows are not changed.
-                        </p>
-                      </div>
-                      <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                        <Select value={adminOverridePlan} onValueChange={(value) => setAdminOverridePlan(value as AdminOverridePlan)}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {ADMIN_OVERRIDE_PLANS.map((plan) => (
-                              <SelectItem key={plan} value={plan}>
-                                {adminOverridePlanLabel(plan)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={onSaveAdminOverride}
-                          disabled={savingAdminOverride || isReadOnlyMode}
-                        >
-                          {savingAdminOverride ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
-                          Apply
-                        </Button>
-                      </div>
+                  <div className="rounded-md border border-primary/30 bg-primary/5 p-3">
+                    <div className="mb-3 space-y-1">
+                      <Label>Plan Assignment</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Current plan: <span className="font-medium">{adminAssignablePlanLabel(selectedUserCurrentPlan)}</span>.
+                        Changes apply immediately to application limits and do not modify Paystack or other billing-provider records.
+                      </p>
                     </div>
-                  ) : null}
+                    <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                      <Select value={adminOverridePlan} onValueChange={(value) => setAdminOverridePlan(value as AdminAssignablePlanKey)}>
+                        <SelectTrigger aria-label="Target plan">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ADMIN_ASSIGNABLE_PLAN_KEYS.map((plan) => (
+                            <SelectItem key={plan} value={plan}>
+                              {adminAssignablePlanLabel(plan)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant={selectedPlanChangeType === 'downgrade' ? 'destructive' : 'outline'}
+                        onClick={onRequestAdminPlanChange}
+                        disabled={savingAdminOverride || isReadOnlyMode}
+                      >
+                        {savingAdminOverride ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                        {selectedPlanChangeType === 'reassignment'
+                          ? 'Refresh Plan'
+                          : selectedPlanChangeType === 'downgrade'
+                            ? 'Downgrade'
+                            : 'Upgrade'}
+                      </Button>
+                    </div>
+                    <div className="mt-2 rounded border bg-background/70 px-2 py-1.5 text-xs text-muted-foreground">
+                      Effective time: immediately after save. Impact: {adminAssignablePlanLabel(adminOverridePlan)} limits apply to new usage;
+                      existing documents, chats, and generated content are preserved.
+                    </div>
+                  </div>
                   <div className="grid gap-2 sm:grid-cols-3">
                     <Button onClick={onSaveUser} disabled={savingUser || isReadOnlyMode}>
                       {savingUser ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
@@ -1156,6 +1219,39 @@ export function ConexUserManagement() {
           </Card>
         </div>
       </div>
+
+      <AlertDialog
+        open={Boolean(pendingPlanChange)}
+        onOpenChange={(open) => {
+          if (!open && !savingAdminOverride) setPendingPlanChange(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirm plan downgrade</AlertDialogTitle>
+            <AlertDialogDescription>
+              This changes the user from {adminAssignablePlanLabel(selectedUserCurrentPlan)} to{' '}
+              {adminAssignablePlanLabel(pendingPlanChange?.targetPlan || 'free')}. The user may lose access to
+              higher-tier features or limits for new activity, but existing documents, chats, and generated content
+              will be preserved.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={savingAdminOverride}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={savingAdminOverride || !pendingPlanChange}
+              onClick={() => {
+                const targetPlan = pendingPlanChange?.targetPlan;
+                setPendingPlanChange(null);
+                if (targetPlan) void applyAdminPlanChange(targetPlan);
+              }}
+            >
+              {savingAdminOverride ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              Confirm downgrade
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

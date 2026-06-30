@@ -153,11 +153,47 @@ async function main() {
 
   await run('feature flags are fetched with cache and etag instead of normal-user realtime', () => {
     const source = readRepoFile('src/components/feature-flag-provider.tsx');
+    const routeSource = readRepoFile('src/app/api/feature-flags/route.ts');
     assert.match(source, /If-None-Match/);
     assert.match(source, /res\.status === 304/);
     assert.match(source, /inflightFetchRef/);
+    assert.match(source, /currentUserIdRef/);
+    assert.match(source, /setRows\(\[\]\)/);
+    assert.match(routeSource, /status: 401/);
+    assert.match(routeSource, /Cache-Control': 'no-store'/);
     assert.equal(source.includes("channel('feature-flags-v2')"), false);
     assert.equal(source.includes("table: 'feature_flags'"), false);
+  });
+
+  await run('document realtime remains scoped to the authenticated user and cleans up channels', () => {
+    const source = readRepoFile('src/hooks/api/use-au-documents.ts');
+    assert.match(source, /channel\(`au_documents_changes:\$\{user\.id\}`\)/);
+    assert.match(source, /filter: `user_id=eq\.\$\{user\.id\}`/);
+    assert.match(source, /ownerId !== user\.id/);
+    assert.match(source, /supabase\.removeChannel\(channel\)/);
+    assert.equal(source.includes("channel('au_documents_changes')"), false);
+  });
+
+  await run('dashboard sidebar collapse is local, accessible, and does not add Supabase preference traffic', () => {
+    const source = readRepoFile('src/app/dashboard/dashboard-client-layout.tsx');
+    assert.match(source, /DASHBOARD_SIDEBAR_STORAGE_KEY/);
+    assert.match(source, /localStorage\.setItem\(DASHBOARD_SIDEBAR_STORAGE_KEY/);
+    assert.match(source, /aria-expanded=\{expanded\}/);
+    assert.match(source, /Collapse dashboard sidebar/);
+    assert.match(source, /Expand dashboard sidebar/);
+    assert.equal(source.includes('supabase.from'), false);
+  });
+
+  await run('admin plan assignment uses a server RPC and preserves billing-provider records', () => {
+    const routeSource = readRepoFile('src/app/api/admin/users/route.ts');
+    const migrationSource = readRepoFile('supabase/migrations/20260630120000_admin_plan_assignment_overrides.sql');
+    assert.match(routeSource, /action: z\.literal\('set_user_plan'\)/);
+    assert.match(routeSource, /admin_set_user_plan_override/);
+    assert.match(routeSource, /billingRecordsPreserved: true/);
+    assert.match(migrationSource, /billing_records_preserved', TRUE/);
+    assert.match(migrationSource, /DROP CONSTRAINT IF EXISTS au_user_entitlements_admin_override_owner_check/);
+    assert.equal(routeSource.includes(".from('billing_subscriptions').update"), false);
+    assert.equal(routeSource.includes(".from('billing_subscriptions').upsert"), false);
   });
 
   await run('feature output reads are deduped, cached briefly, and mapped to user-facing errors', () => {

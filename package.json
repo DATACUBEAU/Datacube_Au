@@ -36,6 +36,7 @@
     "test:au-chat-proxy-auth": "node tests/manual-au-chat-proxy-auth.mjs",
     "test:ai-endpoints-smoke": "node tests/manual-ai-endpoints-smoke.mjs",
     "test:feature-flags-smoke": "node tests/manual-feature-flags-smoke.mjs",
+    "test:feature-flags-cache": "pnpm exec tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/feature-flags-cache.unit.test.ts src/lib/feature-flags/http-cache.ts && node -e \"require('node:fs').writeFileSync('.tmp-tests/package.json', '{\\\"type\\\":\\\"commonjs\\\"}')\" && node .tmp-tests/tests/feature-flags-cache.unit.test.js",
     "repro:upload-complete": "node scripts/repro-complete-upload.mjs",
     "supabase:db:push": "supabase --workdir backend db push",
     "supabase:functions:deploy": "supabase --workdir backend functions deploy"

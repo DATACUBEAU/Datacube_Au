@@ -7,12 +7,16 @@ import {
 } from '@/lib/server/authorization';
 import {
   ACCOUNT_STATUSES,
+  ADMIN_ASSIGNABLE_PLAN_KEYS,
   USER_ROLES,
+  adminAssignablePlanLabel,
   buildAppMetadataPatch,
   filterManagedUsers,
   normalizeAccountStatus,
+  normalizeAdminAssignablePlan,
   normalizePermissions,
   normalizeUserRole,
+  resolveAdminPlanChangeType,
   roleToTier,
   type ManagedUserRecord,
   type UserRole,
@@ -25,6 +29,7 @@ import {
   normalizeAdminOverridePlan,
   type AdminOverridePlan,
 } from '@/lib/admin/protected-owner';
+import { resolveCanonicalAccountSnapshot } from '@/lib/server/account-snapshot';
 
 export const runtime = 'nodejs';
 
@@ -133,22 +138,27 @@ function jsonError(error: unknown) {
   if (error instanceof ApiError) {
     return NextResponse.json(
       { error: error.message, details: error.details ?? null },
-      { status: error.status }
+      { status: error.status, headers: { 'Cache-Control': 'no-store' } }
     );
   }
   if (error instanceof z.ZodError) {
     return NextResponse.json(
       { error: 'invalid_request', details: error.flatten() },
-      { status: 400 }
+      { status: 400, headers: { 'Cache-Control': 'no-store' } }
     );
   }
-  return NextResponse.json({ error: 'internal_server_error' }, { status: 500 });
+  return NextResponse.json({ error: 'internal_server_error' }, { status: 500, headers: { 'Cache-Control': 'no-store' } });
 }
 
 type AuthorizedActor = {
   userId: string;
   email: string | null;
   accessToken: string;
+};
+
+type AdminOverrideRow = {
+  user_id: string;
+  admin_override_plan: string | null;
 };
 
 async function requireConexAdmin(req: NextRequest): Promise<AuthorizedActor> {
@@ -282,21 +292,23 @@ async function fetchAdminOverrideMap(
   userIds: string[]
 ): Promise<Map<string, AdminOverridePlan | null>> {
   const map = new Map<string, AdminOverridePlan | null>();
-  if (userIds.length === 0 || !userIds.includes(PLATFORM_OWNER_USER_ID)) return map;
+  if (userIds.length === 0) return map;
 
-  const { data, error } = await supabaseAdmin
-    .from('au_user_entitlements')
-    .select('user_id,admin_override_plan')
-    .eq('user_id', PLATFORM_OWNER_USER_ID)
-    .maybeSingle();
+  for (let i = 0; i < userIds.length; i += 500) {
+    const chunk = userIds.slice(i, i + 500);
+    const { data, error } = await supabaseAdmin
+      .from('au_user_entitlements')
+      .select('user_id,admin_override_plan')
+      .in('user_id', chunk);
 
-  if (error) {
-    if (isSchemaDriftError(error)) return map;
-    throw new ApiError(500, 'admin_override_lookup_failed', error.message);
-  }
+    if (error) {
+      if (isSchemaDriftError(error)) return map;
+      throw new ApiError(500, 'admin_override_lookup_failed', error.message);
+    }
 
-  if (data) {
-    map.set(PLATFORM_OWNER_USER_ID, normalizeAdminOverridePlan((data as any).admin_override_plan));
+    for (const row of (data ?? []) as AdminOverrideRow[]) {
+      map.set(row.user_id, normalizeAdminOverridePlan(row.admin_override_plan));
+    }
   }
 
   return map;
@@ -482,6 +494,13 @@ const setOwnerAdminOverrideSchema = z.object({
   adminOverridePlan: z.enum(ADMIN_OVERRIDE_PLANS),
 });
 
+const setUserPlanSchema = z.object({
+  action: z.literal('set_user_plan'),
+  userId: z.string().uuid(),
+  targetPlan: z.enum(ADMIN_ASSIGNABLE_PLAN_KEYS),
+  reason: z.string().trim().max(240).optional(),
+});
+
 const actionsSchema = z.discriminatedUnion('action', [
   createUserSchema,
   updateUserSchema,
@@ -491,6 +510,7 @@ const actionsSchema = z.discriminatedUnion('action', [
   bulkDeleteSchema,
   activitySchema,
   setOwnerAdminOverrideSchema,
+  setUserPlanSchema,
 ]);
 
 async function listManagedUsers(req: NextRequest) {
@@ -787,6 +807,83 @@ async function handleSetOwnerAdminOverridePlan(
   );
 }
 
+async function handleSetUserPlan(
+  payload: z.infer<typeof setUserPlanSchema>,
+  supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
+  actor: AuthorizedActor,
+) {
+  const targetPlan = normalizeAdminAssignablePlan(payload.targetPlan);
+  if (!targetPlan) {
+    throw new ApiError(400, 'invalid_target_plan', 'Choose Free, Pro, or Premium.');
+  }
+
+  const userRes = await supabaseAdmin.auth.admin.getUserById(payload.userId);
+  if (userRes.error || !userRes.data.user) {
+    throw new ApiError(404, 'user_not_found', userRes.error?.message ?? 'User not found.');
+  }
+
+  const previousSnapshot = await resolveCanonicalAccountSnapshot(supabaseAdmin, payload.userId);
+  const previousPlan = normalizeAdminAssignablePlan(
+    previousSnapshot.entitlements.adminOverridePlan ||
+    previousSnapshot.effectivePlan.plan ||
+    previousSnapshot.currentPlan.activePlanKey ||
+    previousSnapshot.plan,
+  ) ?? 'free';
+  const changeType = resolveAdminPlanChangeType({ previousPlan, targetPlan });
+  const requestId = crypto.randomUUID();
+
+  const rpcArgs = {
+    p_actor_user_id: actor.userId,
+    p_actor_email: actor.email,
+    p_target_user_id: payload.userId,
+    p_target_plan: targetPlan,
+    p_previous_effective_plan: previousSnapshot.effectivePlan.plan,
+    p_change_type: changeType,
+    p_reason: payload.reason || 'admin_plan_assignment',
+    p_request_id: requestId,
+  };
+
+  const rpcRes = await supabaseAdmin.rpc('admin_set_user_plan_override', rpcArgs);
+
+  if (rpcRes.error) {
+    if (isSchemaDriftError(rpcRes.error) || String(rpcRes.error.message || '').includes('admin_set_user_plan_override')) {
+      throw new ApiError(
+        503,
+        'admin_plan_assignment_migration_required',
+        'Run the admin plan assignment migration before changing user plans.',
+      );
+    }
+    throw new ApiError(500, 'admin_plan_assignment_failed', rpcRes.error.message);
+  }
+
+  const nextSnapshot = await resolveCanonicalAccountSnapshot(supabaseAdmin, payload.userId);
+
+  return NextResponse.json(
+    {
+      ok: true,
+      requestId,
+      userId: payload.userId,
+      previousPlan,
+      targetPlan,
+      targetPlanLabel: adminAssignablePlanLabel(targetPlan),
+      changeType,
+      effectivePlan: nextSnapshot.effectivePlan.plan,
+      entitlements: {
+        plan: nextSnapshot.entitlements.plan,
+        source: nextSnapshot.entitlements.source,
+        entitlementSource: nextSnapshot.entitlements.entitlementSource,
+        adminOverridePlan: nextSnapshot.entitlements.adminOverridePlan,
+      },
+      billingRecordsPreserved: true,
+      cacheInvalidation: {
+        userId: payload.userId,
+        scope: 'single-user',
+      },
+    },
+    { headers: { 'Cache-Control': 'no-store' } },
+  );
+}
+
 async function handleResetPassword(userId: string, supabaseAdmin: ReturnType<typeof createServiceRoleClient>) {
   const userRes = await supabaseAdmin.auth.admin.getUserById(userId);
   if (userRes.error || !userRes.data.user) {
@@ -888,6 +985,10 @@ export async function POST(req: NextRequest) {
 
     if (payload.action === 'set_owner_admin_override_plan') {
       return await handleSetOwnerAdminOverridePlan(payload, supabaseAdmin, actor);
+    }
+
+    if (payload.action === 'set_user_plan') {
+      return await handleSetUserPlan(payload, supabaseAdmin, actor);
     }
 
     if (payload.action === 'create_user') {

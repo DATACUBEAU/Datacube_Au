@@ -34,7 +34,7 @@ export type AccountEntitlementsSnapshot = {
   promoEndsAtUtc: string | null;
   promoEndsAtLagos: string | null;
   retentionDays: number;
-  adminOverridePlan: 'free' | 'pro_weekly' | 'pro_monthly' | null;
+  adminOverridePlan: 'free' | 'pro_weekly' | 'pro_monthly' | 'premium' | null;
   asOf: string | null;
   source: string;
 };
@@ -101,7 +101,7 @@ export const ACCOUNT_SNAPSHOT_ROUTE = '/account/effective';
 export const ACCOUNT_SNAPSHOT_LEGACY_ROUTE = '/account/snapshot';
 export const ACCOUNT_SNAPSHOT_SOURCE = 'account-snapshot';
 export const ACCOUNT_SNAPSHOT_CACHE_SCHEMA = 1;
-export const ACCOUNT_SNAPSHOT_CACHE_TTL_MS = 1000 * 60 * 30;
+export const ACCOUNT_SNAPSHOT_CACHE_TTL_MS = 1000 * 60 * 10;
 
 const ACCOUNT_SNAPSHOT_STORAGE_PREFIX = 'dcau:account-snapshot';
 
@@ -225,7 +225,7 @@ function normalizeEntitlements(
     retentionDays: Math.max(1, Math.floor(asNumber(row.retentionDays, FREE_PLAN_EXPIRATION_DAYS))),
     adminOverridePlan: (() => {
       const raw = asString(row.adminOverridePlan);
-      return raw === 'free' || raw === 'pro_weekly' || raw === 'pro_monthly' ? raw : null;
+      return raw === 'free' || raw === 'pro_weekly' || raw === 'pro_monthly' || raw === 'premium' ? raw : null;
     })(),
     asOf: asString(row.asOf),
     source: asString(row.source) || 'api',

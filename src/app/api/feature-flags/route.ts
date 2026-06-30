@@ -1,18 +1,20 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { createHash } from 'node:crypto';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import {
+  buildFeatureFlagsEtag,
+  ifNoneMatchIncludesEtag,
+  type FeatureFlagEtagRow,
+} from '@/lib/feature-flags/http-cache';
+import {
   createSupabaseRlsClient,
-  getSupabaseAnonKey,
-  getSupabaseUrl,
 } from '@/lib/server/supabase-admin';
 
 export const runtime = 'nodejs';
 
 type FeatureFlagScope = 'global' | 'org' | 'user';
 
-type FeatureFlagApiRow = {
+type FeatureFlagApiRow = FeatureFlagEtagRow & {
   key: string;
   enabled: boolean;
   category: string;
@@ -115,29 +117,8 @@ async function loadFeatureFlagRows(supabase: SupabaseClient) {
     .filter((row): row is FeatureFlagApiRow => row !== null);
 }
 
-function buildFeatureFlagsEtag(rows: FeatureFlagApiRow[]): string {
-  const stableRows = rows
-    .map((row) => ({
-      key: row.key,
-      enabled: row.enabled,
-      category: row.category,
-      description: row.description,
-      scope: row.scope,
-      config: row.config,
-      updated_at: row.updated_at,
-    }))
-    .sort((a, b) => a.key.localeCompare(b.key));
-  const hash = createHash('sha256').update(JSON.stringify(stableRows)).digest('base64url');
-  return `"feature-flags:${hash}"`;
-}
-
 function etagMatches(req: NextRequest, etag: string): boolean {
-  const header = req.headers.get('if-none-match');
-  if (!header) return false;
-  return header
-    .split(',')
-    .map((entry) => entry.trim())
-    .some((entry) => entry === etag || entry === '*');
+  return ifNoneMatchIncludesEtag(req.headers.get('if-none-match'), etag);
 }
 
 export async function GET(req: NextRequest) {
@@ -145,15 +126,22 @@ export async function GET(req: NextRequest) {
 
   try {
     const auth = await requireUserFromRequest(req);
-    const supabase = auth.ok
-      ? createSupabaseRlsClient(auth.accessToken)
-      : createClient(getSupabaseUrl(), getSupabaseAnonKey(), {
-          auth: {
-            persistSession: false,
-            autoRefreshToken: false,
-            detectSessionInUrl: false,
-          },
-        });
+    if (!auth.ok) {
+      return NextResponse.json(
+        {
+          code: 'unauthorized',
+          message: 'Sign in required.',
+          requestId,
+          details: { reason: auth.reason },
+        },
+        {
+          status: 401,
+          headers: { 'Cache-Control': 'no-store' },
+        },
+      );
+    }
+
+    const supabase = createSupabaseRlsClient(auth.accessToken);
 
     const rows = await loadFeatureFlagRows(supabase);
     const etag = buildFeatureFlagsEtag(rows);

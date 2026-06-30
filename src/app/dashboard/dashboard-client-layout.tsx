@@ -18,6 +18,8 @@ import {
   Bell,
   Inbox,
   Lock,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 import {
   Dialog,
@@ -48,6 +50,7 @@ import {
   SidebarProvider,
   SidebarFooter,
   SidebarTrigger,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import { Icons } from '@/components/icons';
 import { usePathname, useRouter } from 'next/navigation';
@@ -92,6 +95,8 @@ const LOCKED_ITEM_TOOLTIPS: Record<string, string> = {
   practice_exam_generation: 'Generate and mark custom practice papers.',
 };
 
+const DASHBOARD_SIDEBAR_STORAGE_KEY = 'dcau:dashboard-sidebar-expanded';
+
 type NavItem = {
   href: string;
   label: string;
@@ -134,6 +139,7 @@ const SidebarNavMenu = ({
           return (
             <SidebarMenuItem key={item.href}>
               <SidebarMenuButton
+                asChild
                 tooltip={{
                   children: item.tooltip || `Upgrade to Pro to unlock ${item.label}`,
                 }}
@@ -142,15 +148,19 @@ const SidebarNavMenu = ({
                 onClick={() => onLockedClick(item)}
                 className="opacity-70 hover:opacity-100 transition-opacity cursor-pointer"
               >
-                <button className="flex items-center gap-2 w-full h-full" type="button">
+                <button
+                  className="flex h-full w-full items-center gap-2"
+                  type="button"
+                  aria-label={`${item.label}. ${item.tooltip || 'Upgrade to Pro to unlock this feature.'}`}
+                >
                   {/* Pulsing icon — draws the eye subtly */}
                   <span className="locked-icon-pulse">
                     {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
                   </span>
-                  <span className="flex-1 text-left">{item.label}</span>
+                  <span className="flex-1 text-left group-data-[collapsible=icon]:sr-only">{item.label}</span>
                   {/* Shimmer badge */}
                   <span
-                    className="pro-badge-shimmer ml-auto flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-semibold text-primary"
+                    className="pro-badge-shimmer ml-auto flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[10px] font-semibold text-primary group-data-[collapsible=icon]:hidden"
                     aria-label="Pro feature — upgrade required"
                   >
                     <Lock className="h-2.5 w-2.5" />
@@ -165,18 +175,18 @@ const SidebarNavMenu = ({
         return (
           <SidebarMenuItem key={item.href}>
             <SidebarMenuButton
-              asChild={!item.onClick}
+              asChild
               isActive={pathname === item.href}
               tooltip={{ children: item.label }}
               data-tour={item.tourId}
               onClick={item.onClick}
             >
               {item.onClick ? (
-                <button className="flex items-center gap-2 w-full h-full">
+                <button className="flex h-full w-full items-center gap-2" type="button" aria-label={item.label}>
                   {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
-                  <span>{item.label}</span>
+                  <span className="group-data-[collapsible=icon]:sr-only">{item.label}</span>
                   {item.badge ? (
-                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground group-data-[collapsible=icon]:hidden">
                       {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
                     </span>
                   ) : null}
@@ -184,9 +194,9 @@ const SidebarNavMenu = ({
               ) : (
                 <Link href={item.href} prefetch={item.prefetch === true} className="flex items-center gap-2 w-full h-full">
                   {item.isLoading ? <Loader2 className="animate-spin" /> : <item.icon />}
-                  <span className="flex-1">{item.label}</span>
+                  <span className="flex-1 group-data-[collapsible=icon]:sr-only">{item.label}</span>
                   {item.badge ? (
-                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
+                    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground group-data-[collapsible=icon]:hidden">
                       {typeof item.badge === 'number' && item.badge > 9 ? '9+' : item.badge}
                     </span>
                   ) : null}
@@ -229,7 +239,7 @@ const SidebarFooterMenu = ({
       <SidebarMenuItem>
         <SidebarMenuButton tooltip={{ children: 'User Guide & Install' }} onClick={onOpenGuide}>
           <BookOpen />
-          <span>User Guide</span>
+          <span className="group-data-[collapsible=icon]:sr-only">User Guide</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
       {footerItems.map((item) => (
@@ -238,19 +248,19 @@ const SidebarFooterMenu = ({
             <SidebarMenuButton asChild>
               <Link href={item.href} prefetch={false}>
                 <item.icon />
-                <span>{item.label}</span>
+                <span className="group-data-[collapsible=icon]:sr-only">{item.label}</span>
               </Link>
             </SidebarMenuButton>
           ) : (
-            <SidebarMenuButton onClick={item.onClick}>
+            <SidebarMenuButton onClick={item.onClick} aria-label={item.label}>
               <item.icon />
-              <span>{item.label}</span>
+              <span className="group-data-[collapsible=icon]:sr-only">{item.label}</span>
             </SidebarMenuButton>
           )}
         </SidebarMenuItem>
       ))}
 
-      <SidebarMenuItem>
+      <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
         <div className="rounded-md border border-sidebar-border bg-sidebar-accent/35 px-3 py-2">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-sidebar-foreground/60">
             Plan Status
@@ -271,7 +281,7 @@ const SidebarFooterMenu = ({
 
       <Separator className="my-2 bg-sidebar-border" />
 
-      <SidebarMenuItem>
+      <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
         <div className="rounded-md border border-sidebar-border/80 bg-sidebar-accent/20 px-3 py-2 text-[10px] leading-relaxed text-sidebar-foreground/70">
           <p className="font-semibold text-sidebar-foreground">Datacube AU</p>
           <p>Built by Zahed Investment Ltd</p>
@@ -283,7 +293,7 @@ const SidebarFooterMenu = ({
         <SidebarMenuItem>
           <SidebarMenuButton className="pointer-events-none text-yellow-500 bg-yellow-500/10" tooltip={{ children: 'You are currently offline.' }}>
             <WifiOff className="text-yellow-500" />
-            <span>Offline</span>
+            <span className="group-data-[collapsible=icon]:sr-only">Offline</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       )}
@@ -296,7 +306,7 @@ const SidebarFooterMenu = ({
               <AvatarImage src={''} alt="User Avatar" />
               <AvatarFallback>{userInitial}</AvatarFallback>
             </Avatar>
-            <div className="flex flex-col">
+            <div className="flex min-w-0 flex-col group-data-[collapsible=icon]:sr-only">
               <span className="font-semibold">{userDisplayName}</span>
               <span className="text-xs text-sidebar-foreground/70">{userEmail}</span>
             </div>
@@ -308,14 +318,60 @@ const SidebarFooterMenu = ({
 );
 
 export default function DashboardClientLayout({ children }: { children: React.ReactNode }) {
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarPreferenceReady, setSidebarPreferenceReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(DASHBOARD_SIDEBAR_STORAGE_KEY);
+      if (stored === 'false') setSidebarOpen(false);
+      if (stored === 'true') setSidebarOpen(true);
+    } catch {
+      // Local preference is optional.
+    } finally {
+      setSidebarPreferenceReady(true);
+    }
+  }, []);
+
+  const handleSidebarOpenChange = useCallback((open: boolean) => {
+    setSidebarOpen(open);
+    if (!sidebarPreferenceReady) return;
+    try {
+      window.localStorage.setItem(DASHBOARD_SIDEBAR_STORAGE_KEY, String(open));
+    } catch {
+      // Ignore localStorage failures; the sidebar still works for this session.
+    }
+  }, [sidebarPreferenceReady]);
+
   return (
     <AuChatProvider>
       <ChatRuntimeProvider>
-        <SidebarProvider>
+        <SidebarProvider open={sidebarOpen} onOpenChange={handleSidebarOpenChange}>
           <DashboardContent>{children}</DashboardContent>
         </SidebarProvider>
       </ChatRuntimeProvider>
     </AuChatProvider>
+  );
+}
+
+function DashboardSidebarToggle() {
+  const { state, toggleSidebar, isMobile } = useSidebar();
+  if (isMobile) return null;
+
+  const expanded = state === 'expanded';
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="ml-auto h-8 w-8 shrink-0"
+      aria-label={expanded ? 'Collapse dashboard sidebar' : 'Expand dashboard sidebar'}
+      aria-expanded={expanded}
+      title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
+      onClick={toggleSidebar}
+    >
+      {expanded ? <PanelLeftClose className="h-4 w-4" /> : <PanelLeftOpen className="h-4 w-4" />}
+    </Button>
   );
 }
 
@@ -858,12 +914,17 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         <div className="flex min-h-dvh w-full bg-transparent">
           <Sidebar collapsible="icon" side="left" variant="sidebar" className="group-data-[variant=sidebar]:border-r">
             <SidebarHeader className="flex h-14 items-center gap-2 border-b p-2">
-              <Link href="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+              <Link
+                href="/"
+                className="flex min-w-0 flex-1 items-center gap-2 group-data-[collapsible=icon]:justify-center"
+                aria-label="DataCube AU home"
+              >
                 <Icons.logo className="size-7 shrink-0 text-primary" />
                 <span className="font-headline text-lg font-semibold group-data-[collapsible=icon]:hidden">
                   DataCube AU
                 </span>
               </Link>
+              <DashboardSidebarToggle />
             </SidebarHeader>
 
             <SidebarNavMenu navItems={navItems} pathname={pathname} isProUnlocked={isProUnlocked} onLockedClick={handleLockedNavClick} />

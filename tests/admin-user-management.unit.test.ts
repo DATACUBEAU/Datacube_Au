@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import {
   buildAppMetadataPatch,
   filterManagedUsers,
+  normalizeAdminAssignablePlan,
   normalizeAccountStatus,
   normalizePermissions,
   normalizeUserRole,
+  resolveAdminPlanChangeType,
   roleToTier,
   validateBulkUserIds,
   type ManagedUserRecord,
@@ -120,5 +122,22 @@ run('bulk user id validation rejects invalid payloads', () => {
   assert.throws(() => validateBulkUserIds(['not-a-uuid']), /Invalid user ID/);
 });
 
-if (failed > 0) process.exit(1);
+run('admin plan assignment normalizes exact supported targets', () => {
+  assert.equal(normalizeAdminAssignablePlan('free'), 'free');
+  assert.equal(normalizeAdminAssignablePlan('pro'), 'pro_monthly');
+  assert.equal(normalizeAdminAssignablePlan('pro_monthly'), 'pro_monthly');
+  assert.equal(normalizeAdminAssignablePlan('premium'), 'premium');
+  assert.equal(normalizeAdminAssignablePlan('enterprise'), null);
+});
 
+run('admin plan assignment classifies every supported transition', () => {
+  assert.equal(resolveAdminPlanChangeType({ previousPlan: 'free', targetPlan: 'pro_monthly' }), 'upgrade');
+  assert.equal(resolveAdminPlanChangeType({ previousPlan: 'free', targetPlan: 'premium' }), 'upgrade');
+  assert.equal(resolveAdminPlanChangeType({ previousPlan: 'pro_monthly', targetPlan: 'premium' }), 'upgrade');
+  assert.equal(resolveAdminPlanChangeType({ previousPlan: 'premium', targetPlan: 'pro_monthly' }), 'downgrade');
+  assert.equal(resolveAdminPlanChangeType({ previousPlan: 'premium', targetPlan: 'free' }), 'downgrade');
+  assert.equal(resolveAdminPlanChangeType({ previousPlan: 'pro_monthly', targetPlan: 'free' }), 'downgrade');
+  assert.equal(resolveAdminPlanChangeType({ previousPlan: 'premium', targetPlan: 'premium' }), 'reassignment');
+});
+
+if (failed > 0) process.exit(1);
