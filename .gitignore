@@ -34,6 +34,7 @@ yarn-error.log*
 .cache/
 .turbo/
 .trae/
+.trae-*
 
 # Large Archives/Media
 *.zip
