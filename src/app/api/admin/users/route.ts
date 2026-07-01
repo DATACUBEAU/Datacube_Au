@@ -501,6 +501,13 @@ const setUserPlanSchema = z.object({
   reason: z.string().trim().max(240).optional(),
 });
 
+const setOwnerSelfPlanSchema = z.object({
+  action: z.literal('set_owner_self_plan'),
+  targetUserId: z.string().uuid().optional(),
+  targetPlan: z.enum(ADMIN_ASSIGNABLE_PLAN_KEYS),
+  reason: z.string().trim().max(240).optional(),
+});
+
 const actionsSchema = z.discriminatedUnion('action', [
   createUserSchema,
   updateUserSchema,
@@ -511,6 +518,7 @@ const actionsSchema = z.discriminatedUnion('action', [
   activitySchema,
   setOwnerAdminOverrideSchema,
   setUserPlanSchema,
+  setOwnerSelfPlanSchema,
 ]);
 
 async function listManagedUsers(req: NextRequest) {
@@ -884,6 +892,32 @@ async function handleSetUserPlan(
   );
 }
 
+async function handleSetOwnerSelfPlan(
+  payload: z.infer<typeof setOwnerSelfPlanSchema>,
+  supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
+  actor: AuthorizedActor,
+) {
+  if (!isProtectedOwnerUserId(actor.userId)) {
+    throw new ApiError(403, 'protected_owner_only', 'Only the protected owner can change this plan override.');
+  }
+
+  const targetUserId = payload.targetUserId || actor.userId;
+  if (targetUserId !== actor.userId || !isProtectedOwnerUserId(targetUserId)) {
+    throw new ApiError(403, 'owner_self_plan_only', 'The protected owner plan control can only target the owner account.');
+  }
+
+  return handleSetUserPlan(
+    {
+      action: 'set_user_plan',
+      userId: actor.userId,
+      targetPlan: payload.targetPlan,
+      reason: payload.reason || 'owner_subscription_settings',
+    },
+    supabaseAdmin,
+    actor,
+  );
+}
+
 async function handleResetPassword(userId: string, supabaseAdmin: ReturnType<typeof createServiceRoleClient>) {
   const userRes = await supabaseAdmin.auth.admin.getUserById(userId);
   if (userRes.error || !userRes.data.user) {
@@ -989,6 +1023,10 @@ export async function POST(req: NextRequest) {
 
     if (payload.action === 'set_user_plan') {
       return await handleSetUserPlan(payload, supabaseAdmin, actor);
+    }
+
+    if (payload.action === 'set_owner_self_plan') {
+      return await handleSetOwnerSelfPlan(payload, supabaseAdmin, actor);
     }
 
     if (payload.action === 'create_user') {

@@ -1,3 +1,5 @@
+import { getProtectedOwnerUserId, isProtectedOwnerUserId } from './admin/protected-owner';
+
 export const CONEX_ROOT_ADMIN_EMAIL = String(
   process.env.NEXT_PUBLIC_CONEX_ROOT_ADMIN_EMAIL ?? process.env.CONEX_ROOT_ADMIN_EMAIL ?? ''
 )
@@ -8,7 +10,7 @@ export const CONEX_ROOT_ADMIN_EMAIL_FALLBACK = String(
 )
   .trim()
   .toLowerCase();
-export const CONEX_ROOT_ADMIN_USER_ID = '05ad2f16-b3ce-48eb-bf24-41b407556ffd';
+export const CONEX_ROOT_ADMIN_USER_ID = getProtectedOwnerUserId();
 
 export type ConexTier = 'admin' | 'free';
 
@@ -29,7 +31,7 @@ export function isRootConexAdmin(userId: string, email?: string | null): boolean
   const normalizedEmail = String(email ?? '').trim().toLowerCase();
   const emailMatch =
     normalizedEmail === CONEX_ROOT_ADMIN_EMAIL || normalizedEmail === CONEX_ROOT_ADMIN_EMAIL_FALLBACK;
-  const idMatch = userId === CONEX_ROOT_ADMIN_USER_ID;
+  const idMatch = isProtectedOwnerUserId(userId);
 
   // Allow either verified root email or known root user_id.
   // This prevents lockout when auth provider/user migration changes one side.

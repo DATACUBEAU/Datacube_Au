@@ -1,5 +1,13 @@
 export const PLATFORM_OWNER_USER_ID = '05ad2f16-b3ce-48eb-bf24-41b407556ffd';
 
+export function getProtectedOwnerUserId(): string {
+  const configured =
+    typeof process !== 'undefined'
+      ? process.env?.DATACUBE_OWNER_ADMIN_USER_ID
+      : null;
+  return String(configured || PLATFORM_OWNER_USER_ID).trim().toLowerCase();
+}
+
 export const ADMIN_OVERRIDE_PLANS = ['free', 'pro_weekly', 'pro_monthly', 'premium'] as const;
 
 export type AdminOverridePlan = (typeof ADMIN_OVERRIDE_PLANS)[number];
@@ -7,7 +15,7 @@ export type AdminOverridePlan = (typeof ADMIN_OVERRIDE_PLANS)[number];
 const ADMIN_OVERRIDE_PLAN_SET = new Set<string>(ADMIN_OVERRIDE_PLANS);
 
 export function isProtectedOwnerUserId(userId: unknown): boolean {
-  return String(userId || '').trim().toLowerCase() === PLATFORM_OWNER_USER_ID;
+  return String(userId || '').trim().toLowerCase() === getProtectedOwnerUserId();
 }
 
 export function normalizeAdminOverridePlan(value: unknown): AdminOverridePlan | null {

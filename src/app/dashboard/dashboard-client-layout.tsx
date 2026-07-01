@@ -364,7 +364,7 @@ function DashboardSidebarToggle() {
       type="button"
       variant="ghost"
       size="icon"
-      className="ml-auto h-8 w-8 shrink-0"
+      className="h-9 w-9 shrink-0 rounded-md"
       aria-label={expanded ? 'Collapse dashboard sidebar' : 'Expand dashboard sidebar'}
       aria-expanded={expanded}
       title={expanded ? 'Collapse sidebar' : 'Expand sidebar'}
@@ -913,18 +913,20 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
         <div className="flex min-h-dvh w-full bg-transparent">
           <Sidebar collapsible="icon" side="left" variant="sidebar" className="group-data-[variant=sidebar]:border-r">
-            <SidebarHeader className="flex h-14 items-center gap-2 border-b p-2">
-              <Link
-                href="/"
-                className="flex min-w-0 flex-1 items-center gap-2 group-data-[collapsible=icon]:justify-center"
-                aria-label="DataCube AU home"
-              >
-                <Icons.logo className="size-7 shrink-0 text-primary" />
-                <span className="font-headline text-lg font-semibold group-data-[collapsible=icon]:hidden">
-                  DataCube AU
-                </span>
-              </Link>
-              <DashboardSidebarToggle />
+            <SidebarHeader className="border-b p-1.5 group-data-[collapsible=icon]:px-1.5">
+              <div className="flex min-h-11 w-full items-center gap-2 group-data-[collapsible=icon]:min-h-[5rem] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-2">
+                <Link
+                  href="/"
+                  className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 group-data-[collapsible=icon]:h-9 group-data-[collapsible=icon]:w-9 group-data-[collapsible=icon]:flex-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+                  aria-label="DataCube AU home"
+                >
+                  <Icons.logo className="size-7 shrink-0 text-primary" />
+                  <span className="truncate font-headline text-lg font-semibold group-data-[collapsible=icon]:hidden">
+                    DataCube AU
+                  </span>
+                </Link>
+                <DashboardSidebarToggle />
+              </div>
             </SidebarHeader>
 
             <SidebarNavMenu navItems={navItems} pathname={pathname} isProUnlocked={isProUnlocked} onLockedClick={handleLockedNavClick} />

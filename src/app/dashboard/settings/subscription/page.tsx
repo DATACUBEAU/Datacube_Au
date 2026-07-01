@@ -10,6 +10,16 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -29,11 +39,12 @@ import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { BillingPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useLimits } from '@/components/providers/limits-provider';
 import { useFeatureFlags } from '@/components/feature-flag-provider';
-import { useAccountSnapshot } from '@/components/providers/account-snapshot-provider';
+import { dispatchAccountSnapshotInvalidated, useAccountSnapshot } from '@/components/providers/account-snapshot-provider';
 import type {
   AccountPlanSnapshot,
   PersistedCanonicalAccountSnapshot,
 } from '@/lib/account/account-snapshot-cache';
+import { PLATFORM_OWNER_USER_ID } from '@/lib/admin/protected-owner';
 import {
   buildPromoCopy,
   formatPromoEndsAtLabel,
@@ -72,6 +83,68 @@ const BILLING_ROUTE = '/dashboard/settings/subscription';
 const BILLING_STATUS_SOURCE = 'billing-status';
 const BILLING_CACHE_SCHEMA = 1;
 const BILLING_CACHE_TTL_MS = 1000 * 60 * 30;
+
+type OwnerPlanKey = 'free' | 'premium' | 'pro_monthly';
+type OwnerPlanChangeType = 'upgrade' | 'downgrade' | 'reassignment';
+
+const OWNER_PLAN_OPTIONS: Array<{
+  key: OwnerPlanKey;
+  label: string;
+  impact: string;
+}> = [
+  {
+    key: 'free',
+    label: 'Free',
+    impact: 'Free-plan features and limits apply to future actions.',
+  },
+  {
+    key: 'premium',
+    label: 'Premium',
+    impact: 'Premium application access and limits apply immediately.',
+  },
+  {
+    key: 'pro_monthly',
+    label: 'Pro',
+    impact: 'Pro application access and limits apply immediately.',
+  },
+];
+
+function normalizeOwnerPlanKey(value: unknown): OwnerPlanKey {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'premium') return 'premium';
+  if (
+    normalized === 'pro' ||
+    normalized === 'admin' ||
+    normalized === 'monthly' ||
+    normalized === 'weekly' ||
+    normalized === 'pro_monthly' ||
+    normalized === 'pro_weekly'
+  ) {
+    return 'pro_monthly';
+  }
+  return 'free';
+}
+
+function ownerPlanLabel(value: unknown): string {
+  const normalized = normalizeOwnerPlanKey(value);
+  if (normalized === 'premium') return 'Premium';
+  if (normalized === 'pro_monthly') return 'Pro';
+  return 'Free';
+}
+
+function ownerPlanRank(value: unknown): number {
+  const normalized = normalizeOwnerPlanKey(value);
+  if (normalized === 'premium') return 2;
+  if (normalized === 'pro_monthly') return 1;
+  return 0;
+}
+
+function resolveOwnerPlanChangeType(previousPlan: unknown, targetPlan: unknown): OwnerPlanChangeType {
+  const previous = normalizeOwnerPlanKey(previousPlan);
+  const target = normalizeOwnerPlanKey(targetPlan);
+  if (previous === target) return 'reassignment';
+  return ownerPlanRank(target) > ownerPlanRank(previous) ? 'upgrade' : 'downgrade';
+}
 
 function makeBillingIdempotencyKey(prefix: string, seed?: string): string {
   const rawSeed =
@@ -237,6 +310,11 @@ export default function SubscriptionPage() {
   const [usageError, setUsageError] = useState<string | null>(null);
   const [planCatalog, setPlanCatalog] = useState<PlanCatalogEntry[]>([]);
   const [planSnapshot, setPlanSnapshot] = useState<BillingPageSnapshotSeed['planSnapshot']>(initialSnapshotSeed.planSnapshot);
+  const [ownerPlanTarget, setOwnerPlanTarget] = useState<OwnerPlanKey>('free');
+  const [ownerPlanSaving, setOwnerPlanSaving] = useState(false);
+  const [ownerPlanStatus, setOwnerPlanStatus] = useState<string | null>(null);
+  const [ownerPlanError, setOwnerPlanError] = useState<string | null>(null);
+  const [pendingOwnerDowngrade, setPendingOwnerDowngrade] = useState<OwnerPlanKey | null>(null);
   const billingRequestTokenRef = useRef<string | null>(null);
   const statusRequestIdRef = useRef(0);
   const latestAppliedStatusIssuedAtRef = useRef<string | null>(null);
@@ -264,6 +342,33 @@ export default function SubscriptionPage() {
   const isPromoUnlocked = promoActive;
   const hasPaidProAccess = currentPlan.managedPlan === 'pro' && currentPlan.hasPaidEntitlement;
   const hasPremiumAccess = currentPlan.managedPlan === 'premium' && currentPlan.hasPaidEntitlement;
+  const isProtectedOwner = user?.id === PLATFORM_OWNER_USER_ID;
+  const ownerBillingPlanLabel = subscription?.plan_key ? ownerPlanLabel(subscription.plan_key) : 'No active billing plan';
+  const ownerAdminOverrideLabel = accountSnapshot?.entitlements.adminOverridePlan
+    ? ownerPlanLabel(accountSnapshot.entitlements.adminOverridePlan)
+    : 'None';
+  const ownerEffectivePlanKey = useMemo(
+    () => normalizeOwnerPlanKey(
+      accountSnapshot?.entitlements.adminOverridePlan ||
+        accountSnapshot?.effectivePlan.plan ||
+        accountSnapshot?.currentPlan.activePlanKey ||
+        currentPlan.activePlanKey ||
+        currentPlan.managedPlan ||
+        tier,
+    ),
+    [
+      accountSnapshot?.currentPlan.activePlanKey,
+      accountSnapshot?.effectivePlan.plan,
+      accountSnapshot?.entitlements.adminOverridePlan,
+      currentPlan.activePlanKey,
+      currentPlan.managedPlan,
+      tier,
+    ],
+  );
+  const ownerPlanChangeType = useMemo(
+    () => resolveOwnerPlanChangeType(ownerEffectivePlanKey, ownerPlanTarget),
+    [ownerEffectivePlanKey, ownerPlanTarget],
+  );
   const promoContent = useMemo(
     () => normalizePromoContentConfig(featureFlagRecords.promo_content?.config || {}),
     [featureFlagRecords],
@@ -682,6 +787,114 @@ export default function SubscriptionPage() {
       session?.access_token,
       user?.id,
       writeCachedBillingStatus,
+  ]);
+
+  useEffect(() => {
+      if (!isProtectedOwner || ownerPlanSaving) return;
+      setOwnerPlanTarget(ownerEffectivePlanKey);
+  }, [isProtectedOwner, ownerEffectivePlanKey, ownerPlanSaving]);
+
+  const applyOwnerPlan = useCallback(async (
+      targetPlan: OwnerPlanKey,
+      options?: { confirmedDowngrade?: boolean },
+  ) => {
+      if (!isProtectedOwner || !user?.id) {
+          return;
+      }
+      if (!canPerformNetworkMutations) {
+          toast({
+              variant: 'destructive',
+              title: isDegraded ? 'Connection unstable' : 'Offline',
+              description: isDegraded
+                  ? 'Wait for the connection to stabilize before changing the owner plan.'
+                  : 'Connect to the internet before changing the owner plan.',
+          });
+          return;
+      }
+      if (!session?.access_token) {
+          toast({ variant: 'destructive', title: 'Sign in required', description: 'Sign in to change the owner plan.' });
+          return;
+      }
+
+      const changeType = resolveOwnerPlanChangeType(ownerEffectivePlanKey, targetPlan);
+      if (changeType === 'downgrade' && options?.confirmedDowngrade !== true) {
+          setPendingOwnerDowngrade(targetPlan);
+          return;
+      }
+
+      setOwnerPlanSaving(true);
+      setOwnerPlanStatus(null);
+      setOwnerPlanError(null);
+
+      try {
+          const res = await safeFetch('/api/admin/users', {
+              method: 'POST',
+              headers: {
+                  Authorization: `Bearer ${session.access_token}`,
+                  'Content-Type': 'application/json',
+              },
+              credentials: 'include',
+              timeout: 15000,
+              silent: true,
+              body: JSON.stringify({
+                  action: 'set_owner_self_plan',
+                  targetUserId: user.id,
+                  targetPlan,
+                  reason: 'owner_subscription_settings',
+              }),
+          });
+          const raw = await res.text();
+          let parsed: Record<string, unknown> = {};
+          try {
+              const json = raw ? JSON.parse(raw) : {};
+              parsed = json && typeof json === 'object' && !Array.isArray(json)
+                  ? (json as Record<string, unknown>)
+                  : { message: String(json) };
+          } catch {
+              parsed = { message: raw };
+          }
+
+          if (!res.ok) {
+              const message = String(parsed.message || parsed.error || `Plan update failed (${res.status})`);
+              throw new Error(message);
+          }
+
+          dispatchAccountSnapshotInvalidated({ userId: user.id, reason: 'owner-plan-switch' });
+          await Promise.allSettled([
+              refreshAccountSnapshot(),
+              refreshUsage(),
+              fetchBillingStatus(),
+          ]);
+          router.refresh();
+
+          const nextPlanLabel = ownerPlanLabel(parsed.effectivePlan || targetPlan);
+          const responseChangeType = String(parsed.changeType || changeType);
+          setOwnerPlanTarget(normalizeOwnerPlanKey(parsed.effectivePlan || targetPlan));
+          setOwnerPlanStatus(`${nextPlanLabel} is now the owner effective application plan.`);
+          toast({
+              title: responseChangeType === 'reassignment' ? 'Owner plan refreshed' : 'Owner plan updated',
+              description: `${nextPlanLabel} limits now apply to future actions. Billing records were not changed.`,
+          });
+      } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to change the owner plan.';
+          setOwnerPlanError(message);
+          toast({ variant: 'destructive', title: 'Owner plan update failed', description: message });
+      } finally {
+          setOwnerPlanSaving(false);
+          setPendingOwnerDowngrade(null);
+      }
+  }, [
+      canPerformNetworkMutations,
+      fetchBillingStatus,
+      isDegraded,
+      isProtectedOwner,
+      ownerEffectivePlanKey,
+      refreshAccountSnapshot,
+      refreshUsage,
+      router,
+      session?.access_token,
+      toast,
+      user?.id,
   ]);
 
   const resolvePlanCardKey = useCallback((planType: 'weekly' | 'monthly'): SubscriptionCardKey => {
@@ -1528,6 +1741,106 @@ export default function SubscriptionPage() {
 
   const isAutoRenewActive = subscription?.status === 'active' && subscription?.cancel_at_period_end !== true;
   const canResumeAutoRenew = subscription?.cancel_at_period_end === true || subscription?.status === 'non_renewing';
+  const ownerPlanControls = isProtectedOwner ? (
+      <div className="mx-auto mb-8 max-w-4xl rounded-3xl border border-primary/20 bg-card p-5 shadow-sm sm:p-6">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                      <ShieldCheck className="h-5 w-5 shrink-0 text-primary" />
+                      <h2 className="text-lg font-bold text-foreground">Owner effective plan</h2>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                      This owner-only override changes server-side feature and limit enforcement without modifying billing records.
+                  </p>
+              </div>
+              <Badge variant="outline" className="w-fit shrink-0 rounded-full">
+                  Effective immediately
+              </Badge>
+          </div>
+
+          <div className="mb-5 grid gap-3 text-sm sm:grid-cols-3">
+              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                  <p className="text-xs font-medium uppercase text-muted-foreground">Current billing plan</p>
+                  <p className="mt-1 font-semibold text-foreground">{ownerBillingPlanLabel}</p>
+              </div>
+              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                  <p className="text-xs font-medium uppercase text-muted-foreground">Effective app plan</p>
+                  <p className="mt-1 font-semibold text-foreground">{ownerPlanLabel(ownerEffectivePlanKey)}</p>
+              </div>
+              <div className="rounded-2xl border border-border/70 bg-muted/20 p-4">
+                  <p className="text-xs font-medium uppercase text-muted-foreground">Admin override</p>
+                  <p className="mt-1 font-semibold text-foreground">{ownerAdminOverrideLabel}</p>
+              </div>
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3" role="group" aria-label="Owner target plan">
+              {OWNER_PLAN_OPTIONS.map((option) => {
+                  const selected = ownerPlanTarget === option.key;
+                  return (
+                      <button
+                          key={option.key}
+                          type="button"
+                          aria-pressed={selected}
+                          className={cn(
+                              'rounded-2xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                              selected
+                                  ? 'border-primary bg-primary/10 text-foreground'
+                                  : 'border-border bg-background hover:border-primary/50',
+                              ownerPlanSaving && 'cursor-not-allowed opacity-70',
+                          )}
+                          disabled={ownerPlanSaving}
+                          onClick={() => {
+                              setOwnerPlanTarget(option.key);
+                              setOwnerPlanStatus(null);
+                              setOwnerPlanError(null);
+                          }}
+                      >
+                          <span className="flex items-center justify-between gap-2">
+                              <span className="font-semibold">{option.label}</span>
+                              {selected ? <CheckCircle2 className="h-4 w-4 text-primary" /> : null}
+                          </span>
+                          <span className="mt-2 block text-xs leading-relaxed text-muted-foreground">
+                              {option.impact}
+                          </span>
+                      </button>
+                  );
+              })}
+          </div>
+
+          <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-xs text-muted-foreground">
+                  Action: <span className="font-medium capitalize text-foreground">{ownerPlanChangeType}</span>
+                  {' '}to <span className="font-medium text-foreground">{ownerPlanLabel(ownerPlanTarget)}</span>.
+                  {ownerPlanChangeType === 'downgrade'
+                      ? ' Existing documents, chats, and generated content will not be deleted.'
+                      : ' Existing billing provider records and payment history are preserved.'}
+              </div>
+              <Button
+                  type="button"
+                  className="w-full sm:w-auto"
+                  onClick={() => void applyOwnerPlan(ownerPlanTarget)}
+                  disabled={ownerPlanSaving || !canPerformNetworkMutations}
+              >
+                  {ownerPlanSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  {ownerPlanSaving
+                      ? 'Applying...'
+                      : ownerPlanChangeType === 'reassignment'
+                        ? 'Refresh current plan'
+                        : `Apply ${ownerPlanLabel(ownerPlanTarget)}`}
+              </Button>
+          </div>
+          {ownerPlanStatus ? (
+              <p className="mt-3 rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200">
+                  {ownerPlanStatus}
+              </p>
+          ) : null}
+          {ownerPlanError ? (
+              <p className="mt-3 rounded-2xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+                  {ownerPlanError}
+              </p>
+          ) : null}
+      </div>
+  ) : null;
 
   const activeBillingSummary = (hasPaidProAccess || hasPremiumAccess) ? (
       <div className="mb-8 max-w-4xl mx-auto space-y-8">
@@ -1913,6 +2226,7 @@ export default function SubscriptionPage() {
         {/* Pricing Cards Grid */}
         <div className="container relative z-20 mx-auto max-w-6xl px-4 pt-10 sm:px-6">
             <UsageMeter />
+            {ownerPlanControls}
             {activeBillingSummary}
             {pricingOptions}
 
@@ -1964,6 +2278,40 @@ export default function SubscriptionPage() {
                 </div>
             </DialogContent>
         </Dialog>
+        <AlertDialog
+            open={Boolean(pendingOwnerDowngrade)}
+            onOpenChange={(open) => {
+                if (!open && !ownerPlanSaving) {
+                    setPendingOwnerDowngrade(null);
+                }
+            }}
+        >
+            <AlertDialogContent>
+                <AlertDialogHeader>
+                    <AlertDialogTitle>
+                        Switch effective plan from {ownerPlanLabel(ownerEffectivePlanKey)} to {ownerPlanLabel(pendingOwnerDowngrade)}?
+                    </AlertDialogTitle>
+                    <AlertDialogDescription>
+                        {ownerPlanLabel(pendingOwnerDowngrade)}-plan features and limits will apply immediately.
+                        {' '}Existing documents, chats, and generated content will not be deleted.
+                    </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                    <AlertDialogCancel disabled={ownerPlanSaving}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                        onClick={() => {
+                            if (pendingOwnerDowngrade) {
+                                void applyOwnerPlan(pendingOwnerDowngrade, { confirmedDowngrade: true });
+                            }
+                        }}
+                        disabled={ownerPlanSaving}
+                    >
+                        {ownerPlanSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                        Confirm change
+                    </AlertDialogAction>
+                </AlertDialogFooter>
+            </AlertDialogContent>
+        </AlertDialog>
     </div>
   );
 }
