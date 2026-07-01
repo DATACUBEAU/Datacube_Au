@@ -8,7 +8,6 @@ import {
   Wand2,
   Sparkles,
   ArrowRight,
-  Send,
   Lightbulb,
   Info,
   Trash2,
@@ -32,8 +31,7 @@ import {
   RotateCcw,
   Check,
   Globe,
-  Lock,
-  Square
+  Lock
 } from 'lucide-react';
 import { FeedbackSection } from "@/components/au-feedback";
 import { 
@@ -84,6 +82,7 @@ import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 
 import { generatePromptStarters, type ChatMessage } from '@/lib/api/chat';
 import { AssistantResponseBody } from '@/components/chat/assistant-response-body';
+import { ChatComposer } from '@/components/chat/chat-composer';
 import { FollowUpSuggestions } from '@/components/chat/follow-up-suggestions';
 import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useAuChat } from '@/hooks/api/use-au-chat';
@@ -799,6 +798,22 @@ export default function ChatPage() {
     return <ChatPageSkeleton />;
   }
 
+  const composerStatusContent = selectedDocId && (
+    !isOnline ||
+    ((isLoadingAuth || isRestoringAuth) && isOnline) ||
+    (!isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline) ||
+    (selectedDoc && selectedDoc.status !== 'completed')
+  ) ? (
+    <>
+      {!isOnline ? <div>Offline mode</div> : null}
+      {(isLoadingAuth || isRestoringAuth) && isOnline ? <div>Restoring session...</div> : null}
+      {!isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline ? <div>Sign in required</div> : null}
+      {selectedDoc && selectedDoc.status !== 'completed' ? (
+        <div>Document is {selectedDoc.status}. Chat unlocks when processing is completed.</div>
+      ) : null}
+    </>
+  ) : null;
+
   return (
     <main className="relative flex h-[calc(100dvh-3.5rem)] min-w-0 flex-col overflow-hidden">
       {showSlowNotice && isBootLoading ? <SlowNetworkNotice onRetry={() => void refreshDocuments()} /> : null}
@@ -1224,208 +1239,165 @@ export default function ChatPage() {
         </AnimatePresence>
       </div>
 
-      <div className="border-t bg-background px-4 pb-4 pt-2">
-        <div className="relative mx-auto max-w-4xl">
-          <LimitToast alert={chatLimitToast} onShown={markChatLimitToastShown} />
-          {chatRequestError ? (
-            <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
-              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div className="min-w-0 space-y-1">
-                  <p className="text-sm font-medium text-destructive">{chatErrorTitle(chatRequestError)}</p>
-                  <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">
-                    {chatErrorDescription(chatRequestError)}
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  {chatRequestError.retryable && lastRetryPayloadRef.current ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={() => {
-                        const pendingRetry = lastRetryPayloadRef.current;
-                        if (!pendingRetry) return;
-                        clearLastError();
-                        void sendMessage(pendingRetry.message, pendingRetry.options);
-                      }}
-                    >
-                      Retry
+      <ChatComposer
+        textareaRef={textareaRef}
+        value={input}
+        onValueChange={setInput}
+        onSubmit={(event) => handleSendMessage(event)}
+        placeholder={
+          !selectedDocId
+            ? "Please select a document to start chatting."
+            : !selectedDoc || selectedDoc.status !== 'completed'
+              ? `Document is ${selectedDoc?.status || 'not ready'}...`
+            : !isOnline
+              ? "Offline mode"
+              : isLoadingAuth || isRestoringAuth
+                ? "Restoring session..."
+                : !user || isAuthLocked
+                  ? "Sign in required"
+                  : "Message AU..."
+        }
+        ariaLabel="Message AU"
+        disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed'}
+        sendDisabled={!input.trim() || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed'}
+        isResponding={isResponding}
+        onStop={stopGeneration}
+        leftControl={(
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed'}
+                className={cn(
+                  'h-10 w-10 flex-shrink-0 rounded-full transition-all duration-300 hover:scale-105',
+                  summaryMode ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:text-primary',
+                )}
+                aria-label="Choose AU response mode"
+              >
+                {summaryMode === 'short' ? <Scissors className="h-5 w-5" /> :
+                  summaryMode === 'mid' ? <AlignLeft className="h-5 w-5" /> :
+                    summaryMode === 'detailed' ? <FileTextIcon className="h-5 w-5" /> :
+                      <Sparkles className="h-5 w-5" />}
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem onClick={() => setSummaryMode(null)}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Default (Auto)
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSummaryMode('short')}>
+                <Scissors className="mr-2 h-4 w-4" />
+                Short Answer
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSummaryMode('mid')}>
+                <AlignLeft className="mr-2 h-4 w-4" />
+                Standard Answer
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setSummaryMode('detailed')}>
+                <FileTextIcon className="mr-2 h-4 w-4" />
+                Detailed Answer
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+        topContent={(
+          <>
+            <LimitToast alert={chatLimitToast} onShown={markChatLimitToastShown} />
+            {chatRequestError ? (
+              <div className="mb-3 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3">
+                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 space-y-1">
+                    <p className="text-sm font-medium text-destructive">{chatErrorTitle(chatRequestError)}</p>
+                    <p className="break-words text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                      {chatErrorDescription(chatRequestError)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {chatRequestError.retryable && lastRetryPayloadRef.current ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => {
+                          const pendingRetry = lastRetryPayloadRef.current;
+                          if (!pendingRetry) return;
+                          clearLastError();
+                          void sendMessage(pendingRetry.message, pendingRetry.options);
+                        }}
+                      >
+                        Retry
+                      </Button>
+                    ) : null}
+                    <Button type="button" size="sm" variant="outline" onClick={clearLastError}>
+                      Dismiss
                     </Button>
-                  ) : null}
-                  <Button type="button" size="sm" variant="outline" onClick={clearLastError}>
-                    Dismiss
-                  </Button>
+                  </div>
                 </div>
               </div>
-            </div>
-          ) : null}
-          {chatLimitAlert ? (
-            <div className="mb-3">
-              <LimitAlertCard
-                alert={chatLimitAlert}
-                onDismiss={(alertId) => {
-                  dismissChatLimitAlert(alertId);
-                  if (alertId.startsWith('server:')) {
-                    clearChatLimitError();
-                  }
-                }}
-              />
-            </div>
-          ) : null}
-
-          <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 flex-1 text-xs text-muted-foreground">
-              {chatMode === 'global' ? (
+            ) : null}
+            {chatLimitAlert ? (
+              <div className="mb-3">
+                <LimitAlertCard
+                  alert={chatLimitAlert}
+                  onDismiss={(alertId) => {
+                    dismissChatLimitAlert(alertId);
+                    if (alertId.startsWith('server:')) {
+                      clearChatLimitError();
+                    }
+                  }}
+                />
+              </div>
+            ) : null}
+            <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 flex-1 text-xs text-muted-foreground">
+                {chatMode === 'global' ? (
                   <span className="block break-words">
-                      <strong>Global Chat</strong> • App-wide help and navigation. No private document access.
+                    <strong>Global Chat</strong> • App-wide help and navigation. No private document access.
                   </span>
-              ) : selectedDocName ? (
-                <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-x-2 sm:gap-y-1">
-                  <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-                    <span className="shrink-0">Chatting with:</span>
-                    <FileNameText
-                      text={selectedDocName}
-                      className="font-medium text-foreground"
-                      maxWidthClass="max-w-[150px] sm:max-w-[250px] md:max-w-[350px]"
-                    />
+                ) : selectedDocName ? (
+                  <div className="flex min-w-0 flex-col gap-1 sm:flex-row sm:items-center sm:gap-x-2 sm:gap-y-1">
+                    <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                      <span className="shrink-0">Chatting with:</span>
+                      <FileNameText
+                        text={selectedDocName}
+                        className="font-medium text-foreground"
+                        maxWidthClass="max-w-[150px] sm:max-w-[250px] md:max-w-[350px]"
+                      />
+                    </div>
+                    {selectedDocExpiryLabel ? (
+                      <span className="sm:shrink-0">
+                        • {selectedDocExpiryLabel}
+                      </span>
+                    ) : null}
                   </div>
-                  {selectedDocExpiryLabel ? (
-                    <span className="sm:shrink-0">
-                      • {selectedDocExpiryLabel}
-                    </span>
-                  ) : null}
-                </div>
-              ) : (
-                'Select a document to start chatting.'
-              )}
-            </div>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setIsGuideOpen(true)}
-                  disabled={!user}
-                  className="hover:text-primary transition-all duration-300 hover:scale-110"
-                >
-                  <Sparkles className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="center">
-                <p>AU Guide (Intelligent Patterns)</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-
-          <form onSubmit={(e) => handleSendMessage(e)} className="flex w-full min-w-0 items-end space-x-2">
-            <div className="relative min-w-0 flex-1">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
+                ) : (
+                  'Select a document to start chatting.'
+                )}
+              </div>
+              <Tooltip>
+                <TooltipTrigger asChild>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed'}
-                    className={`absolute left-1.5 top-1/2 -translate-y-1/2 h-9 w-9 flex-shrink-0 transition-all duration-300 hover:scale-110 ${summaryMode ? 'text-primary bg-primary/10' : 'text-muted-foreground hover:text-primary'}`}
+                    onClick={() => setIsGuideOpen(true)}
+                    disabled={!user}
+                    className="transition-all duration-300 hover:scale-110 hover:text-primary"
+                    aria-label="Open AU Guide"
                   >
-                    {summaryMode === 'short' ? <Scissors className="h-5 w-5" /> :
-                     summaryMode === 'mid' ? <AlignLeft className="h-5 w-5" /> :
-                     summaryMode === 'detailed' ? <FileTextIcon className="h-5 w-5" /> :
-                     <Sparkles className="h-5 w-5" />}
+                    <Sparkles className="h-4 w-4" />
                   </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start">
-                  <DropdownMenuItem onClick={() => setSummaryMode(null)}>
-                    <Sparkles className="mr-2 h-4 w-4" />
-                    Default (Auto)
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSummaryMode('short')}>
-                    <Scissors className="mr-2 h-4 w-4" />
-                    Short Answer
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSummaryMode('mid')}>
-                    <AlignLeft className="mr-2 h-4 w-4" />
-                    Standard Answer
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setSummaryMode('detailed')}>
-                    <FileTextIcon className="mr-2 h-4 w-4" />
-                    Detailed Answer
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <Textarea
-                id="message"
-                ref={textareaRef}
-                placeholder={
-                  !selectedDocId
-                    ? "Please select a document to start chatting."
-                    : !selectedDoc || selectedDoc.status !== 'completed'
-                      ? `Document is ${selectedDoc?.status || 'not ready'}...`
-                    : !isOnline
-                      ? "Offline mode"
-                      : isLoadingAuth || isRestoringAuth
-                        ? "Restoring session..."
-                        : !user || isAuthLocked
-                        ? "Sign in required"
-                        : "Message AU..."
-                }
-                className="flex-1 resize-none rounded-full border bg-secondary p-3 pl-12 pr-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (canChat) handleSendMessage(e);
-                  }
-                }}
-                disabled={isLoading || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed'}
-              />
-              {selectedDocId && !isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Offline mode</div>
-              )}
-              {selectedDocId && (isLoadingAuth || isRestoringAuth) && isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Restoring session...</div>
-              )}
-              {selectedDocId && !isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in required</div>
-              )}
-              {selectedDocId && selectedDoc && selectedDoc.status !== 'completed' && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">
-                  Document is {selectedDoc.status}. Chat unlocks when processing is completed.
-                </div>
-              )}
+                </TooltipTrigger>
+                <TooltipContent side="top" align="center">
+                  <p>AU Guide (Intelligent Patterns)</p>
+                </TooltipContent>
+              </Tooltip>
             </div>
-
-            <Button 
-              type={isResponding ? "button" : "submit"} 
-              size="icon" 
-              className={`h-12 w-12 shrink-0 rounded-full transition-all ${isResponding ? 'bg-destructive hover:bg-destructive/90' : ''}`}
-              disabled={((!input.trim() || !selectedDocId || !canChat || upgradeBlocked || !selectedDoc || selectedDoc.status !== 'completed') && !isResponding)}
-              onClick={(e) => {
-                  if (isResponding) {
-                      e.preventDefault();
-                      stopGeneration();
-                  } else {
-                      // Explicitly trigger submit if needed, but type="submit" usually handles it.
-                      // However, since we are inside a form, we can let the form handler take over.
-                      // If this onClick is preventing default, that might be the issue.
-                      // Let's NOT prevent default here unless isResponding.
-                  }
-              }}
-            >
-              {isResponding ? (
-                  <div className="relative flex items-center justify-center">
-                     <Square className="h-4 w-4 fill-current" />
-                     <span className="absolute inset-0 animate-ping rounded-full bg-destructive opacity-20"></span>
-                  </div>
-              ) : (
-                  <Send className="h-5 w-5" />
-              )}
-            </Button>
-          </form>
-        </div>
-      </div>
+          </>
+        )}
+        statusContent={composerStatusContent}
+      />
       </TooltipProvider>
 
       {/* Dialogs */}

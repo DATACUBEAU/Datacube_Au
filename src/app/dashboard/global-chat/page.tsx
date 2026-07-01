@@ -8,7 +8,6 @@ import {
   Wand2,
   Sparkles,
   ArrowRight,
-  Send,
   Trash2,
   ChevronDown,
   Edit2,
@@ -18,7 +17,6 @@ import {
   X,
   Globe,
   Lock,
-  Square,
   Check,
   Copy,
   RotateCcw,
@@ -28,7 +26,6 @@ import {
 import { FeedbackSection } from "@/components/au-feedback";
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { logOnce } from '@/lib/log/dedupe';
@@ -67,6 +64,7 @@ import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { GlobalChatPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { GLOBAL_CHAT_TITLE, GLOBAL_CHAT_WELCOME_COPY } from '@shared/global-chat-routing';
 import { AssistantResponseBody } from '@/components/chat/assistant-response-body';
+import { ChatComposer } from '@/components/chat/chat-composer';
 import { FollowUpSuggestions } from '@/components/chat/follow-up-suggestions';
 import {
   buildFollowUpSuggestions,
@@ -311,6 +309,18 @@ export default function GlobalChatPage() {
     return <GlobalChatPageSkeleton />;
   }
 
+  const composerStatusContent = (
+    !isOnline ||
+    ((isLoadingAuth || isRestoringAuth) && isOnline) ||
+    (!isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline)
+  ) ? (
+    <>
+      {!isOnline ? <div>Offline mode</div> : null}
+      {(isLoadingAuth || isRestoringAuth) && isOnline ? <div>Restoring session...</div> : null}
+      {!isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline ? <div>Sign in required</div> : null}
+    </>
+  ) : null;
+
   return (
     <main className="flex h-[calc(100dvh-3.5rem)] flex-col relative">
       {showSlowNotice && isBootLoading ? <SlowNetworkNotice onRetry={() => void refreshDocuments()} /> : null}
@@ -478,66 +488,46 @@ export default function GlobalChatPage() {
         </AnimatePresence>
       </div>
 
-      <div className="border-t bg-background px-4 pb-4 pt-2">
-        <div className="relative mx-auto max-w-4xl">
-          <form onSubmit={(e) => handleSendMessage(e)} className="flex w-full items-end space-x-2">
-            <div className="relative flex-1">
-              <AnimatePresence>
-                 {connectionStatus === 'reconnecting' && (
-                    <motion.div
-                     initial={{ opacity: 0, y: 10 }}
-                     animate={{ opacity: 1, y: 0 }}
-                     exit={{ opacity: 0, y: 10 }}
-                     className="absolute bottom-full left-0 right-0 mb-2 flex justify-center"
-                   >
-                     <div className="flex items-center gap-2 rounded-full bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-800 border border-yellow-200 shadow-sm">
-                       <Loader2 className="h-3 w-3 animate-spin" />
-                       <span>Reconnecting...</span>
-                     </div>
-                   </motion.div>
-                 )}
-              </AnimatePresence>
-              <Textarea
-                id="message"
-                ref={textareaRef}
-                placeholder={
-                  !isOnline
-                    ? "Offline mode"
-                    : isLoadingAuth || isRestoringAuth
-                      ? "Restoring session..."
-                      : !user || isAuthLocked
-                      ? "Sign in required"
-                      : `Ask ${GLOBAL_CHAT_TITLE}...`
-                }
-                className="flex-1 resize-none rounded-full border bg-secondary p-3 px-4 text-base shadow-none focus-visible:ring-0 no-scrollbar h-12"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    if (canChat) handleSendMessage(e);
-                  }
-                }}
-                disabled={!canChat}
-              />
-              {!isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Offline mode</div>
+      <OfflineGuard disabledReason="Offline: Global Chat unavailable">
+        <ChatComposer
+          textareaRef={textareaRef}
+          value={input}
+          onValueChange={setInput}
+          onSubmit={(event) => handleSendMessage(event)}
+          placeholder={
+            !isOnline
+              ? "Offline mode"
+              : isLoadingAuth || isRestoringAuth
+                ? "Restoring session..."
+                : !user || isAuthLocked
+                  ? "Sign in required"
+                  : `Ask ${GLOBAL_CHAT_TITLE}...`
+          }
+          ariaLabel={`Ask ${GLOBAL_CHAT_TITLE}`}
+          disabled={!canChat}
+          sendDisabled={!input.trim() || !canChat}
+          isResponding={isResponding}
+          onStop={stopGeneration}
+          topContent={(
+            <AnimatePresence>
+              {connectionStatus === 'reconnecting' && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="mb-2 flex justify-center"
+                >
+                  <div className="flex items-center gap-2 rounded-full border border-yellow-200 bg-yellow-100 px-3 py-1 text-xs font-medium text-yellow-800 shadow-sm">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <span>Reconnecting...</span>
+                  </div>
+                </motion.div>
               )}
-              {(isLoadingAuth || isRestoringAuth) && isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Restoring session...</div>
-              )}
-              {!isLoadingAuth && !isRestoringAuth && (!user || isAuthLocked) && isOnline && (
-                <div className="mt-1 pl-3 text-xs text-muted-foreground">Sign in required</div>
-              )}
-            </div>
-            <OfflineGuard disabledReason="Offline: Global Chat unavailable">
-            <Button type={isResponding ? "button" : "submit"} size="icon" className={`h-12 w-12 shrink-0 rounded-full transition-all ${isResponding ? 'bg-destructive' : ''}`} disabled={((!input.trim() || !canChat) && !isResponding)} onClick={(e) => { if (isResponding) { e.preventDefault(); stopGeneration(); } }}>
-              {isResponding ? <div className="relative flex items-center justify-center"><Square className="h-4 w-4 fill-current" /><span className="absolute inset-0 animate-ping rounded-full bg-destructive opacity-20"></span></div> : <Send className="h-5 w-5" />}
-            </Button>
-            </OfflineGuard>
-          </form>
-        </div>
-      </div>
+            </AnimatePresence>
+          )}
+          statusContent={composerStatusContent}
+        />
+      </OfflineGuard>
       </TooltipProvider>
 
       {/* Clear Chat Dialog */}
