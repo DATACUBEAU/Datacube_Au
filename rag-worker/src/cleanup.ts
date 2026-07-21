@@ -3,6 +3,7 @@ import 'dotenv/config';
 import { createClient } from '@supabase/supabase-js';
 import { logger } from './utils';
 import { isJobOlderThan } from './job-recovery';
+import { finalizeDocumentSourceCleanup } from './source-cleanup';
 
 function resolveBucket(): string {
   return process.env.BUCKET || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents';
@@ -157,7 +158,10 @@ async function cleanup() {
     for (const job of failedJobs || []) {
         if (!job.object_path) continue;
         try {
-            logger.info(`Cleaning up storage for job ${job.id}`, { path: job.object_path });
+            logger.info('Cleaning up storage for expired failed job', {
+              jobId: job.id,
+              documentId: job.document_id,
+            });
             const { error: delError } = await supabase.storage
               .from(job.bucket || bucket)
               .remove([job.object_path]);
@@ -283,7 +287,7 @@ async function cleanup() {
 
   const { data: pendingCleanup, error: pendingCleanupError } = await supabase
     .from('au_documents')
-    .select('id,file_path,storage_deleted_at,cleanup_attempts')
+    .select('id,owner_id,user_id,file_path,storage_deleted_at,cleanup_attempts')
     .eq('cleanup_pending', true)
     .eq('status', 'completed')
     .is('storage_deleted_at', null)
@@ -295,26 +299,21 @@ async function cleanup() {
     for (const doc of pendingCleanup) {
       if (!doc.file_path) continue;
       try {
-        logger.info('Retrying pending cleanup', { documentId: doc.id, filePath: doc.file_path });
-        const { error: delError } = await supabase.storage
-          .from(bucket)
-          .remove([doc.file_path]);
-
-        if (delError) {
-          await updateCleanupState(doc.id, {
-            success: false,
-            reason: 'retry_pending_cleanup',
-            error: delError.message || String(delError),
-            currentAttempts: doc.cleanup_attempts || 0,
-          });
-          continue;
-        }
-
-        await updateCleanupState(doc.id, {
-          success: true,
-          reason: 'retry_pending_cleanup',
-          currentAttempts: doc.cleanup_attempts || 0,
+        logger.info('Retrying pending cleanup', { documentId: doc.id });
+        const cleanupResult = await finalizeDocumentSourceCleanup({
+          supabase,
+          documentId: doc.id,
+          preferredObjectPath: String(doc.file_path || '').trim() || null,
+          expectedOwnerId: String(doc.owner_id || doc.user_id || '').trim() || null,
+          defaultBucket: bucket,
         });
+        if (!cleanupResult.success) {
+          logger.warn('Pending cleanup retry did not delete source file', {
+            documentId: doc.id,
+            cleanupCode: cleanupResult.code,
+            cleanupAttempts: cleanupResult.attempts,
+          });
+        }
       } catch (e: any) {
         await updateCleanupState(doc.id, {
           success: false,

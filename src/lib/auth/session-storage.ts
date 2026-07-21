@@ -2,6 +2,7 @@ import type { Session } from '@supabase/supabase-js';
 import { clearPersistedAccountSnapshotSync } from '@/lib/account/account-snapshot-cache';
 import { clearUserCache } from '@/lib/cache/user-cache';
 import { clearUserLocalWorkingMemory } from '@/lib/memory/working-memory';
+import { clearAllPrivateQueuedWrites, clearQueuedWritesForUser } from '@/lib/offline/write-queue';
 
 type SessionContainer =
   | Session
@@ -99,10 +100,12 @@ export async function clearUserScopedClientCaches(userId: string | null | undefi
     await Promise.allSettled([
       clearUserCache(userId),
       clearUserLocalWorkingMemory(userId),
+      clearQueuedWritesForUser(userId),
       purgeEmergencyPwaCaches(),
     ]);
     return;
   }
+  await clearAllPrivateQueuedWrites();
   await purgeEmergencyPwaCaches();
 }
 

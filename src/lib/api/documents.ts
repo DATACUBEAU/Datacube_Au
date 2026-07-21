@@ -269,6 +269,7 @@ export async function deleteDocument(user: User | null, documentId: string): Pro
       suppressAuthError: true,
       offlineQueueable: true,
       offlineQueueLabel: 'Delete document',
+      offlineQueueUserId: user?.id ?? null,
     });
 
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();

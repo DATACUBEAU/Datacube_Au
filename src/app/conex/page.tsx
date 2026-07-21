@@ -2092,7 +2092,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
                         )}
                     </div>
                     <div className="flex justify-between items-end">
-                         <span className="text-[10px] font-mono text-muted-foreground">{k.key_value || 'No Key'}</span>
+                         <span className="text-[10px] font-mono text-muted-foreground">{k.key_label || 'Not configured'}</span>
                          <div className="flex items-center gap-1">
                            <Badge variant="secondary" className="text-[9px] h-4">{k.provider_type}</Badge>
                            <Badge variant="outline" className="text-[9px] h-4 uppercase">
@@ -2126,7 +2126,7 @@ const AdminRegistry = ({ token }: { token: string }) => {
                              <Badge variant="outline">{selectedKey.provider_type}</Badge>
                          </h2>
                          <p className="text-xs text-muted-foreground font-mono mt-1">
-                             {selectedKey.key_value}
+                              {selectedKey.key_label || 'Not configured'}
                          </p>
                      </div>
                      <div className="flex gap-2">
@@ -2353,11 +2353,13 @@ const ModelForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (da
 };
 
 const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data: any) => void }) => {
-  const [data, setData] = useState(initialData || {
-    service: '',
+  const [data, setData] = useState({
+    service: initialData?.service || '',
     key_value: '',
-    provider_type: 'openrouter',
-    is_active: true
+    provider_type: initialData?.provider_type || 'openrouter',
+    is_active: initialData?.is_active ?? true,
+    allowed_models: initialData?.allowed_models ?? null,
+    metadata: initialData?.metadata || {},
   });
 
   return (
@@ -2377,7 +2379,7 @@ const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data
           type="password"
           value={data.key_value} 
           onChange={e => setData({...data, key_value: e.target.value})} 
-          placeholder="sk-..."
+          placeholder={initialData?.configured ? 'Leave blank to keep existing key' : 'sk-...'}
         />
       </div>
       <div className="space-y-2">

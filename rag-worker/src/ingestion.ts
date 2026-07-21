@@ -1010,10 +1010,6 @@ export class IngestionService {
     return embeddings;
   }
 
-  private chunkPreview(text: string): string {
-    return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 80);
-  }
-
   private validateCanonicalChunkText(documentId: string, chunkIndex: number, value: unknown): string {
     if (typeof value !== 'string') {
       throw new Error(`invalid_chunk_text_non_string: document=${documentId} chunk_index=${chunkIndex}`);
@@ -1046,7 +1042,6 @@ export class IngestionService {
         ownerId,
         chunkIndex: index,
         textLength: text.length,
-        textPreview: this.chunkPreview(text),
         textHash: hash,
       });
 

@@ -14,6 +14,8 @@ import {
   isAlreadySynced,
   purgeSyncLog,
   onQueueUpdate,
+  canReplayQueuedWriteForUser,
+  sanitizeQueuedWriteHeaders,
   type QueuedWrite,
 } from './write-queue';
 import { purgeExpiredApiCache } from './api-cache';
@@ -89,6 +91,19 @@ function getRetryDelayMs(attemptCount: number): number {
   return Math.max(500, Math.round(delay + jitter));
 }
 
+async function resolveReplayAuth(): Promise<{ userId: string | null; accessToken: string | null }> {
+  try {
+    const { resolveBrowserSession } = await import('@/lib/supabase-client/client');
+    const resolved = await resolveBrowserSession({ forceRefresh: true });
+    return {
+      userId: resolved.session?.user?.id ?? null,
+      accessToken: resolved.session?.access_token ?? null,
+    };
+  } catch {
+    return { userId: null, accessToken: null };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Core sync loop
 // ---------------------------------------------------------------------------
@@ -150,12 +165,36 @@ export async function processSyncQueue(): Promise<{
     });
 
     try {
+      const requiresAuth = entry.requires_auth !== false;
+      const auth = requiresAuth
+        ? await resolveReplayAuth()
+        : { userId: null, accessToken: null };
+
+      if (!canReplayQueuedWriteForUser(entry, auth.userId)) {
+        const message = auth.userId ? 'AUTH_USER_MISMATCH' : 'AUTH_REQUIRED';
+        await markWriteFailed(entry.id, message);
+        failed += 1;
+        emit({ type: 'sync:error', error: message, entry });
+        continue;
+      }
+
+      const replayHeaders: Record<string, string> = {
+        ...sanitizeQueuedWriteHeaders(entry.headers),
+        'Content-Type': entry.headers['Content-Type'] || entry.headers['content-type'] || 'application/json',
+      };
+      if (requiresAuth) {
+        if (!auth.accessToken) {
+          await markWriteFailed(entry.id, 'AUTH_REQUIRED');
+          failed += 1;
+          emit({ type: 'sync:error', error: 'AUTH_REQUIRED', entry });
+          continue;
+        }
+        replayHeaders.Authorization = `Bearer ${auth.accessToken}`;
+      }
+
       const response = await fetch(entry.url, {
         method: entry.method,
-        headers: {
-          ...entry.headers,
-          'Content-Type': entry.headers['Content-Type'] || 'application/json',
-        },
+        headers: replayHeaders,
         body: entry.body,
         credentials: 'include',
       });

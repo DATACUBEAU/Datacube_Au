@@ -179,8 +179,6 @@ async function validateAccessToken(token: string): Promise<{ userId: string; ema
     console.warn('[proxy] validateAccessToken failed:', {
       error: error?.message || 'missing_user_id',
       errorCode: (error as any)?.code || (error as any)?.status || 'unknown',
-      tokenPreview: `${token.slice(0, 8)}...${token.slice(-8)}`,
-      tokenLength: token.length,
       hasData: !!data,
       hasUser: !!data?.user,
     });
@@ -233,7 +231,7 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
     const validation = await validateAccessToken(token);
     if (!validation?.userId) {
       diagnostics.failedSources.push(source);
-      const msg = `Validation failed for ${source} token: ${token.slice(0, 10)}...`;
+      const msg = `Validation failed for ${source} token.`;
       if (!debugMessage) debugMessage = msg;
       continue;
     }

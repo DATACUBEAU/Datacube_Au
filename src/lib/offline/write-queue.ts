@@ -29,6 +29,10 @@ export type QueuedWrite = {
   body: string | null;
   /** Request headers snapshot */
   headers: Record<string, string>;
+  /** Authenticated user that queued the private write */
+  user_id: string | null;
+  /** Whether replay requires the current authenticated user to match user_id */
+  requires_auth: boolean;
   /** Human-readable description of the operation (e.g. "Send chat message") */
   label: string;
   /** Current queue status */
@@ -60,6 +64,14 @@ export type SyncLogEntry = {
 
 const MAX_QUEUE_SIZE = 100;
 const MAX_ATTEMPTS = 3;
+const SENSITIVE_HEADER_NAMES = [
+  'authorization',
+  'cookie',
+  'set-cookie',
+  'apikey',
+  'x-api-key',
+  'x-admin-token',
+];
 
 // ---------------------------------------------------------------------------
 // ID generation – uses crypto.randomUUID (available in all modern browsers)
@@ -71,6 +83,34 @@ function generateId(): string {
   }
   // Fallback for older environments
   return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+function isSensitiveHeaderName(name: string): boolean {
+  const normalized = String(name || '').trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized === 'x-idempotency-key') return false;
+  if (SENSITIVE_HEADER_NAMES.includes(normalized)) return true;
+  return normalized.includes('token') || normalized.includes('secret') || normalized.includes('key');
+}
+
+export function sanitizeQueuedWriteHeaders(headers?: Record<string, string>): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(headers ?? {})) {
+    const key = String(rawKey || '').trim();
+    if (!key || isSensitiveHeaderName(key)) continue;
+    sanitized[key] = String(rawValue ?? '');
+  }
+  return sanitized;
+}
+
+export function canReplayQueuedWriteForUser(
+  entry: Pick<QueuedWrite, 'requires_auth' | 'user_id'>,
+  currentUserId: string | null | undefined,
+): boolean {
+  if (entry.requires_auth === false) return true;
+  const queuedUserId = String(entry.user_id || '').trim();
+  const activeUserId = String(currentUserId || '').trim();
+  return Boolean(queuedUserId && activeUserId && queuedUserId === activeUserId);
 }
 
 // ---------------------------------------------------------------------------
@@ -87,6 +127,8 @@ export async function enqueueWrite(input: {
   body?: unknown;
   headers?: Record<string, string>;
   label?: string;
+  userId?: string | null;
+  requiresAuth?: boolean;
 }): Promise<QueuedWrite | null> {
   // Check queue size limit
   const currentSize = await getQueueSize();
@@ -98,6 +140,12 @@ export async function enqueueWrite(input: {
   const id = generateId();
   const idempotencyKey = generateId();
   const now = Date.now();
+  const requiresAuth = input.requiresAuth !== false;
+  const userId = String(input.userId || '').trim() || null;
+  if (requiresAuth && !userId) {
+    console.warn('[write-queue] Refusing to enqueue private write without an authenticated user.');
+    return null;
+  }
 
   const entry: QueuedWrite = {
     id,
@@ -106,9 +154,11 @@ export async function enqueueWrite(input: {
     method: input.method,
     body: input.body != null ? JSON.stringify(input.body) : null,
     headers: {
-      ...(input.headers ?? {}),
+      ...sanitizeQueuedWriteHeaders(input.headers),
       'x-idempotency-key': idempotencyKey,
     },
+    user_id: userId,
+    requires_auth: requiresAuth,
     label: input.label ?? `${input.method} ${input.url}`,
     status: 'pending',
     attempt_count: 0,
@@ -319,6 +369,38 @@ export async function discardWrite(id: string): Promise<void> {
     store.delete(id);
   });
   dispatchQueueUpdate();
+}
+
+export async function clearQueuedWritesForUser(userId: string): Promise<number> {
+  const normalizedUserId = String(userId || '').trim();
+  if (!normalizedUserId) return 0;
+  const writes = await getQueuedWrites();
+  let removed = 0;
+  await idbWrite(STORE_WRITE_QUEUE, (store) => {
+    for (const entry of writes) {
+      if (entry.requires_auth && entry.user_id === normalizedUserId) {
+        store.delete(entry.id);
+        removed += 1;
+      }
+    }
+  });
+  if (removed > 0) dispatchQueueUpdate();
+  return removed;
+}
+
+export async function clearAllPrivateQueuedWrites(): Promise<number> {
+  const writes = await getQueuedWrites();
+  let removed = 0;
+  await idbWrite(STORE_WRITE_QUEUE, (store) => {
+    for (const entry of writes) {
+      if (entry.requires_auth) {
+        store.delete(entry.id);
+        removed += 1;
+      }
+    }
+  });
+  if (removed > 0) dispatchQueueUpdate();
+  return removed;
 }
 
 /**

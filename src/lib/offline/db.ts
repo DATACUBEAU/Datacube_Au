@@ -11,7 +11,7 @@
  */
 
 const DB_NAME = 'dcau_offline';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const STORE_API_CACHE = 'api_cache';
 const STORE_WRITE_QUEUE = 'write_queue';
@@ -21,11 +21,63 @@ export { STORE_API_CACHE, STORE_WRITE_QUEUE, STORE_SYNC_LOG };
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
+function isSensitiveQueuedHeaderName(name: string): boolean {
+  const normalized = String(name || '').trim().toLowerCase();
+  if (!normalized) return true;
+  if (normalized === 'x-idempotency-key') return false;
+  if (
+    normalized === 'authorization' ||
+    normalized === 'cookie' ||
+    normalized === 'set-cookie' ||
+    normalized === 'apikey' ||
+    normalized === 'x-api-key' ||
+    normalized === 'x-admin-token'
+  ) {
+    return true;
+  }
+  return normalized.includes('token') || normalized.includes('secret') || normalized.includes('key');
+}
+
+function sanitizeLegacyQueuedWriteHeaders(headers: unknown): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  if (!headers || typeof headers !== 'object') return sanitized;
+
+  for (const [rawKey, rawValue] of Object.entries(headers as Record<string, unknown>)) {
+    const key = String(rawKey || '').trim();
+    if (!key || isSensitiveQueuedHeaderName(key)) continue;
+    sanitized[key] = String(rawValue ?? '');
+  }
+  return sanitized;
+}
+
+function scrubLegacyQueuedWrites(store: IDBObjectStore): void {
+  const cursorRequest = store.openCursor();
+  cursorRequest.onsuccess = () => {
+    const cursor = cursorRequest.result;
+    if (!cursor) return;
+
+    const record = cursor.value;
+    if (record && typeof record === 'object') {
+      const nextRecord = { ...(record as Record<string, unknown>) };
+      nextRecord.headers = sanitizeLegacyQueuedWriteHeaders(nextRecord.headers);
+      if (nextRecord.requires_auth !== false) {
+        nextRecord.requires_auth = true;
+        if (!String(nextRecord.user_id || '').trim()) {
+          nextRecord.status = 'failed';
+          nextRecord.last_error = 'AUTH_REQUIRED';
+        }
+      }
+      cursor.update(nextRecord);
+    }
+    cursor.continue();
+  };
+}
+
 function createOpenRequest(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
       const db = request.result;
 
       // api_cache: keyed by cache key (url+params hash)
@@ -45,6 +97,11 @@ function createOpenRequest(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_SYNC_LOG)) {
         const store = db.createObjectStore(STORE_SYNC_LOG, { keyPath: 'idempotency_key' });
         store.createIndex('synced_at', 'synced_at', { unique: false });
+      }
+
+      if (event.oldVersion < 2 && db.objectStoreNames.contains(STORE_WRITE_QUEUE)) {
+        const tx = request.transaction;
+        if (tx) scrubLegacyQueuedWrites(tx.objectStore(STORE_WRITE_QUEUE));
       }
     };
 

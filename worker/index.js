@@ -85,14 +85,6 @@ function isNextDataRequest(url) {
   return Boolean(url && /\/_next\/data\/.+\/.+\.json$/i.test(url.pathname));
 }
 
-function serializeRequestHeaders(request) {
-  try {
-    return Object.fromEntries(request?.headers?.entries?.() ?? []);
-  } catch {
-    return {};
-  }
-}
-
 function buildServiceWorkerNetworkFailureResponse(request, input = {}) {
   const url = tryParseRequestUrl(request);
   const accept = String(request?.headers?.get?.("accept") || "").toLowerCase();
@@ -138,7 +130,6 @@ self.fallback = async (request) => {
       url: requestUrl,
       method: request?.method || "GET",
       destination,
-      headers: serializeRequestHeaders(request),
     });
     return buildServiceWorkerNetworkFailureResponse(request, {
       stage: "malformed_request",
@@ -152,7 +143,6 @@ self.fallback = async (request) => {
       url: url.toString(),
       method: request?.method || "GET",
       destination,
-      headers: serializeRequestHeaders(request),
     });
     return buildServiceWorkerNetworkFailureResponse(request, {
       stage: "api_network_failure",

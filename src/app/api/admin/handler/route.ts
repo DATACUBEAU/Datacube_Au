@@ -1,7 +1,93 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
+import { createHash } from 'node:crypto';
 
 export const runtime = 'nodejs';
+
+const PROVIDER_KEY_PUBLIC_COLUMNS =
+  'service,provider_type,key_value,is_active,allowed_models,metadata,error_count,last_used_at,created_at,updated_at';
+
+function maskProviderKey(raw: unknown): {
+  configured: boolean;
+  key_last4: string | null;
+  key_fingerprint: string | null;
+  key_label: string;
+} {
+  const key = String(raw || '').trim();
+  if (!key) {
+    return {
+      configured: false,
+      key_last4: null,
+      key_fingerprint: null,
+      key_label: 'Not configured',
+    };
+  }
+
+  const last4 = key.slice(-4);
+  const fingerprint = createHash('sha256').update(key).digest('hex').slice(0, 12);
+  return {
+    configured: true,
+    key_last4: last4,
+    key_fingerprint: fingerprint,
+    key_label: `Configured ••••${last4}`,
+  };
+}
+
+function sanitizeProviderKeyRow(row: any) {
+  const masked = maskProviderKey(row?.key_value);
+  return {
+    service: row?.service ?? null,
+    provider_type: row?.provider_type ?? 'openrouter',
+    is_active: row?.is_active !== false,
+    allowed_models: Array.isArray(row?.allowed_models) ? row.allowed_models : row?.allowed_models ?? null,
+    metadata: row?.metadata && typeof row.metadata === 'object' ? row.metadata : {},
+    error_count: Number(row?.error_count || 0),
+    last_used_at: row?.last_used_at ?? null,
+    created_at: row?.created_at ?? null,
+    updated_at: row?.updated_at ?? null,
+    ...masked,
+  };
+}
+
+function hasNewProviderKeyValue(value: unknown): boolean {
+  return String(value || '').trim().length > 0;
+}
+
+function redactLogValue(value: unknown, keyHint = '', depth = 0): unknown {
+  const lowered = String(keyHint || '').toLowerCase();
+  if (
+    lowered.includes('authorization') ||
+    lowered.includes('token') ||
+    lowered.includes('secret') ||
+    lowered.includes('api_key') ||
+    lowered.includes('key_value') ||
+    lowered.includes('provider_key') ||
+    lowered.includes('prompt') ||
+    lowered.includes('documentcontent') ||
+    lowered.includes('document_content') ||
+    lowered === 'preview'
+  ) {
+    return '[REDACTED]';
+  }
+
+  if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    return value.length > 300 ? `${value.slice(0, 300)}...` : value;
+  }
+  if (depth >= 4) return '[REDACTED_DEPTH]';
+  if (Array.isArray(value)) {
+    return value.slice(0, 20).map((entry) => redactLogValue(entry, keyHint, depth + 1));
+  }
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [
+        key,
+        redactLogValue(entry, key, depth + 1),
+      ]),
+    );
+  }
+  return '[REDACTED]';
+}
 
 /**
  * Local admin handler — replaces the deleted Supabase Edge Function proxy.
@@ -145,7 +231,7 @@ async function handleUpdateConexConfig(supabase: any, body: any, requestId: stri
 
 async function handleGetRegistry(supabase: any, body: any, requestId: string) {
   const [keysResult, modelsResult] = await Promise.all([
-    supabase.from('au_api_keys').select('*').order('service'),
+    supabase.from('au_api_keys').select(PROVIDER_KEY_PUBLIC_COLUMNS).order('service'),
     supabase.from('au_model_routing').select('*').order('model_id'),
   ]);
 
@@ -159,7 +245,7 @@ async function handleGetRegistry(supabase: any, body: any, requestId: string) {
     if (code !== '42P01') throw modelsResult.error;
   }
 
-  const keys = keysResult.data || [];
+  const keys = (keysResult.data || []).map(sanitizeProviderKeyRow);
   const models = modelsResult.data || [];
 
   // Determine registry source from config
@@ -194,16 +280,46 @@ async function handleUpdateApiKey(supabase: any, body: any, requestId: string) {
     );
   }
 
+  const newKeyValue = String(keyData.key_value || '').trim();
+  const { data: existing, error: existingError } = await supabase
+    .from('au_api_keys')
+    .select('service')
+    .eq('service', service)
+    .maybeSingle();
+  if (existingError) {
+    const code = String(existingError?.code || '');
+    if (code !== '42P01') throw existingError;
+  }
+
+  if (!existing?.service && !hasNewProviderKeyValue(newKeyValue)) {
+    return NextResponse.json(
+      { error: 'missing_key_value', message: 'A new provider key value is required.', requestId },
+      { status: 400, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  const payload: Record<string, unknown> = {
+    service,
+    provider_type: String(keyData.provider_type || 'openrouter').trim() || 'openrouter',
+    is_active: keyData.is_active !== false,
+    allowed_models: Array.isArray(keyData.allowed_models) ? keyData.allowed_models : keyData.allowed_models ?? null,
+    metadata: keyData.metadata && typeof keyData.metadata === 'object' ? keyData.metadata : {},
+    updated_at: new Date().toISOString(),
+  };
+  if (newKeyValue) {
+    payload.key_value = newKeyValue;
+  }
+
   const { data, error } = await supabase
     .from('au_api_keys')
-    .upsert({ ...keyData, service, updated_at: new Date().toISOString() }, { onConflict: 'service' })
-    .select()
+    .upsert(payload, { onConflict: 'service' })
+    .select(PROVIDER_KEY_PUBLIC_COLUMNS)
     .maybeSingle();
 
   if (error) throw error;
 
   return NextResponse.json(
-    { ok: true, key: data, requestId },
+    { ok: true, key: sanitizeProviderKeyRow(data), requestId },
     { status: 200, headers: { 'Cache-Control': 'no-store' } },
   );
 }
@@ -337,11 +453,21 @@ async function handleUpdateAlertConfig(supabase: any, body: any, requestId: stri
 }
 
 async function handleGetDebugLogs(supabase: any, requestId: string) {
-  const { data, error } = await supabase
+  let result = await supabase
     .from('au_debug_logs')
-    .select('*')
+    .select('id,level,source,component,message,details,created_at')
     .order('created_at', { ascending: false })
     .limit(200);
+
+  if (result.error && String(result.error?.message || '').toLowerCase().includes('component')) {
+    result = await supabase
+      .from('au_debug_logs')
+      .select('id,level,source,message,details,created_at')
+      .order('created_at', { ascending: false })
+      .limit(200);
+  }
+
+  const { data, error } = result;
 
   if (error) {
     const code = String(error?.code || '');
@@ -353,7 +479,13 @@ async function handleGetDebugLogs(supabase: any, requestId: string) {
   }
 
   return NextResponse.json(
-    { logs: data || [], requestId },
+    {
+      logs: (data || []).map((row: any) => ({
+        ...row,
+        details: redactLogValue(row?.details, 'details'),
+      })),
+      requestId,
+    },
     { status: 200, headers: { 'Cache-Control': 'no-store' } },
   );
 }

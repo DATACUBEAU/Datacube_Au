@@ -24,6 +24,8 @@ interface SafeFetchOptions extends RequestInit {
   retryDelayMs?: number;
   offlineQueueable?: boolean; // If true, queue write operations when offline instead of throwing
   offlineQueueLabel?: string; // Human-readable label for the queued operation in the sync UI
+  offlineQueueUserId?: string | null; // Authenticated user scope for private queued writes
+  offlineQueueRequiresAuth?: boolean; // Defaults to true for queued writes
 }
 
 function createSafeFetchError(
@@ -68,6 +70,8 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     retryDelayMs = 750,
     offlineQueueable = false,
     offlineQueueLabel,
+    offlineQueueUserId,
+    offlineQueueRequiresAuth = true,
     ...fetchOptions
   } = options;
   const method = String(fetchOptions.method || options.method || 'GET').trim().toUpperCase();
@@ -96,6 +100,11 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
     ) {
       try {
         const { enqueueWrite } = await import('@/lib/offline/write-queue');
+        let queuedUserId = String(offlineQueueUserId || '').trim() || null;
+        if (offlineQueueRequiresAuth && !queuedUserId) {
+          const { readPersistedSupabaseSession } = await import('@/lib/auth/session-storage');
+          queuedUserId = readPersistedSupabaseSession()?.user?.id ?? null;
+        }
         const headersObj: Record<string, string> = {};
         if (fetchOptions.headers) {
           const h = new Headers(fetchOptions.headers);
@@ -109,6 +118,8 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
           body: fetchOptions.body ? JSON.parse(String(fetchOptions.body)) : undefined,
           headers: headersObj,
           label: offlineQueueLabel || `${method} ${url.split('/').slice(-2).join('/')}`,
+          userId: queuedUserId,
+          requiresAuth: offlineQueueRequiresAuth,
         });
 
         if (entry) {

@@ -3,6 +3,9 @@ import { logger } from './utils';
 
 type DocumentCleanupSnapshot = {
   id: string;
+  ownerId: string | null;
+  userId: string | null;
+  status: string | null;
   filePath: string | null;
   cleanupAttempts: number;
   storageDeletedAt: string | null;
@@ -24,7 +27,11 @@ export type SourceCleanupResultCode =
   | 'already_missing'
   | 'already_deleted'
   | 'missing_path'
-  | 'delete_failed';
+  | 'delete_failed'
+  | 'owner_mismatch'
+  | 'path_mismatch'
+  | 'not_completed'
+  | 'max_attempts_exceeded';
 
 export type SourceCleanupResult = {
   success: boolean;
@@ -43,7 +50,11 @@ export type FinalizeSourceCleanupInput = {
   preferredBucket?: string | null;
   preferredObjectPath?: string | null;
   defaultBucket?: string | null;
+  expectedOwnerId?: string | null;
+  maxAttempts?: number;
 };
+
+const DEFAULT_MAX_CLEANUP_ATTEMPTS = 3;
 
 function isMissingColumnError(error: any, column: string): boolean {
   const message = String(error?.message || '').toLowerCase();
@@ -91,11 +102,20 @@ function isStorageMissingError(error: unknown): boolean {
   );
 }
 
+function isCompletedDocumentStatus(status: string | null): boolean {
+  const normalized = String(status || '').trim().toLowerCase();
+  return normalized === 'completed' || normalized === 'done' || normalized === 'indexed' || normalized === 'ready';
+}
+
+function isRetryableCleanupFailure(code: SourceCleanupResultCode): boolean {
+  return code === 'delete_failed';
+}
+
 async function readCleanupSnapshot(
   supabase: SupabaseClient,
   documentId: string,
 ): Promise<DocumentCleanupSnapshot> {
-  const baseColumns = 'id,file_path,cleanup_attempts,storage_deleted_at';
+  const baseColumns = 'id,owner_id,user_id,status,file_path,cleanup_attempts,storage_deleted_at';
   const withSourceColumns = `${baseColumns},source_deleted_at`;
 
   let response = await supabase
@@ -121,6 +141,9 @@ async function readCleanupSnapshot(
 
   return {
     id: String(response.data.id),
+    ownerId: String((response.data as any).owner_id || '').trim() || null,
+    userId: String((response.data as any).user_id || '').trim() || null,
+    status: String((response.data as any).status || '').trim() || null,
     filePath: String((response.data as any).file_path || '').trim() || null,
     cleanupAttempts: Number((response.data as any).cleanup_attempts || 0),
     storageDeletedAt: String((response.data as any).storage_deleted_at || '').trim() || null,
@@ -212,7 +235,7 @@ async function persistCleanupResult(input: {
   const nowIso = new Date().toISOString();
   const attempts = Math.max(0, Number(input.snapshot.cleanupAttempts || 0)) + 1;
   const payload: CleanupStateUpdate = {
-    cleanup_pending: !input.success,
+    cleanup_pending: input.success ? false : isRetryableCleanupFailure(input.code),
     cleanup_attempts: attempts,
     cleanup_last_error: input.success ? null : (input.error || 'cleanup_failed'),
     cleanup_last_attempt_at: nowIso,
@@ -241,7 +264,42 @@ export async function finalizeDocumentSourceCleanup(
   const supabase = input.supabase;
   const snapshot = await readCleanupSnapshot(supabase, input.documentId);
   const bucket = String(input.preferredBucket || input.defaultBucket || 'documents').trim() || 'documents';
-  const objectPath = String(snapshot.filePath || input.preferredObjectPath || '').trim() || null;
+  const objectPath = String(snapshot.filePath || '').trim() || null;
+  const preferredObjectPath = String(input.preferredObjectPath || '').trim();
+  const expectedOwnerId = String(input.expectedOwnerId || '').trim();
+  const maxAttempts = Math.max(1, Math.floor(Number(input.maxAttempts || DEFAULT_MAX_CLEANUP_ATTEMPTS)));
+
+  if (expectedOwnerId && snapshot.ownerId !== expectedOwnerId && snapshot.userId !== expectedOwnerId) {
+    const persisted = await persistCleanupResult({
+      supabase,
+      snapshot,
+      success: false,
+      code: 'owner_mismatch',
+      error: 'source_cleanup_owner_mismatch',
+      deletedAt: null,
+    });
+    return {
+      ...persisted,
+      bucket,
+      objectPath,
+    };
+  }
+
+  if (!isCompletedDocumentStatus(snapshot.status)) {
+    const persisted = await persistCleanupResult({
+      supabase,
+      snapshot,
+      success: false,
+      code: 'not_completed',
+      error: 'source_cleanup_requires_completed_document',
+      deletedAt: null,
+    });
+    return {
+      ...persisted,
+      bucket,
+      objectPath,
+    };
+  }
 
   if (snapshot.storageDeletedAt || snapshot.sourceDeletedAt) {
     const persisted = await persistCleanupResult({
@@ -275,6 +333,22 @@ export async function finalizeDocumentSourceCleanup(
     };
   }
 
+  if (preferredObjectPath && preferredObjectPath !== objectPath) {
+    const persisted = await persistCleanupResult({
+      supabase,
+      snapshot,
+      success: false,
+      code: 'path_mismatch',
+      error: 'source_cleanup_path_mismatch',
+      deletedAt: null,
+    });
+    return {
+      ...persisted,
+      bucket,
+      objectPath,
+    };
+  }
+
   const existenceCheck = await objectExistsInStorage(supabase, bucket, objectPath);
   if (existenceCheck.exists === false) {
     const nowIso = new Date().toISOString();
@@ -293,11 +367,26 @@ export async function finalizeDocumentSourceCleanup(
     };
   }
 
+  if (snapshot.cleanupAttempts >= maxAttempts) {
+    const persisted = await persistCleanupResult({
+      supabase,
+      snapshot,
+      success: false,
+      code: 'max_attempts_exceeded',
+      error: 'source_cleanup_max_attempts_exceeded',
+      deletedAt: null,
+    });
+    return {
+      ...persisted,
+      bucket,
+      objectPath,
+    };
+  }
+
   if (existenceCheck.error) {
     logger.warn('Source existence check failed before deletion; attempting delete anyway', {
       documentId: snapshot.id,
       bucket,
-      objectPath,
       message: existenceCheck.error,
     });
   }

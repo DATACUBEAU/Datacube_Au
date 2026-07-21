@@ -303,6 +303,7 @@ async function main() {
         supabase,
         documentId: doc.id,
         preferredObjectPath: String(doc.file_path || '').trim() || null,
+        expectedOwnerId: ownerId,
         defaultBucket,
       });
       if (cleanup.success) {

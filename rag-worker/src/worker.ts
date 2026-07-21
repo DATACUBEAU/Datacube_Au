@@ -330,6 +330,7 @@ export class RAGWorker {
         documentId: job.document_id,
         preferredBucket: String(job.bucket || '').trim() || null,
         preferredObjectPath: String(job.object_path || '').trim() || null,
+        expectedOwnerId: String(job.owner_id || job.user_id || '').trim() || null,
         defaultBucket: process.env.BUCKET || process.env.NEXT_PUBLIC_SUPABASE_BUCKET || 'documents',
       });
 
@@ -338,7 +339,6 @@ export class RAGWorker {
           jobId: job.id,
           documentId: job.document_id,
           bucket: cleanupResult.bucket,
-          objectPath: cleanupResult.objectPath,
           cleanupCode: cleanupResult.code,
           cleanupError: cleanupResult.error,
           cleanupAttempts: cleanupResult.attempts,
@@ -348,7 +348,6 @@ export class RAGWorker {
           jobId: job.id,
           documentId: job.document_id,
           bucket: cleanupResult.bucket,
-          objectPath: cleanupResult.objectPath,
           cleanupCode: cleanupResult.code,
           cleanupAttempts: cleanupResult.attempts,
           sourceDeletedAt: cleanupResult.deletedAt,
@@ -758,7 +757,7 @@ export class RAGWorker {
 
     await this.updateJobProgress(job.id, 20);
 
-    logger.info('Downloading file', { bucket: job.bucket, path: job.object_path });
+    logger.info('Downloading file', { jobId: job.id, documentId: job.document_id, bucket: job.bucket });
     const downloadStartedAt = Date.now();
     const { data: fileData, error: downloadError } = await this.supabase.storage
       .from(job.bucket)
@@ -788,7 +787,6 @@ export class RAGWorker {
       textLength: text.length,
       alnumRatio: alnumRatio(text),
       zeroRatio: zeroRatio(text),
-      preview: text.slice(0, 120),
     });
 
     assertValidExtractedText(text, extension);
@@ -910,6 +908,20 @@ export class RAGWorker {
   }
 
   async reprocessDocument(documentId: string): Promise<void> {
+    const { data: doc, error: docError } = await this.supabase
+      .from('au_documents')
+      .select('id,storage_deleted_at,source_deleted_at')
+      .eq('id', documentId)
+      .maybeSingle();
+
+    if (docError) {
+      throw new Error(`Failed to inspect document ${documentId} before reprocessing: ${docError.message}`);
+    }
+
+    if (doc?.storage_deleted_at || doc?.source_deleted_at) {
+      throw new Error('source_not_retained: Original file is no longer retained after successful processing. Re-upload is required to reprocess from source.');
+    }
+
     const { data: job, error } = await this.supabase
       .from('au_worker_jobs')
       .select('id')

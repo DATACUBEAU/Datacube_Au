@@ -19,7 +19,6 @@ const apiGetFailurePlugin = {
       method: string;
       destination: string;
       mode: string;
-      headers: Record<string, string>;
     };
 
     try {
@@ -28,7 +27,6 @@ const apiGetFailurePlugin = {
         method: request?.method || 'GET',
         destination: request?.destination || '',
         mode: request?.mode || 'same-origin',
-        headers: Object.fromEntries(request?.headers?.entries?.() ?? []),
       };
     } catch {
       snapshot = {
@@ -36,7 +34,6 @@ const apiGetFailurePlugin = {
         method: request?.method || 'GET',
         destination: request?.destination || '',
         mode: request?.mode || 'same-origin',
-        headers: {},
       };
     }
 
@@ -110,7 +107,6 @@ const apiPostFailurePlugin = {
       method: string;
       destination: string;
       mode: string;
-      headers: Record<string, string>;
     };
 
     try {
@@ -119,7 +115,6 @@ const apiPostFailurePlugin = {
         method: request?.method || 'POST',
         destination: request?.destination || '',
         mode: request?.mode || 'same-origin',
-        headers: Object.fromEntries(request?.headers?.entries?.() ?? []),
       };
     } catch {
       snapshot = {
@@ -127,7 +122,6 @@ const apiPostFailurePlugin = {
         method: request?.method || 'POST',
         destination: request?.destination || '',
         mode: request?.mode || 'same-origin',
-        headers: {},
       };
     }
 
@@ -449,24 +443,11 @@ const withPWA = withPWAInit({
           const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
           if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
           if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-          // Exclude auth endpoints from caching
-          if (/\/auth\/v1\//i.test(url.pathname)) return false;
           return request.method === 'GET' && /^https:\/\/.*\.supabase\.co\/.*/i.test(url.toString());
         },
-        handler: 'StaleWhileRevalidate',
+        handler: 'NetworkOnly',
         options: {
-          cacheName: PWA_RUNTIME_CACHE_NAMES['supabase-swr'],
-          plugins: [
-            {
-              cacheWillUpdate: async ({ response }: { response: Response }) => {
-                return response && response.status === 200 ? response : null;
-              },
-            },
-          ],
-          expiration: {
-            maxEntries: 64,
-            maxAgeSeconds: 30 * 60, // 30 minutes
-          },
+          cacheName: PWA_RUNTIME_CACHE_NAMES['supabase-no-cache'],
         },
       },
       {
