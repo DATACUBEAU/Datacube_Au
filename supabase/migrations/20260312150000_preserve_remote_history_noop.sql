@@ -1,0 +1,4 @@
+-- Applied remotely before local migration history was recovered.
+-- SQL body unknown.
+-- Preserved as a no-op to align local migration history with production.
+-- Do not remove unless the production migration history is intentionally rewritten.
