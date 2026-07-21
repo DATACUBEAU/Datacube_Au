@@ -123,20 +123,57 @@ async function main() {
         strict_1.default.match(source, /activePromptHashRef/);
         strict_1.default.match(source, /if \(activePromptHashRef\.current === promptHash\) \{/);
     });
-    await run('account snapshot refreshes are throttled and polling only runs when realtime is degraded', () => {
+    await run('account snapshot refreshes are cache-first and no longer mount normal-user realtime', () => {
         const source = readRepoFile('src/components/providers/account-snapshot-provider.tsx');
-        strict_1.default.match(source, /POLL_INTERVAL_MS = 120_000/);
         strict_1.default.match(source, /SNAPSHOT_MIN_REFRESH_INTERVAL_MS = 15_000/);
-        strict_1.default.match(source, /const \[isRealtimeDegraded, setIsRealtimeDegraded\] = useState\(false\)/);
-        strict_1.default.match(source, /if \(!isRealtimeDegraded\) return;/);
-        strict_1.default.equal(source.includes("table: 'au_messages'"), false);
-        strict_1.default.equal(source.includes("table: 'au_model_usage'"), false);
+        strict_1.default.match(source, /resolveAccountSnapshotRefreshDecision/);
+        strict_1.default.match(source, /inflightFetchRef/);
+        strict_1.default.match(source, /stale_response_ignored/);
+        strict_1.default.equal(source.includes("channel(`account-snapshot:"), false);
+        strict_1.default.equal(source.includes("table: 'feature_flags'"), false);
+        strict_1.default.equal(source.includes("table: 'usage_counters'"), false);
+        strict_1.default.equal(source.includes("table: 'au_plan_limit_rules'"), false);
     });
-    await run('feature flag polling only activates when realtime is degraded', () => {
+    await run('feature flags are fetched with cache and etag instead of normal-user realtime', () => {
         const source = readRepoFile('src/components/feature-flag-provider.tsx');
-        strict_1.default.match(source, /POLL_INTERVAL_MS = 120_000/);
-        strict_1.default.match(source, /const \[isRealtimeDegraded, setIsRealtimeDegraded\] = useState\(false\)/);
-        strict_1.default.match(source, /if \(!isRealtimeDegraded\) return;/);
+        const routeSource = readRepoFile('src/app/api/feature-flags/route.ts');
+        strict_1.default.match(source, /If-None-Match/);
+        strict_1.default.match(source, /res\.status === 304/);
+        strict_1.default.match(source, /inflightFetchRef/);
+        strict_1.default.match(source, /currentUserIdRef/);
+        strict_1.default.match(source, /setRows\(\[\]\)/);
+        strict_1.default.match(routeSource, /status: 401/);
+        strict_1.default.match(routeSource, /Cache-Control': 'no-store'/);
+        strict_1.default.equal(source.includes("channel('feature-flags-v2')"), false);
+        strict_1.default.equal(source.includes("table: 'feature_flags'"), false);
+    });
+    await run('document realtime remains scoped to the authenticated user and cleans up channels', () => {
+        const source = readRepoFile('src/hooks/api/use-au-documents.ts');
+        strict_1.default.match(source, /channel\(`au_documents_changes:\$\{user\.id\}`\)/);
+        strict_1.default.match(source, /filter: `user_id=eq\.\$\{user\.id\}`/);
+        strict_1.default.match(source, /ownerId !== user\.id/);
+        strict_1.default.match(source, /supabase\.removeChannel\(channel\)/);
+        strict_1.default.equal(source.includes("channel('au_documents_changes')"), false);
+    });
+    await run('dashboard sidebar collapse is local, accessible, and does not add Supabase preference traffic', () => {
+        const source = readRepoFile('src/app/dashboard/dashboard-client-layout.tsx');
+        strict_1.default.match(source, /DASHBOARD_SIDEBAR_STORAGE_KEY/);
+        strict_1.default.match(source, /localStorage\.setItem\(DASHBOARD_SIDEBAR_STORAGE_KEY/);
+        strict_1.default.match(source, /aria-expanded=\{expanded\}/);
+        strict_1.default.match(source, /Collapse dashboard sidebar/);
+        strict_1.default.match(source, /Expand dashboard sidebar/);
+        strict_1.default.equal(source.includes('supabase.from'), false);
+    });
+    await run('admin plan assignment uses a server RPC and preserves billing-provider records', () => {
+        const routeSource = readRepoFile('src/app/api/admin/users/route.ts');
+        const migrationSource = readRepoFile('supabase/migrations/20260630120000_admin_plan_assignment_overrides.sql');
+        strict_1.default.match(routeSource, /action: z\.literal\('set_user_plan'\)/);
+        strict_1.default.match(routeSource, /admin_set_user_plan_override/);
+        strict_1.default.match(routeSource, /billingRecordsPreserved: true/);
+        strict_1.default.match(migrationSource, /billing_records_preserved', TRUE/);
+        strict_1.default.match(migrationSource, /DROP CONSTRAINT IF EXISTS au_user_entitlements_admin_override_owner_check/);
+        strict_1.default.equal(routeSource.includes(".from('billing_subscriptions').update"), false);
+        strict_1.default.equal(routeSource.includes(".from('billing_subscriptions').upsert"), false);
     });
     await run('feature output reads are deduped, cached briefly, and mapped to user-facing errors', () => {
         const hookSource = readRepoFile('src/hooks/api/use-feature-output.ts');

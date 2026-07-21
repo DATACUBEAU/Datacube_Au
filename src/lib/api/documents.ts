@@ -321,20 +321,22 @@ function applyOwnershipFilters(query: any, conditions: string) {
 /**
  * Fetches all text chunks for a document and joins them.
  */
-export async function getDocumentText(user: User | null, documentId: string): Promise<string> {
+export async function getDocumentText(user: User | null, documentId: string, limit = 15): Promise<string> {
   const ownershipConditions = await getOwnershipConditionCandidates(user);
 
   for (const conditions of ownershipConditions) {
     const query = supabase
       .from('au_document_chunks')
       .select('text')
-      .eq('document_id', documentId);
+      .eq('document_id', documentId)
+      .limit(limit);
 
     applyOwnershipFilter(query, conditions);
     const { data, error } = await query.order('chunk_index', { ascending: true });
 
     if (!error) {
-      return (data || []).map(chunk => chunk.text).join('\n\n');
+      const text = (data || []).map(chunk => chunk.text).join('\n\n');
+      return text.slice(0, 12000); // hard char limit
     }
 
     if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {

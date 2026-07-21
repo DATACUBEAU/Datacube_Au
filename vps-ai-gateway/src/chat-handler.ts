@@ -2,9 +2,18 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { FastifyReply } from 'fastify';
 import { logger, getOpenRouterKey, getAnthropicKey, sleep } from './utils.js';
 import { buildRoutingCandidates, selectProviderAndModel, type RoutingCandidate } from './ai-routing.js';
+import { RetrievalService } from './retrieval-service.js';
 
 export class ChatHandler {
-  constructor(private supabase: SupabaseClient) {}
+  private retrievalService: RetrievalService;
+
+  constructor(
+    private supabase: SupabaseClient,
+    private qdrantUrl: string,
+    private qdrantApiKey?: string
+  ) {
+    this.retrievalService = new RetrievalService(qdrantUrl, qdrantApiKey, supabase);
+  }
 
   async handleAuChat(body: any, headers: any, reply: FastifyReply) {
     const userId = headers['x-user-id'];
@@ -17,6 +26,28 @@ export class ChatHandler {
         return reply.code(400).send({ error: 'missing_question', message: 'No question provided' });
       }
 
+      // Fetch RAG Context from Qdrant
+      const documentId = body.activeDocIds?.[0] || body.doc_id || body.selectedDocId;
+      let ragContext: string | null = null;
+      
+      if (documentId && documentId !== 'global') {
+        try {
+          const chunks = await this.retrievalService.semanticTopKRetrieval({
+            userId,
+            documentId,
+            query: question,
+            limit: body.retrieval?.top_k || 15,
+            minScore: body.retrieval?.min_score || 0.0,
+            maxChars: 12000,
+          });
+          if (chunks.length > 0) {
+            ragContext = chunks.map(c => `[Page ${c.page_number || '?'}] ${c.text}`).join('\n\n');
+          }
+        } catch (err: any) {
+          logger.error('Failed to retrieve chat context from Qdrant', err.message);
+        }
+      }
+
       const routingCandidate = await this.selectModel('chat', userId, headers['x-user-plan']);
       
       if (stream) {
@@ -27,7 +58,7 @@ export class ChatHandler {
           'X-Request-Id': correlationId,
         });
 
-        const answer = await this.generateWithRouting(routingCandidate, question, body, (text) => {
+        const answer = await this.generateWithRouting(routingCandidate, question, body, ragContext, (text) => {
           reply.raw.write(`data: ${JSON.stringify({ type: 'delta', text })}\n\n`);
         });
 
@@ -41,7 +72,7 @@ export class ChatHandler {
         return reply;
       }
 
-      const answer = await this.generateWithRouting(routingCandidate, question, body);
+      const answer = await this.generateWithRouting(routingCandidate, question, body, ragContext);
       return reply.code(200).send({
         answer,
         thought: null,
@@ -80,7 +111,7 @@ export class ChatHandler {
           'X-Request-Id': correlationId,
         });
 
-        const answer = await this.generateWithRouting(routingCandidate, question, body, (text) => {
+        const answer = await this.generateWithRouting(routingCandidate, question, body, null, (text: string) => {
           reply.raw.write(`data: ${JSON.stringify({ type: 'delta', text })}\n\n`);
         });
 
@@ -93,7 +124,7 @@ export class ChatHandler {
         return reply;
       }
 
-      const answer = await this.generateWithRouting(routingCandidate, question, body);
+      const answer = await this.generateWithRouting(routingCandidate, question, body, null);
       return reply.code(200).send({
         answer,
         requestId: correlationId,
@@ -115,7 +146,7 @@ export class ChatHandler {
     }
 
     const routingCandidate = await this.selectModel('chat', headers['x-user-id'], headers['x-user-plan']);
-    const answer = await this.generateWithRouting(routingCandidate, question, body);
+    const answer = await this.generateWithRouting(routingCandidate, question, body, null);
 
     return reply.code(200).send({ answer });
   }
@@ -153,9 +184,10 @@ export class ChatHandler {
     candidate: RoutingCandidate,
     question: string,
     body: any,
+    ragContext: string | null = null,
     onChunk?: (text: string) => void
   ): Promise<string> {
-    const messages = this.buildMessages(question, body);
+    const messages = this.buildMessages(question, body, ragContext);
     
     if (candidate.service === 'openrouter') {
       return this.callOpenRouter(candidate, messages, onChunk);
@@ -166,13 +198,15 @@ export class ChatHandler {
     throw new Error(`Unsupported service: ${candidate.service}`);
   }
 
-  private buildMessages(question: string, body: any): { role: string; content: string }[] {
-    const systemPrompt = this.buildSystemPrompt(body);
+  private buildMessages(question: string, body: any, ragContext: string | null = null): { role: string; content: string }[] {
+    let systemPrompt = this.buildSystemPrompt(body) || 'You are an AI teaching assistant.';
+    if (ragContext) {
+      systemPrompt += `\n\nUse the following document excerpts to answer the user's question:\n\n${ragContext}`;
+    }
+
     const messages: { role: string; content: string }[] = [];
 
-    if (systemPrompt) {
-      messages.push({ role: 'system', content: systemPrompt });
-    }
+    messages.push({ role: 'system', content: systemPrompt });
 
     if (Array.isArray(body.messages)) {
       for (const msg of body.messages) {

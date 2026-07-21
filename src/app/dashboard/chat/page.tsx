@@ -626,6 +626,7 @@ export default function ChatPage() {
       const documentTitle = selectedDocName || 'Current Document';
       const prompts = await generatePromptStarters(documentTitle, '', promptStudioInput, {
         documentId: selectedDocId,
+        accessToken: session?.access_token,
       });
       
       if (prompts.length > 0) {

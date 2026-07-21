@@ -15,6 +15,7 @@ import { logEvent } from '@/lib/analytics';
 import { guardRequest } from '@/lib/api/request-guard';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
+import { dispatchSessionExpired } from '@/lib/auth/session-expiry-events';
 import { mergeDocumentContext, normalizeDocumentContext, type ChatDocumentContext } from '@shared/document-chat-context';
 import {
   formatAssistantResponseText,
@@ -676,6 +677,12 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           requestId: normalizedError.requestId,
           details: normalizedError.details,
         });
+        dispatchSessionExpired({
+          status: 401,
+          source: 'useAuChat',
+          reason: 'http_auth_error',
+          intent: 'interactive',
+        });
       } else if (authFailure?.status === 403) {
         logOnce('warn', 'chat:send:forbidden', '[useAuChat] Message forbidden', {
           status,
@@ -811,7 +818,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
             selectedDocId,
             action: 'scan_and_greet',
             model: selectedModel === 'auto' ? undefined : selectedModel
-        }, { signal: abortControllerRef.current?.signal });
+        }, { signal: abortControllerRef.current?.signal, accessToken: session?.access_token });
 
         if (thinkingInterval) clearInterval(thinkingInterval);
         setAuAnimationState('responding');
@@ -895,7 +902,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
             content: `Based on the document "${title}" and the recent chat history:\n${historyContext}\n\nGenerate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
           }],
           selectedDocId: selectedDocId!
-        });
+        }, { accessToken: session?.access_token });
 
         const parsed = JSON.parse(result.answer);
         if (Array.isArray(parsed)) return parsed;

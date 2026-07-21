@@ -1,4 +1,3 @@
-
 import {
   extractApiError,
   extractApiErrorMessage,
@@ -7,6 +6,7 @@ import {
   type ApiErrorShape,
 } from '@/lib/api/api-contract';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
+import { safeFetch } from '@/lib/api/safe-fetch';
 // Legacy Edge Function imports removed — VPS ticket path is the sole path.
 import {
   validateAndNormalizeChatPayload,
@@ -271,7 +271,7 @@ function normalizeThrownChatError(error: unknown, fallbackMessage = 'Chat reques
  */
 export async function sendChatMessage(
   request: ChatRequest,
-  opts?: { signal?: AbortSignal; clientMessageId?: string }
+  opts?: { signal?: AbortSignal; clientMessageId?: string; accessToken?: string | null }
 ): Promise<ChatResponse> {
   // ROUTING LOGIC:
   // 1. Global Chat -> 'global-chat' endpoint
@@ -291,10 +291,14 @@ export async function sendChatMessage(
   });
 
   
-  const ticketRes = await fetch('/api/au/vps-ticket', {
+  const ticketRes = await safeFetch('/api/au/vps-ticket', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feature: endpoint })
+    headers: {
+      'Content-Type': 'application/json',
+      ...(opts?.accessToken ? { Authorization: `Bearer ${opts.accessToken}` } : {}),
+    },
+    body: JSON.stringify({ feature: endpoint }),
+    authIntent: 'interactive',
   });
 
   if (!ticketRes.ok) {
@@ -357,7 +361,7 @@ export async function sendChatMessageStream(
   handlers: {
     onEvent: (event: ChatStreamEvent) => void;
   },
-  opts?: { signal?: AbortSignal }
+  opts?: { signal?: AbortSignal; accessToken?: string | null }
 ): Promise<ChatStreamDoneEvent> {
   const isGlobal = request.selectedDocId === 'global' || request.chat_type === 'global';
   const endpoint = isGlobal ? 'global-chat' : 'au-chat';
@@ -373,10 +377,14 @@ export async function sendChatMessageStream(
   };
 
   
-  const ticketRes = await fetch('/api/au/vps-ticket', {
+  const ticketRes = await safeFetch('/api/au/vps-ticket', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feature: endpoint })
+    headers: {
+      'Content-Type': 'application/json',
+      ...(opts?.accessToken ? { Authorization: `Bearer ${opts.accessToken}` } : {}),
+    },
+    body: JSON.stringify({ feature: endpoint }),
+    authIntent: 'interactive',
   });
 
   if (!ticketRes.ok) {
@@ -545,15 +553,19 @@ export async function generatePromptStarters(
   documentTitle: string,
   documentContent: string,
   userIdea?: string,
-  opts?: { documentId?: string | null }
+  opts?: { documentId?: string | null; accessToken?: string | null }
 ): Promise<string[]> {
   const hasDocId = Boolean(opts?.documentId);
 
   
-  const ticketRes = await fetch('/api/au/vps-ticket', {
+  const ticketRes = await safeFetch('/api/au/vps-ticket', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ feature: 'generate-prompt-starters' })
+    headers: {
+      'Content-Type': 'application/json',
+      ...(opts?.accessToken ? { Authorization: `Bearer ${opts.accessToken}` } : {}),
+    },
+    body: JSON.stringify({ feature: 'generate-prompt-starters' }),
+    authIntent: 'interactive',
   });
 
   if (!ticketRes.ok) {
@@ -571,8 +583,9 @@ export async function generatePromptStarters(
     },
     body: JSON.stringify({
       documentTitle,
-      documentContent,
+      documentContent: hasDocId ? undefined : documentContent,
       userIdea,
+      documentId: opts?.documentId || undefined,
     }),
   });
 

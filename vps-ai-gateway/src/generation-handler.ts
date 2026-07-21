@@ -3,12 +3,18 @@ import { FastifyReply } from 'fastify';
 import { logger, getOpenRouterKey, getAnthropicKey } from './utils.js';
 import { selectProviderAndModel } from './ai-routing.js';
 
+import { RetrievalService } from './retrieval-service.js';
+
 export class GenerationHandler {
+  private retrievalService: RetrievalService;
+
   constructor(
     private supabase: SupabaseClient,
     private qdrantUrl: string,
     private qdrantApiKey?: string
-  ) {}
+  ) {
+    this.retrievalService = new RetrievalService(qdrantUrl, qdrantApiKey, supabase);
+  }
 
   async handleKnowledge(body: any, headers: any, reply: FastifyReply) {
     const userId = headers['x-user-id'];
@@ -16,7 +22,7 @@ export class GenerationHandler {
     let { documentContent, pastQuestionsContent } = body;
 
     if (!documentContent && documentId) {
-      documentContent = await this.hydrateDocumentContent(documentId, userId);
+      documentContent = await this.fetchBoundedCoverage(documentId, userId, ['key concepts', 'comprehensive study materials summary']);
     }
     if (!pastQuestionsContent && body.pastQuestionIds) {
       pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
@@ -48,7 +54,12 @@ export class GenerationHandler {
     let { mainTextbookContent, pastQuestionsContent } = body;
 
     if (!mainTextbookContent && mainTextbookId) {
-      mainTextbookContent = await this.hydrateDocumentContent(mainTextbookId, userId);
+      mainTextbookContent = await this.fetchBoundedCoverage(mainTextbookId, userId, [
+        'likely exam topics', 
+        'important concepts', 
+        'frequent themes', 
+        'key sections'
+      ]);
     }
     if (!pastQuestionsContent && body.pastQuestionIds) {
       pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
@@ -80,7 +91,13 @@ export class GenerationHandler {
     let { documentContent, pastQuestionsContent } = body;
 
     if (!documentContent && documentId) {
-      documentContent = await this.hydrateDocumentContent(documentId, userId);
+      documentContent = await this.fetchBoundedCoverage(documentId, userId, [
+        'important concepts', 
+        'definitions', 
+        'examples', 
+        'exam questions', 
+        'key sections'
+      ]);
     }
     if (!pastQuestionsContent && body.pastQuestionIds) {
       pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
@@ -108,7 +125,17 @@ export class GenerationHandler {
 
   async handlePromptStarters(body: any, headers: any, reply: FastifyReply) {
     const userId = headers['x-user-id'];
-    const { documentTitle, documentContent, userIdea } = body;
+    const { documentId, documentTitle, userIdea } = body;
+    let { documentContent } = body;
+
+    if (!documentContent && documentId) {
+      const intent = userIdea || 'core concepts';
+      documentContent = await this.fetchBoundedCoverage(documentId, userId, [
+        'key questions', 
+        'study topics', 
+        intent
+      ]);
+    }
 
     if (!documentContent) {
       return reply.code(400).send({ error: 'missing_content' });
@@ -135,14 +162,38 @@ export class GenerationHandler {
   }
 
 
-  private async hydrateDocumentContent(documentId: string, userId: string): Promise<string | null> {
-    const { data } = await this.supabase
-      .from('au_documents')
-      .select('content_text')
-      .eq('id', documentId)
-      .eq('user_id', userId)
-      .single();
-    return data?.content_text || null;
+  private async fetchBoundedCoverage(documentId: string, userId: string, intentQueries?: string[]): Promise<string | null> {
+    try {
+      const chunks = await this.retrievalService.boundedCoverageRetrieval({
+        userId,
+        documentId,
+        intentQueries,
+        limit: 15,
+        maxChars: 12000,
+      });
+      if (chunks.length === 0) return null;
+      return chunks.map(c => `[Page ${c.page_number || '?'}] ${c.text}`).join('\n\n');
+    } catch (err: any) {
+      logger.error('Failed to retrieve bounded coverage context', err.message);
+      return null;
+    }
+  }
+
+  private async fetchSemanticTopK(documentId: string | undefined, userId: string, query: string): Promise<string | null> {
+    try {
+      const chunks = await this.retrievalService.semanticTopKRetrieval({
+        userId,
+        documentId,
+        query,
+        limit: 15,
+        maxChars: 12000,
+      });
+      if (chunks.length === 0) return null;
+      return chunks.map(c => `[Page ${c.page_number || '?'}] ${c.text}`).join('\n\n');
+    } catch (err: any) {
+      logger.error('Failed to retrieve semantic top-k context', err.message);
+      return null;
+    }
   }
 
   private async hydratePastQuestions(pastQuestionIds: string[], userId: string): Promise<string | null> {

@@ -27,12 +27,11 @@ if (!VPS_SHARED_SECRET.ok) {
   process.exit(1);
 }
 const VPS_SHARED_SECRET_VALUE = VPS_SHARED_SECRET.secret;
-
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
 
-const chatHandler = new ChatHandler(supabase);
+const chatHandler = new ChatHandler(supabase, QDRANT_URL, QDRANT_API_KEY);
 const generationHandler = new GenerationHandler(supabase, QDRANT_URL, QDRANT_API_KEY);
 
 async function buildServer() {
