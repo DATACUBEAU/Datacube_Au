@@ -1,9 +1,37 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { FastifyReply } from 'fastify';
-import { logger, getOpenRouterKey, getAnthropicKey } from './utils.js';
+import {
+  GatewayProviderError,
+  clampPositiveInt,
+  errorLogDetails,
+  getAnthropicKey,
+  getOpenRouterKey,
+  logger,
+  parsePositiveInt,
+  publicErrorMessage,
+} from './utils.js';
 import { selectProviderAndModel } from './ai-routing.js';
 
-import { RetrievalService } from './retrieval-service.js';
+import { RetrievalService, type RetrievedChunk } from './retrieval-service.js';
+
+const MAX_GENERATION_CONTEXT_CHARS = parsePositiveInt(process.env.AI_CONTEXT_CHAR_LIMIT, 12000);
+const MAX_PAST_QUESTION_CONTEXT_CHARS = parsePositiveInt(process.env.AI_PAST_QUESTION_CONTEXT_CHAR_LIMIT, 4000);
+const MAX_PAST_QUESTION_IDS = parsePositiveInt(process.env.AI_PAST_QUESTION_LIMIT, 10);
+const AI_PROVIDER_TIMEOUT_MS = parsePositiveInt(process.env.AI_PROVIDER_TIMEOUT_MS, 60000);
+const AI_MAX_OUTPUT_TOKENS = clampPositiveInt(process.env.AI_MAX_OUTPUT_TOKENS, 2048, 256, 4096);
+
+type GenerationSource = {
+  document_id: string;
+  document_title?: string;
+  chunk_index: number;
+  page_number?: number;
+  score?: number;
+};
+
+type RetrievedContext = {
+  text: string | null;
+  sources: GenerationSource[];
+};
 
 export class GenerationHandler {
   private retrievalService: RetrievalService;
@@ -17,12 +45,19 @@ export class GenerationHandler {
   }
 
   async handleKnowledge(body: any, headers: any, reply: FastifyReply) {
-    const userId = headers['x-user-id'];
+    const userId = String(headers['x-user-id'] || '').trim();
     const { documentId } = body;
     let { documentContent, pastQuestionsContent } = body;
+    let sources: GenerationSource[] = [];
+
+    if (!userId) {
+      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+    }
 
     if (!documentContent && documentId) {
-      documentContent = await this.fetchBoundedCoverage(documentId, userId, ['key concepts', 'comprehensive study materials summary']);
+      const retrieved = await this.fetchBoundedCoverage(documentId, userId, ['key concepts', 'comprehensive study materials summary']);
+      documentContent = retrieved.text;
+      sources = retrieved.sources;
     }
     if (!pastQuestionsContent && body.pastQuestionIds) {
       pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
@@ -41,25 +76,33 @@ export class GenerationHandler {
         output: result,
         status: 'ready',
         model: candidate.model,
+        sources,
       });
     } catch (err: any) {
-      logger.error('knowledge generation error', err.message);
-      return reply.code(500).send({ error: 'generation_failed', message: err.message });
+      logger.error('knowledge generation error', errorLogDetails(err));
+      return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
   }
 
   async handleExamPredictions(body: any, headers: any, reply: FastifyReply) {
-    const userId = headers['x-user-id'];
-    const { mainTextbookId } = body;
+    const userId = String(headers['x-user-id'] || '').trim();
+    const mainTextbookId = body.mainTextbookId || body.documentId;
     let { mainTextbookContent, pastQuestionsContent } = body;
+    let sources: GenerationSource[] = [];
+
+    if (!userId) {
+      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+    }
 
     if (!mainTextbookContent && mainTextbookId) {
-      mainTextbookContent = await this.fetchBoundedCoverage(mainTextbookId, userId, [
+      const retrieved = await this.fetchBoundedCoverage(mainTextbookId, userId, [
         'likely exam topics', 
         'important concepts', 
         'frequent themes', 
         'key sections'
       ]);
+      mainTextbookContent = retrieved.text;
+      sources = retrieved.sources;
     }
     if (!pastQuestionsContent && body.pastQuestionIds) {
       pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
@@ -78,26 +121,34 @@ export class GenerationHandler {
         predictions: result,
         status: 'ready',
         model: candidate.model,
+        sources,
       });
     } catch (err: any) {
-      logger.error('exam predictions error', err.message);
-      return reply.code(500).send({ error: 'generation_failed', message: err.message });
+      logger.error('exam predictions error', errorLogDetails(err));
+      return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
   }
 
   async handlePracticeExam(body: any, headers: any, reply: FastifyReply) {
-    const userId = headers['x-user-id'];
+    const userId = String(headers['x-user-id'] || '').trim();
     const { documentId } = body;
     let { documentContent, pastQuestionsContent } = body;
+    let sources: GenerationSource[] = [];
+
+    if (!userId) {
+      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+    }
 
     if (!documentContent && documentId) {
-      documentContent = await this.fetchBoundedCoverage(documentId, userId, [
+      const retrieved = await this.fetchBoundedCoverage(documentId, userId, [
         'important concepts', 
         'definitions', 
         'examples', 
         'exam questions', 
         'key sections'
       ]);
+      documentContent = retrieved.text;
+      sources = retrieved.sources;
     }
     if (!pastQuestionsContent && body.pastQuestionIds) {
       pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
@@ -116,25 +167,33 @@ export class GenerationHandler {
         exam: result,
         status: 'ready',
         model: candidate.model,
+        sources,
       });
     } catch (err: any) {
-      logger.error('practice exam error', err.message);
-      return reply.code(500).send({ error: 'generation_failed', message: err.message });
+      logger.error('practice exam error', errorLogDetails(err));
+      return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
   }
 
   async handlePromptStarters(body: any, headers: any, reply: FastifyReply) {
-    const userId = headers['x-user-id'];
+    const userId = String(headers['x-user-id'] || '').trim();
     const { documentId, documentTitle, userIdea } = body;
     let { documentContent } = body;
+    let sources: GenerationSource[] = [];
+
+    if (!userId) {
+      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+    }
 
     if (!documentContent && documentId) {
       const intent = userIdea || 'core concepts';
-      documentContent = await this.fetchBoundedCoverage(documentId, userId, [
+      const retrieved = await this.fetchBoundedCoverage(documentId, userId, [
         'key questions', 
         'study topics', 
         intent
       ]);
+      documentContent = retrieved.text;
+      sources = retrieved.sources;
     }
 
     if (!documentContent) {
@@ -149,33 +208,36 @@ export class GenerationHandler {
       try {
         const prompts = JSON.parse(result);
         if (Array.isArray(prompts)) {
-          return reply.code(200).send({ prompts });
+          return reply.code(200).send({ prompts, sources });
         }
       } catch {}
 
       const lines = result.split('\n').filter(l => l.trim().length > 0).slice(0, 4);
-      return reply.code(200).send({ prompts: lines });
+      return reply.code(200).send({ prompts: lines, sources });
     } catch (err: any) {
-      logger.error('prompt starters error', err.message);
-      return reply.code(500).send({ error: 'generation_failed', message: err.message });
+      logger.error('prompt starters error', errorLogDetails(err));
+      return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
   }
 
 
-  private async fetchBoundedCoverage(documentId: string, userId: string, intentQueries?: string[]): Promise<string | null> {
+  private async fetchBoundedCoverage(documentId: string, userId: string, intentQueries?: string[]): Promise<RetrievedContext> {
     try {
       const chunks = await this.retrievalService.boundedCoverageRetrieval({
         userId,
         documentId,
         intentQueries,
         limit: 15,
-        maxChars: 12000,
+        maxChars: MAX_GENERATION_CONTEXT_CHARS,
       });
-      if (chunks.length === 0) return null;
-      return chunks.map(c => `[Page ${c.page_number || '?'}] ${c.text}`).join('\n\n');
+      if (chunks.length === 0) return { text: null, sources: [] };
+      return {
+        text: this.formatContext(chunks),
+        sources: this.formatSources(chunks),
+      };
     } catch (err: any) {
-      logger.error('Failed to retrieve bounded coverage context', err.message);
-      return null;
+      logger.error('Failed to retrieve bounded coverage context', { message: err.message });
+      return { text: null, sources: [] };
     }
   }
 
@@ -186,26 +248,29 @@ export class GenerationHandler {
         documentId,
         query,
         limit: 15,
-        maxChars: 12000,
+        maxChars: MAX_GENERATION_CONTEXT_CHARS,
       });
       if (chunks.length === 0) return null;
-      return chunks.map(c => `[Page ${c.page_number || '?'}] ${c.text}`).join('\n\n');
+      return this.formatContext(chunks);
     } catch (err: any) {
-      logger.error('Failed to retrieve semantic top-k context', err.message);
+      logger.error('Failed to retrieve semantic top-k context', { message: err.message });
       return null;
     }
   }
 
   private async hydratePastQuestions(pastQuestionIds: string[], userId: string): Promise<string | null> {
     if (!pastQuestionIds || pastQuestionIds.length === 0) return null;
+    const safeIds = pastQuestionIds.map((id) => String(id || '').trim()).filter(Boolean).slice(0, MAX_PAST_QUESTION_IDS);
+    if (safeIds.length === 0) return null;
     const { data } = await this.supabase
       .from('au_past_questions')
       .select('question, answer')
-      .in('id', pastQuestionIds)
-      .eq('user_id', userId);
+      .in('id', safeIds)
+      .eq('user_id', userId)
+      .limit(MAX_PAST_QUESTION_IDS);
     
     if (!data || data.length === 0) return null;
-    return data.map(q => `Q: ${q.question}\nA: ${q.answer}`).join('\n\n');
+    return data.map(q => `Q: ${q.question}\nA: ${q.answer}`).join('\n\n').slice(0, MAX_PAST_QUESTION_CONTEXT_CHARS);
   }
 
   private async selectModel(requestType: string, userId: string, headerPlan?: string) {
@@ -220,10 +285,10 @@ export class GenerationHandler {
   }
 
   private buildKnowledgePrompt(documentContent: string, pastQuestionsContent?: string): string {
-    let prompt = `You are an expert study assistant. Based on the following document content, generate comprehensive study materials including key concepts, summaries, and practice questions.\n\nDocument Content:\n${documentContent.slice(0, 8000)}`;
+    let prompt = `You are an expert study assistant. Based on the following document content, generate comprehensive study materials including key concepts, summaries, and practice questions.\n\nDocument Content:\n${String(documentContent || '').slice(0, 8000)}`;
     
     if (pastQuestionsContent) {
-      prompt += `\n\nPast Questions:\n${pastQuestionsContent.slice(0, 4000)}`;
+      prompt += `\n\nPast Questions:\n${String(pastQuestionsContent || '').slice(0, 4000)}`;
     }
     
     prompt += `\n\nGenerate a comprehensive knowledge summary in JSON format with the following structure:
@@ -237,10 +302,10 @@ export class GenerationHandler {
   }
 
   private buildPredictionsPrompt(textbookContent: string, pastQuestionsContent?: string): string {
-    let prompt = `Analyze the following textbook content and past exam questions to predict likely exam questions.\n\nTextbook:\n${textbookContent.slice(0, 8000)}`;
+    let prompt = `Analyze the following textbook content and past exam questions to predict likely exam questions.\n\nTextbook:\n${String(textbookContent || '').slice(0, 8000)}`;
     
     if (pastQuestionsContent) {
-      prompt += `\n\nPast Questions:\n${pastQuestionsContent.slice(0, 4000)}`;
+      prompt += `\n\nPast Questions:\n${String(pastQuestionsContent || '').slice(0, 4000)}`;
     }
     
     prompt += `\n\nGenerate exam predictions in JSON format:
@@ -254,10 +319,10 @@ export class GenerationHandler {
   }
 
   private buildPracticeExamPrompt(documentContent: string, pastQuestionsContent?: string): string {
-    let prompt = `Generate a practice exam based on the following document content.\n\nContent:\n${documentContent.slice(0, 8000)}`;
+    let prompt = `Generate a practice exam based on the following document content.\n\nContent:\n${String(documentContent || '').slice(0, 8000)}`;
     
     if (pastQuestionsContent) {
-      prompt += `\n\nPast Questions:\n${pastQuestionsContent.slice(0, 4000)}`;
+      prompt += `\n\nPast Questions:\n${String(pastQuestionsContent || '').slice(0, 4000)}`;
     }
     
     prompt += `\n\nGenerate a practice exam in JSON format:
@@ -276,7 +341,7 @@ export class GenerationHandler {
       return `Based on the document "${title}" and the user's interest in "${userIdea}", generate 4 relevant follow-up questions the user might ask. Return ONLY a JSON array of strings.`;
     }
     
-    return `Based on the document "${title}", generate 4 smart and relevant questions the user might want to ask. Return ONLY a JSON array of strings. Document content preview: ${content.slice(0, 1000)}`;
+    return `Based on the document "${title}", generate 4 smart and relevant questions the user might want to ask. Return ONLY a JSON array of strings. Document content preview: ${String(content || '').slice(0, 1000)}`;
   }
 
   private async generate(candidate: any, prompt: string): Promise<string> {
@@ -297,6 +362,7 @@ export class GenerationHandler {
 
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
+      signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -306,13 +372,13 @@ export class GenerationHandler {
       body: JSON.stringify({
         model: candidate.model,
         messages,
-        max_tokens: 4096,
+        max_tokens: AI_MAX_OUTPUT_TOKENS,
       }),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenRouter error: ${response.status} - ${error}`);
+      await response.text().catch(() => '');
+      throw new GatewayProviderError('openrouter', response.status);
     }
 
     const result: any = await response.json();
@@ -328,6 +394,7 @@ export class GenerationHandler {
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
@@ -337,16 +404,33 @@ export class GenerationHandler {
         model: candidate.model,
         system: systemMessage?.content,
         messages: userMessages,
-        max_tokens: 4096,
+        max_tokens: AI_MAX_OUTPUT_TOKENS,
       }),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Anthropic error: ${response.status} - ${error}`);
+      await response.text().catch(() => '');
+      throw new GatewayProviderError('anthropic', response.status);
     }
 
     const result: any = await response.json();
     return result.content?.[0]?.text || '';
+  }
+
+  private formatContext(chunks: RetrievedChunk[]): string {
+    return chunks
+      .map(c => `[Page ${c.page_number || '?'} | Chunk ${c.chunk_index}] ${c.text}`)
+      .join('\n\n')
+      .slice(0, MAX_GENERATION_CONTEXT_CHARS);
+  }
+
+  private formatSources(chunks: RetrievedChunk[]): GenerationSource[] {
+    return chunks.map((chunk) => ({
+      document_id: chunk.document_id,
+      document_title: chunk.document_title,
+      chunk_index: chunk.chunk_index,
+      page_number: chunk.page_number,
+      score: chunk.score,
+    }));
   }
 }

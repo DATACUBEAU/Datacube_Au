@@ -5,7 +5,54 @@ import { createHash } from 'node:crypto';
 export const runtime = 'nodejs';
 
 const PROVIDER_KEY_PUBLIC_COLUMNS =
-  'service,provider_type,key_value,is_active,allowed_models,metadata,error_count,last_used_at,created_at,updated_at';
+  'service,provider_type,key_last4,key_fingerprint,is_active,allowed_models,metadata,error_count,last_used_at,rotated_at,revoked_at,created_at,updated_at';
+const AU_CONFIG_COLUMNS = [
+  'id',
+  'billing_enabled',
+  'free_chat_daily_limit',
+  'free_exam_daily_limit',
+  'free_upload_daily_limit',
+  'free_max_upload_mb',
+  'premium_models_paid_only',
+  'stripe_price_weekly',
+  'stripe_price_monthly',
+  'stripe_price_weekly_id',
+  'stripe_price_monthly_id',
+  'bank_name',
+  'bank_account_number',
+  'bank_account_name',
+  'bank_instructions',
+  'alert_config',
+  'created_at',
+  'updated_at',
+].join(',');
+const AU_MODEL_ROUTING_COLUMNS =
+  'id,model_id,display_name,provider,registry,is_active,tier_required,priority,metadata,created_at,updated_at';
+
+const CONFIG_WRITE_FIELDS = new Set([
+  'billing_enabled',
+  'free_chat_daily_limit',
+  'free_exam_daily_limit',
+  'free_upload_daily_limit',
+  'free_max_upload_mb',
+  'premium_models_paid_only',
+  'stripe_price_weekly',
+  'stripe_price_monthly',
+  'stripe_price_weekly_id',
+  'stripe_price_monthly_id',
+  'bank_name',
+  'bank_account_number',
+  'bank_account_name',
+  'bank_instructions',
+  'alert_config',
+]);
+
+const SECRET_VALUE_PATTERNS = [
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi,
+  /\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+  /\bsk-[A-Za-z0-9_-]{12,}\b/g,
+  /\bsb_secret_[A-Za-z0-9_-]{12,}\b/g,
+];
 
 function maskProviderKey(raw: unknown): {
   configured: boolean;
@@ -34,15 +81,31 @@ function maskProviderKey(raw: unknown): {
 }
 
 function sanitizeProviderKeyRow(row: any) {
-  const masked = maskProviderKey(row?.key_value);
+  const rawKey = String(row?.key_value || '').trim();
+  const last4 = typeof row?.key_last4 === 'string' && row.key_last4.trim()
+    ? row.key_last4.trim().slice(-4)
+    : null;
+  const fingerprint = typeof row?.key_fingerprint === 'string' && row.key_fingerprint.trim()
+    ? row.key_fingerprint.trim().slice(0, 12)
+    : null;
+  const masked = rawKey
+    ? maskProviderKey(rawKey)
+    : {
+        configured: Boolean(last4 || fingerprint),
+        key_last4: last4,
+        key_fingerprint: fingerprint,
+        key_label: last4 ? `Configured ••••${last4}` : (fingerprint ? 'Configured' : 'Not configured'),
+      };
   return {
     service: row?.service ?? null,
     provider_type: row?.provider_type ?? 'openrouter',
     is_active: row?.is_active !== false,
     allowed_models: Array.isArray(row?.allowed_models) ? row.allowed_models : row?.allowed_models ?? null,
-    metadata: row?.metadata && typeof row.metadata === 'object' ? row.metadata : {},
+    metadata: redactLogValue(row?.metadata && typeof row.metadata === 'object' ? row.metadata : {}, 'metadata'),
     error_count: Number(row?.error_count || 0),
     last_used_at: row?.last_used_at ?? null,
+    rotated_at: row?.rotated_at ?? null,
+    revoked_at: row?.revoked_at ?? null,
     created_at: row?.created_at ?? null,
     updated_at: row?.updated_at ?? null,
     ...masked,
@@ -72,7 +135,11 @@ function redactLogValue(value: unknown, keyHint = '', depth = 0): unknown {
 
   if (value == null || typeof value === 'number' || typeof value === 'boolean') return value;
   if (typeof value === 'string') {
-    return value.length > 300 ? `${value.slice(0, 300)}...` : value;
+    const redacted = SECRET_VALUE_PATTERNS.reduce(
+      (next, pattern) => next.replace(pattern, '[REDACTED_SECRET]'),
+      value,
+    );
+    return redacted.length > 300 ? `${redacted.slice(0, 300)}...` : redacted;
   }
   if (depth >= 4) return '[REDACTED_DEPTH]';
   if (Array.isArray(value)) {
@@ -87,6 +154,50 @@ function redactLogValue(value: unknown, keyHint = '', depth = 0): unknown {
     );
   }
   return '[REDACTED]';
+}
+
+function sanitizeConexConfigRow(row: any) {
+  if (!row || typeof row !== 'object') return {};
+  return Object.fromEntries(
+    AU_CONFIG_COLUMNS.split(',')
+      .map((field) => [field, redactLogValue(row?.[field], field)] as const)
+      .filter(([, value]) => value !== undefined),
+  );
+}
+
+function sanitizeConexConfigPatch(config: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(config)
+      .filter(([key]) => CONFIG_WRITE_FIELDS.has(key))
+      .map(([key, value]) => [key, redactLogValue(value, key)]),
+  );
+}
+
+async function auditProviderKeyChange(
+  supabase: any,
+  input: {
+    action: 'create' | 'update' | 'revoke';
+    service: string;
+    providerType?: string | null;
+    keyFingerprint?: string | null;
+    actorUserId?: string | null;
+  },
+) {
+  const { error } = await supabase
+    .from('au_provider_key_audit_logs')
+    .insert({
+      action: input.action,
+      service: input.service,
+      provider_type: input.providerType || null,
+      key_fingerprint: input.keyFingerprint || null,
+      actor_user_id: input.actorUserId || null,
+    });
+
+  if (error && String(error?.code || '') !== '42P01') {
+    console.warn('[admin/handler] provider key audit log write failed', {
+      code: String(error?.code || ''),
+    });
+  }
 }
 
 /**
@@ -128,9 +239,9 @@ export async function POST(req: NextRequest) {
       case 'get_registry':
         return await handleGetRegistry(supabase, body, requestId);
       case 'update_api_key':
-        return await handleUpdateApiKey(supabase, body, requestId);
+        return await handleUpdateApiKey(supabase, body, requestId, adminResult.auth.userId);
       case 'delete_api_key':
-        return await handleDeleteApiKey(supabase, body, requestId);
+        return await handleDeleteApiKey(supabase, body, requestId, adminResult.auth.userId);
       case 'update_model':
         return await handleUpdateModel(supabase, body, requestId);
       case 'get_active_users':
@@ -154,9 +265,12 @@ export async function POST(req: NextRequest) {
         );
     }
   } catch (error: any) {
-    console.error(`[admin/handler] action=${action} failed:`, error?.message || error);
+    console.error(`[admin/handler] action=${action} failed:`, {
+      code: String(error?.code || ''),
+      message: String(redactLogValue(error?.message || 'Admin action failed.', 'message')),
+    });
     return NextResponse.json(
-      { error: 'handler_failed', message: String(error?.message || 'Admin action failed.'), requestId },
+      { error: 'handler_failed', message: 'Admin action failed.', requestId },
       { status: 500, headers: { 'Cache-Control': 'no-store' } },
     );
   }
@@ -167,7 +281,7 @@ export async function POST(req: NextRequest) {
 async function handleGetConexConfig(supabase: any, requestId: string) {
   const { data, error } = await supabase
     .from('au_config')
-    .select('*')
+    .select(AU_CONFIG_COLUMNS)
     .limit(1)
     .maybeSingle();
 
@@ -184,7 +298,7 @@ async function handleGetConexConfig(supabase: any, requestId: string) {
   }
 
   return NextResponse.json(
-    { config: data || {}, requestId },
+    { config: sanitizeConexConfigRow(data), requestId },
     { status: 200, headers: { 'Cache-Control': 'no-store' } },
   );
 }
@@ -194,6 +308,14 @@ async function handleUpdateConexConfig(supabase: any, body: any, requestId: stri
   if (!config || typeof config !== 'object') {
     return NextResponse.json(
       { error: 'invalid_config', message: 'Config object is required.', requestId },
+      { status: 400, headers: { 'Cache-Control': 'no-store' } },
+    );
+  }
+
+  const patch = sanitizeConexConfigPatch(config);
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json(
+      { error: 'empty_config', message: 'No supported config fields were provided.', requestId },
       { status: 400, headers: { 'Cache-Control': 'no-store' } },
     );
   }
@@ -209,22 +331,22 @@ async function handleUpdateConexConfig(supabase: any, body: any, requestId: stri
   if (existing?.id) {
     result = await supabase
       .from('au_config')
-      .update(config)
+      .update({ ...patch, updated_at: new Date().toISOString() })
       .eq('id', existing.id)
-      .select()
+      .select(AU_CONFIG_COLUMNS)
       .maybeSingle();
   } else {
     result = await supabase
       .from('au_config')
-      .insert(config)
-      .select()
+      .insert(patch)
+      .select(AU_CONFIG_COLUMNS)
       .maybeSingle();
   }
 
   if (result.error) throw result.error;
 
   return NextResponse.json(
-    { ok: true, config: result.data || config, requestId },
+    { ok: true, config: sanitizeConexConfigRow(result.data || patch), requestId },
     { status: 200, headers: { 'Cache-Control': 'no-store' } },
   );
 }
@@ -232,7 +354,7 @@ async function handleUpdateConexConfig(supabase: any, body: any, requestId: stri
 async function handleGetRegistry(supabase: any, body: any, requestId: string) {
   const [keysResult, modelsResult] = await Promise.all([
     supabase.from('au_api_keys').select(PROVIDER_KEY_PUBLIC_COLUMNS).order('service'),
-    supabase.from('au_model_routing').select('*').order('model_id'),
+    supabase.from('au_model_routing').select(AU_MODEL_ROUTING_COLUMNS).order('model_id'),
   ]);
 
   if (keysResult.error) {
@@ -263,7 +385,7 @@ async function handleGetRegistry(supabase: any, body: any, requestId: string) {
   );
 }
 
-async function handleUpdateApiKey(supabase: any, body: any, requestId: string) {
+async function handleUpdateApiKey(supabase: any, body: any, requestId: string, actorUserId?: string | null) {
   const keyData = body?.keyData;
   if (!keyData || typeof keyData !== 'object') {
     return NextResponse.json(
@@ -283,7 +405,7 @@ async function handleUpdateApiKey(supabase: any, body: any, requestId: string) {
   const newKeyValue = String(keyData.key_value || '').trim();
   const { data: existing, error: existingError } = await supabase
     .from('au_api_keys')
-    .select('service')
+    .select('service,provider_type')
     .eq('service', service)
     .maybeSingle();
   if (existingError) {
@@ -304,10 +426,17 @@ async function handleUpdateApiKey(supabase: any, body: any, requestId: string) {
     is_active: keyData.is_active !== false,
     allowed_models: Array.isArray(keyData.allowed_models) ? keyData.allowed_models : keyData.allowed_models ?? null,
     metadata: keyData.metadata && typeof keyData.metadata === 'object' ? keyData.metadata : {},
+    updated_by: actorUserId || null,
     updated_at: new Date().toISOString(),
   };
+  if (!existing?.service) {
+    payload.created_by = actorUserId || null;
+  }
   if (newKeyValue) {
     payload.key_value = newKeyValue;
+    payload.key_last4 = newKeyValue.slice(-4);
+    payload.key_fingerprint = createHash('sha256').update(newKeyValue).digest('hex');
+    payload.rotated_at = new Date().toISOString();
   }
 
   const { data, error } = await supabase
@@ -317,6 +446,13 @@ async function handleUpdateApiKey(supabase: any, body: any, requestId: string) {
     .maybeSingle();
 
   if (error) throw error;
+  await auditProviderKeyChange(supabase, {
+    action: existing?.service ? 'update' : 'create',
+    service,
+    providerType: String(data?.provider_type || payload.provider_type || ''),
+    keyFingerprint: typeof data?.key_fingerprint === 'string' ? data.key_fingerprint : null,
+    actorUserId,
+  });
 
   return NextResponse.json(
     { ok: true, key: sanitizeProviderKeyRow(data), requestId },
@@ -324,7 +460,7 @@ async function handleUpdateApiKey(supabase: any, body: any, requestId: string) {
   );
 }
 
-async function handleDeleteApiKey(supabase: any, body: any, requestId: string) {
+async function handleDeleteApiKey(supabase: any, body: any, requestId: string, actorUserId?: string | null) {
   const service = String(body?.service || '').trim();
   if (!service) {
     return NextResponse.json(
@@ -333,12 +469,30 @@ async function handleDeleteApiKey(supabase: any, body: any, requestId: string) {
     );
   }
 
+  const { data: existing } = await supabase
+    .from('au_api_keys')
+    .select('service,provider_type,key_fingerprint')
+    .eq('service', service)
+    .maybeSingle();
+
   const { error } = await supabase
     .from('au_api_keys')
-    .delete()
+    .update({
+      key_value: null,
+      is_active: false,
+      revoked_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    })
     .eq('service', service);
 
   if (error) throw error;
+  await auditProviderKeyChange(supabase, {
+    action: 'revoke',
+    service,
+    providerType: String(existing?.provider_type || ''),
+    keyFingerprint: typeof existing?.key_fingerprint === 'string' ? existing.key_fingerprint : null,
+    actorUserId,
+  });
 
   return NextResponse.json(
     { ok: true, requestId },
@@ -434,13 +588,13 @@ async function handleUpdateAlertConfig(supabase: any, body: any, requestId: stri
       .from('au_config')
       .update({ alert_config: config })
       .eq('id', existing.id)
-      .select()
+      .select('id,alert_config,updated_at')
       .maybeSingle();
   } else {
     result = await supabase
       .from('au_config')
       .insert({ alert_config: config })
-      .select()
+      .select('id,alert_config,updated_at')
       .maybeSingle();
   }
 
@@ -482,6 +636,7 @@ async function handleGetDebugLogs(supabase: any, requestId: string) {
     {
       logs: (data || []).map((row: any) => ({
         ...row,
+        message: redactLogValue(row?.message, 'message'),
         details: redactLogValue(row?.details, 'details'),
       })),
       requestId,

@@ -888,7 +888,10 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       }
 
       if (idea) {
-        return await generatePromptStarters(title, content, idea);
+        return await generatePromptStarters(title, content, idea, {
+          documentId: selectedDocId,
+          accessToken: session?.access_token,
+        });
       }
 
       // Smart suggestion: Scan chat history and document patterns
@@ -910,7 +913,10 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
         // Fallback to legacy
       }
 
-      return await generatePromptStarters(title, content);
+      return await generatePromptStarters(title, content, undefined, {
+        documentId: selectedDocId,
+        accessToken: session?.access_token,
+      });
     } catch (err: any) {
       console.error('[useAuChat] Prompt generation failed:', err);
       return [];

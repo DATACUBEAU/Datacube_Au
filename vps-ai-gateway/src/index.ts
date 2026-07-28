@@ -6,63 +6,113 @@ import { createClient } from '@supabase/supabase-js';
 import { ChatHandler } from './chat-handler.js';
 import { GenerationHandler } from './generation-handler.js';
 import fastifyRateLimit from '@fastify/rate-limit';
-import { resolveVpsSharedSecret, routeRequirementForPath, verifyVpsTicket } from './auth.js';
-import { logger } from './utils.js';
+import {
+  isOriginAllowed,
+  resolveAllowedOrigins,
+  resolveVpsSharedSecret,
+  routeRequirementForPath,
+  verifyVpsTicket,
+} from './auth.js';
+import { errorLogDetails, logger, parsePositiveInt } from './utils.js';
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3001;
+const PORT = parsePositiveInt(process.env.PORT, 3001);
 const HOST = process.env.HOST || '0.0.0.0';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVER_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 const QDRANT_URL = process.env.QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const VPS_SHARED_SECRET = resolveVpsSharedSecret();
+const ALLOWED_ORIGINS = resolveAllowedOrigins();
+const RATE_LIMIT_MAX = parsePositiveInt(process.env.RATE_LIMIT_MAX_PER_MINUTE, 20);
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  logger.error('Missing SUPABASE_URL or SUPABASE_ANON_KEY');
+if (!SUPABASE_URL || !SUPABASE_SERVER_KEY) {
+  logger.error('Missing Supabase server configuration');
   process.exit(1);
 }
 if (!VPS_SHARED_SECRET.ok) {
   logger.error('AI gateway authentication is not configured', { code: VPS_SHARED_SECRET.code });
   process.exit(1);
 }
+if (!ALLOWED_ORIGINS.ok) {
+  logger.error('AI gateway CORS is not configured', { code: ALLOWED_ORIGINS.code });
+  process.exit(1);
+}
 const VPS_SHARED_SECRET_VALUE = VPS_SHARED_SECRET.secret;
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVER_KEY, {
   auth: { persistSession: false, autoRefreshToken: false }
 });
+const allowedOrigins = ALLOWED_ORIGINS.origins;
+
+function isInsecurePublicQdrantUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    const isLoopback = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
+    return IS_PRODUCTION && parsed.protocol !== 'https:' && !isLoopback;
+  } catch {
+    return true;
+  }
+}
 
 const chatHandler = new ChatHandler(supabase, QDRANT_URL, QDRANT_API_KEY);
 const generationHandler = new GenerationHandler(supabase, QDRANT_URL, QDRANT_API_KEY);
 
 async function buildServer() {
   const server = Fastify({
-    logger: true,
+    logger: {
+      redact: [
+        'req.headers.authorization',
+        'req.headers.apikey',
+        'req.headers.cookie',
+        'req.headers["x-api-key"]',
+        'request.headers.authorization',
+        'request.headers.apikey',
+        'request.headers.cookie',
+      ],
+    },
     bodyLimit: 50 * 1024 * 1024,
   });
 
   await server.register(cors, {
-    origin: true,
+    origin: (origin, callback) => {
+      callback(null, isOriginAllowed(origin, allowedOrigins));
+    },
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'x-correlation-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'x-correlation-id'],
   });
 
   await server.register(fastifyRateLimit, {
-    max: (req: FastifyRequest) => {
-      const plan = (req.headers['x-user-plan'] as string) || 'free';
-      return plan === 'free' ? 5 : 20; // 5 req/min for free, 20 for pro
-    },
+    max: RATE_LIMIT_MAX,
     timeWindow: '1 minute',
-    keyGenerator: (req: FastifyRequest) => (req.headers['x-user-id'] as string) || req.ip,
+    keyGenerator: (req: FastifyRequest) => req.ip,
+  });
+
+  server.setNotFoundHandler(async (_request, reply) => {
+    return reply.code(404).send({ error: 'unknown_route', message: 'Gateway route is not available' });
+  });
+
+  server.setErrorHandler(async (err, request, reply) => {
+    logger.error('Unhandled gateway request error', {
+      path: request.url.split('?')[0],
+      error: errorLogDetails(err),
+    });
+    const statusCode = Number((err as any).statusCode || 500);
+    const safeStatus = statusCode >= 400 && statusCode < 500 ? statusCode : 500;
+    return reply.code(safeStatus).send({
+      error: safeStatus === 500 ? 'gateway_error' : 'request_failed',
+      message: safeStatus === 500 ? 'Gateway request failed' : 'Request failed',
+    });
   });
 
   server.addHook('preHandler', async (request, reply) => {
-    const path = request.url;
+    const path = request.url.split('?')[0] || '/';
     if (path === '/health') return;
 
     const authHeader = request.headers.authorization;
-    const apiKey = request.headers.apikey;
 
-    if (!authHeader && !apiKey) {
+    if (!authHeader) {
       reply.code(401).send({ error: 'missing_auth', message: 'Authorization required' });
       return;
     }
@@ -73,7 +123,7 @@ async function buildServer() {
       return;
     }
 
-    const token = authHeader?.replace(/^Bearer\s+/i, '') || String(apiKey || '');
+    const token = authHeader.replace(/^Bearer\s+/i, '');
 
     // We expect a VPS ticket generated by Next.js
     const ticketData = await verifyVpsTicket(token, VPS_SHARED_SECRET_VALUE, expectedRoute);
@@ -132,9 +182,14 @@ async function main() {
   
   await server.listen({ port: PORT, host: HOST });
   logger.info(`VPS AI Gateway listening on ${HOST}:${PORT}`);
-  logger.info(`Supabase URL: ${SUPABASE_URL}`);
-  logger.info(`Qdrant URL: ${QDRANT_URL}`);
-  logger.info(`OpenRouter key: ${process.env.OPENROUTER_API_KEY ? '***set***' : 'NOT SET'}`);
+  logger.info('Gateway dependency status', {
+    supabaseConfigured: Boolean(SUPABASE_URL),
+    qdrantConfigured: Boolean(QDRANT_URL),
+    qdrantHttpsOrLoopback: !isInsecurePublicQdrantUrl(QDRANT_URL),
+    allowedOriginCount: allowedOrigins.size,
+    openRouterConfigured: Boolean(process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY),
+    anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+  });
   logger.info(`Node ${process.version}, PID ${process.pid}`);
 
   // ── Graceful shutdown ──────────────────────────────────────────────────
@@ -153,7 +208,7 @@ async function main() {
       process.exit(0);
     } catch (err) {
       clearTimeout(forceTimer);
-      logger.error('Error during shutdown', err);
+      logger.error('Error during shutdown', errorLogDetails(err));
       process.exit(1);
     }
   };
@@ -163,15 +218,15 @@ async function main() {
 
   // Catch unhandled rejections in production
   process.on('unhandledRejection', (reason) => {
-    logger.error('Unhandled rejection', reason);
+    logger.error('Unhandled rejection', errorLogDetails(reason));
   });
   process.on('uncaughtException', (err) => {
-    logger.error('Uncaught exception — exiting', err);
+    logger.error('Uncaught exception — exiting', errorLogDetails(err));
     process.exit(1);
   });
 }
 
 main().catch(err => {
-  logger.error('Failed to start server', err);
+  logger.error('Failed to start server', errorLogDetails(err));
   process.exit(1);
 });

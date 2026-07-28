@@ -8,7 +8,7 @@ import { fetchAdmin } from '@/lib/api/admin-fetch';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 
-export const AdminAnalytics = ({ token }: { token: string }) => {
+export const AdminAnalytics = (_props: { token?: string }) => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

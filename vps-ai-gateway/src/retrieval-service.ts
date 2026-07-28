@@ -1,7 +1,7 @@
 import { QdrantClient } from '@qdrant/js-client-rest';
 import { FlagEmbedding, EmbeddingModel } from 'fastembed';
 import { SupabaseClient } from '@supabase/supabase-js';
-import { logger } from './utils.js';
+import { clampPositiveInt, logger, parsePositiveInt } from './utils.js';
 
 export interface RetrievedChunk {
   id: string | number;
@@ -17,7 +17,8 @@ export class RetrievalService {
   private qdrant: QdrantClient;
   private embedder: FlagEmbedding | null = null;
   private embedderPromise: Promise<FlagEmbedding> | null = null;
-  private collectionName = 'au_chunks';
+  private collectionName = process.env.QDRANT_COLLECTION || 'au_chunks';
+  private qdrantTimeoutMs = parsePositiveInt(process.env.QDRANT_TIMEOUT_MS, 8000);
 
   constructor(
     qdrantUrl: string,
@@ -32,7 +33,7 @@ export class RetrievalService {
     if (!this.embedderPromise) {
       logger.info('Initializing fastembed model for RetrievalService...');
       this.embedderPromise = Promise.race([
-        FlagEmbedding.init({ model: EmbeddingModel.AllMiniLML6V2 }).then((embedder) => {
+        FlagEmbedding.init({ model: EmbeddingModel.AllMiniLML6V2 }).then((embedder: FlagEmbedding) => {
           this.embedder = embedder;
           logger.info('fastembed model initialized.');
           return embedder;
@@ -66,32 +67,41 @@ export class RetrievalService {
     minScore?: number;
     maxChars?: number;
   }): Promise<RetrievedChunk[]> {
-    if (!params.userId) {
-      logger.error('semanticTopKRetrieval: missing userId, failing closed.');
+    const userId = String(params.userId || '').trim();
+    const documentId = String(params.documentId || '').trim();
+    const query = String(params.query || '').trim();
+    if (!userId || !documentId || !query) {
+      logger.warn('semanticTopKRetrieval: missing required retrieval filter/query, failing closed.', {
+        hasUserId: Boolean(userId),
+        hasDocumentId: Boolean(documentId),
+        hasQuery: Boolean(query),
+      });
       return [];
     }
 
-    const limit = params.limit || 15;
-    const maxChars = params.maxChars || 12000;
+    const limit = clampPositiveInt(params.limit, 15, 1, 20);
+    const maxChars = clampPositiveInt(params.maxChars, 12000, 1000, 16000);
     
-    const mustFilters: any[] = [{ key: 'user_id', match: { value: params.userId } }];
-    if (params.documentId) {
-      mustFilters.push({ key: 'document_id', match: { value: params.documentId } });
-    }
+    const mustFilters: any[] = [
+      { key: 'user_id', match: { value: userId } },
+      { key: 'document_id', match: { value: documentId } },
+    ];
 
     try {
-      const vector = await this.embedQuery(params.query);
-      const rawResults = await this.qdrant.search(this.collectionName, {
-        vector,
-        filter: { must: mustFilters },
-        limit,
-        with_payload: true,
-        score_threshold: params.minScore || 0.0,
-      });
+      const vector = await this.embedQuery(query);
+      const rawResults = await this.withTimeout<any[]>('qdrant semantic search', () =>
+        this.qdrant.search(this.collectionName, {
+          vector,
+          filter: { must: mustFilters },
+          limit,
+          with_payload: true,
+          score_threshold: params.minScore || 0.0,
+        })
+      );
 
-      return this.processRawResults(rawResults, maxChars);
+      return this.processRawResults(rawResults, maxChars, { userId, documentId });
     } catch (err: any) {
-      logger.error('semanticTopKRetrieval error', err.message);
+      logger.error('semanticTopKRetrieval error', { message: err.message });
       return [];
     }
   }
@@ -103,44 +113,58 @@ export class RetrievalService {
     limit?: number;
     maxChars?: number;
   }): Promise<RetrievedChunk[]> {
-    if (!params.userId) {
-      logger.error('boundedCoverageRetrieval: missing userId, failing closed.');
+    const userId = String(params.userId || '').trim();
+    const documentId = String(params.documentId || '').trim();
+    if (!userId || !documentId) {
+      logger.warn('boundedCoverageRetrieval: missing required retrieval filter, failing closed.', {
+        hasUserId: Boolean(userId),
+        hasDocumentId: Boolean(documentId),
+      });
       return [];
     }
 
-    const limit = params.limit || 15;
-    const maxChars = params.maxChars || 12000;
+    const limit = clampPositiveInt(params.limit, 15, 1, 20);
+    const maxChars = clampPositiveInt(params.maxChars, 12000, 1000, 16000);
     
-    const mustFilters: any[] = [{ key: 'user_id', match: { value: params.userId } }];
-    if (params.documentId) {
-      mustFilters.push({ key: 'document_id', match: { value: params.documentId } });
-    }
+    const mustFilters: any[] = [
+      { key: 'user_id', match: { value: userId } },
+      { key: 'document_id', match: { value: documentId } },
+    ];
 
     let rawResults: any[] = [];
     let qdrantFailed = false;
 
     try {
-      const scrollResult = await this.qdrant.scroll(this.collectionName, {
-        filter: { must: mustFilters },
-        limit: Math.max(5, Math.floor(limit / 2)),
-        with_payload: true,
-        with_vector: false,
-      });
+      const scrollResult = await this.withTimeout<{ points: any[] }>('qdrant bounded scroll', () =>
+        this.qdrant.scroll(this.collectionName, {
+          filter: { must: mustFilters },
+          limit: Math.min(8, Math.max(3, Math.floor(limit / 2))),
+          with_payload: true,
+          with_vector: false,
+        })
+      );
       rawResults.push(...scrollResult.points);
 
-      if (params.intentQueries && params.intentQueries.length > 0) {
-        const queryPromises = params.intentQueries.map(async (query) => {
+      const intentQueries = (params.intentQueries || [])
+        .map((query) => String(query || '').trim())
+        .filter(Boolean)
+        .slice(0, 4);
+
+      if (intentQueries.length > 0) {
+        const queryPromises = intentQueries.map(async (query) => {
           try {
             const vector = await this.embedQuery(query);
-            const searchResult = await this.qdrant.search(this.collectionName, {
-              vector,
-              filter: { must: mustFilters },
-              limit: Math.max(3, Math.floor(limit / params.intentQueries!.length)),
-              with_payload: true,
-            });
+            const searchResult = await this.withTimeout<any[]>('qdrant bounded intent search', () =>
+              this.qdrant.search(this.collectionName, {
+                vector,
+                filter: { must: mustFilters },
+                limit: Math.min(6, Math.max(2, Math.floor(limit / intentQueries.length))),
+                with_payload: true,
+              })
+            );
             return searchResult;
           } catch (e: any) {
-            logger.error(`Intent query failed: ${query}`, e.message);
+            logger.warn('Intent query failed', { message: e.message });
             return [];
           }
         });
@@ -151,20 +175,20 @@ export class RetrievalService {
         }
       }
     } catch (err: any) {
-      logger.error('Qdrant scroll failed in boundedCoverageRetrieval', err.message);
+      logger.error('Qdrant retrieval failed in boundedCoverageRetrieval', { message: err.message });
       qdrantFailed = true;
     }
 
-    let chunks = this.processRawResults(rawResults, maxChars);
+    let chunks = this.processRawResults(rawResults, maxChars, { userId, documentId });
 
     if (qdrantFailed || chunks.length === 0) {
-       chunks = await this.fallbackSupabaseRetrieval(params.userId, params.documentId, limit, maxChars);
+       chunks = await this.fallbackSupabaseRetrieval(userId, documentId, limit, maxChars);
     }
 
     return chunks;
   }
 
-  private processRawResults(rawResults: any[], maxChars: number): RetrievedChunk[] {
+  private processRawResults(rawResults: any[], maxChars: number, expected: { userId: string; documentId: string }): RetrievedChunk[] {
     const uniqueMap = new Map<string, RetrievedChunk>();
     
     for (const point of rawResults) {
@@ -172,6 +196,12 @@ export class RetrievalService {
       const text = payload.text as string || '';
       const textHash = payload.text_hash as string || '';
       const idKey = textHash || String(point.id);
+      const payloadDocumentId = String(payload.document_id || '').trim();
+      const payloadUserId = String(payload.user_id || '').trim();
+      const payloadOwnerId = String(payload.owner_id || '').trim();
+
+      if (payloadDocumentId !== expected.documentId) continue;
+      if (payloadUserId !== expected.userId && payloadOwnerId !== expected.userId) continue;
 
       if (!uniqueMap.has(idKey) && text.trim().length > 0) {
         uniqueMap.set(idKey, {
@@ -202,47 +232,46 @@ export class RetrievalService {
     return finalChunks;
   }
 
-  private async fallbackSupabaseRetrieval(userId: string, documentId: string | undefined, limit: number, maxChars: number): Promise<RetrievedChunk[]> {
+  private async fallbackSupabaseRetrieval(userId: string, documentId: string, limit: number, maxChars: number): Promise<RetrievedChunk[]> {
+    if (!userId || !documentId) {
+      logger.warn('fallbackSupabaseRetrieval: missing required retrieval filter, failing closed.');
+      return [];
+    }
     logger.warn('Invoking fallbackSupabaseRetrieval for bounded coverage');
     
-    let query = this.supabase
-      .from('au_document_chunks')
-      .select('id, document_id, chunk_index, text')
-      // use user_id since au_document_chunks can be filtered by either owner_id or user_id or we just fallback to no owner_id check if we only have document_id and user_id isn't indexed, wait we must enforce owner_id
-      // According to schemas seen earlier, owner_id is safe. If it fails, I'll switch to user_id. Let's use user_id based on src/app/api/account/delete/route.ts.
-      .eq('user_id', userId);
-      
-    if (documentId) {
-      query = query.eq('document_id', documentId);
-    }
+    const strategies: Array<{ column: 'user_id' | 'owner_id' }> = [
+      { column: 'user_id' },
+      { column: 'owner_id' },
+    ];
 
-    const { data, error } = await query
-      .order('chunk_index', { ascending: true })
-      .limit(limit);
-
-    if (error || !data) {
-      // It's possible the column is owner_id, fallback to it if there's an error.
-      if (error && error.message.includes('user_id')) {
-        let altQuery = this.supabase
+    for (const strategy of strategies) {
+      const query = this.supabase
           .from('au_document_chunks')
           .select('id, document_id, chunk_index, text')
-          .eq('owner_id', userId);
-        if (documentId) altQuery = altQuery.eq('document_id', documentId);
-        
-        const altRes = await altQuery.order('chunk_index', { ascending: true }).limit(limit);
-        if (altRes.error || !altRes.data) return [];
-        return this.mapSupabaseData(altRes.data, maxChars);
+          .eq(strategy.column, userId)
+          .eq('document_id', documentId)
+          .order('chunk_index', { ascending: true })
+          .limit(limit);
+
+      const { data, error } = await query;
+      if (!error && data) {
+        return this.mapSupabaseData(data, maxChars, { userId, documentId });
       }
-      logger.error('fallbackSupabaseRetrieval failed', error?.message);
+
+      if (error && error.message.includes(strategy.column)) {
+        continue;
+      }
+      logger.error('fallbackSupabaseRetrieval failed', { message: error?.message });
       return [];
     }
 
-    return this.mapSupabaseData(data, maxChars);
+    return [];
   }
   
-  private mapSupabaseData(data: any[], maxChars: number) {
+  private mapSupabaseData(data: any[], maxChars: number, expected: { userId: string; documentId: string }) {
     const uniqueMap = new Map<string, RetrievedChunk>();
     for (const row of data) {
+      if (String(row.document_id || '').trim() !== expected.documentId) continue;
       if (row.text && row.text.trim().length > 0) {
         uniqueMap.set(String(row.id), {
           id: row.id,
@@ -266,5 +295,19 @@ export class RetrievalService {
     }
 
     return finalChunks;
+  }
+
+  private async withTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    try {
+      return await Promise.race([
+        fn(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`${label} timeout`)), this.qdrantTimeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 }

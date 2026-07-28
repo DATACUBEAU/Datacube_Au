@@ -38,6 +38,10 @@ export type VpsSharedSecretResolution =
   | { ok: true; secret: Uint8Array; source: 'env' | 'explicit_dev' }
   | { ok: false; status: 503; code: 'VPS_SHARED_SECRET_MISSING'; message: string };
 
+type VpsSharedSecretEnv =
+  Partial<Record<'VPS_SHARED_SECRET' | 'NODE_ENV' | 'DCAU_ALLOW_INSECURE_DEV_VPS_SECRET', string | undefined>> &
+  Record<string, string | undefined>;
+
 function normalizeToken(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
 }
@@ -53,7 +57,7 @@ export function resolveVpsTicketOperation(value: unknown): VpsTicketOperation | 
 }
 
 export function resolveVpsSharedSecretForSigning(
-  env: Partial<Record<'VPS_SHARED_SECRET' | 'NODE_ENV' | 'DCAU_ALLOW_INSECURE_DEV_VPS_SECRET', string | undefined>> = process.env,
+  env: VpsSharedSecretEnv = process.env,
 ): VpsSharedSecretResolution {
   const configured = String(env.VPS_SHARED_SECRET || '').trim();
   if (configured) {

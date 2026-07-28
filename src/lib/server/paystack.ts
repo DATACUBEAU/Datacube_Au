@@ -1,3 +1,4 @@
+import 'server-only';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { firstEnv } from '@/lib/server/env';
 import {

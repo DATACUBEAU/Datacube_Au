@@ -1,0 +1,104 @@
+flowchart LR
+  subgraph BROWSER["Browser boundary"]
+    PWA["Browser / PWA"]
+    AdminUI["Conex Admin UI"]
+  end
+
+  subgraph NEXT["Next.js server boundary"]
+    Auth["Supabase Auth session validation"]
+    TicketAPI["/api/au/vps-ticket"]
+    NextAPI["Next.js API routes"]
+    Entitlements["Billing / entitlement checks"]
+    Usage["Usage tracking"]
+    AdminAPI["Admin APIs"]
+  end
+
+  subgraph VPS["Oracle VPS boundary"]
+    Gateway["VPS AI Gateway"]
+    TicketVerify["VPS ticket verification"]
+    AUChat["AU Chat"]
+    GlobalChat["Global Chat"]
+    Knowledge["Knowledge Hub"]
+    Practice["Practice Exam"]
+    Prediction["Exam Prediction"]
+    Starters["Prompt Starters"]
+    Retrieval["RAG retrieval service"]
+    Router["AI provider router"]
+  end
+
+  subgraph DATA["Database boundary"]
+    Postgres["Supabase Postgres"]
+    Storage["Supabase Storage"]
+    Qdrant["Qdrant vector DB"]
+  end
+
+  subgraph WORKER["RAG worker boundary"]
+    Worker["RAG Worker"]
+    Embed["Embedding model: AllMiniLML6V2"]
+  end
+
+  subgraph PROVIDERS["Provider boundary"]
+    OpenRouter["OpenRouter"]
+    OpenAI["OpenAI"]
+    Anthropic["Anthropic"]
+    OtherAI["Other AI providers"]
+  end
+
+  subgraph OBS["Logs / observability"]
+    Logs["Redacted logs"]
+    Audit["Provider key audit logs"]
+  end
+
+  PWA -->|"Supabase session JWT"| Auth
+  PWA -->|"POST /api/au/vps-ticket"| TicketAPI
+  TicketAPI --> Auth
+  TicketAPI --> Entitlements
+  TicketAPI --> Usage
+  TicketAPI -->|"short-lived route-bound VPS ticket"| PWA
+  PWA -->|"Authorization: Bearer VPS ticket"| Gateway
+  Gateway --> TicketVerify
+  TicketVerify --> AUChat
+  TicketVerify --> GlobalChat
+  TicketVerify --> Knowledge
+  TicketVerify --> Practice
+  TicketVerify --> Prediction
+  TicketVerify --> Starters
+
+  AUChat --> Retrieval
+  Knowledge --> Retrieval
+  Practice --> Retrieval
+  Prediction --> Retrieval
+  Starters --> Retrieval
+  Retrieval -->|"semantic top-k / bounded coverage with user_id + document_id"| Qdrant
+  Retrieval -->|"strict limited fallback"| Postgres
+
+  PWA -->|"upload metadata + Storage object"| NextAPI
+  NextAPI --> Postgres
+  NextAPI --> Storage
+  Worker --> Storage
+  Worker --> Postgres
+  Worker --> Embed
+  Worker -->|"chunk vectors + source metadata"| Qdrant
+
+  AUChat --> Router
+  GlobalChat --> Router
+  Knowledge --> Router
+  Practice --> Router
+  Prediction --> Router
+  Starters --> Router
+  Router --> OpenRouter
+  Router --> OpenAI
+  Router --> Anthropic
+  Router --> OtherAI
+
+  AdminUI --> AdminAPI
+  AdminAPI -->|"masked DTOs only"| AdminUI
+  AdminAPI -->|"server-only raw provider key write/read"| Postgres
+  AdminAPI --> Audit
+  Gateway --> Logs
+  NextAPI --> Logs
+  Worker --> Logs
+
+  Postgres -. forbidden raw key .-> PWA
+  Logs -. forbidden raw key .-> PWA
+  PWA -. forbidden persistence .-> PWA

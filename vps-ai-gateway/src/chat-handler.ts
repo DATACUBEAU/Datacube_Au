@@ -1,8 +1,31 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { FastifyReply } from 'fastify';
-import { logger, getOpenRouterKey, getAnthropicKey, sleep } from './utils.js';
-import { buildRoutingCandidates, selectProviderAndModel, type RoutingCandidate } from './ai-routing.js';
-import { RetrievalService } from './retrieval-service.js';
+import {
+  GatewayProviderError,
+  clampPositiveInt,
+  errorLogDetails,
+  getAnthropicKey,
+  getOpenRouterKey,
+  logger,
+  parsePositiveInt,
+  publicErrorMessage,
+} from './utils.js';
+import { selectProviderAndModel, type RoutingCandidate } from './ai-routing.js';
+import { RetrievalService, type RetrievedChunk } from './retrieval-service.js';
+
+const MAX_CONTEXT_CHARS = parsePositiveInt(process.env.AI_CONTEXT_CHAR_LIMIT, 12000);
+const MAX_CHAT_MESSAGES = parsePositiveInt(process.env.AI_CHAT_HISTORY_MESSAGES, 12);
+const MAX_MESSAGE_CHARS = parsePositiveInt(process.env.AI_CHAT_MESSAGE_CHAR_LIMIT, 4000);
+const AI_PROVIDER_TIMEOUT_MS = parsePositiveInt(process.env.AI_PROVIDER_TIMEOUT_MS, 60000);
+const AI_MAX_OUTPUT_TOKENS = clampPositiveInt(process.env.AI_MAX_OUTPUT_TOKENS, 2048, 256, 4096);
+
+type GatewayCitation = {
+  document_id: string;
+  document_title?: string;
+  chunk_index: number;
+  page_number?: number;
+  score?: number;
+};
 
 export class ChatHandler {
   private retrievalService: RetrievalService;
@@ -16,19 +39,24 @@ export class ChatHandler {
   }
 
   async handleAuChat(body: any, headers: any, reply: FastifyReply) {
-    const userId = headers['x-user-id'];
+    const userId = String(headers['x-user-id'] || '').trim();
     const correlationId = headers['x-correlation-id'] || crypto.randomUUID();
     const stream = body.stream === true;
 
     try {
+      if (!userId) {
+        return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+      }
+
       const question = this.extractQuestion(body);
       if (!question) {
         return reply.code(400).send({ error: 'missing_question', message: 'No question provided' });
       }
 
       // Fetch RAG Context from Qdrant
-      const documentId = body.activeDocIds?.[0] || body.doc_id || body.selectedDocId;
+      const documentId = this.extractDocumentId(body);
       let ragContext: string | null = null;
+      let citations: GatewayCitation[] = [];
       
       if (documentId && documentId !== 'global') {
         try {
@@ -36,15 +64,16 @@ export class ChatHandler {
             userId,
             documentId,
             query: question,
-            limit: body.retrieval?.top_k || 15,
+            limit: clampPositiveInt(body.retrieval?.top_k, 15, 1, 20),
             minScore: body.retrieval?.min_score || 0.0,
-            maxChars: 12000,
+            maxChars: MAX_CONTEXT_CHARS,
           });
           if (chunks.length > 0) {
-            ragContext = chunks.map(c => `[Page ${c.page_number || '?'}] ${c.text}`).join('\n\n');
+            ragContext = this.formatContext(chunks);
+            citations = this.formatCitations(chunks);
           }
         } catch (err: any) {
-          logger.error('Failed to retrieve chat context from Qdrant', err.message);
+          logger.error('Failed to retrieve chat context from Qdrant', { message: err.message });
         }
       }
 
@@ -65,7 +94,7 @@ export class ChatHandler {
         reply.raw.write(`data: ${JSON.stringify({ 
           type: 'done', 
           answer, 
-          citations: [],
+          citations,
           requestId: correlationId 
         })}\n\n`);
         reply.raw.write('data: [DONE]\n\n');
@@ -76,26 +105,30 @@ export class ChatHandler {
       return reply.code(200).send({
         answer,
         thought: null,
-        citations: [],
+        citations,
         requestId: correlationId,
         correlation_id: correlationId,
       });
     } catch (err: any) {
-      logger.error('au-chat error', err.message);
+      logger.error('au-chat error', errorLogDetails(err));
       return reply.code(500).send({ 
         error: 'chat_failed', 
-        message: err.message || 'Chat failed',
+        message: publicErrorMessage(err, 'Chat failed'),
         status: 500 
       });
     }
   }
 
   async handleGlobalChat(body: any, headers: any, reply: FastifyReply) {
-    const userId = headers['x-user-id'];
+    const userId = String(headers['x-user-id'] || '').trim();
     const correlationId = headers['x-correlation-id'] || crypto.randomUUID();
     const stream = body.stream === true;
 
     try {
+      if (!userId) {
+        return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+      }
+
       const question = this.extractQuestion(body);
       if (!question) {
         return reply.code(400).send({ error: 'missing_question', message: 'No question provided' });
@@ -131,15 +164,19 @@ export class ChatHandler {
         correlation_id: correlationId,
       });
     } catch (err: any) {
-      logger.error('global-chat error', err.message);
+      logger.error('global-chat error', errorLogDetails(err));
       return reply.code(500).send({ 
         error: 'chat_failed', 
-        message: err.message || 'Chat failed' 
+        message: publicErrorMessage(err, 'Chat failed') 
       });
     }
   }
 
   async handleLegacyChat(body: any, headers: any, reply: FastifyReply) {
+    if (!headers['x-user-id']) {
+      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+    }
+
     const question = body.question;
     if (!question) {
       return reply.code(400).send({ error: 'missing_question' });
@@ -165,6 +202,14 @@ export class ChatHandler {
       }
     }
     return null;
+  }
+
+  private extractDocumentId(body: any): string | null {
+    const raw = Array.isArray(body?.activeDocIds) && body.activeDocIds.length > 0
+      ? body.activeDocIds[0]
+      : body?.doc_id || body?.documentId || body?.selectedDocId;
+    const documentId = String(raw || '').trim();
+    return documentId ? documentId : null;
   }
 
   private async selectModel(requestType: string, userId: string, headerPlan?: string): Promise<RoutingCandidate> {
@@ -201,7 +246,7 @@ export class ChatHandler {
   private buildMessages(question: string, body: any, ragContext: string | null = null): { role: string; content: string }[] {
     let systemPrompt = this.buildSystemPrompt(body) || 'You are an AI teaching assistant.';
     if (ragContext) {
-      systemPrompt += `\n\nUse the following document excerpts to answer the user's question:\n\n${ragContext}`;
+      systemPrompt += `\n\nUse the following document excerpts to answer the user's question:\n\n${ragContext.slice(0, MAX_CONTEXT_CHARS)}`;
     }
 
     const messages: { role: string; content: string }[] = [];
@@ -209,14 +254,14 @@ export class ChatHandler {
     messages.push({ role: 'system', content: systemPrompt });
 
     if (Array.isArray(body.messages)) {
-      for (const msg of body.messages) {
+      for (const msg of body.messages.slice(-MAX_CHAT_MESSAGES)) {
         if (msg.role === 'user' || msg.role === 'assistant') {
-          messages.push({ role: msg.role, content: msg.content || '' });
+          messages.push({ role: msg.role, content: String(msg.content || '').slice(0, MAX_MESSAGE_CHARS) });
         }
       }
     }
 
-    messages.push({ role: 'user', content: question });
+    messages.push({ role: 'user', content: question.slice(0, MAX_MESSAGE_CHARS) });
     return messages;
   }
 
@@ -240,6 +285,7 @@ export class ChatHandler {
 
     const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
+      signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
@@ -250,17 +296,18 @@ export class ChatHandler {
         model: candidate.model,
         messages,
         stream: !!onChunk,
-        max_tokens: 4096,
+        max_tokens: AI_MAX_OUTPUT_TOKENS,
       }),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`OpenRouter error: ${response.status} - ${error}`);
+      await response.text().catch(() => '');
+      throw new GatewayProviderError('openrouter', response.status);
     }
 
     if (onChunk) {
       const reader = response.body?.getReader();
+      if (!reader) throw new GatewayProviderError('openrouter', response.status, 'OpenRouter stream missing body');
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
@@ -311,6 +358,7 @@ export class ChatHandler {
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: AbortSignal.timeout(AI_PROVIDER_TIMEOUT_MS),
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
@@ -320,18 +368,19 @@ export class ChatHandler {
         model: candidate.model,
         system: systemMessage?.content,
         messages: userMessages,
-        max_tokens: 4096,
+        max_tokens: AI_MAX_OUTPUT_TOKENS,
         stream: !!onChunk,
       }),
     });
 
     if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Anthropic error: ${response.status} - ${error}`);
+      await response.text().catch(() => '');
+      throw new GatewayProviderError('anthropic', response.status);
     }
 
     if (onChunk) {
       const reader = response.body?.getReader();
+      if (!reader) throw new GatewayProviderError('anthropic', response.status, 'Anthropic stream missing body');
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
@@ -364,5 +413,22 @@ export class ChatHandler {
 
     const result: any = await response.json();
     return result.content?.[0]?.text || '';
+  }
+
+  private formatContext(chunks: RetrievedChunk[]): string {
+    return chunks
+      .map(c => `[Page ${c.page_number || '?'} | Chunk ${c.chunk_index}] ${c.text}`)
+      .join('\n\n')
+      .slice(0, MAX_CONTEXT_CHARS);
+  }
+
+  private formatCitations(chunks: RetrievedChunk[]): GatewayCitation[] {
+    return chunks.map((chunk) => ({
+      document_id: chunk.document_id,
+      document_title: chunk.document_title,
+      chunk_index: chunk.chunk_index,
+      page_number: chunk.page_number,
+      score: chunk.score,
+    }));
   }
 }

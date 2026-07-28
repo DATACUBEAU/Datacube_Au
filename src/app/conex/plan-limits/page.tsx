@@ -359,12 +359,6 @@ export default function ConexPlanLimitsPage() {
         router.replace('/login?redirectTo=/conex/plan-limits');
         return;
       }
-      const token = typeof window !== 'undefined' ? localStorage.getItem('conex_admin_token') : null;
-      const step = typeof window !== 'undefined' ? localStorage.getItem('conex_auth_step') : null;
-      if (!token || step !== '3' || !UUID_REGEX.test(token)) {
-        router.replace('/conex');
-        return;
-      }
       const access = await getSupabaseAccessToken();
       if (!access) {
         router.replace('/login?redirectTo=/conex/plan-limits');

@@ -26,7 +26,7 @@
   - `NEXT_PUBLIC_SUPABASE_URL` (Supabase URL)
   - `NEXT_PUBLIC_SUPABASE_ANON_KEY` (Supabase Anon Key)
   - `NEXT_PUBLIC_FIREBASE_API_KEY` (Firebase API Key)
-  - `NEXT_PUBLIC_OPENROUTER_API_KEY` (OpenRouter API Key)
+  - `OPENROUTER_API_KEY` (server-only OpenRouter API Key)
 
 ## Project Structure
 - **Root Files**: 

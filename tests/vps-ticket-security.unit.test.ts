@@ -5,6 +5,8 @@ import {
   resolveVpsTicketOperation,
 } from '../src/lib/server/vps-ticket-config';
 import {
+  isOriginAllowed,
+  resolveAllowedOrigins,
   routeRequirementForPath,
   resolveVpsSharedSecret,
   verifyVpsTicket,
@@ -29,6 +31,8 @@ async function signTicket(input: {
   route?: string;
   ticketId?: string;
   expiresAt?: number;
+  omitTicketId?: boolean;
+  omitExpiration?: boolean;
 }) {
   const jwt = new SignJWT({
     sub: input.sub ?? 'user-1',
@@ -36,15 +40,20 @@ async function signTicket(input: {
     ...(input.feature !== undefined ? { feature: input.feature } : {}),
     ...(input.featureKey !== undefined ? { feature_key: input.featureKey } : {}),
     ...(input.route !== undefined ? { route: input.route } : {}),
-    ticket_id: input.ticketId ?? 'ticket-1',
+    ...(input.omitTicketId ? {} : { ticket_id: input.ticketId ?? 'ticket-1' }),
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuer('dcau-next')
     .setAudience('dcau-vps-ai-gateway')
-    .setJti(input.ticketId ?? 'ticket-1')
     .setIssuedAt();
 
-  if (input.expiresAt) {
+  if (!input.omitTicketId) {
+    jwt.setJti(input.ticketId ?? 'ticket-1');
+  }
+
+  if (input.omitExpiration) {
+    // No-op: this intentionally signs a structurally incomplete ticket.
+  } else if (input.expiresAt) {
     jwt.setExpirationTime(input.expiresAt);
   } else {
     jwt.setExpirationTime('5m');
@@ -203,6 +212,38 @@ await run('tampered ticket is rejected', async () => {
   assert.equal(verified, null);
 });
 
+await run('ticket without explicit expiry is rejected', async () => {
+  const ticket = await signTicket({
+    secret: configuredSecret,
+    feature: 'au-chat',
+    featureKey: 'au_chat',
+    route: '/chat/au-chat',
+    omitExpiration: true,
+  });
+  const verified = await verifyVpsTicket(
+    ticket,
+    configuredSecret,
+    routeRequirementForPath('/chat/au-chat'),
+  );
+  assert.equal(verified, null);
+});
+
+await run('ticket without unique id is rejected', async () => {
+  const ticket = await signTicket({
+    secret: configuredSecret,
+    feature: 'au-chat',
+    featureKey: 'au_chat',
+    route: '/chat/au-chat',
+    omitTicketId: true,
+  });
+  const verified = await verifyVpsTicket(
+    ticket,
+    configuredSecret,
+    routeRequirementForPath('/chat/au-chat'),
+  );
+  assert.equal(verified, null);
+});
+
 await run('VPS verification rejects when shared secret is missing', async () => {
   const ticket = await signTicket({
     secret: configuredSecret,
@@ -227,6 +268,23 @@ await run('Next ticket operation map binds features to intended routes', () => {
   });
   assert.equal(resolveVpsTicketOperation('global-chat')?.gatewayRoute, '/chat/global-chat');
   assert.equal(resolveVpsTicketOperation('generate-practice-exam')?.gatewayRoute, '/generate/practice-exam');
+});
+
+await run('production CORS requires explicit allowed origins and rejects wildcard', () => {
+  assert.equal(resolveAllowedOrigins({ NODE_ENV: 'production' }).ok, false);
+  assert.equal(resolveAllowedOrigins({ NODE_ENV: 'production', ALLOWED_ORIGINS: '*' }).ok, false);
+});
+
+await run('CORS origin matching is explicit and does not reflect arbitrary origins', () => {
+  const resolved = resolveAllowedOrigins({
+    NODE_ENV: 'production',
+    ALLOWED_ORIGINS: 'https://datacube.au,https://app.datacube.au',
+  });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  assert.equal(isOriginAllowed('https://datacube.au', resolved.origins), true);
+  assert.equal(isOriginAllowed('https://evil.example', resolved.origins), false);
+  assert.equal(isOriginAllowed(undefined, resolved.origins), true);
 });
 }
 

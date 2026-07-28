@@ -217,7 +217,7 @@ function AdminLoadError({
 }
 
 // Admin Dashboard Components
-const AdminBilling = ({ token }: { token: string }) => {
+const AdminBilling = (_props: { token?: string }) => {
   const [config, setConfig] = useState<any>({});
   const [planMetadataDraftByPlan, setPlanMetadataDraftByPlan] = useState<PlanMetadataDraftByPlan>({});
   const [planOptions, setPlanOptions] = useState<string[]>([...FALLBACK_PLAN_KEYS]);
@@ -1064,14 +1064,14 @@ const AdminBilling = ({ token }: { token: string }) => {
             </TabsContent>
 
             <TabsContent value="payments">
-                <AdminManualPayments token={token} />
+                <AdminManualPayments />
             </TabsContent>
         </Tabs>
     </div>
   );
 };
 
-const AdminManualPayments = (_props: { token: string }) => {
+const AdminManualPayments = (_props: { token?: string }) => {
     const [transactions, setTransactions] = useState<any[]>([]);
     const [subscriptions, setSubscriptions] = useState<any[]>([]);
     const [entitlementAudit, setEntitlementAudit] = useState<any[]>([]);
@@ -1520,7 +1520,7 @@ const AdminManualPayments = (_props: { token: string }) => {
     );
 };
 
-const AdminUsage = ({ token }: { token: string }) => {
+const AdminUsage = (_props: { token?: string }) => {
   const [usage, setUsage] = useState<any[]>([]);
   const [stats, setStats] = useState({ totalCalls: 0, failedCalls: 0, successfulCalls: 0 });
   const [cacheMetrics, setCacheMetrics] = useState<{
@@ -1631,7 +1631,6 @@ const AdminUsage = ({ token }: { token: string }) => {
       // Fetch Usage using the centralized fetchAdmin utility
       const usageRes = await fetchAdmin('/api/admin/model-usage?limit=50', {
         method: 'GET',
-        headers: { 'X-Admin-Token': token },
       });
       if (!usageRes.ok) {
         throw new Error((usageRes as any).error || 'Failed to load usage');
@@ -1680,7 +1679,7 @@ const AdminUsage = ({ token }: { token: string }) => {
     } finally {
       setLoading(false);
     }
-  }, [applyPayload, isOnline, readUsageCache, toast, token, writeUsageCache]);
+  }, [applyPayload, isOnline, readUsageCache, toast, writeUsageCache]);
 
   useEffect(() => {
     void fetchData();
@@ -1858,7 +1857,7 @@ const AdminUsage = ({ token }: { token: string }) => {
   );
 };
 
-const AdminRegistry = ({ token }: { token: string }) => {
+const AdminRegistry = (_props: { token?: string }) => {
   const [keys, setKeys] = useState<any[]>([]);
   const [models, setModels] = useState<any[]>([]);
   const [selectedKey, setSelectedKey] = useState<any>(null);
@@ -2417,7 +2416,7 @@ const AdminUsers = () => (
   </div>
 );
 
-const AdminActivity = ({ token }: { token: string }) => {
+const AdminActivity = (_props: { token?: string }) => {
   const [isLive, setIsLive] = useState(true);
   const [events, setEvents] = useState<any[]>([]);
   const [activeUsers, setActiveUsers] = useState(0);
@@ -2608,7 +2607,7 @@ const AdminActivity = ({ token }: { token: string }) => {
   );
 };
 
-const AdminFeedback = ({ token }: { token: string }) => {
+const AdminFeedback = (_props: { token?: string }) => {
   const [feedback, setFeedback] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -2746,7 +2745,7 @@ const AdminFeedback = ({ token }: { token: string }) => {
   );
 };
 
-const AdminAlerts = ({ token }: { token: string }) => {
+const AdminAlerts = (_props: { token?: string }) => {
   const [configs, setConfigs] = useState<any[]>([]);
   const [tableMissing, setTableMissing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -2871,7 +2870,7 @@ const AdminAlerts = ({ token }: { token: string }) => {
   );
 };
 
-const AdminLogs = ({ token }: { token: string }) => {
+const AdminLogs = (_props: { token?: string }) => {
   const [logs, setLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [clearing, setClearing] = useState(false);
@@ -2990,7 +2989,7 @@ const AdminLogs = ({ token }: { token: string }) => {
   );
 };
 
-const AdminHealth = ({ token }: { token: string }) => {
+const AdminHealth = (_props: { token?: string }) => {
   const [results, setResults] = useState<Record<string, boolean>>({});
   const [details, setDetails] = useState<Record<string, string | null>>({});
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -3119,7 +3118,7 @@ export default function ConexPage() {
   const [answer, setAnswer] = useState('');
   const [accessKey, setAccessKey] = useState('');
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [adminToken, setAdminToken] = useState<string | null>(null);
+  const [isAdminVerified, setIsAdminVerified] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("access");
@@ -3182,7 +3181,7 @@ export default function ConexPage() {
     localStorage.removeItem('conex_admin_token');
     localStorage.removeItem('conex_session_id');
     localStorage.removeItem('conex_auth_step');
-    setAdminToken(null);
+    setIsAdminVerified(false);
     setSessionId(null);
     setAccessKey('');
     setAnswer('');
@@ -3202,17 +3201,12 @@ export default function ConexPage() {
         return;
       }
 
-      const savedToken = localStorage.getItem('conex_admin_token');
       const savedSession = localStorage.getItem('conex_session_id');
       const savedStep = localStorage.getItem('conex_auth_step');
 
       if (savedStep === '3') {
-        if (!savedToken || savedToken === 'undefined' || !UUID_REGEX.test(savedToken)) {
-          resetConexAuth({ message: 'Session expired. Please log in again.' });
-          return;
-        }
-        setAdminToken(savedToken);
         setStep(3);
+        setIsAdminVerified(true);
         return;
       }
 
@@ -3305,13 +3299,8 @@ export default function ConexPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        const nextAdminToken = String(data.adminToken || '');
-        if (!UUID_REGEX.test(nextAdminToken)) {
-          throw new Error('Admin token missing. Please try again.');
-        }
-        setAdminToken(nextAdminToken);
         setStep(3);
-        localStorage.setItem('conex_admin_token', nextAdminToken);
+        setIsAdminVerified(true);
         localStorage.setItem('conex_auth_step', '3');
         toast({ title: 'Welcome, Admin', description: 'System access granted.' });
       } else {
@@ -3351,7 +3340,7 @@ export default function ConexPage() {
     );
   }
 
-  if (step === 3 && adminToken) {
+  if (step === 3 && isAdminVerified) {
     return (
       <div className="min-h-screen bg-transparent p-4 md:p-8">
         <div className="mx-auto max-w-6xl space-y-8">
@@ -3442,7 +3431,7 @@ export default function ConexPage() {
                   <CardDescription>Recent API calls and token consumption.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminUsage token={adminToken} />
+                  <AdminUsage />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3454,7 +3443,7 @@ export default function ConexPage() {
                   <CardDescription>Manage Stripe integration and premium features.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminBilling token={adminToken} />
+                  <AdminBilling />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3466,7 +3455,7 @@ export default function ConexPage() {
                   <CardDescription>Configure API keys and model assignments.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminRegistry token={adminToken} />
+                  <AdminRegistry />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3490,7 +3479,7 @@ export default function ConexPage() {
                   <CardDescription>Real-time view of user interactions.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminActivity token={adminToken} />
+                  <AdminActivity />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3502,7 +3491,7 @@ export default function ConexPage() {
                   <CardDescription>View ratings and comments from users.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminFeedback token={adminToken} />
+                  <AdminFeedback />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3514,7 +3503,7 @@ export default function ConexPage() {
                   <CardDescription>Configure automatic notifications for system events.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminAlerts token={adminToken} />
+                  <AdminAlerts />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3526,7 +3515,7 @@ export default function ConexPage() {
                   <CardDescription>Verify table existence and recover from 404 errors.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminHealth token={adminToken} />
+                  <AdminHealth />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3538,7 +3527,7 @@ export default function ConexPage() {
                   <CardDescription>Visual insights into system usage and performance.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminAnalytics token={adminToken} />
+                  <AdminAnalytics />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -3550,7 +3539,7 @@ export default function ConexPage() {
                   <CardDescription>Detailed debug logs from the AU backend.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <AdminLogs token={adminToken} />
+                  <AdminLogs />
                 </CardContent>
               </Card>
             </TabsContent>

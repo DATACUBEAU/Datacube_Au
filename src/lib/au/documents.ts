@@ -14,6 +14,8 @@ const DOC_TEXT_CACHE_SOURCE = 'au_document_chunks';
 const DOC_TEXT_CACHE_SCHEMA = 1;
 const DOC_TEXT_CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const DOC_TEXT_MEMORY_TTL_MS = 60_000;
+const DOC_TEXT_MAX_CHUNKS = 15;
+const DOC_TEXT_MAX_CHARS = 12000;
 const docTextMemoryCache = new Map<string, { text: string; cachedAt: number }>();
 const docTextInFlightRequests = new Map<string, Promise<string>>();
 
@@ -170,14 +172,15 @@ export async function getAuDocumentChunksText(user: User | null, documentId: str
         .from('au_document_chunks')
         .select('text, chunk_index')
         .eq('document_id', documentId)
-        .order('chunk_index', { ascending: true });
+        .order('chunk_index', { ascending: true })
+        .limit(DOC_TEXT_MAX_CHUNKS);
 
       applyOwnershipFilter(query, conditions);
       const { data, error } = await query;
 
       if (!error) {
         const rows = (data ?? []) as Pick<AuDocumentChunkRow, 'text' | 'chunk_index'>[];
-        const text = rows.map(r => r.text).join('\n\n');
+        const text = rows.map(r => r.text).join('\n\n').slice(0, DOC_TEXT_MAX_CHARS);
         void writeCachedText(text);
         return text;
       }

@@ -319,7 +319,7 @@ function applyOwnershipFilters(query: any, conditions: string) {
 }
 
 /**
- * Fetches all text chunks for a document and joins them.
+ * Fetches a bounded text preview for a document.
  */
 export async function getDocumentText(user: User | null, documentId: string, limit = 15): Promise<string> {
   const ownershipConditions = await getOwnershipConditionCandidates(user);

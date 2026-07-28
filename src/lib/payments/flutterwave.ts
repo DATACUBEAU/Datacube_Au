@@ -1,3 +1,4 @@
+import 'server-only';
 import { firstEnv } from '@/lib/server/env';
 import { timingSafeEqual } from 'crypto';
 import {

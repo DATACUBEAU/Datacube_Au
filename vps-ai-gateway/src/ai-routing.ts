@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { logger, firstEnv } from './utils.js';
+import { errorLogDetails, firstEnv, logger } from './utils.js';
 
 export type RoutingRequestType = 'chat' | 'global_chat' | 'knowledge' | 'prediction_engine' | 'exam_generator';
 
@@ -61,7 +61,7 @@ export async function selectProviderAndModel(input: {
 
   return {
     service: providerType,
-    apiKey: providerKey.key,
+    apiKey: '[configured]',
     model: providerKey.model || (isPaidPlan ? 'meta-llama/llama-3.1-70b-instruct' : 'meta-llama/llama-3.1-8b-instruct'),
     errorCount: 0,
     providerType,
@@ -78,7 +78,7 @@ export function buildRoutingCandidates(supabase: SupabaseClient, plan: string | 
   if (openRouterKey) {
     candidates.push({
       service: 'openrouter',
-      apiKey: openRouterKey,
+      apiKey: '[configured]',
       model: isPaidPlan ? 'meta-llama/llama-3.1-70b-instruct' : 'meta-llama/llama-3.1-8b-instruct',
       errorCount: 0,
       providerType: 'openrouter',
@@ -88,7 +88,7 @@ export function buildRoutingCandidates(supabase: SupabaseClient, plan: string | 
   if (anthropicKey && isPaidPlan) {
     candidates.push({
       service: 'anthropic',
-      apiKey: anthropicKey,
+      apiKey: '[configured]',
       model: 'claude-3-haiku-20240307',
       errorCount: 0,
       providerType: 'anthropic',
@@ -99,7 +99,7 @@ export function buildRoutingCandidates(supabase: SupabaseClient, plan: string | 
 }
 
 export function noteRoutingFailure(candidate: RoutingCandidate, error: any) {
-  logger.warn('Routing failure', { service: candidate.service, error: error.message });
+  logger.warn('Routing failure', { service: candidate.service, error: errorLogDetails(error) });
 }
 
 export function noteRoutingSuccess(candidate: RoutingCandidate) {

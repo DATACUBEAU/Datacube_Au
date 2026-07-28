@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 function readRepoFile(...segments: string[]): string {
   return readFileSync(path.join(process.cwd(), ...segments), 'utf8');
@@ -34,14 +35,80 @@ test('PWA Supabase requests are NetworkOnly and protected APIs remain excluded f
 test('admin provider key responses are masked and never echo raw key rows', () => {
   const handler = readRepoFile('src', 'app', 'api', 'admin', 'handler', 'route.ts');
   const conexPage = readRepoFile('src', 'app', 'conex', 'page.tsx');
+  const adminAuth = readRepoFile('src', 'app', 'api', 'admin', 'auth', 'route.ts');
+  const adminFetch = readRepoFile('src', 'lib', 'api', 'admin-fetch.ts');
+  const featureFlags = readRepoFile('src', 'components', 'feature-flag-provider.tsx');
+  const providerColumns = handler.match(/const PROVIDER_KEY_PUBLIC_COLUMNS =\s*\n\s*'([^']+)'/)?.[1] || '';
   assert.match(handler, /requireConexAdmin\(req\)/);
   assert.doesNotMatch(handler, /from\('au_api_keys'\)\.select\('\*'\)/);
+  assert.match(providerColumns, /key_last4/);
+  assert.doesNotMatch(providerColumns, /key_value/);
   assert.match(handler, /sanitizeProviderKeyRow/);
   assert.match(handler, /key_label/);
+  assert.match(handler, /au_provider_key_audit_logs/);
+  assert.match(handler, /key_fingerprint/);
   assert.doesNotMatch(handler, /\{\s*ok:\s*true,\s*key:\s*data/);
+  assert.doesNotMatch(handler, /select\('\*'\)/);
   assert.doesNotMatch(conexPage, /selectedKey\.key_value/);
   assert.doesNotMatch(conexPage, /k\.key_value/);
+  assert.doesNotMatch(conexPage, /localStorage\.getItem\('conex_admin_token'\)/);
+  assert.doesNotMatch(conexPage, /localStorage\.setItem\('conex_admin_token'/);
+  assert.doesNotMatch(conexPage, /X-Admin-Token/);
+  assert.doesNotMatch(adminFetch, /localStorage\.getItem\('conex_admin_token'\)/);
+  assert.doesNotMatch(adminFetch, /X-Admin-Token/);
+  assert.doesNotMatch(featureFlags, /conex_admin_token/);
+  assert.match(adminAuth, /sanitizeCredentialPayload/);
+  assert.doesNotMatch(adminAuth, /select\('\*'\)/);
+  assert.doesNotMatch(adminAuth, /Non-JSON response from Edge Function:',\s*text/);
   assert.match(conexPage, /Leave blank to keep existing key/);
+});
+
+test('tracked and public files do not contain high-confidence raw secret values', () => {
+  const trackedFiles = execFileSync('git', ['ls-files'], { encoding: 'utf8' })
+    .split('\n')
+    .map((file) => file.trim())
+    .filter(Boolean);
+  const highConfidencePatterns: Array<[RegExp, string]> = [
+    [/\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, 'jwt'],
+    [/\bsk-[A-Za-z0-9_-]{12,}\b/g, 'provider_key'],
+    [/\bsb_secret_[A-Za-z0-9_-]{12,}\b/g, 'supabase_secret'],
+  ];
+  const findings: string[] = [];
+
+  for (const file of trackedFiles) {
+    let text = '';
+    try {
+      text = readFileSync(path.join(process.cwd(), file), 'utf8');
+    } catch {
+      continue;
+    }
+    for (const [pattern, label] of highConfidencePatterns) {
+      if (pattern.test(text)) {
+        findings.push(`${label}:${file}`);
+      }
+      pattern.lastIndex = 0;
+    }
+  }
+
+  assert.deepEqual(findings, []);
+});
+
+test('service worker and public assets do not carry credential plumbing', () => {
+  const publicFiles = execFileSync('git', ['ls-files', 'public'], { encoding: 'utf8' })
+    .split('\n')
+    .map((file) => file.trim())
+    .filter(Boolean);
+  const findings: string[] = [];
+
+  for (const file of publicFiles) {
+    if (!existsSync(path.join(process.cwd(), file))) continue;
+    const text = readFileSync(path.join(process.cwd(), file), 'utf8');
+    if (/Authorization|Bearer|service_role|SUPABASE_SERVICE_ROLE|OPENAI_API_KEY|OPENROUTER_API_KEY|ANTHROPIC_API_KEY|QDRANT_API_KEY|VPS_SHARED_SECRET/i.test(text)) {
+      findings.push(file);
+    }
+  }
+
+  assert.deepEqual(findings, []);
 });
 
 test('auth and worker diagnostics do not log token or document text previews', () => {

@@ -62,6 +62,9 @@ function safeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+const DOCUMENT_VERSION_FALLBACK_CHUNK_LIMIT = 40;
+const DOCUMENT_VERSION_FALLBACK_TEXT_CHARS = 12000;
+
 export function sha256Hex(input: string): string {
   return createHash('sha256').update(String(input || ''), 'utf8').digest('hex');
 }
@@ -281,10 +284,14 @@ export async function resolveDocumentVersion(input: {
   let contentHash = safeString(row?.content_hash);
   if (!contentHash) {
     const explicit = safeString(input.sourceText);
-    const fallback = (input.fallbackTexts || []).map((entry) => safeString(entry)).filter(Boolean).join('\n\n');
+    const fallback = (input.fallbackTexts || [])
+      .map((entry) => safeString(entry))
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, DOCUMENT_VERSION_FALLBACK_TEXT_CHARS);
     const material = explicit || fallback;
     if (material) {
-      contentHash = sha256Hex(material);
+      contentHash = sha256Hex(material.slice(0, DOCUMENT_VERSION_FALLBACK_TEXT_CHARS));
     }
   }
 
@@ -293,10 +300,15 @@ export async function resolveDocumentVersion(input: {
       .from('au_document_chunks')
       .select('text')
       .eq('document_id', documentId)
+      .or(`owner_id.eq.${userId},user_id.eq.${userId}`)
       .order('chunk_index', { ascending: true })
-      .limit(120);
+      .limit(DOCUMENT_VERSION_FALLBACK_CHUNK_LIMIT);
     if (!chunkRes.error) {
-      const chunkBlob = (chunkRes.data || []).map((entry: any) => safeString(entry?.text)).filter(Boolean).join('\n\n');
+      const chunkBlob = (chunkRes.data || [])
+        .map((entry: any) => safeString(entry?.text))
+        .filter(Boolean)
+        .join('\n\n')
+        .slice(0, DOCUMENT_VERSION_FALLBACK_TEXT_CHARS);
       if (chunkBlob) {
         contentHash = sha256Hex(chunkBlob);
       }

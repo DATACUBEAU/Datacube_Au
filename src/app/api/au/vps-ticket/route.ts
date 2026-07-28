@@ -112,8 +112,26 @@ export async function POST(req: NextRequest) {
     if (isAccessControlError(error)) {
       return accessControlResponse(error, requestId);
     }
-    console.error('[VPS Ticket Error]', error);
+    console.error('[VPS Ticket Error]', {
+      requestId,
+      code: typeof error?.code === 'string' ? error.code : null,
+      status: Number.isFinite(Number(error?.status)) ? Number(error.status) : null,
+    });
     const apiError = extractApiError(error);
-    return withNoStore(NextResponse.json(buildApiErrorBody(apiError), { status: apiError.status || 500 }));
+    const status = Number.isFinite(Number(apiError.status)) && Number(apiError.status) >= 400
+      ? Number(apiError.status)
+      : 500;
+    return withNoStore(
+      NextResponse.json(
+        buildApiErrorBody({
+          status,
+          code: status >= 500 ? 'VPS_TICKET_FAILED' : apiError.code,
+          message: status >= 500 ? 'VPS ticket request failed.' : apiError.message,
+          requestId,
+          retryable: apiError.retryable,
+        }),
+        { status },
+      ),
+    );
   }
 }

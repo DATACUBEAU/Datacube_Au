@@ -36,13 +36,10 @@ export async function readAdminResponsePayload<T = Record<string, unknown>>(resp
 
 /**
  * Centralized utility for all admin-related API requests.
- * Automatically injects required Supabase and Admin authentication headers.
+ * Automatically injects required Supabase authentication headers.
  */
 export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   const ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  
-  // Retrieve the admin token from secure storage (using localStorage for persistence across refreshes)
-  const adminToken = typeof window !== 'undefined' ? localStorage.getItem('conex_admin_token') : null;
 
   const online = typeof window === 'undefined' ? true : window.navigator.onLine;
   const gate = guardRequest({
@@ -137,10 +134,6 @@ export async function fetchAdmin(endpoint: string, options: RequestInit = {}) {
   }
 
   if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  
-  if (!headers.has('X-Admin-Token') && adminToken) {
-    headers.set('X-Admin-Token', adminToken);
-  }
 
   let res = await executeWithToken(accessToken);
 

@@ -59,6 +59,7 @@ async function main() {
     assert.ok(interceptedScroll, 'scroll should have been called');
     const filter = interceptedScroll[1].filter.must;
     assert.ok(filter.some((f: any) => f.key === 'user_id' && f.match.value === 'userB'), 'User B filter not strictly applied');
+    assert.ok(filter.some((f: any) => f.key === 'document_id' && f.match.value === 'docA'), 'Document filter not strictly applied');
   });
 
   await run('boundedCoverageRetrieval: Uses synthesized intent queries correctly', async () => {
@@ -81,6 +82,61 @@ async function main() {
     const resultsBounded = await service.boundedCoverageRetrieval({ userId: '', documentId: 'docA' });
     assert.equal(resultsBounded.length, 0, 'Should return empty array when userId is missing');
     assert.equal(interceptedScroll, null, 'Should not scroll Qdrant if user filter is missing');
+  });
+
+  await run('Missing document filter fails closed', async () => {
+    interceptedSearch = null;
+    interceptedScroll = null;
+    
+    const resultsTopK = await service.semanticTopKRetrieval({ userId: 'userA', query: 'hello' });
+    assert.equal(resultsTopK.length, 0, 'Should return empty array when documentId is missing');
+    assert.equal(interceptedSearch, null, 'Should not query Qdrant if document filter is missing');
+    
+    const resultsBounded = await service.boundedCoverageRetrieval({ userId: 'userA' });
+    assert.equal(resultsBounded.length, 0, 'Should return empty array when documentId is missing');
+    assert.equal(interceptedScroll, null, 'Should not scroll Qdrant if document filter is missing');
+  });
+
+  await run('Qdrant payload mismatches are discarded after filtered search', async () => {
+    (service as any).qdrant.search = async (...args: any[]) => {
+      interceptedSearch = args;
+      return [
+        {
+          id: 'wrong-user',
+          score: 0.9,
+          payload: {
+            user_id: 'userB',
+            document_id: 'docA',
+            chunk_index: 0,
+            text: 'wrong user text',
+          },
+        },
+        {
+          id: 'right-user',
+          score: 0.8,
+          payload: {
+            user_id: 'userA',
+            document_id: 'docA',
+            chunk_index: 1,
+            text: 'right user text',
+          },
+        },
+        {
+          id: 'wrong-doc',
+          score: 0.7,
+          payload: {
+            user_id: 'userA',
+            document_id: 'docB',
+            chunk_index: 2,
+            text: 'wrong document text',
+          },
+        },
+      ];
+    };
+
+    const results = await service.semanticTopKRetrieval({ userId: 'userA', documentId: 'docA', query: 'hello' });
+    assert.equal(results.length, 1);
+    assert.equal(results[0]?.text, 'right user text');
   });
 
   if (failed > 0) {

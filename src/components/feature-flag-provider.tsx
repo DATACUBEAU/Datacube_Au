@@ -421,10 +421,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
         p_config: optimisticRow.config,
       };
 
-      const adminToken = typeof window !== 'undefined'
-        ? window.localStorage.getItem('conex_admin_token')
-        : null;
-      const inConexContext = Boolean(adminToken) || pathname?.startsWith('/conex');
+      const inConexContext = pathname?.startsWith('/conex') === true;
 
       const parseAdminPayload = async (res: any): Promise<any> => {
         if (res?.data && typeof res.data === 'object') return res.data;
@@ -517,7 +514,7 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
       const attempts: Array<{ name: string; run: () => Promise<any> }> = [
         // Prefer stable local API first to avoid surfacing transient admin-handler 500s in UI.
         { name: 'api/admin/feature-flags', run: runLocalApiUpdate },
-        ...((inConexContext || adminToken)
+        ...(inConexContext
           ? [{ name: 'admin-handler', run: runAdminHandlerWithRefreshRetry }]
           : []),
       ];
