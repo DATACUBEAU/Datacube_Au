@@ -1,7 +1,7 @@
 -- DataCube AU API key pipeline hardening
 -- Adds server-only credential metadata and audit logging without exposing raw values.
 
-create extension if not exists pgcrypto;
+create extension if not exists pgcrypto with schema extensions;
 
 alter table if exists public.au_config
   add column if not exists stripe_price_weekly text default '',
@@ -13,28 +13,47 @@ alter table if exists public.au_config
   add column if not exists bank_account_name text default '',
   add column if not exists bank_instructions text default '';
 
-alter table if exists public.au_api_keys
-  add column if not exists key_last4 text,
-  add column if not exists key_fingerprint text,
-  add column if not exists rotated_at timestamptz,
-  add column if not exists revoked_at timestamptz,
-  add column if not exists created_by uuid,
-  add column if not exists updated_by uuid;
+do $$
+begin
+  if exists (
+    select 1 from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'au_api_keys'
+      and c.relkind = 'r'
+  ) then
+    alter table public.au_api_keys
+      add column if not exists key_last4 text,
+      add column if not exists key_fingerprint text,
+      add column if not exists rotated_at timestamptz,
+      add column if not exists revoked_at timestamptz,
+      add column if not exists created_by uuid,
+      add column if not exists updated_by uuid;
 
-alter table if exists public.au_api_keys
-  alter column key_value drop not null;
+    if exists (
+      select 1 from information_schema.columns
+      where table_schema = 'public'
+        and table_name = 'au_api_keys'
+        and column_name = 'key_value'
+    ) then
+      alter table public.au_api_keys
+        alter column key_value drop not null;
 
-update public.au_api_keys
-set key_last4 = right(key_value, 4)
-where key_last4 is null
-  and key_value is not null
-  and length(key_value) >= 4;
+      execute 'update public.au_api_keys
+        set key_last4 = right(key_value, 4)
+        where key_last4 is null
+          and key_value is not null
+          and length(key_value) >= 4';
 
-update public.au_api_keys
-set key_fingerprint = encode(digest(key_value, 'sha256'), 'hex')
-where key_fingerprint is null
-  and key_value is not null
-  and length(key_value) > 0;
+      execute 'update public.au_api_keys
+        set key_fingerprint = encode(extensions.digest(convert_to(key_value, ''UTF8''), ''sha256''), ''hex'')
+        where key_fingerprint is null
+          and key_value is not null
+          and length(key_value) > 0';
+    end if;
+  end if;
+end
+$$;
 
 create table if not exists public.au_provider_key_audit_logs (
   id uuid primary key default gen_random_uuid(),
@@ -122,7 +141,7 @@ begin
         and length(key_value) >= 4;
 
       update public.ai_provider_keys
-      set key_fingerprint = encode(digest(key_value, 'sha256'), 'hex')
+      set key_fingerprint = encode(extensions.digest(convert_to(key_value, 'UTF8'), 'sha256'), 'hex')
       where key_fingerprint is null
         and key_value is not null
         and length(key_value) > 0;
@@ -155,7 +174,7 @@ begin
         and length(api_key) >= 4;
 
       update public.au_key_groups
-      set api_key_fingerprint = encode(digest(api_key, 'sha256'), 'hex')
+      set api_key_fingerprint = encode(extensions.digest(convert_to(api_key, 'UTF8'), 'sha256'), 'hex')
       where api_key_fingerprint is null
         and api_key is not null
         and length(api_key) > 0;

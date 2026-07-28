@@ -681,8 +681,8 @@ export function ConexUserManagement() {
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Read-only Admin Mode</CardTitle>
             <CardDescription>
-              User listing is loaded from <code>au_users</code> fallback because <code>SUPABASE_SERVICE_ROLE_KEY</code> is missing.
-              Create/update/delete/reset actions are disabled until server env is fixed.
+              User listing is loaded from <code>au_users</code> fallback because the server admin credential is missing.
+              Create/update/delete/reset actions are disabled until server configuration is fixed.
             </CardDescription>
           </CardHeader>
         </Card>

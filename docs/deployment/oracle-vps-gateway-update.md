@@ -2,21 +2,24 @@
 
 Last updated: 2026-07-28
 
-Use this after the code and Supabase migration are deployed. Do not paste secrets into shell history. Store secret values in your deployment secret manager, PM2 ecosystem file outside git, systemd environment file outside git, or Docker/Compose secret environment that is not committed.
+Use this after the code and Supabase migration are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`; do not create or push another migration for the service-role replacement.
+
+Do not paste secrets into shell history. Store secret values in your deployment secret manager, PM2 ecosystem file outside git, systemd environment file outside git, or Docker/Compose secret environment that is not committed. `SUPABASE_SERVICE_ROLE_KEY` should now hold the new `sb_secret` value everywhere it is needed server-side.
 
 ## A. Files And Services Affected
 
 | Item | Must update | Notes |
 |---|---:|---|
-| `vps-ai-gateway` | Yes | Deploy TypeScript gateway changes for ticket verification, CORS, RAG filters, provider sanitization, limits, and logging. |
-| Frontend deployment | Yes | Deploy `/api/au/vps-ticket`, admin credential masking, PWA/offline safety, and prompt-starter document scoping. |
-| RAG worker | Verify | Worker embedding model must remain compatible with gateway retrieval: `AllMiniLML6V2` unless both sides are intentionally changed together. |
-| Environment variables | Yes | Add/check required names below on both frontend server and Oracle VPS. |
+| `vps-ai-gateway` | Yes | Deploy TypeScript gateway changes for ticket verification, CORS, RAG filters, provider sanitization, limits, and logging. Restart after env replacement. |
+| Frontend deployment | Yes | Redeploy after env replacement so Next.js server routes, middleware, admin routes, billing routes, and background routes use the new service-role credential. |
+| RAG worker | Yes | Restart after env replacement. Worker embedding model must remain compatible with gateway retrieval: `AllMiniLML6V2` unless both sides are intentionally changed together. |
+| Cron/background workers | If used | Restart any process that uses Supabase admin access or caches env at process start. |
+| Environment variables | Yes | Add/check required names below on both frontend server and Oracle VPS. Keep values out of logs and docs. |
 | Nginx/reverse proxy | Verify | Ensure only intended gateway domain/path proxies to the gateway port over HTTPS. |
 | PM2/systemd/Docker service | Yes | Restart the gateway after code/env updates. |
 | Firewall/security list | Verify | OCI ingress should allow only HTTPS/SSH and the private gateway port if required by reverse proxy topology. |
 | Qdrant config | Verify | `QDRANT_URL` should use HTTPS in production unless Qdrant is private loopback/VPN-only. |
-| Supabase keys/config | Yes | Rotate exposed historical keys and keep service-role keys server-only. |
+| Supabase keys/config | Yes | `SUPABASE_SERVICE_ROLE_KEY` should contain the new `sb_secret` value. Disable the legacy service-role credential only after restart and live tests pass. |
 
 ## B. Required Oracle VPS Env Vars
 
@@ -52,9 +55,12 @@ Production requirements:
 
 - `NODE_ENV` must be `production`.
 - `VPS_SHARED_SECRET` must match the frontend/Next.js server env exactly.
+- `SUPABASE_SERVICE_ROLE_KEY` must contain the new `sb_secret` credential in every server-side runtime that uses Supabase admin access.
 - `ALLOWED_ORIGINS` must be an explicit comma-separated allowlist, never `*`.
 - `QDRANT_URL` should be HTTPS in production. Loopback/private network URLs are acceptable only if Qdrant is not publicly reachable.
 - No provider key or Supabase service-role key may be defined with `NEXT_PUBLIC_*`.
+- Do not disable the legacy service-role credential until frontend, Oracle VPS gateway, RAG worker, and relevant cron/background worker live tests pass.
+- Do not print env values in commands, logs, screenshots, docs, or support tickets.
 
 ## C. Oracle VPS Update Commands
 
@@ -103,6 +109,55 @@ npm run build
 
 Use your actual deployment command after the build step.
 
+RAG worker:
+
+systemd:
+
+```bash
+cd /path/to/Datacube-Au
+git pull origin main
+cd rag-worker
+npm ci
+npm run build
+sudo systemctl restart dcau-rag-worker
+sudo journalctl -u dcau-rag-worker -f
+```
+
+If the cleanup worker is deployed as a systemd oneshot/timer, run or restart the associated unit after env replacement:
+
+```bash
+sudo systemctl restart dcau-rag-worker-cleanup
+sudo journalctl -u dcau-rag-worker-cleanup -n 100
+```
+
+Docker Compose from `rag-worker/` or `backend/rag-worker/`:
+
+```bash
+docker compose build worker
+docker compose up -d worker
+docker compose logs -f worker
+```
+
+PM2, if used:
+
+```bash
+pm2 restart dcau-rag-worker
+pm2 logs dcau-rag-worker
+```
+
+Inspect logs without printing or copying secret values.
+
+Cron/background workers:
+
+```bash
+cd /path/to/Datacube-Au
+git pull origin main
+npm ci
+npm run build
+```
+
+Restart each scheduler or background service that uses Supabase admin access. Examples include retention jobs, background config jobs, worker cleanup jobs, and deployment-specific queue consumers.
+
 ## D. Oracle Cloud Networking Checklist
 
 | Check | Required result |
@@ -150,6 +205,8 @@ PAYSTACK_SECRET
 FLUTTERWAVE_SECRET_KEY
 FLUTTERWAVE_WEBHOOK_SECRET_HASH
 ```
+
+`SUPABASE_SERVICE_ROLE_KEY` should now be the new `sb_secret` credential. Keep the legacy service-role credential enabled only long enough to complete the restart and live-test checklist.
 
 Values that must match frontend/server env:
 
@@ -213,3 +270,20 @@ curl -i https://YOUR_GATEWAY_DOMAIN/generate/practice-exam
 ```
 
 Expected result: health is non-secret; generation/chat routes reject without a valid ticket.
+
+## Legacy Service-Role Disable Gate
+
+Before disabling the legacy Supabase service-role credential:
+
+- Frontend/server has been redeployed with the new `SUPABASE_SERVICE_ROLE_KEY`.
+- Oracle VPS gateway has been restarted with the new environment.
+- RAG worker has been restarted with the new environment.
+- Cron/background workers using Supabase admin access have been restarted.
+- Admin user list and at least one safe admin write action work without read-only fallback.
+- Document upload, worker ingestion, Qdrant write, and source cleanup pass.
+- AU Chat, Global Chat, document Q&A, Knowledge Hub, Practice Exam, Exam Prediction, and Prompt Starters pass.
+- Invalid/expired/wrong-route VPS ticket tests fail closed.
+- Frontend, Oracle VPS gateway, RAG worker, and cron/background logs contain no raw secrets, Authorization headers, cookies, refresh tokens, provider keys, Qdrant keys, Supabase keys, or signed VPS tickets.
+- Public assets and service worker output contain no service-role/provider key values.
+
+Use `docs/deployment/post-hardening-live-test-checklist.md` as the full checklist.

@@ -83,7 +83,7 @@ function createServiceRoleClient() {
     throw new ApiError(
       503,
       'server_misconfigured',
-      'Missing SUPABASE_SERVICE_ROLE_KEY. Read-only listing can use au_users fallback, but admin write actions require service role.'
+      'Server admin credential is missing. Read-only listing can use the fallback, but admin write actions are unavailable.'
     );
   }
   return createClient(supabaseUrl, serviceRoleKey, {

@@ -17,7 +17,7 @@ Status model:
 | RAG retrieval | Green | Gateway retrieval requires `user_id` and `document_id`, uses Qdrant top-k/bounded coverage, and has strict limited Supabase fallback. |
 | Browser/PWA private caching | Green | Protected API and Supabase requests are network-only; offline queued writes strip Authorization and credential headers. |
 | Admin/provider-key pipeline | Yellow | Browser DTOs are masked and legacy admin token storage was removed. Encryption-at-rest upgrade remains. |
-| Supabase live policy state | Yellow | Migration adds revokes/RLS/audit metadata, but live status depends on successful Supabase CLI push and staging verification. |
+| Supabase live policy state | Yellow | Credential-hardening migration was pushed and the final dry run reports the remote database is up to date. Direct policy catalog verification and staging behavior checks still remain. |
 
 ## Supabase Consumers
 

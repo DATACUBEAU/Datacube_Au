@@ -18,8 +18,18 @@ No raw secret values are included in this report.
 | Browser/provider-key exposure | Green | Admin provider-key DTOs expose only configured status, last4/fingerprint, provider name, timestamps, and status fields. |
 | Legacy Conex admin token pipeline | Green | Custom admin token storage/header flow was removed from the browser. Old stored values are cleanup-only. |
 | Tracked secret exposure cleanup | Red | Confirmed tracked historical credential values were removed, but rotation is required because tracked exposure occurred. |
-| Secret table controls | Yellow | Migration adds credential metadata, audit logs, RLS/revokes, and service-role-only access. Encryption-at-rest is still not implemented. |
+| Secret table controls | Yellow | Migration is applied remotely and adds credential metadata, audit logs, RLS/revokes, and service-role-only access. Encryption-at-rest and direct live policy catalog verification are still outstanding. |
 | Public/service-worker exposure | Green | Static checks assert no high-confidence raw secret values or credential plumbing in tracked public files. |
+
+## Supabase Migration Retry Status
+
+Migration file: `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`
+
+Local fix applied after the failed remote push: all provider/admin key fingerprints now use `extensions.digest(convert_to(..., 'UTF8'), 'sha256')`, and `pgcrypto` is created in the Supabase `extensions` schema. The `au_api_keys` metadata/backfill block is guarded so a retry is safe if the earlier failed push created some objects before aborting.
+
+Pre-push migration list showed `20260728120000` as local-only, so the failed earlier push was not marked applied. A schema-only inspection path was blocked by the local Docker/Colima requirement, but the migration itself is idempotent for retry. The dry run listed only `20260728120000_api_key_pipeline_hardening.sql`, so the migration was pushed automatically. Post-push verification shows `20260728120000` applied remotely and `npx supabase db push --dry-run` returns `Remote database is up to date.`
+
+Remote schema metadata confirms the provider key audit table exists, the `au_api_keys` metadata columns exist, and the `au_config` cleanup columns exist. The optional `au_key_groups` table is not present in the generated public schema. Direct live policy catalog verification is still pending because follow-up CLI metadata connections began failing with temporary Supabase pooler authentication/circuit-breaker errors.
 
 ## Secret Categories Audited
 
@@ -94,7 +104,7 @@ Remaining gaps:
 - `au_api_keys` and compat provider-key tables still store raw values unless the next encryption migration is implemented.
 - No admin re-auth UX beyond existing Conex/Supabase admin checks was added in this pass.
 - Provider key `last_used_at` exists, but full use-audit on every provider request is not implemented yet.
-- Live RLS/grant state must be verified after the Supabase push.
+- Direct live policy catalog verification must still be completed after the Supabase pooler temp-role issue clears.
 
 Recommended encryption-safe plan:
 
