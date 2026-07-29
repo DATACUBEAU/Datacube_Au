@@ -92,8 +92,8 @@ const TOUR_STEPS: Record<string, Step> = {
   },
   '/signup': {
     title: 'Create Account',
-    content: 'Create your account to start uploading documents, saving study outputs, and using AU across your dashboard.',
-    actions: ['Enter your email', 'Choose a password', 'Confirm your email if asked'],
+    content: 'Create your account with a unique username and a strong password. Email confirmation may be required, and Google users can finish username setup from profile settings.',
+    actions: ['Choose a unique username', 'Use a strong password', 'Confirm your email if asked'],
   },
 };
 

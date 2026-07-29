@@ -28,7 +28,8 @@ async function main() {
     assert.match(login, /signUp/);
     assert.match(login, /TabsTrigger value="login"/);
     assert.match(login, /TabsTrigger value="signup"/);
-    assert.match(login, /disabled=\{isLoadingEmail \|\| !email\.trim\(\) \|\| !password\}/);
+    assert.match(login, /disabled=\{isLoadingEmail \|\| !email\.trim\(\) \|\| !password \|\| \(authMode === 'signup' && !username\.trim\(\)\)\}/);
+    assert.match(login, /validateUsername\(username\)/);
     assert.match(login, /disabled=\{isLoadingGoogle\}/);
     assert.doesNotMatch(login, /disabled=\{[^}]*isSmartLoading/);
     assert.doesNotMatch(login, /if \(isUserLoading \|\| isResolvingRedirect\)/);

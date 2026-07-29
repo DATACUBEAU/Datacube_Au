@@ -215,14 +215,30 @@ async function warmOfflinePages() {
 }
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(warmOfflinePages());
+  event.waitUntil(Promise.all([
+    warmOfflinePages(),
+    self.skipWaiting(),
+  ]));
 });
 
+async function claimActiveClients() {
+  if (typeof self.clients?.claim !== "function") return;
+  try {
+    await self.clients.claim();
+  } catch {
+    // Claiming can reject if the browser races activation; never let it surface as
+    // an unhandled promise rejection in the app console.
+  }
+}
+
 self.addEventListener("activate", (event) => {
-  event.waitUntil(Promise.all([
-    cleanupStaleRuntimeCaches(),
-    warmOfflinePages(),
-  ]));
+  event.waitUntil((async () => {
+    await Promise.all([
+      cleanupStaleRuntimeCaches(),
+      warmOfflinePages(),
+    ]);
+    await claimActiveClients();
+  })());
 });
 
 self.addEventListener("message", (event) => {

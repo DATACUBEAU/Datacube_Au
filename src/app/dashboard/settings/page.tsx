@@ -33,6 +33,7 @@ import { Switch } from '@/components/ui/switch';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { useEffectiveEntitlements } from '@/hooks/use-effective-entitlements';
 import { getRetentionPolicyNotice } from '@/lib/plans/subscription-policy';
+import { USERNAME_TAKEN_MESSAGE, normalizeUsername, validateUsername } from '@/lib/auth/username';
 
 import {
   Dialog,
@@ -74,6 +75,10 @@ export default function SettingsPage() {
   }, [user]);
 
   const [displayName, setDisplayName] = useState(currentDisplayName);
+  const [username, setUsername] = useState('');
+  const [currentUsername, setCurrentUsername] = useState('');
+  const [isUsernameLoading, setIsUsernameLoading] = useState(false);
+  const [usernameHelp, setUsernameHelp] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
   const [isAssistantEnabled, setIsAssistantEnabled] = useState(true);
@@ -98,6 +103,55 @@ export default function SettingsPage() {
       return () => window.removeEventListener('au_assistant_settings_updated', handleSettingsUpdate);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setUsername('');
+      setCurrentUsername('');
+      setUsernameHelp(null);
+      return;
+    }
+
+    let cancelled = false;
+
+    const loadUsername = async () => {
+      setIsUsernameLoading(true);
+      try {
+        const res = await fetch('/api/profile/username', {
+          method: 'GET',
+          cache: 'no-store',
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        });
+        const payload = await res.json().catch(() => ({}));
+        if (cancelled) return;
+
+        if (res.ok && payload?.ok === true) {
+          const nextUsername = typeof payload.username === 'string' ? payload.username : '';
+          setUsername(nextUsername);
+          setCurrentUsername(nextUsername);
+          setUsernameHelp(payload.needsUsername ? 'Choose a unique username to complete your profile.' : null);
+          return;
+        }
+
+        setUsernameHelp(payload?.message || 'Username setup is not available yet.');
+      } catch {
+        if (!cancelled) {
+          setUsernameHelp('Could not load username right now.');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsUsernameLoading(false);
+        }
+      }
+    };
+
+    void loadUsername();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
 
   const hasPaidPro = useMemo(
     () => entitlements.entitlementSource === 'paid' && entitlements.hasPro,
@@ -195,7 +249,9 @@ export default function SettingsPage() {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: { redirectTo: `${window.location.origin}/dashboard` },
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/dashboard')}`,
+        },
       });
       if (error) throw error;
     } catch (error: any) {
@@ -223,6 +279,13 @@ export default function SettingsPage() {
   useEffect(() => {
     setDisplayName(currentDisplayName);
   }, [currentDisplayName]);
+
+  const hasProfileChanges = useMemo(
+    () =>
+      displayName !== currentDisplayName ||
+      normalizeUsername(username) !== normalizeUsername(currentUsername),
+    [currentDisplayName, currentUsername, displayName, username],
+  );
 
   const startSignOutFlow = () => {
     setShowSignOutPopup(true);
@@ -308,17 +371,49 @@ export default function SettingsPage() {
     const oldDisplayName = currentDisplayName;
 
     try {
+      const normalizedUsername = normalizeUsername(username);
+      if (normalizedUsername !== normalizeUsername(currentUsername)) {
+        const validation = validateUsername(username);
+        if (!validation.ok) {
+          throw new Error(validation.message || 'Choose a valid username.');
+        }
+
+        const res = await fetch('/api/profile/username', {
+          method: 'POST',
+          credentials: 'include',
+          cache: 'no-store',
+          headers: {
+            Accept: 'application/json',
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ username: validation.normalized }),
+        });
+        const payload = await res.json().catch(() => ({}));
+
+        if (res.status === 409 || payload?.code === 'username_taken') {
+          throw new Error(USERNAME_TAKEN_MESSAGE);
+        }
+        if (!res.ok || payload?.ok !== true) {
+          throw new Error(payload?.message || 'Could not save username.');
+        }
+
+        const nextUsername = typeof payload.username === 'string' ? payload.username : validation.normalized;
+        setUsername(nextUsername);
+        setCurrentUsername(nextUsername);
+        setUsernameHelp(null);
+      }
+
       if (oldDisplayName !== displayName) {
         const { error } = await supabase.auth.updateUser({
           data: { full_name: displayName },
         });
         if (error) throw error;
-        
-        toast({
-          title: 'Success',
-          description: 'Your profile has been updated.',
-        });
       }
+
+      toast({
+        title: 'Success',
+        description: 'Your profile has been updated.',
+      });
     } catch (error: any) {
       toast({
         variant: 'destructive',
@@ -375,7 +470,7 @@ export default function SettingsPage() {
                         </Avatar>
                     </div>
                     <div className="grid w-full gap-1.5">
-                        <Label htmlFor="displayName">Username</Label>
+                        <Label htmlFor="displayName">Display name</Label>
                         <Input
                         id="displayName"
                         value={displayName}
@@ -384,13 +479,27 @@ export default function SettingsPage() {
                     </div>
                     </div>
                     <div className="grid w-full gap-1.5">
+                        <Label htmlFor="settings-username">Username</Label>
+                        <Input
+                        id="settings-username"
+                        autoComplete="username"
+                        value={username}
+                        onChange={(e) => setUsername(normalizeUsername(e.target.value))}
+                        placeholder="Choose a unique username"
+                        disabled={isUsernameLoading}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {usernameHelp || 'Usernames are unique, lowercase, and visible only as account identity metadata.'}
+                        </p>
+                    </div>
+                    <div className="grid w-full gap-1.5">
                         <Label htmlFor="email">Email</Label>
                         <Input id="email" type="email" value={user?.email || ''} disabled />
                     </div>
                 </form>
                 </CardContent>
                 <CardFooter className="border-t px-6 py-4 flex flex-col-reverse sm:flex-row sm:justify-between items-center gap-4">
-                <Button onClick={handleSaveChanges} disabled={isSaving || displayName === currentDisplayName} className="w-full sm:w-auto">
+                <Button onClick={handleSaveChanges} disabled={isSaving || isUsernameLoading || !hasProfileChanges} className="w-full sm:w-auto">
                     {isSaving ? <><Save className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" /> Saving...</> : 'Save Changes'}
                 </Button>
                 <div className="flex gap-2 w-full sm:w-auto">

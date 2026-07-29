@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
@@ -1137,7 +1138,12 @@ export function ConexUserManagement() {
               </div>
               <div className="space-y-1">
                 <Label>Password (optional)</Label>
-                <Input value={createPassword} onChange={(event) => setCreatePassword(event.target.value)} type="password" placeholder="Auto-generated if empty" />
+                <PasswordInput
+                  value={createPassword}
+                  onChange={(event) => setCreatePassword(event.target.value)}
+                  placeholder="Auto-generated if empty"
+                  autoComplete="new-password"
+                />
               </div>
               <div className="space-y-1">
                 <Label>Full Name</Label>

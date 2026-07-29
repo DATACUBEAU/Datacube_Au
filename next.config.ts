@@ -316,8 +316,8 @@ const withPWA = withPWAInit({
   },
   extendDefaultRuntimeCaching: false,
   workboxOptions: {
-    skipWaiting: true,
-    clientsClaim: true,
+    skipWaiting: false,
+    clientsClaim: false,
     exclude: [
       /\/_next\/static\/chunks\/app\/dashboard\//,
       /^_next\/static\/chunks\/app\/dashboard\//,

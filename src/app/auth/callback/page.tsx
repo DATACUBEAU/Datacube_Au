@@ -56,14 +56,25 @@ export default function AuthCallbackPage() {
         return;
       }
 
+      if (!code) {
+        markAuthUnauthenticated('auth-callback', 'missing_code');
+        debugAuthCallback('missing_code', {
+          hasSession: false,
+          nextPath,
+        });
+        if (!cancelled) {
+          setMessage('No authentication code was found.');
+          router.replace(safeLoginRedirect(nextPath, 'session_expired'));
+        }
+        return;
+      }
+
       try {
-        const { data, error } = code
-          ? await supabase.auth.exchangeCodeForSession(code)
-          : await supabase.auth.getSession();
+        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
         if (error) throw error;
 
-        const session = code ? data.session : data.session;
+        const session = data.session;
         if (!session?.access_token || !session.user?.id) {
           markAuthUnauthenticated('auth-callback', 'session_missing');
           if (!cancelled) {

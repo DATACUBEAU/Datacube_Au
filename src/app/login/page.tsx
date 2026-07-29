@@ -18,6 +18,7 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -43,6 +44,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
+import {
+  USERNAME_TAKEN_MESSAGE,
+  isUsernameTakenError,
+  normalizeUsername,
+  validateUsername,
+} from '@/lib/auth/username';
 
 type AuthMode = 'login' | 'signup';
 
@@ -70,6 +77,7 @@ export default function LoginPage() {
   const [isResolvingRedirect, setIsResolvingRedirect] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [authError, setAuthError] = useState<string | null>(null);
@@ -241,6 +249,44 @@ export default function LoginPage() {
     }
   };
 
+  const checkUsernameAvailable = async (normalizedUsername: string): Promise<boolean> => {
+    const res = await fetch(`/api/profile/username?username=${encodeURIComponent(normalizedUsername)}`, {
+      method: 'GET',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+    });
+    const payload = await res.json().catch(() => ({}));
+
+    if (!res.ok || payload?.ok !== true) {
+      throw new Error(payload?.message || 'Could not check username availability.');
+    }
+    if (payload?.available === false) {
+      setAuthError(USERNAME_TAKEN_MESSAGE);
+      return false;
+    }
+    return payload.available === true;
+  };
+
+  const saveUsernameForSession = async (normalizedUsername: string, accessToken: string) => {
+    const res = await fetch('/api/profile/username', {
+      method: 'POST',
+      credentials: 'include',
+      cache: 'no-store',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ username: normalizedUsername }),
+    });
+    const payload = await res.json().catch(() => ({}));
+
+    if (!res.ok || payload?.ok !== true) {
+      throw new Error(payload?.message || 'Could not save username.');
+    }
+  };
+
   const handleEmailAuth = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isLoadingEmail) return;
@@ -251,12 +297,22 @@ export default function LoginPage() {
       return;
     }
 
+    const usernameValidation = authMode === 'signup' ? validateUsername(username) : null;
+    if (usernameValidation && !usernameValidation.ok) {
+      setAuthError(usernameValidation.message || 'Choose a username to continue.');
+      return;
+    }
+
     setIsLoadingEmail(true);
     setAuthError(null);
     setAuthNotice(null);
 
     try {
       if (authMode === 'signup') {
+        const normalizedUsername = usernameValidation?.normalized || normalizeUsername(username);
+        const isAvailable = await checkUsernameAvailable(normalizedUsername);
+        if (!isAvailable) return;
+
         const emailRedirectTo =
           typeof window !== 'undefined'
             ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(safeRedirectPath)}`
@@ -266,7 +322,10 @@ export default function LoginPage() {
           password,
           options: {
             emailRedirectTo,
-            data: fullName.trim() ? { full_name: fullName.trim() } : undefined,
+            data: {
+              username: normalizedUsername,
+              ...(fullName.trim() ? { full_name: fullName.trim() } : {}),
+            },
           },
         });
 
@@ -274,6 +333,7 @@ export default function LoginPage() {
 
         if (data.session?.access_token) {
           syncServerAuthSessionCookie(data.session);
+          await saveUsernameForSession(normalizedUsername, data.session.access_token);
           toast({ title: 'Account created', description: 'Taking you to your dashboard.' });
           router.replace(safeRedirectPath);
           return;
@@ -304,7 +364,11 @@ export default function LoginPage() {
       toast({ title: 'Signed in', description: 'Taking you to your dashboard.' });
       router.replace(safeRedirectPath);
     } catch (error) {
-      setAuthError(safeAuthMessage(error, authMode === 'signup' ? 'Could not create your account.' : 'Could not sign in.'));
+      setAuthError(
+        isUsernameTakenError(error)
+          ? USERNAME_TAKEN_MESSAGE
+          : safeAuthMessage(error, authMode === 'signup' ? 'Could not create your account.' : 'Could not sign in.'),
+      );
     } finally {
       setIsLoadingEmail(false);
     }
@@ -451,6 +515,23 @@ export default function LoginPage() {
               </div>
             ) : null}
 
+            {authMode === 'signup' ? (
+              <div className="grid gap-2">
+                <Label htmlFor="username">Username</Label>
+                <Input
+                  id="username"
+                  autoComplete="username"
+                  value={username}
+                  onChange={(event) => setUsername(normalizeUsername(event.target.value))}
+                  placeholder="Choose a unique username"
+                  required
+                />
+                <p className="text-xs text-muted-foreground">
+                  Usernames are unique and saved in lowercase.
+                </p>
+              </div>
+            ) : null}
+
             <div className="grid gap-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -466,9 +547,8 @@ export default function LoginPage() {
 
             <div className="grid gap-2">
               <Label htmlFor="password">Password</Label>
-              <Input
+              <PasswordInput
                 id="password"
-                type="password"
                 autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
@@ -480,7 +560,7 @@ export default function LoginPage() {
             <Button
               type="submit"
               className="w-full"
-              disabled={isLoadingEmail || !email.trim() || !password}
+              disabled={isLoadingEmail || !email.trim() || !password || (authMode === 'signup' && !username.trim())}
             >
               {isLoadingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               {authMode === 'signup' ? 'Create Account' : 'Sign In'}
