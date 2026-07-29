@@ -90,6 +90,11 @@ const TOUR_STEPS: Record<string, Step> = {
     content: 'Sign in to reach your dashboard, documents, chats, and saved study outputs. If your session expired, signing in again refreshes access.',
     actions: ['Enter your account details', 'Complete sign in', 'Return to your dashboard'],
   },
+  '/signup': {
+    title: 'Create Account',
+    content: 'Create your account to start uploading documents, saving study outputs, and using AU across your dashboard.',
+    actions: ['Enter your email', 'Choose a password', 'Confirm your email if asked'],
+  },
 };
 
 const DEFAULT_STEP: Step = {

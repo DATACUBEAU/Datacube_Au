@@ -162,6 +162,12 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const clearStaleAuthState = useCallback(async (source: string) => {
+    if (sessionSignatureRef.current && authStateRef.current === 'authenticated') {
+      staleAuthCleanupRef.current = false;
+      markAuthSessionRestored(`${source}:fresh_session_detected`);
+      return;
+    }
+
     if (!staleAuthCleanupRef.current) {
       staleAuthCleanupRef.current = true;
       await clearUserScopedClientCaches(user?.id ?? null);
@@ -209,6 +215,12 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       if (resolved.session?.user?.id) {
         markAuthSessionRestored('useSmartAuth.bootstrap');
         recordSignIn(resolved.session.user.id);
+      } else if (
+        typeof window !== 'undefined' &&
+        window.location.pathname.startsWith('/auth/callback') &&
+        (window.location.search.includes('code=') || window.location.search.includes('error='))
+      ) {
+        markAuthRestoring('useSmartAuth.bootstrap:auth-callback');
       } else {
         await clearStaleAuthState('useSmartAuth.bootstrap');
       }
@@ -303,7 +315,9 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
         ? redirectPath
         : '/dashboard';
     const redirectTo =
-      typeof window !== 'undefined' ? `${window.location.origin}${safePath}` : undefined;
+      typeof window !== 'undefined'
+        ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(safePath)}`
+        : undefined;
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',

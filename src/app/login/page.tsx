@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type FormEvent } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -11,12 +11,16 @@ import {
 } from '@/components/ui/card';
 import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog,
   DialogContent,
@@ -40,25 +44,60 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
 
+type AuthMode = 'login' | 'signup';
+
+function safeAuthMessage(error: unknown, fallback: string): string {
+  const message = String((error as any)?.message || fallback);
+  if (/invalid login credentials/i.test(message)) {
+    return 'Email or password is incorrect.';
+  }
+  if (/email not confirmed/i.test(message)) {
+    return 'Please confirm your email before signing in.';
+  }
+  if (/already registered|already exists|user already/i.test(message)) {
+    return 'This email is already registered. Try signing in instead.';
+  }
+  if (/password/i.test(message) && /6|weak|short/i.test(message)) {
+    return 'Use a stronger password with at least 6 characters.';
+  }
+  return message || fallback;
+}
+
 export default function LoginPage() {
-  const { signInWithGoogle, isLoading: isSmartLoading } = useSmartAuth();
+  const { signInWithGoogle } = useSmartAuth();
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
+  const [isLoadingEmail, setIsLoadingEmail] = useState(false);
   const [isResolvingRedirect, setIsResolvingRedirect] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
   
   const [user, , isUserLoading] = useSupabaseUser();
   const { toast } = useToast();
   const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
 
   const redirectToParam = searchParams.get('redirectTo');
   const sessionReasonParam = searchParams.get('reason');
+  const requestedModeParam = searchParams.get('mode');
   const wasSessionExpired = sessionReasonParam === 'session_expired';
+  const hadAuthError = sessionReasonParam === 'auth_error';
   const safeRedirectPath =
     typeof redirectToParam === 'string' &&
     redirectToParam.startsWith('/') &&
     !redirectToParam.startsWith('//')
       ? redirectToParam
       : '/dashboard';
+
+  useEffect(() => {
+    const nextMode: AuthMode =
+      pathname?.startsWith('/signup') || requestedModeParam === 'signup' ? 'signup' : 'login';
+    setAuthMode(nextMode);
+  }, [pathname, requestedModeParam]);
 
   useEffect(() => {
     if (isUserLoading) return;
@@ -181,6 +220,8 @@ export default function LoginPage() {
   const handleGoogleSignIn = async () => {
     setIsLoadingGoogle(true);
     setShowAuthPopup(true);
+    setAuthError(null);
+    setAuthNotice(null);
 
     // Artificial delay for animation
     await new Promise(resolve => setTimeout(resolve, 1500));
@@ -200,6 +241,75 @@ export default function LoginPage() {
     }
   };
 
+  const handleEmailAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (isLoadingEmail) return;
+
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail || !password) {
+      setAuthError('Enter your email and password to continue.');
+      return;
+    }
+
+    setIsLoadingEmail(true);
+    setAuthError(null);
+    setAuthNotice(null);
+
+    try {
+      if (authMode === 'signup') {
+        const emailRedirectTo =
+          typeof window !== 'undefined'
+            ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(safeRedirectPath)}`
+            : undefined;
+        const { data, error } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: {
+            emailRedirectTo,
+            data: fullName.trim() ? { full_name: fullName.trim() } : undefined,
+          },
+        });
+
+        if (error) throw error;
+
+        if (data.session?.access_token) {
+          syncServerAuthSessionCookie(data.session);
+          toast({ title: 'Account created', description: 'Taking you to your dashboard.' });
+          router.replace(safeRedirectPath);
+          return;
+        }
+
+        setPassword('');
+        setAuthNotice('Check your email to confirm your account, then sign in.');
+        toast({
+          title: 'Confirm your email',
+          description: 'We sent a confirmation link if email confirmation is enabled.',
+        });
+        return;
+      }
+
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      });
+
+      if (error) throw error;
+
+      if (!data.session?.access_token) {
+        setAuthNotice('Please check your email to finish signing in.');
+        return;
+      }
+
+      syncServerAuthSessionCookie(data.session);
+      toast({ title: 'Signed in', description: 'Taking you to your dashboard.' });
+      router.replace(safeRedirectPath);
+    } catch (error) {
+      setAuthError(safeAuthMessage(error, authMode === 'signup' ? 'Could not create your account.' : 'Could not sign in.'));
+    } finally {
+      setIsLoadingEmail(false);
+    }
+  };
+
   const handleAuthCancelAttempt = () => {
     setShowAuthCancelConfirm(true);
   };
@@ -210,7 +320,7 @@ export default function LoginPage() {
     setIsLoadingGoogle(false);
   };
 
-  if (isUserLoading || isResolvingRedirect) {
+  if (isResolvingRedirect || (isUserLoading && Boolean(user))) {
     return (
       <div className="flex h-dvh items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -302,13 +412,91 @@ export default function LoginPage() {
           <CardDescription>
             {wasSessionExpired
               ? 'Your session expired. Please sign in again to continue.'
-              : 'Sign in to upload documents, chat with your data, and unlock A U insights.'}
+              : hadAuthError
+                ? 'Authentication could not be completed. Please try again.'
+                : 'Sign in or create an account to upload documents, chat with your data, and unlock AU insights.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-4">
+          <Tabs value={authMode} onValueChange={(value) => setAuthMode(value === 'signup' ? 'signup' : 'login')}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="login">Sign In</TabsTrigger>
+              <TabsTrigger value="signup">Sign Up</TabsTrigger>
+            </TabsList>
+          </Tabs>
+
+          {authError ? (
+            <Alert variant="destructive">
+              <AlertDescription>{authError}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          {authNotice ? (
+            <Alert>
+              <AlertDescription>{authNotice}</AlertDescription>
+            </Alert>
+          ) : null}
+
+          <form className="grid gap-3" onSubmit={handleEmailAuth}>
+            {authMode === 'signup' ? (
+              <div className="grid gap-2">
+                <Label htmlFor="full-name">Name</Label>
+                <Input
+                  id="full-name"
+                  autoComplete="name"
+                  value={fullName}
+                  onChange={(event) => setFullName(event.target.value)}
+                  placeholder="Your name"
+                />
+              </div>
+            ) : null}
+
+            <div className="grid gap-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="you@example.com"
+                required
+              />
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="password">Password</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder={authMode === 'signup' ? 'Create a password' : 'Enter your password'}
+                required
+              />
+            </div>
+
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={isLoadingEmail || !email.trim() || !password}
+            >
+              {isLoadingEmail ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {authMode === 'signup' ? 'Create Account' : 'Sign In'}
+            </Button>
+          </form>
+
+          <div className="relative flex items-center py-1">
+            <div className="h-px flex-1 bg-border" />
+            <span className="px-3 text-xs text-muted-foreground">or</span>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+
           <Button
             onClick={handleGoogleSignIn}
             className="w-full"
+            variant="outline"
             disabled={isLoadingGoogle}
           >
             {isLoadingGoogle ? (
@@ -318,6 +506,32 @@ export default function LoginPage() {
             )}
             Sign in with Google
           </Button>
+
+          <p className="text-center text-sm text-muted-foreground">
+            {authMode === 'signup' ? (
+              <>
+                Already have an account?{' '}
+                <button
+                  type="button"
+                  className="font-medium text-primary underline underline-offset-4"
+                  onClick={() => setAuthMode('login')}
+                >
+                  Sign in
+                </button>
+              </>
+            ) : (
+              <>
+                New to DataCube AU?{' '}
+                <button
+                  type="button"
+                  className="font-medium text-primary underline underline-offset-4"
+                  onClick={() => setAuthMode('signup')}
+                >
+                  Create an account
+                </button>
+              </>
+            )}
+          </p>
         </CardContent>
       </Card>
       <footer className="mt-8 text-center text-sm text-muted-foreground">

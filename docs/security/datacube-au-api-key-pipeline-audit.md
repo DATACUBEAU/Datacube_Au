@@ -18,7 +18,7 @@ No raw secret values are included in this report.
 | Browser/provider-key exposure | Green | Admin provider-key DTOs expose only configured status, last4/fingerprint, provider name, timestamps, and status fields. |
 | Legacy Conex admin token pipeline | Green | Custom admin token storage/header flow was removed from the browser. Old stored values are cleanup-only. |
 | Tracked secret exposure cleanup | Yellow | Confirmed tracked historical credential values were removed, and the owner reports credential rotation is complete. Live post-rotation smoke tests are still pending. |
-| Secret table controls | Yellow | Credential metadata/audit hardening is applied. New provider-key create/update paths now use server-side encrypted storage metadata and masked DTOs, but the new encryption migration/code still needs deployment/live verification and legacy plaintext rows must be re-entered or rotated. |
+| Secret table controls | Yellow | Credential metadata/audit hardening and provider-key encryption metadata migrations are applied remotely. New provider-key create/update paths now use server-side encrypted storage metadata and masked DTOs, but the code/env still need deployment/live verification and legacy plaintext rows must be re-entered or rotated. |
 | Public/service-worker exposure | Green | Static checks assert no high-confidence raw secret values or credential plumbing in tracked public files. |
 
 ## Supabase Migration Retry Status
@@ -110,7 +110,7 @@ Remaining gaps:
 Provider-key encrypted storage plan:
 
 1. Set `PROVIDER_KEY_ENCRYPTION_SECRET` in server-only runtime secret storage for the Next.js/admin server.
-2. Apply `supabase/migrations/20260729120000_provider_key_encryption_columns.sql` before using the new admin provider-key write path.
+2. Confirm `supabase/migrations/20260729120000_provider_key_encryption_columns.sql` remains applied before using the new admin provider-key write path; the owner-confirmed final dry run reports the remote database is up to date.
 3. Re-enter or rotate existing database-stored provider keys through the admin UI/API so they are stored in `encrypted_key_value` and legacy `key_value` is nulled.
 4. Keep `key_last4`, `key_fingerprint`, rotation metadata, and audit logs for UI/status.
 5. After all legacy rows are rotated and live provider calls pass, remove plaintext fallback in a later migration-safe task.
@@ -215,7 +215,7 @@ Bounded git-history review: high-confidence token-shaped values were found in th
 Current storage model:
 
 - Environment provider keys remain server-only env values.
-- Database provider keys now have nullable encrypted/provider-reference columns.
+- Database provider keys now have nullable encrypted/provider-reference columns; user-confirmed Supabase CLI verification shows the provider-key encryption migration is applied and the remote database is up to date.
 - New admin create/update stores `encrypted_key_value`, `key_encryption_version`, `key_encrypted_at`, `key_last4`, `key_fingerprint`, and rotation metadata.
 - New admin create/update sets legacy `key_value` to null.
 - Server AI routing decrypts encrypted rows only in server code immediately before provider use.

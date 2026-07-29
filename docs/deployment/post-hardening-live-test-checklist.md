@@ -17,7 +17,7 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm no `SUPABASE_SERVICE_ROLE_KEY`, provider key, Qdrant key, shared secret, webhook secret, or signed ticket is configured as `NEXT_PUBLIC_*`.
 - [ ] Confirm `ALLOWED_ORIGINS` contains the production frontend domain and does not use `*`.
 - [ ] Confirm `QDRANT_URL` is HTTPS in production or private loopback/VPN-only.
-- [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, and `20260728160000_atomic_usage_replay_guard.sql` are already applied and the remote database is up to date.
+- [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, `20260728160000_atomic_usage_replay_guard.sql`, and `20260729120000_provider_key_encryption_columns.sql` are already applied and the remote database is up to date.
 - [ ] Confirm a server-side cron/background path exists for `expire_ai_usage_reservations`; do not expose it to browser clients.
 
 ## 2. Restart And Redeploy Order
@@ -33,6 +33,10 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 ## 3. Frontend And Auth Tests
 
 - [ ] Login succeeds for a normal user.
+- [ ] Email/password login succeeds, syncs the server session cookie, and redirects to the dashboard or the original safe `redirectTo` path.
+- [ ] Signup succeeds and either redirects to the dashboard when email confirmation is disabled or shows a clear email-confirmation message when confirmation is enabled.
+- [ ] Google sign-in returns through `/auth/callback` and then redirects to the dashboard or the original safe `redirectTo` path.
+- [ ] `/login`, `/signup`, and `/auth/callback` remain public while unauthenticated; protected routes still redirect unauthenticated users to `/login`.
 - [ ] Logout and login again succeeds without stale session errors.
 - [ ] If Supabase `/auth/v1/user` returns 401 during bootstrap and no live/persisted session/token exists, the app transitions to unauthenticated and shows a session-expired sign-in path instead of returning to authenticated.
 - [ ] Stale browser auth artifacts are cleared once without an auth loop; refresh again and confirm the dashboard/admin pages are not accessible until sign-in completes.

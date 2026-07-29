@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-29
 
-Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, and `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`; do not create or push another migration for the service-role replacement.
+Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`, and `supabase/migrations/20260729120000_provider_key_encryption_columns.sql`; do not create or push another migration for the service-role replacement or provider-key encryption.
 
 Do not paste secrets into shell history. Store secret values in your deployment secret manager, PM2 ecosystem file outside git, systemd environment file outside git, or Docker/Compose secret environment that is not committed. `SUPABASE_SERVICE_ROLE_KEY` should now hold the new `sb_secret` value everywhere it is needed server-side.
 
