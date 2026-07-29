@@ -18,6 +18,7 @@ import type { ChatDocumentContext } from '@shared/document-chat-context';
 import type { GlobalChatNavAction } from '@shared/global-chat-routing';
 import { normalizeAssistantCitations } from '@/lib/chat/assistant-response';
 import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
+import { createAiIdempotencyKey } from '@/lib/api/ai-idempotency';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
 
@@ -166,10 +167,7 @@ function buildIdempotencyKey(request: ChatRequest, opts?: { clientMessageId?: st
   if (existing) return existing;
   const fromClientMessageId = typeof opts?.clientMessageId === 'string' ? opts.clientMessageId.trim() : '';
   if (fromClientMessageId) return fromClientMessageId;
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return `chat_${crypto.randomUUID()}`;
-  }
-  return `chat_${Date.now()}`;
+  return createAiIdempotencyKey('chat');
 }
 
 function buildCanonicalPayload(
@@ -266,6 +264,19 @@ function normalizeThrownChatError(error: unknown, fallbackMessage = 'Chat reques
   return extractApiError(error, fallbackMessage);
 }
 
+function requireAiAccessToken(accessToken: string | null | undefined): string {
+  const token = String(accessToken || '').trim();
+  if (!token) {
+    throw toApiRequestError({
+      code: 'AUTH_REQUIRED',
+      message: 'Session expired. Please sign in again.',
+      status: 401,
+      retryable: false,
+    });
+  }
+  return token;
+}
+
 /**
  * Sends a chat request to the au-chat Edge Function.
  */
@@ -289,15 +300,17 @@ export async function sendChatMessage(
   const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
     clientMessageId: opts?.clientMessageId,
   });
+  const accessToken = requireAiAccessToken(opts?.accessToken);
 
   
   const ticketRes = await safeFetch('/api/au/vps-ticket', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(opts?.accessToken ? { Authorization: `Bearer ${opts.accessToken}` } : {}),
+      'x-idempotency-key': String(legacyPayload.idempotencyKey || ''),
+      Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ feature: endpoint }),
+    body: JSON.stringify({ ...legacyPayload, feature: endpoint, idempotencyKey: legacyPayload.idempotencyKey }),
     authIntent: 'interactive',
   });
 
@@ -375,15 +388,17 @@ export async function sendChatMessageStream(
     ...legacyPayload,
     stream: true,
   };
+  const accessToken = requireAiAccessToken(opts?.accessToken);
 
   
   const ticketRes = await safeFetch('/api/au/vps-ticket', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(opts?.accessToken ? { Authorization: `Bearer ${opts.accessToken}` } : {}),
+      'x-idempotency-key': String(payload.idempotencyKey || ''),
+      Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ feature: endpoint }),
+    body: JSON.stringify({ ...payload, feature: endpoint, idempotencyKey: payload.idempotencyKey }),
     authIntent: 'interactive',
   });
 
@@ -556,15 +571,22 @@ export async function generatePromptStarters(
   opts?: { documentId?: string | null; accessToken?: string | null }
 ): Promise<string[]> {
   const hasDocId = Boolean(opts?.documentId);
+  const idempotencyKey = createAiIdempotencyKey('prompt_starters');
+  const accessToken = requireAiAccessToken(opts?.accessToken);
 
   
   const ticketRes = await safeFetch('/api/au/vps-ticket', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(opts?.accessToken ? { Authorization: `Bearer ${opts.accessToken}` } : {}),
+      'x-idempotency-key': idempotencyKey,
+      Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ feature: 'generate-prompt-starters' }),
+    body: JSON.stringify({
+      feature: 'generate-prompt-starters',
+      idempotencyKey,
+      documentId: opts?.documentId || undefined,
+    }),
     authIntent: 'interactive',
   });
 

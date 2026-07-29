@@ -11,9 +11,9 @@ import {
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   areAuthActionsDisabled,
-  clearAuthActionsDisabled,
   dispatchSessionExpired,
   getAuthRuntimeState,
+  markAuthSessionRestored,
   markAuthRestoring,
 } from '@/lib/auth/session-expiry-events';
 import type { SessionExpiryTriggerIntent } from '@/lib/auth/session-expiry-policy';
@@ -570,7 +570,7 @@ export async function fetchEdgeFunctionResponse(
   const requestBody = resolveEdgeRequestBody(method, options?.body);
   const restoreRecoveredAuthState = () => {
     if (getAuthRuntimeState() === 'RESTORING') {
-      clearAuthActionsDisabled();
+      markAuthSessionRestored(`invokeEdgeFunction:${functionName}`);
     }
   };
 
@@ -584,7 +584,7 @@ export async function fetchEdgeFunctionResponse(
     const gate = guardRequest({
       isOnline,
       requireAuth,
-      accessToken: accessToken ?? (requireAuth ? '__cookie_session__' : null),
+      accessToken,
       allowOfflineRead: allowOffline,
       warnKey: `invoke-edge:${functionName}`,
       context: functionName,

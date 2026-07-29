@@ -9,7 +9,7 @@ export const AUTH_STATE_CHANGED_EVENT = 'dcau:auth-state-changed';
 export const AUTH_ACTIONS_DISABLED_KEY = 'dcau:auth-actions-disabled';
 export const AUTH_RUNTIME_STATE_KEY = 'dcau:auth-runtime-state';
 
-export type AuthRuntimeState = 'RESTORING' | 'AUTHENTICATED' | 'EXPIRED' | 'REAUTH_IN_PROGRESS';
+export type AuthRuntimeState = 'RESTORING' | 'AUTHENTICATED' | 'UNAUTHENTICATED' | 'EXPIRED' | 'REAUTH_IN_PROGRESS';
 
 const DISPATCH_COOLDOWN_MS = 15000;
 let lastDispatchAt = 0;
@@ -18,7 +18,7 @@ let reauthRedirectClaimed = false;
 let lastReauthRedirectAt = 0;
 
 let hasInitializedRuntimeState = false;
-let runtimeStateCache: AuthRuntimeState = 'AUTHENTICATED';
+let runtimeStateCache: AuthRuntimeState = 'UNAUTHENTICATED';
 const authBoundControllers = new Set<AbortController>();
 
 type SessionExpiredDetail = {
@@ -32,18 +32,21 @@ type SessionExpiredDetail = {
 function normalizeRuntimeState(value: unknown): AuthRuntimeState {
   const normalized = String(value || '').trim().toUpperCase();
   if (normalized === 'RESTORING') return 'RESTORING';
+  if (normalized === 'UNAUTHENTICATED' || normalized === 'SIGNED_OUT') return 'UNAUTHENTICATED';
   if (normalized === 'EXPIRED') return 'EXPIRED';
   if (normalized === 'REAUTH_IN_PROGRESS') return 'REAUTH_IN_PROGRESS';
-  return 'AUTHENTICATED';
+  if (normalized === 'AUTHENTICATED') return 'AUTHENTICATED';
+  return 'UNAUTHENTICATED';
 }
 
 function readRuntimeStateFromStorage(): AuthRuntimeState {
   if (typeof window === 'undefined') return 'AUTHENTICATED';
   try {
     const raw = window.localStorage.getItem(AUTH_RUNTIME_STATE_KEY);
+    if (!raw) return 'UNAUTHENTICATED';
     return normalizeRuntimeState(raw);
   } catch {
-    return 'AUTHENTICATED';
+    return 'UNAUTHENTICATED';
   }
 }
 
@@ -163,9 +166,21 @@ export function setAuthActionsDisabled(disabled: boolean): void {
 export function clearAuthActionsDisabled(): void {
   setAuthActionsDisabled(false);
   releaseReauthRedirect();
+}
+
+export function markAuthSessionRestored(source = 'auth_session_restored'): void {
+  clearAuthActionsDisabled();
   setAuthRuntimeState('AUTHENTICATED', {
-    source: 'clearAuthActionsDisabled',
+    source,
     reason: 'session_restored',
+  });
+}
+
+export function markAuthUnauthenticated(source = 'auth_session_missing', reason = 'session_missing'): void {
+  clearAuthActionsDisabled();
+  setAuthRuntimeState('UNAUTHENTICATED', {
+    source,
+    reason,
   });
 }
 

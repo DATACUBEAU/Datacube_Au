@@ -353,7 +353,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? '__cookie_session__',
+      accessToken: session?.access_token,
       warnKey: 'chat:send',
       context: 'chat send',
     });
@@ -768,7 +768,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? '__cookie_session__',
+      accessToken: session?.access_token,
       warnKey: 'chat:greet',
       context: 'chat greet',
     });
@@ -876,7 +876,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       const gate = guardRequest({
         isOnline,
         requireAuth: true,
-        accessToken: session?.access_token ?? '__cookie_session__',
+        accessToken: session?.access_token,
         warnKey: 'chat:prompts',
         context: 'prompt generation',
       });

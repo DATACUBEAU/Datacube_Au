@@ -4,14 +4,15 @@ import { useEffect, useState, createContext, useContext, useMemo, useCallback, u
 import { recordUserActivityRpc, resolveBrowserSession, supabase } from '@/lib/supabase-client/client';
 import { Session } from '@supabase/supabase-js';
 import { normalizeUsableSupabaseSession } from '@/lib/auth/browser-session';
-import { readPersistedSupabaseSession } from '@/lib/auth/session-storage';
+import { clearClientAuthStorageArtifacts, clearUserScopedClientCaches, readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
+import { clearServerAuthSessionCookie, hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   AUTH_STATE_CHANGED_EVENT,
-  clearAuthActionsDisabled,
   getAuthRuntimeState,
   markAuthRestoring,
+  markAuthSessionRestored,
+  markAuthUnauthenticated,
   markReauthInProgress,
   type AuthRuntimeState,
 } from '@/lib/auth/session-expiry-events';
@@ -60,9 +61,8 @@ function normalizeBootstrapSession(candidate: Session | null): Session | null {
 
 function signatureFromBootstrapSession(nextSession: Session | null): string | null {
   if (!nextSession?.user?.id || !nextSession?.access_token) return null;
-  const tokenTail = nextSession.access_token.slice(-12);
   const expires = typeof nextSession.expires_at === 'number' ? nextSession.expires_at : 0;
-  return `${nextSession.user.id}:${tokenTail}:${expires}`;
+  return `${nextSession.user.id}:${expires}`;
 }
 
 export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
@@ -84,6 +84,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const [runtimeAuthState, setRuntimeAuthState] = useState<AuthRuntimeState>(() => getAuthRuntimeState());
   const sessionSignatureRef = useRef<string | null>(signatureFromBootstrapSession(bootstrapSession));
   const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const staleAuthCleanupRef = useRef(false);
 
   const sessionToUser = useCallback((nextSession: Session | null): SmartUser | null => {
     return sessionToBootstrapUser(nextSession);
@@ -123,7 +124,6 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
         finalSessionSource: resolved.source,
         refreshed: resolved.refreshed,
         hasToken: !!resolved.session?.access_token,
-        expiresAt: resolved.session?.expires_at ? new Date(resolved.session.expires_at * 1000).toISOString() : null,
       });
       return {
         session: normalizeSession(resolved.session),
@@ -154,9 +154,29 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       authStateRef.current = nextAuthState;
       setAuthState(nextAuthState);
       setIsOfflineSession(Boolean(options?.offlineBootstrap && normalizedSession?.user));
+      if (normalizedSession?.user?.id) {
+        staleAuthCleanupRef.current = false;
+      }
     },
     [normalizeSession, sessionToUser, signatureFromSession],
   );
+
+  const clearStaleAuthState = useCallback(async (source: string) => {
+    if (!staleAuthCleanupRef.current) {
+      staleAuthCleanupRef.current = true;
+      await clearUserScopedClientCaches(user?.id ?? null);
+      clearClientAuthStorageArtifacts();
+      clearServerAuthSessionCookie();
+      try {
+        await supabase.auth.signOut({ scope: 'local' });
+      } catch {
+        // Local storage/cookie cleanup above is authoritative for stale browser auth.
+      }
+      clearClientAuthStorageArtifacts();
+      clearServerAuthSessionCookie();
+    }
+    markAuthUnauthenticated(source, 'session_missing');
+  }, [user?.id]);
 
   useEffect(() => {
     setRuntimeAuthState(getAuthRuntimeState());
@@ -187,26 +207,31 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (resolved.session?.user?.id) {
+        markAuthSessionRestored('useSmartAuth.bootstrap');
         recordSignIn(resolved.session.user.id);
+      } else {
+        await clearStaleAuthState('useSmartAuth.bootstrap');
       }
-      clearAuthActionsDisabled();
     };
 
     void syncInitialSession();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (!mounted) return;
-      applySessionState(session, { force: event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' });
+      const normalizedEventSession = normalizeSession(session);
+      applySessionState(normalizedEventSession, { force: event === 'SIGNED_OUT' || event === 'TOKEN_REFRESHED' });
       if (event !== 'SIGNED_OUT') {
         setIsOfflineSession(false);
       }
-      if (event === 'SIGNED_IN' && session?.user?.id) {
-        clearAuthActionsDisabled();
-        recordSignIn(session.user.id);
-      } else if (event === 'TOKEN_REFRESHED' && session?.user?.id) {
-        clearAuthActionsDisabled();
+      if (event === 'SIGNED_IN' && normalizedEventSession?.user?.id) {
+        markAuthSessionRestored('useSmartAuth.authStateChange');
+        recordSignIn(normalizedEventSession.user.id);
+      } else if (event === 'TOKEN_REFRESHED' && normalizedEventSession?.user?.id) {
+        markAuthSessionRestored('useSmartAuth.authStateChange');
       } else if (event === 'SIGNED_OUT') {
-        clearAuthActionsDisabled();
+        void clearStaleAuthState('useSmartAuth.authStateChange');
+      } else if (!normalizedEventSession && isOnlineNow()) {
+        void clearStaleAuthState('useSmartAuth.authStateChange');
       }
     });
 
@@ -221,7 +246,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
           if (!resolved.session) {
             applySessionState(null, { force: true });
             setIsOfflineSession(false);
-            clearAuthActionsDisabled();
+            void clearStaleAuthState('useSmartAuth.online');
             return;
           }
 
@@ -230,7 +255,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
             offlineBootstrap: resolved.usedCachedSession,
           });
           if (resolved.session.user?.id) {
-            clearAuthActionsDisabled();
+            markAuthSessionRestored('useSmartAuth.online');
           }
           setIsOfflineSession(resolved.usedCachedSession);
         })
@@ -239,12 +264,12 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
           const persisted = normalizeSession(readPersistedSupabaseSession());
           if (persisted?.user) {
             applySessionState(persisted, { force: true, offlineBootstrap: true });
-            clearAuthActionsDisabled();
+            markAuthSessionRestored('useSmartAuth.online');
             setIsOfflineSession(true);
             return;
           }
           applySessionState(null, { force: true });
-          clearAuthActionsDisabled();
+          void clearStaleAuthState('useSmartAuth.online');
           setIsOfflineSession(false);
         });
     };
@@ -266,7 +291,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener(AUTH_STATE_CHANGED_EVENT, handleRuntimeAuthStateChange as EventListener);
     };
-  }, [applySessionState, normalizeSession, resolveSessionFromSupabase]);
+  }, [applySessionState, clearStaleAuthState, isOnlineNow, normalizeSession, resolveSessionFromSupabase]);
 
   const signInWithGoogle = useCallback(async (redirectPath?: string) => {
     authStateRef.current = 'loading';
@@ -298,8 +323,8 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     setAuthState('loading');
     await explicitSignOut(session?.user?.id ?? null);
     applySessionState(null, { force: true });
-    clearAuthActionsDisabled();
-  }, [applySessionState, session?.user?.id]);
+    await clearStaleAuthState('useSmartAuth.signOut');
+  }, [applySessionState, clearStaleAuthState, session?.user?.id]);
 
   const startReauth = useCallback((source?: string) => {
     markReauthInProgress(source || 'useSmartAuth.startReauth');
@@ -319,11 +344,14 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       force: true,
       offlineBootstrap: resolved.usedCachedSession,
     });
+    if (!resolved.session) {
+      await clearStaleAuthState('useSmartAuth.getToken');
+    }
     console.log('[useSmartAuth] getToken: resolved session from Supabase', {
       hasToken: !!resolved.session?.access_token,
     });
     return resolved.session?.access_token ?? null;
-  }, [applySessionState, normalizeSession, resolveSessionFromSupabase, session]);
+  }, [applySessionState, clearStaleAuthState, normalizeSession, resolveSessionFromSupabase, session]);
 
   const isAuthed = authState === 'authenticated';
   const isLoading = authState === 'loading';

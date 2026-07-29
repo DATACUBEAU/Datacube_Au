@@ -5,11 +5,27 @@ import type { GenerateKnowledgeOutput, GeneratePredictionsOutput } from '@/app/a
 import { toast } from '@/hooks/use-toast';
 // invokeEdgeFunction removed — VPS ticket + direct fetch is the sole path.
 import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
+import { createAiIdempotencyKey } from '@/lib/api/ai-idempotency';
+import { safeFetch } from '@/lib/api/safe-fetch';
+import { toApiRequestError } from '@/lib/api/api-contract';
 
 const KNOWLEDGE_DOCUMENT_BUDGET = 12_000;
 const KNOWLEDGE_PAST_QUESTIONS_BUDGET = 10_000;
 const PREDICTION_DOCUMENT_BUDGET = 12_000;
 const PREDICTION_PAST_QUESTIONS_BUDGET = 12_000;
+
+function requireAiAccessToken(accessToken: string | null | undefined): string {
+  const token = String(accessToken || '').trim();
+  if (!token) {
+    throw toApiRequestError({
+      code: 'AUTH_REQUIRED',
+      message: 'Session expired. Please sign in again.',
+      status: 401,
+      retryable: false,
+    });
+  }
+  return token;
+}
 
 interface AppState {
   // Knowledge Engine State
@@ -38,6 +54,7 @@ interface AppState {
       documentContent?: string;
       pastQuestionsContent?: string;
       pastQuestionIds?: string[];
+      accessToken?: string | null;
     },
   ) => Promise<void>;
   generatePredictions: (options: {
@@ -46,6 +63,7 @@ interface AppState {
     documentId?: string | null;
     mainTextbookId?: string | null;
     pastQuestionIds?: string[];
+    accessToken?: string | null;
   }) => Promise<void>;
 
   // Utility to clear data on doc selection change
@@ -144,6 +162,7 @@ export const useStore = create<AppState>()(
           documentContent?: string;
           pastQuestionsContent?: string;
           pastQuestionIds?: string[];
+          accessToken?: string | null;
         },
       ) => {
         if (get().isGeneratingKnowledge) return;
@@ -152,13 +171,24 @@ export const useStore = create<AppState>()(
 
         const hasDocId = Boolean(docId);
         const hasPqIds = Array.isArray(options?.pastQuestionIds) && options!.pastQuestionIds.length > 0;
+        const idempotencyKey = createAiIdempotencyKey('knowledge');
         
         try {
+          const accessToken = requireAiAccessToken(options?.accessToken);
           
-          const ticketRes = await fetch('/api/au/vps-ticket', {
+          const ticketRes = await safeFetch('/api/au/vps-ticket', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ feature: 'generate-knowledge' })
+            headers: {
+              'Content-Type': 'application/json',
+              'x-idempotency-key': idempotencyKey,
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              feature: 'generate-knowledge',
+              idempotencyKey,
+              documentId: docId,
+              pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
+            })
           });
           if (!ticketRes.ok) throw new Error('Ticket generation failed');
 
@@ -172,6 +202,7 @@ export const useStore = create<AppState>()(
               'Authorization': `Bearer ${ticket}`,
             },
             body: JSON.stringify({
+              idempotencyKey,
               documentContent: hasDocId ? undefined : (options?.documentContent ? String(options.documentContent).slice(0, KNOWLEDGE_DOCUMENT_BUDGET) : undefined),
               pastQuestionsContent: hasPqIds ? undefined : (options?.pastQuestionsContent ? String(options.pastQuestionsContent).slice(0, KNOWLEDGE_PAST_QUESTIONS_BUDGET) : undefined),
               pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
@@ -219,6 +250,7 @@ export const useStore = create<AppState>()(
         documentId?: string | null;
         mainTextbookId?: string | null;
         pastQuestionIds?: string[];
+        accessToken?: string | null;
       }) => {
         if (get().isGeneratingPredictions) return;
 
@@ -227,12 +259,24 @@ export const useStore = create<AppState>()(
         try {
           const hasTextbookId = Boolean(options?.mainTextbookId || options?.documentId);
           const hasPqIds = Array.isArray(options?.pastQuestionIds) && options!.pastQuestionIds.length > 0;
+          const idempotencyKey = createAiIdempotencyKey('exam_predictions');
+          const accessToken = requireAiAccessToken(options?.accessToken);
 
           // Get VPS ticket
-          const ticketRes = await fetch('/api/au/vps-ticket', {
+          const ticketRes = await safeFetch('/api/au/vps-ticket', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ feature: 'generate-exam-predictions' }),
+            headers: {
+              'Content-Type': 'application/json',
+              'x-idempotency-key': idempotencyKey,
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              feature: 'generate-exam-predictions',
+              idempotencyKey,
+              documentId: options?.documentId || options?.mainTextbookId || undefined,
+              mainTextbookId: options?.mainTextbookId || undefined,
+              pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
+            }),
           });
           if (!ticketRes.ok) throw new Error('Ticket generation failed: ' + await ticketRes.text());
 
@@ -246,6 +290,7 @@ export const useStore = create<AppState>()(
               'Authorization': `Bearer ${ticket}`,
             },
             body: JSON.stringify({
+              idempotencyKey,
               pastQuestionsContent: hasPqIds ? undefined
                 : (options?.pastQuestionsContent
                     ? String(options.pastQuestionsContent).slice(0, PREDICTION_PAST_QUESTIONS_BUDGET)

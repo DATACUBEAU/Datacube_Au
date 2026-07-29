@@ -87,11 +87,12 @@ async function main() {
     assert.match(source, /resolveBrowserSession\(\)/);
   });
 
-  await run('chat pipeline does not force expiry on a transient missing token during restore', () => {
+  await run('chat pipeline blocks protected ticket requests without a live access token', () => {
     const source = readRepoFile('src/hooks/api/use-au-chat.ts');
     assert.equal(source.includes('missing_access_token'), false);
     assert.match(source, /isAuthLoading \|\| isRestoringAuth/);
-    assert.match(source, /accessToken:\s*session\?\.access_token \?\? '__cookie_session__'/);
+    assert.match(source, /accessToken:\s*session\?\.access_token/);
+    assert.doesNotMatch(source, /__cookie_session__/);
     assert.equal(source.includes("source: 'useAuChat.sendMessage'"), false);
   });
 
@@ -229,13 +230,16 @@ async function main() {
     assert.match(clientSource, /userActivityMetadataSyncAt/);
   });
 
-  await run('exam and generation flows no longer hard-require a local access token before protected requests', () => {
+  await run('exam and generation flows require a live access token before protected AI requests', () => {
     const examsHook = readRepoFile('src/hooks/api/use-au-exams.ts');
     const knowledgePage = readRepoFile('src/app/dashboard/knowledge/page.tsx');
     const practicePage = readRepoFile('src/app/dashboard/practice/page.tsx');
     const predictionsPage = readRepoFile('src/app/dashboard/predictions/page.tsx');
 
-    assert.match(examsHook, /accessToken:\s*session\?\.access_token \?\? '__cookie_session__'/);
+    assert.match(examsHook, /accessToken:\s*session\?\.access_token/);
+    assert.doesNotMatch(examsHook, /__cookie_session__/);
+    assert.match(knowledgePage, /accessToken:\s*session\?\.access_token/);
+    assert.match(predictionsPage, /accessToken:\s*session\?\.access_token/);
     assert.match(knowledgePage, /enabled:\s*Boolean\(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);
     assert.match(practicePage, /enabled:\s*Boolean\(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);
     assert.match(predictionsPage, /enabled:\s*Boolean\(\(selectedTextbookId \|\| selectedPastQuestionsId\) && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);

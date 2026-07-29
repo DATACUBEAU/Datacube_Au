@@ -30,8 +30,12 @@ async function signTicket(input: {
   featureKey?: string;
   route?: string;
   ticketId?: string;
+  reservationId?: string;
+  idempotencyKey?: string;
   expiresAt?: number;
   omitTicketId?: boolean;
+  omitReservationId?: boolean;
+  omitIdempotencyKey?: boolean;
   omitExpiration?: boolean;
 }) {
   const jwt = new SignJWT({
@@ -41,6 +45,8 @@ async function signTicket(input: {
     ...(input.featureKey !== undefined ? { feature_key: input.featureKey } : {}),
     ...(input.route !== undefined ? { route: input.route } : {}),
     ...(input.omitTicketId ? {} : { ticket_id: input.ticketId ?? 'ticket-1' }),
+    ...(input.omitReservationId ? {} : { reservation_id: input.reservationId ?? '11111111-1111-4111-8111-111111111111' }),
+    ...(input.omitIdempotencyKey ? {} : { idempotency_key: input.idempotencyKey ?? 'chat_idempotency_1' }),
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setIssuer('dcau-next')
@@ -103,6 +109,8 @@ await run('valid AU Chat ticket is accepted for AU Chat route', async () => {
   assert.equal(verified?.userId, 'user-1');
   assert.equal(verified?.featureKey, 'au_chat');
   assert.equal(verified?.route, '/chat/au-chat');
+  assert.equal(verified?.reservationId, '11111111-1111-4111-8111-111111111111');
+  assert.equal(verified?.idempotencyKey, 'chat_idempotency_1');
 });
 
 await run('valid Global Chat ticket is accepted for Global Chat route', async () => {
@@ -235,6 +243,38 @@ await run('ticket without unique id is rejected', async () => {
     featureKey: 'au_chat',
     route: '/chat/au-chat',
     omitTicketId: true,
+  });
+  const verified = await verifyVpsTicket(
+    ticket,
+    configuredSecret,
+    routeRequirementForPath('/chat/au-chat'),
+  );
+  assert.equal(verified, null);
+});
+
+await run('ticket without usage reservation id is rejected', async () => {
+  const ticket = await signTicket({
+    secret: configuredSecret,
+    feature: 'au-chat',
+    featureKey: 'au_chat',
+    route: '/chat/au-chat',
+    omitReservationId: true,
+  });
+  const verified = await verifyVpsTicket(
+    ticket,
+    configuredSecret,
+    routeRequirementForPath('/chat/au-chat'),
+  );
+  assert.equal(verified, null);
+});
+
+await run('ticket without idempotency key is rejected', async () => {
+  const ticket = await signTicket({
+    secret: configuredSecret,
+    feature: 'au-chat',
+    featureKey: 'au_chat',
+    route: '/chat/au-chat',
+    omitIdempotencyKey: true,
   });
   const verified = await verifyVpsTicket(
     ticket,

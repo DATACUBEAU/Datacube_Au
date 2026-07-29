@@ -20,7 +20,7 @@ const HOST = process.env.HOST || '0.0.0.0';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_SERVER_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const SUPABASE_SERVER_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const QDRANT_URL = process.env.QDRANT_URL || 'http://localhost:6333';
 const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const VPS_SHARED_SECRET = resolveVpsSharedSecret();
@@ -28,7 +28,7 @@ const ALLOWED_ORIGINS = resolveAllowedOrigins();
 const RATE_LIMIT_MAX = parsePositiveInt(process.env.RATE_LIMIT_MAX_PER_MINUTE, 20);
 
 if (!SUPABASE_URL || !SUPABASE_SERVER_KEY) {
-  logger.error('Missing Supabase server configuration');
+  logger.error('Missing Supabase service-role server configuration');
   process.exit(1);
 }
 if (!VPS_SHARED_SECRET.ok) {
@@ -137,6 +137,9 @@ async function buildServer() {
     request.headers['x-user-plan'] = ticketData.plan;
     request.headers['x-user-feature'] = ticketData.feature;
     request.headers['x-user-feature-key'] = ticketData.featureKey;
+    request.headers['x-user-route'] = ticketData.route;
+    request.headers['x-usage-reservation-id'] = ticketData.reservationId;
+    request.headers['x-usage-idempotency-key'] = ticketData.idempotencyKey;
     if (ticketData.ticketId) {
       request.headers['x-ticket-id'] = ticketData.ticketId;
     }

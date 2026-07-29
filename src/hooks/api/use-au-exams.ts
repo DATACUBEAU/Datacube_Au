@@ -26,7 +26,7 @@ export function useAuExams(selectedDocId: string | null) {
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? '__cookie_session__',
+      accessToken: session?.access_token,
       warnKey: 'exams:practice',
       context: 'practice exam',
     });
@@ -45,7 +45,7 @@ export function useAuExams(selectedDocId: string | null) {
       const result = await generatePracticeExam(
         '',
         '',
-        { documentId: selectedDocId, pastQuestionIds }
+        { documentId: selectedDocId, pastQuestionIds, accessToken: session?.access_token }
       );
       setExamData(result);
       toast({ title: 'Practice exam generated!' });
@@ -67,7 +67,7 @@ export function useAuExams(selectedDocId: string | null) {
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token ?? '__cookie_session__',
+      accessToken: session?.access_token,
       warnKey: 'exams:predictions',
       context: 'predictions',
     });
@@ -86,7 +86,7 @@ export function useAuExams(selectedDocId: string | null) {
       const result = await generatePredictions(
         '',
         '',
-        { documentId: selectedDocId, mainTextbookId: selectedDocId, pastQuestionIds }
+        { documentId: selectedDocId, mainTextbookId: selectedDocId, pastQuestionIds, accessToken: session?.access_token }
       );
       setPredictions(result);
       toast({ title: 'Predictions generated!' });

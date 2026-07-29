@@ -350,6 +350,7 @@ function PredictionsPageContent() {
         documentId: selectedTextbookId || selectedPastQuestionsId,
         mainTextbookId: selectedTextbookId || undefined,
         pastQuestionIds: [selectedPastQuestionsId],
+        accessToken: session?.access_token,
       });
 
     } catch (err: any) {

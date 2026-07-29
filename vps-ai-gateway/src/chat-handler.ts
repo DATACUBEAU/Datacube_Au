@@ -12,6 +12,14 @@ import {
 } from './utils.js';
 import { selectProviderAndModel, type RoutingCandidate } from './ai-routing.js';
 import { RetrievalService, type RetrievedChunk } from './retrieval-service.js';
+import {
+  beginUsageReservation,
+  commitUsageReservation,
+  safeReleaseUsageReservation,
+  UsageAccountingError,
+  usageReservationFromHeaders,
+  type UsageReservationContext,
+} from './usage-accounting.js';
 
 const MAX_CONTEXT_CHARS = parsePositiveInt(process.env.AI_CONTEXT_CHAR_LIMIT, 12000);
 const MAX_CHAT_MESSAGES = parsePositiveInt(process.env.AI_CHAT_HISTORY_MESSAGES, 12);
@@ -42,14 +50,22 @@ export class ChatHandler {
     const userId = String(headers['x-user-id'] || '').trim();
     const correlationId = headers['x-correlation-id'] || crypto.randomUUID();
     const stream = body.stream === true;
+    const usageContext = usageReservationFromHeaders(headers);
+    let providerAttemptStarted = false;
+    let providerSucceeded = false;
 
     try {
-      if (!userId) {
+      if (!userId || !usageContext) {
         return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
       }
 
       const question = this.extractQuestion(body);
       if (!question) {
+        await safeReleaseUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          failureCode: 'missing_question',
+        });
         return reply.code(400).send({ error: 'missing_question', message: 'No question provided' });
       }
 
@@ -78,6 +94,13 @@ export class ChatHandler {
       }
 
       const routingCandidate = await this.selectModel('chat', userId, headers['x-user-plan']);
+      await beginUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: routingCandidate.service,
+        model: routingCandidate.model,
+      });
+      providerAttemptStarted = true;
       
       if (stream) {
         reply.raw.writeHead(200, {
@@ -90,6 +113,14 @@ export class ChatHandler {
         const answer = await this.generateWithRouting(routingCandidate, question, body, ragContext, (text) => {
           reply.raw.write(`data: ${JSON.stringify({ type: 'delta', text })}\n\n`);
         });
+        providerSucceeded = true;
+        await commitUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          provider: routingCandidate.service,
+          model: routingCandidate.model,
+        });
+        providerAttemptStarted = false;
 
         reply.raw.write(`data: ${JSON.stringify({ 
           type: 'done', 
@@ -102,6 +133,14 @@ export class ChatHandler {
       }
 
       const answer = await this.generateWithRouting(routingCandidate, question, body, ragContext);
+      providerSucceeded = true;
+      await commitUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: routingCandidate.service,
+        model: routingCandidate.model,
+      });
+      providerAttemptStarted = false;
       return reply.code(200).send({
         answer,
         thought: null,
@@ -110,7 +149,19 @@ export class ChatHandler {
         correlation_id: correlationId,
       });
     } catch (err: any) {
+      await this.settleFailedUsage({
+        context: usageContext,
+        error: err,
+        providerAttemptStarted,
+        providerSucceeded,
+      });
+      if (err instanceof UsageAccountingError) {
+        return this.usageAccountingResponse(reply, stream, correlationId, err);
+      }
       logger.error('au-chat error', errorLogDetails(err));
+      if (stream && reply.raw.headersSent) {
+        return this.streamError(reply, correlationId, 'chat_failed', publicErrorMessage(err, 'Chat failed'));
+      }
       return reply.code(500).send({ 
         error: 'chat_failed', 
         message: publicErrorMessage(err, 'Chat failed'),
@@ -123,18 +174,33 @@ export class ChatHandler {
     const userId = String(headers['x-user-id'] || '').trim();
     const correlationId = headers['x-correlation-id'] || crypto.randomUUID();
     const stream = body.stream === true;
+    const usageContext = usageReservationFromHeaders(headers);
+    let providerAttemptStarted = false;
+    let providerSucceeded = false;
 
     try {
-      if (!userId) {
+      if (!userId || !usageContext) {
         return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
       }
 
       const question = this.extractQuestion(body);
       if (!question) {
+        await safeReleaseUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          failureCode: 'missing_question',
+        });
         return reply.code(400).send({ error: 'missing_question', message: 'No question provided' });
       }
 
       const routingCandidate = await this.selectModel('global_chat', userId, headers['x-user-plan']);
+      await beginUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: routingCandidate.service,
+        model: routingCandidate.model,
+      });
+      providerAttemptStarted = true;
       
       if (stream) {
         reply.raw.writeHead(200, {
@@ -147,6 +213,14 @@ export class ChatHandler {
         const answer = await this.generateWithRouting(routingCandidate, question, body, null, (text: string) => {
           reply.raw.write(`data: ${JSON.stringify({ type: 'delta', text })}\n\n`);
         });
+        providerSucceeded = true;
+        await commitUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          provider: routingCandidate.service,
+          model: routingCandidate.model,
+        });
+        providerAttemptStarted = false;
 
         reply.raw.write(`data: ${JSON.stringify({ 
           type: 'done', 
@@ -158,13 +232,33 @@ export class ChatHandler {
       }
 
       const answer = await this.generateWithRouting(routingCandidate, question, body, null);
+      providerSucceeded = true;
+      await commitUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: routingCandidate.service,
+        model: routingCandidate.model,
+      });
+      providerAttemptStarted = false;
       return reply.code(200).send({
         answer,
         requestId: correlationId,
         correlation_id: correlationId,
       });
     } catch (err: any) {
+      await this.settleFailedUsage({
+        context: usageContext,
+        error: err,
+        providerAttemptStarted,
+        providerSucceeded,
+      });
+      if (err instanceof UsageAccountingError) {
+        return this.usageAccountingResponse(reply, stream, correlationId, err);
+      }
       logger.error('global-chat error', errorLogDetails(err));
+      if (stream && reply.raw.headersSent) {
+        return this.streamError(reply, correlationId, 'chat_failed', publicErrorMessage(err, 'Chat failed'));
+      }
       return reply.code(500).send({ 
         error: 'chat_failed', 
         message: publicErrorMessage(err, 'Chat failed') 
@@ -173,19 +267,53 @@ export class ChatHandler {
   }
 
   async handleLegacyChat(body: any, headers: any, reply: FastifyReply) {
-    if (!headers['x-user-id']) {
+    const usageContext = usageReservationFromHeaders(headers);
+    let providerSucceeded = false;
+    if (!headers['x-user-id'] || !usageContext) {
       return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
     }
 
     const question = body.question;
     if (!question) {
+      await safeReleaseUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        failureCode: 'missing_question',
+      });
       return reply.code(400).send({ error: 'missing_question' });
     }
 
-    const routingCandidate = await this.selectModel('chat', headers['x-user-id'], headers['x-user-plan']);
-    const answer = await this.generateWithRouting(routingCandidate, question, body, null);
+    try {
+      const routingCandidate = await this.selectModel('chat', headers['x-user-id'], headers['x-user-plan']);
+      await beginUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: routingCandidate.service,
+        model: routingCandidate.model,
+      });
+      const answer = await this.generateWithRouting(routingCandidate, question, body, null);
+      providerSucceeded = true;
+      await commitUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: routingCandidate.service,
+        model: routingCandidate.model,
+      });
 
-    return reply.code(200).send({ answer });
+      return reply.code(200).send({ answer });
+    } catch (err: any) {
+      await this.settleFailedUsage({
+        context: usageContext,
+        error: err,
+        providerAttemptStarted: true,
+        providerSucceeded,
+      });
+      if (err instanceof UsageAccountingError) {
+        return this.usageAccountingResponse(reply, false, crypto.randomUUID(), err);
+      }
+      logger.error('legacy-chat error', errorLogDetails(err));
+      return reply.code(500).send({ error: 'chat_failed', message: publicErrorMessage(err, 'Chat failed') });
+    }
   }
 
   private extractQuestion(body: any): string | null {
@@ -223,6 +351,56 @@ export class ChatHandler {
     });
 
     return candidate;
+  }
+
+  private async settleFailedUsage(input: {
+    context: UsageReservationContext | null;
+    error: unknown;
+    providerAttemptStarted: boolean;
+    providerSucceeded: boolean;
+  }): Promise<void> {
+    if (!input.context) return;
+    if (input.error instanceof UsageAccountingError && input.error.code.startsWith('USAGE_BEGIN')) return;
+
+    await safeReleaseUsageReservation({
+      supabase: this.supabase,
+      context: input.context,
+      failureCode: this.failureCodeFor(input.error, input.providerAttemptStarted, input.providerSucceeded),
+      status: input.providerSucceeded ? 'disputed' : 'released',
+    });
+  }
+
+  private failureCodeFor(error: unknown, providerAttemptStarted: boolean, providerSucceeded: boolean): string {
+    if (providerSucceeded) return 'commit_failed_after_provider_success';
+    if (error instanceof GatewayProviderError) return `provider_${error.statusCode}`;
+    if (error instanceof Error && /timeout|aborted/i.test(error.message)) return providerAttemptStarted ? 'provider_timeout' : 'request_aborted';
+    return providerAttemptStarted ? 'provider_generation_failed' : 'request_failed_before_provider';
+  }
+
+  private usageAccountingResponse(
+    reply: FastifyReply,
+    stream: boolean,
+    correlationId: string,
+    error: UsageAccountingError,
+  ) {
+    const message = error.statusCode === 409
+      ? 'This AI request is already in progress or no longer active.'
+      : 'AI usage accounting failed.';
+    if (stream && reply.raw.headersSent) {
+      return this.streamError(reply, correlationId, error.code.toLowerCase(), message);
+    }
+    return reply.code(error.statusCode).send({
+      error: error.code.toLowerCase(),
+      message,
+      status: error.statusCode,
+    });
+  }
+
+  private streamError(reply: FastifyReply, correlationId: string, code: string, message: string) {
+    reply.raw.write(`data: ${JSON.stringify({ type: 'error', error: code, message, requestId: correlationId })}\n\n`);
+    reply.raw.write('data: [DONE]\n\n');
+    reply.raw.end();
+    return reply;
   }
 
   private async generateWithRouting(

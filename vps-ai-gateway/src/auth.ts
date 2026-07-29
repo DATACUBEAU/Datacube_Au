@@ -19,6 +19,8 @@ export type VpsTicketData = {
   featureKey: string;
   route: string;
   ticketId: string | null;
+  reservationId: string;
+  idempotencyKey: string;
 };
 
 export type VpsSecretResolution =
@@ -182,6 +184,12 @@ export async function verifyVpsTicket(
       : typeof payload.jti === 'string' && payload.jti.trim()
         ? payload.jti
         : '';
+    const reservationId = typeof payload.reservation_id === 'string' && payload.reservation_id.trim()
+      ? payload.reservation_id
+      : '';
+    const idempotencyKey = typeof payload.idempotency_key === 'string' && payload.idempotency_key.trim()
+      ? payload.idempotency_key
+      : '';
     if (!feature || !featureKey || !route) {
       logger.warn('Ticket verification failed: missing route or feature claims', {
         hasFeature: Boolean(feature),
@@ -193,6 +201,14 @@ export async function verifyVpsTicket(
 
     if (!ticketId) {
       logger.warn('Ticket verification failed: missing unique ticket id');
+      return null;
+    }
+
+    if (!reservationId || !idempotencyKey) {
+      logger.warn('Ticket verification failed: missing usage reservation claims', {
+        hasReservationId: Boolean(reservationId),
+        hasIdempotencyKey: Boolean(idempotencyKey),
+      });
       return null;
     }
 
@@ -227,6 +243,8 @@ export async function verifyVpsTicket(
       featureKey,
       route,
       ticketId,
+      reservationId,
+      idempotencyKey,
     };
   } catch (err: any) {
     if (err.code === 'ERR_JWT_EXPIRED') {

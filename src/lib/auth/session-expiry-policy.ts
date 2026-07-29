@@ -1,6 +1,7 @@
 export type SessionExpiryRuntimeState =
   | 'RESTORING'
   | 'AUTHENTICATED'
+  | 'UNAUTHENTICATED'
   | 'EXPIRED'
   | 'REAUTH_IN_PROGRESS';
 
@@ -16,6 +17,7 @@ export function shouldDispatchSessionExpiry(input: {
   if (input.status !== 401) return false;
   if ((input.intent ?? 'interactive') !== 'interactive') return false;
   if (input.runtimeState === 'RESTORING') return false;
+  if (input.runtimeState === 'UNAUTHENTICATED') return false;
   if (input.runtimeState === 'EXPIRED' || input.runtimeState === 'REAUTH_IN_PROGRESS') {
     return false;
   }

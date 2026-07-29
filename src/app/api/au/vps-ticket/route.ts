@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { SignJWT } from 'jose';
 import { resolveCanonicalEffectiveLimits, throwChatLimitIfNeeded, throwKnowledgeHubLimitIfNeeded, throwPracticeExamLimitIfNeeded, throwExamPredictionLimitIfNeeded } from '@/lib/server/au-limits';
 import { buildApiErrorBody, buildApiSuccessBody, extractApiError } from '@/lib/api/api-contract';
-import { trackUsageEvent, buildUsageEventKey } from '@/lib/server/usage-tracking';
 import { nanoid } from 'nanoid';
 import {
   accessControlResponse,
@@ -14,13 +13,32 @@ import {
   resolveVpsSharedSecretForSigning,
   resolveVpsTicketOperation,
 } from '@/lib/server/vps-ticket-config';
+import {
+  buildAiUsageIncrements,
+  buildAiUsageReservationPayload,
+  normalizeAiIdempotencyKey,
+  reserveAiUsage,
+  reserveFailureStatus,
+} from '@/lib/server/ai-usage-accounting';
 
 export const runtime = 'nodejs';
+
+function reserveFailureMessage(code: string | null, status: string | null): string {
+  if (code === 'USAGE_LIMIT_EXCEEDED') return 'AI usage limit reached for this account.';
+  if (code === 'USAGE_RESERVATION_FINGERPRINT_MISMATCH') return 'This AI request idempotency key belongs to a different request.';
+  if (status === 'committed' || status === 'released' || status === 'expired' || status === 'disputed') {
+    return 'This AI request idempotency key is no longer active.';
+  }
+  return 'AI usage reservation failed.';
+}
 
 export async function POST(req: NextRequest) {
   const requestId = nanoid();
   try {
-    const body = await req.json().catch(() => ({}));
+    const parsedBody = await req.json().catch(() => ({}));
+    const body = parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody)
+      ? (parsedBody as Record<string, unknown>)
+      : {};
     const operation = resolveVpsTicketOperation(body.feature || 'chat');
     if (!operation) {
       return withNoStore(
@@ -44,7 +62,8 @@ export async function POST(req: NextRequest) {
 
     // Check specific limits based on feature
     if (operation.featureKey === 'au_chat' || operation.featureKey === 'global_chat') {
-      throwChatLimitIfNeeded({ limits: limitsResult, correlationId: requestId });
+      const chatUsage = buildAiUsageIncrements(operation, body);
+      throwChatLimitIfNeeded({ limits: limitsResult, correlationId: requestId, tokenIncrement: chatUsage.estimatedTokens });
     } else if (operation.featureKey === 'knowledge_generation') {
       throwKnowledgeHubLimitIfNeeded({ limits: limitsResult, correlationId: requestId });
     } else if (operation.featureKey === 'practice_exam_generation') {
@@ -72,21 +91,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Pre-increment usage to ensure billing enforcement
-    // Since VPS no longer increments, we do it here when issuing the ticket.
-    await trackUsageEvent({
+    const idempotencyKey = normalizeAiIdempotencyKey(
+      req.headers.get('x-idempotency-key') || (body as any)?.idempotencyKey,
+      operation.requestFeature.replace(/[^a-z0-9]+/gi, '_') || 'ai',
+    );
+    const usageReservationPayload = buildAiUsageReservationPayload({
+      limits: limitsResult,
+      operation,
+      idempotencyKey,
+      body,
+    });
+    const reservation = await reserveAiUsage({
       supabase,
       userId: auth.userId,
-      feature: operation.usageFeature,
-      source: 'vps-ticket',
-      eventKey: buildUsageEventKey({ feature: operation.usageFeature, requestId }),
-      increments: { [operation.usageFeature]: 1 },
-      requestId,
-    }).catch(err => console.error('Failed to pre-increment usage', {
-      requestId,
-      feature: operation.usageFeature,
-      message: err instanceof Error ? err.message : String(err),
-    }));
+      featureKey: operation.featureKey,
+      route: operation.gatewayRoute,
+      idempotencyKey,
+      ticketId: requestId,
+      reservation: usageReservationPayload,
+    });
+
+    if (!reservation.ok || !reservation.reservationId) {
+      const status = reserveFailureStatus(reservation.code, reservation.status);
+      return withNoStore(
+        NextResponse.json(
+          buildApiErrorBody({
+            status,
+            code: reservation.code || 'AI_USAGE_RESERVATION_FAILED',
+            message: reserveFailureMessage(reservation.code, reservation.status),
+            requestId,
+            retryable: status >= 500,
+          }),
+          { status },
+        ),
+      );
+    }
 
     // Sign the JWT ticket
     const jwt = await new SignJWT({
@@ -96,6 +135,8 @@ export async function POST(req: NextRequest) {
         feature_key: operation.featureKey,
         route: operation.gatewayRoute,
         ticket_id: requestId,
+        reservation_id: reservation.reservationId,
+        idempotency_key: reservation.idempotencyKey,
       })
       .setProtectedHeader({ alg: 'HS256' })
       .setIssuer('dcau-next')
@@ -107,7 +148,7 @@ export async function POST(req: NextRequest) {
 
     const vpsUrl = (process.env.VPS_AI_GATEWAY_URL || process.env.NEXT_PUBLIC_VPS_GATEWAY_URL || 'https://vps.datacube.au').replace(/\/+$/, '');
 
-    return withNoStore(NextResponse.json(buildApiSuccessBody({ ticket: jwt, vpsUrl })));
+    return withNoStore(NextResponse.json(buildApiSuccessBody({ ticket: jwt, vpsUrl, idempotencyKey: reservation.idempotencyKey })));
   } catch (error: any) {
     if (isAccessControlError(error)) {
       return accessControlResponse(error, requestId);

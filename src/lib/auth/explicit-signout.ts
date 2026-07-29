@@ -1,6 +1,6 @@
 import { recordUserActivityRpc, supabase } from '@/lib/supabase-client/client';
 import { clearClientAuthStorageArtifacts, clearUserScopedClientCaches } from '@/lib/auth/session-storage';
-import { clearAuthActionsDisabled } from '@/lib/auth/session-expiry-events';
+import { markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
 import { clearServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 
 export async function explicitSignOut(
@@ -32,6 +32,6 @@ export async function explicitSignOut(
   clearClientAuthStorageArtifacts();
   clearServerAuthSessionCookie();
   if (!options?.preserveAuthLock) {
-    clearAuthActionsDisabled();
+    markAuthUnauthenticated('explicitSignOut', 'signed_out');
   }
 }

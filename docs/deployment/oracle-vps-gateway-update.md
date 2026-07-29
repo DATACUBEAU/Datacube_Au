@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-28
 
-Use this after the code and Supabase migration are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`; do not create or push another migration for the service-role replacement.
+Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, and `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`; do not create or push another migration for the service-role replacement.
 
 Do not paste secrets into shell history. Store secret values in your deployment secret manager, PM2 ecosystem file outside git, systemd environment file outside git, or Docker/Compose secret environment that is not committed. `SUPABASE_SERVICE_ROLE_KEY` should now hold the new `sb_secret` value everywhere it is needed server-side.
 
@@ -10,10 +10,10 @@ Do not paste secrets into shell history. Store secret values in your deployment 
 
 | Item | Must update | Notes |
 |---|---:|---|
-| `vps-ai-gateway` | Yes | Deploy TypeScript gateway changes for ticket verification, CORS, RAG filters, provider sanitization, limits, and logging. Restart after env replacement. |
+| `vps-ai-gateway` | Yes | Deploy TypeScript gateway changes for ticket verification, CORS, RAG filters, provider sanitization, limits, logging, and atomic usage commit/release. Restart after env replacement. |
 | Frontend deployment | Yes | Redeploy after env replacement so Next.js server routes, middleware, admin routes, billing routes, and background routes use the new service-role credential. |
 | RAG worker | Yes | Restart after env replacement. Worker embedding model must remain compatible with gateway retrieval: `AllMiniLML6V2` unless both sides are intentionally changed together. |
-| Cron/background workers | If used | Restart any process that uses Supabase admin access or caches env at process start. |
+| Cron/background workers | If used | Restart any process that uses Supabase admin access or caches env at process start. Add/schedule `expire_ai_usage_reservations` cleanup if not already covered. |
 | Environment variables | Yes | Add/check required names below on both frontend server and Oracle VPS. Keep values out of logs and docs. |
 | Nginx/reverse proxy | Verify | Ensure only intended gateway domain/path proxies to the gateway port over HTTPS. |
 | PM2/systemd/Docker service | Yes | Restart the gateway after code/env updates. |
@@ -55,7 +55,7 @@ Production requirements:
 
 - `NODE_ENV` must be `production`.
 - `VPS_SHARED_SECRET` must match the frontend/Next.js server env exactly.
-- `SUPABASE_SERVICE_ROLE_KEY` must contain the new `sb_secret` credential in every server-side runtime that uses Supabase admin access.
+- `SUPABASE_SERVICE_ROLE_KEY` must contain the new `sb_secret` credential in every server-side runtime that uses Supabase admin access. The VPS gateway now requires this key because atomic usage commit/release RPCs are service-role only.
 - `ALLOWED_ORIGINS` must be an explicit comma-separated allowlist, never `*`.
 - `QDRANT_URL` should be HTTPS in production. Loopback/private network URLs are acceptable only if Qdrant is not publicly reachable.
 - No provider key or Supabase service-role key may be defined with `NEXT_PUBLIC_*`.
@@ -158,6 +158,12 @@ npm run build
 
 Restart each scheduler or background service that uses Supabase admin access. Examples include retention jobs, background config jobs, worker cleanup jobs, and deployment-specific queue consumers.
 
+Atomic usage cleanup:
+
+- Schedule a server-side cron/background call to `expire_ai_usage_reservations` using Supabase service-role access.
+- Run it frequently enough that stale reserved quota does not linger, for example every 5-15 minutes.
+- Do not call it from browser code.
+
 ## D. Oracle Cloud Networking Checklist
 
 | Check | Required result |
@@ -186,6 +192,9 @@ Run these after restarting services:
 - Prompt Starters use bounded document retrieval.
 - Invalid, expired, malformed, and tampered tickets return 401.
 - A ticket for one route is rejected on a different route.
+- Reusing the same idempotency key does not double-charge or start duplicate in-flight provider attempts.
+- Provider failure/timeout releases the reservation instead of committing usage.
+- Successful provider response commits exactly once.
 - Cross-user retrieval attempts return no chunks.
 - Gateway logs do not show Authorization headers, tickets, provider keys, Supabase keys, Qdrant keys, or raw provider responses.
 

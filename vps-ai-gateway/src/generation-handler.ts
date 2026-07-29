@@ -13,6 +13,14 @@ import {
 import { selectProviderAndModel } from './ai-routing.js';
 
 import { RetrievalService, type RetrievedChunk } from './retrieval-service.js';
+import {
+  beginUsageReservation,
+  commitUsageReservation,
+  safeReleaseUsageReservation,
+  UsageAccountingError,
+  usageReservationFromHeaders,
+  type UsageReservationContext,
+} from './usage-accounting.js';
 
 const MAX_GENERATION_CONTEXT_CHARS = parsePositiveInt(process.env.AI_CONTEXT_CHAR_LIMIT, 12000);
 const MAX_PAST_QUESTION_CONTEXT_CHARS = parsePositiveInt(process.env.AI_PAST_QUESTION_CONTEXT_CHAR_LIMIT, 4000);
@@ -49,28 +57,51 @@ export class GenerationHandler {
     const { documentId } = body;
     let { documentContent, pastQuestionsContent } = body;
     let sources: GenerationSource[] = [];
-
-    if (!userId) {
-      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
-    }
-
-    if (!documentContent && documentId) {
-      const retrieved = await this.fetchBoundedCoverage(documentId, userId, ['key concepts', 'comprehensive study materials summary']);
-      documentContent = retrieved.text;
-      sources = retrieved.sources;
-    }
-    if (!pastQuestionsContent && body.pastQuestionIds) {
-      pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
-    }
-
-    if (!documentContent) {
-      return reply.code(400).send({ error: 'missing_content', message: 'Document content required' });
-    }
+    const usageContext = usageReservationFromHeaders(headers);
+    let providerAttemptStarted = false;
+    let providerSucceeded = false;
 
     try {
+      if (!userId || !usageContext) {
+        return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+      }
+
+      if (!documentContent && documentId) {
+        const retrieved = await this.fetchBoundedCoverage(documentId, userId, ['key concepts', 'comprehensive study materials summary']);
+        documentContent = retrieved.text;
+        sources = retrieved.sources;
+      }
+      if (!pastQuestionsContent && body.pastQuestionIds) {
+        pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+      }
+
+      if (!documentContent) {
+        await safeReleaseUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          failureCode: 'missing_content',
+        });
+        return reply.code(400).send({ error: 'missing_content', message: 'Document content required' });
+      }
+
       const candidate = await this.selectModel('knowledge', userId, headers['x-user-plan']);
+      await beginUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = true;
       const prompt = this.buildKnowledgePrompt(documentContent, pastQuestionsContent);
       const result = await this.generate(candidate, prompt);
+      providerSucceeded = true;
+      await commitUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = false;
 
       return reply.code(200).send({
         output: result,
@@ -79,6 +110,10 @@ export class GenerationHandler {
         sources,
       });
     } catch (err: any) {
+      await this.settleFailedUsage({ context: usageContext, error: err, providerAttemptStarted, providerSucceeded });
+      if (err instanceof UsageAccountingError) {
+        return this.usageAccountingResponse(reply, err);
+      }
       logger.error('knowledge generation error', errorLogDetails(err));
       return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
@@ -89,33 +124,56 @@ export class GenerationHandler {
     const mainTextbookId = body.mainTextbookId || body.documentId;
     let { mainTextbookContent, pastQuestionsContent } = body;
     let sources: GenerationSource[] = [];
-
-    if (!userId) {
-      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
-    }
-
-    if (!mainTextbookContent && mainTextbookId) {
-      const retrieved = await this.fetchBoundedCoverage(mainTextbookId, userId, [
-        'likely exam topics', 
-        'important concepts', 
-        'frequent themes', 
-        'key sections'
-      ]);
-      mainTextbookContent = retrieved.text;
-      sources = retrieved.sources;
-    }
-    if (!pastQuestionsContent && body.pastQuestionIds) {
-      pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
-    }
-
-    if (!mainTextbookContent) {
-      return reply.code(400).send({ error: 'missing_content' });
-    }
+    const usageContext = usageReservationFromHeaders(headers);
+    let providerAttemptStarted = false;
+    let providerSucceeded = false;
 
     try {
+      if (!userId || !usageContext) {
+        return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+      }
+
+      if (!mainTextbookContent && mainTextbookId) {
+        const retrieved = await this.fetchBoundedCoverage(mainTextbookId, userId, [
+          'likely exam topics',
+          'important concepts',
+          'frequent themes',
+          'key sections'
+        ]);
+        mainTextbookContent = retrieved.text;
+        sources = retrieved.sources;
+      }
+      if (!pastQuestionsContent && body.pastQuestionIds) {
+        pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+      }
+
+      if (!mainTextbookContent) {
+        await safeReleaseUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          failureCode: 'missing_content',
+        });
+        return reply.code(400).send({ error: 'missing_content' });
+      }
+
       const candidate = await this.selectModel('prediction_engine', userId, headers['x-user-plan']);
+      await beginUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = true;
       const prompt = this.buildPredictionsPrompt(mainTextbookContent, pastQuestionsContent);
       const result = await this.generate(candidate, prompt);
+      providerSucceeded = true;
+      await commitUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = false;
 
       return reply.code(200).send({
         predictions: result,
@@ -124,6 +182,10 @@ export class GenerationHandler {
         sources,
       });
     } catch (err: any) {
+      await this.settleFailedUsage({ context: usageContext, error: err, providerAttemptStarted, providerSucceeded });
+      if (err instanceof UsageAccountingError) {
+        return this.usageAccountingResponse(reply, err);
+      }
       logger.error('exam predictions error', errorLogDetails(err));
       return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
@@ -134,34 +196,57 @@ export class GenerationHandler {
     const { documentId } = body;
     let { documentContent, pastQuestionsContent } = body;
     let sources: GenerationSource[] = [];
-
-    if (!userId) {
-      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
-    }
-
-    if (!documentContent && documentId) {
-      const retrieved = await this.fetchBoundedCoverage(documentId, userId, [
-        'important concepts', 
-        'definitions', 
-        'examples', 
-        'exam questions', 
-        'key sections'
-      ]);
-      documentContent = retrieved.text;
-      sources = retrieved.sources;
-    }
-    if (!pastQuestionsContent && body.pastQuestionIds) {
-      pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
-    }
-
-    if (!documentContent) {
-      return reply.code(400).send({ error: 'missing_content' });
-    }
+    const usageContext = usageReservationFromHeaders(headers);
+    let providerAttemptStarted = false;
+    let providerSucceeded = false;
 
     try {
+      if (!userId || !usageContext) {
+        return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+      }
+
+      if (!documentContent && documentId) {
+        const retrieved = await this.fetchBoundedCoverage(documentId, userId, [
+          'important concepts',
+          'definitions',
+          'examples',
+          'exam questions',
+          'key sections'
+        ]);
+        documentContent = retrieved.text;
+        sources = retrieved.sources;
+      }
+      if (!pastQuestionsContent && body.pastQuestionIds) {
+        pastQuestionsContent = await this.hydratePastQuestions(body.pastQuestionIds, userId);
+      }
+
+      if (!documentContent) {
+        await safeReleaseUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          failureCode: 'missing_content',
+        });
+        return reply.code(400).send({ error: 'missing_content' });
+      }
+
       const candidate = await this.selectModel('exam_generator', userId, headers['x-user-plan']);
+      await beginUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = true;
       const prompt = this.buildPracticeExamPrompt(documentContent, pastQuestionsContent);
       const result = await this.generate(candidate, prompt);
+      providerSucceeded = true;
+      await commitUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = false;
 
       return reply.code(200).send({
         exam: result,
@@ -170,6 +255,10 @@ export class GenerationHandler {
         sources,
       });
     } catch (err: any) {
+      await this.settleFailedUsage({ context: usageContext, error: err, providerAttemptStarted, providerSucceeded });
+      if (err instanceof UsageAccountingError) {
+        return this.usageAccountingResponse(reply, err);
+      }
       logger.error('practice exam error', errorLogDetails(err));
       return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
@@ -180,30 +269,53 @@ export class GenerationHandler {
     const { documentId, documentTitle, userIdea } = body;
     let { documentContent } = body;
     let sources: GenerationSource[] = [];
-
-    if (!userId) {
-      return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
-    }
-
-    if (!documentContent && documentId) {
-      const intent = userIdea || 'core concepts';
-      const retrieved = await this.fetchBoundedCoverage(documentId, userId, [
-        'key questions', 
-        'study topics', 
-        intent
-      ]);
-      documentContent = retrieved.text;
-      sources = retrieved.sources;
-    }
-
-    if (!documentContent) {
-      return reply.code(400).send({ error: 'missing_content' });
-    }
+    const usageContext = usageReservationFromHeaders(headers);
+    let providerAttemptStarted = false;
+    let providerSucceeded = false;
 
     try {
+      if (!userId || !usageContext) {
+        return reply.code(401).send({ error: 'invalid_token', message: 'Invalid or expired ticket' });
+      }
+
+      if (!documentContent && documentId) {
+        const intent = userIdea || 'core concepts';
+        const retrieved = await this.fetchBoundedCoverage(documentId, userId, [
+          'key questions',
+          'study topics',
+          intent
+        ]);
+        documentContent = retrieved.text;
+        sources = retrieved.sources;
+      }
+
+      if (!documentContent) {
+        await safeReleaseUsageReservation({
+          supabase: this.supabase,
+          context: usageContext,
+          failureCode: 'missing_content',
+        });
+        return reply.code(400).send({ error: 'missing_content' });
+      }
+
       const candidate = await this.selectModel('chat', userId, headers['x-user-plan']);
+      await beginUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = true;
       const prompt = this.buildPromptStartersPrompt(documentTitle, documentContent, userIdea);
       const result = await this.generate(candidate, prompt);
+      providerSucceeded = true;
+      await commitUsageReservation({
+        supabase: this.supabase,
+        context: usageContext,
+        provider: candidate.service,
+        model: candidate.model,
+      });
+      providerAttemptStarted = false;
 
       try {
         const prompts = JSON.parse(result);
@@ -215,6 +327,10 @@ export class GenerationHandler {
       const lines = result.split('\n').filter(l => l.trim().length > 0).slice(0, 4);
       return reply.code(200).send({ prompts: lines, sources });
     } catch (err: any) {
+      await this.settleFailedUsage({ context: usageContext, error: err, providerAttemptStarted, providerSucceeded });
+      if (err instanceof UsageAccountingError) {
+        return this.usageAccountingResponse(reply, err);
+      }
       logger.error('prompt starters error', errorLogDetails(err));
       return reply.code(500).send({ error: 'generation_failed', message: publicErrorMessage(err, 'Generation failed') });
     }
@@ -281,6 +397,41 @@ export class GenerationHandler {
       userId,
       plan,
       requestType: requestType as any,
+    });
+  }
+
+  private async settleFailedUsage(input: {
+    context: UsageReservationContext | null;
+    error: unknown;
+    providerAttemptStarted: boolean;
+    providerSucceeded: boolean;
+  }): Promise<void> {
+    if (!input.context) return;
+    if (input.error instanceof UsageAccountingError && input.error.code.startsWith('USAGE_BEGIN')) return;
+
+    await safeReleaseUsageReservation({
+      supabase: this.supabase,
+      context: input.context,
+      failureCode: this.failureCodeFor(input.error, input.providerAttemptStarted, input.providerSucceeded),
+      status: input.providerSucceeded ? 'disputed' : 'released',
+    });
+  }
+
+  private failureCodeFor(error: unknown, providerAttemptStarted: boolean, providerSucceeded: boolean): string {
+    if (providerSucceeded) return 'commit_failed_after_provider_success';
+    if (error instanceof GatewayProviderError) return `provider_${error.statusCode}`;
+    if (error instanceof Error && /timeout|aborted/i.test(error.message)) return providerAttemptStarted ? 'provider_timeout' : 'request_aborted';
+    return providerAttemptStarted ? 'provider_generation_failed' : 'request_failed_before_provider';
+  }
+
+  private usageAccountingResponse(reply: FastifyReply, error: UsageAccountingError) {
+    const message = error.statusCode === 409
+      ? 'This AI request is already in progress or no longer active.'
+      : 'AI usage accounting failed.';
+    return reply.code(error.statusCode).send({
+      error: error.code.toLowerCase(),
+      message,
+      status: error.statusCode,
     });
   }
 

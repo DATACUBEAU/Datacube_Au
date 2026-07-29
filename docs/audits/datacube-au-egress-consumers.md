@@ -13,11 +13,11 @@ Status model:
 
 | Area | Status | Notes |
 |---|---|---|
-| VPS AI Gateway | Yellow | Ticket/CORS/provider/RAG hardening is in code. Live Oracle VPS env and logs still need verification. |
+| VPS AI Gateway | Yellow | Ticket/CORS/provider/RAG hardening and reserve/commit/release accounting are in code. Live Oracle VPS env, service restart, and logs still need verification. |
 | RAG retrieval | Green | Gateway retrieval requires `user_id` and `document_id`, uses Qdrant top-k/bounded coverage, and has strict limited Supabase fallback. |
 | Browser/PWA private caching | Green | Protected API and Supabase requests are network-only; offline queued writes strip Authorization and credential headers. |
 | Admin/provider-key pipeline | Yellow | Browser DTOs are masked and legacy admin token storage was removed. Encryption-at-rest upgrade remains. |
-| Supabase live policy state | Yellow | Credential-hardening migration was pushed and the final dry run reports the remote database is up to date. Direct policy catalog verification and staging behavior checks still remain. |
+| Supabase live policy state | Yellow | Credential-hardening and atomic usage migrations, including the daily/total scope fix and replay guard, were pushed; final dry run reports the remote database is up to date. Direct policy catalog verification and staging behavior checks still remain. |
 
 ## Supabase Consumers
 
@@ -29,7 +29,7 @@ Status model:
 | Worker retry downloads | Yellow | Worker retry logic is bounded by job lifecycle controls, but duplicate-job prevention remains partial. | Add duplicate job/chunk reuse safeguards in a later task. |
 | Realtime subscriptions | Yellow | Feature flag/account/admin config channels are targeted, but live fanout and auth behavior need measurement. | Load-test at 1k+ active users. |
 | Account snapshot reads | Green | Cached and TTL-bound client path with authenticated server checks. | Verify stale snapshot invalidation in staging. |
-| Billing/entitlement reads | Yellow | Server-side entitlement checks are centralized, but usage accounting remains non-atomic by instruction. | Implement reserve/commit/rollback RPC later. |
+| Billing/entitlement reads | Green | VPS ticket route now performs server-side entitlement checks and atomic `reserve_ai_usage` before ticket signing. Usage is committed/released from the VPS gateway after provider outcome. | Add live billing/usage reconciliation smoke tests. |
 | Admin user listing | Yellow | Admin APIs use server-side authorization and limits, but large-query scale needs live dataset testing. | Add pagination/cursors for larger admin datasets. |
 | Document preview/export | Yellow | Preview helpers are bounded; CSV/export routes should continue avoiding credential fields. | Add route-level export tests if exports expand. |
 | Chat history | Yellow | Context/history is capped in gateway; DB growth still needs retention/pagination review. | Add archival/retention policy before 100k users. |
@@ -54,10 +54,10 @@ Status model:
 |---|---|---|---|
 | Context size | Green | Gateway caps message/history/context/past-question text. | Tune caps against quality. |
 | Max output tokens | Green | Gateway clamps provider max output with env defaults. | Confirm provider-specific limits in staging. |
-| Provider fallback retries | Yellow | Router fallback exists, but failed generation charge policy remains pre-charge in ticket route. | Implement usage reserve/commit/rollback later. |
-| Streaming reconnects | Grey | Repo audit did not prove duplicate provider request prevention for all reconnects. | Add idempotency tests around streaming clients. |
-| Duplicate requests | Yellow | Some idempotency storage exists, but not globally enforced for all AI requests. | Add request IDs end to end. |
-| Failed generation charge policy | Red | Usage is pre-incremented before VPS generation and is not atomic by instruction. | Implement atomic usage accounting in a later task. |
+| Provider fallback retries | Green | Provider attempts settle against one reservation and final provider/model metadata is recorded on commit. | Add live provider fallback smoke tests. |
+| Streaming reconnects | Yellow | Client actions send stable idempotency keys and gateway `begin_ai_usage_reservation` rejects duplicate in-flight attempts. | Verify browser reconnect behavior against deployed Oracle VPS. |
+| Duplicate requests | Green | Reservation uniqueness is `(user_id, feature_key, idempotency_key)` and duplicate commits/releases are idempotent. | Add browser e2e duplicate-click/reconnect coverage. |
+| Failed generation charge policy | Green | Ticket route reserves only; gateway commits after provider success and releases failed/timeout/missing-content reservations. | Schedule expired reservation cleanup and monitor disputed rows. |
 
 ## Browser/PWA Consumers
 

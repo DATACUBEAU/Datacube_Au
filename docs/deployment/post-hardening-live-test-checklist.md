@@ -1,6 +1,6 @@
 # DataCube AU Post-Hardening Live Test Checklist
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 Use this checklist after deploying the VPS/RAG/API-key hardening changes, restarting the Oracle VPS gateway, restarting RAG/background workers, and replacing the legacy Supabase service-role credential with the new `sb_secret` value in server-side secret storage.
 
@@ -16,7 +16,8 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm no `SUPABASE_SERVICE_ROLE_KEY`, provider key, Qdrant key, shared secret, webhook secret, or signed ticket is configured as `NEXT_PUBLIC_*`.
 - [ ] Confirm `ALLOWED_ORIGINS` contains the production frontend domain and does not use `*`.
 - [ ] Confirm `QDRANT_URL` is HTTPS in production or private loopback/VPN-only.
-- [ ] Confirm the Supabase migration `20260728120000_api_key_pipeline_hardening.sql` is already applied and the remote database is up to date.
+- [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, and `20260728160000_atomic_usage_replay_guard.sql` are already applied and the remote database is up to date.
+- [ ] Confirm a server-side cron/background path exists for `expire_ai_usage_reservations`; do not expose it to browser clients.
 
 ## 2. Restart And Redeploy Order
 
@@ -31,11 +32,15 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 
 - [ ] Login succeeds for a normal user.
 - [ ] Logout and login again succeeds without stale session errors.
+- [ ] If Supabase `/auth/v1/user` returns 401 during bootstrap and no live/persisted session/token exists, the app transitions to unauthenticated and shows a session-expired sign-in path instead of returning to authenticated.
+- [ ] Stale browser auth artifacts are cleared once without an auth loop; refresh again and confirm the dashboard/admin pages are not accessible until sign-in completes.
 - [ ] Dashboard loads without blank screens or auth loops.
 - [ ] Account snapshot loads and shows current plan/account state.
 - [ ] Billing status loads and does not expose raw billing/provider config.
 - [ ] Feature flags load for normal user flows.
-- [ ] Old service worker cleanup works after deploy: refresh twice, close/reopen the app, and confirm protected API responses are not served from stale caches.
+- [ ] Old service worker cleanup works after deploy: refresh twice, close/reopen the app, and confirm protected API responses are not served from stale caches. Only unregister the service worker or clear site data manually if the new cleanup cannot recover automatically.
+- [ ] AU Chat, Global Chat, Knowledge Hub, Practice Exam, Exam Prediction, and Prompt Starters do not request `/api/au/vps-ticket` while auth state is loading/restoring/unauthenticated or when `session.access_token` is missing.
+- [ ] If a tester lands on a stale session, sign out/sign in should recover. Manual site-data clearing is a fallback, not the first step.
 - [ ] Browser console logs do not show Authorization headers, Supabase service-role/provider keys, Qdrant keys, VPS tickets, cookies, refresh tokens, or stack traces containing env data.
 - [ ] Browser network responses do not include raw keys, raw provider credentials, service-role credentials, cookies, or signed tickets except the expected short-lived VPS ticket response from `/api/au/vps-ticket`.
 
@@ -77,6 +82,11 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Normal generation does not fetch and join all chunk text for a whole document.
 - [ ] Provider error responses are sanitized in the browser.
 - [ ] Failed provider calls do not expose provider response bodies or credentials.
+- [ ] Successful AI generation commits one usage reservation.
+- [ ] Failed provider generation releases the usage reservation.
+- [ ] Provider timeout releases the usage reservation.
+- [ ] Retrying the same user action with the same idempotency key does not double-charge.
+- [ ] Duplicate in-flight use of the same VPS ticket/idempotency key is rejected or safely deduped.
 
 ## 7. VPS Ticket And Boundary Tests
 
@@ -87,7 +97,9 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] A tampered VPS ticket is rejected.
 - [ ] A ticket issued for one route is rejected on a different route.
 - [ ] A ticket issued for one feature is rejected for another feature.
+- [ ] A ticket without `reservation_id` or `idempotency_key` is rejected.
 - [ ] Browser-supplied `user_id`, `feature`, or `route` fields are ignored in favor of verified ticket claims.
+- [ ] Browser-supplied `reservation_id` or `idempotencyKey` fields are ignored in favor of signed ticket claims.
 - [ ] Oracle VPS logs do not show Authorization headers, signed tickets, provider keys, Supabase keys, Qdrant keys, cookies, refresh tokens, or raw provider responses.
 
 ## 8. Cross-User RAG Denial Tests
@@ -117,6 +129,7 @@ Complete this gate before disabling the legacy Supabase service-role credential:
 - [ ] Cron/background worker tests pass if those workers use Supabase admin access.
 - [ ] Admin user write actions work and do not fall back to read-only mode.
 - [ ] Worker ingestion and cleanup work without service-role auth errors.
+- [ ] Atomic usage reservation, commit, release, and expiry cleanup paths work without service-role auth errors.
 - [ ] Logs for frontend/server, Oracle VPS gateway, RAG worker, and cron/background workers show no secrets.
 - [ ] Public assets and build output show no service-role/provider keys.
 - [ ] No failed live test requires reverting to the legacy credential.

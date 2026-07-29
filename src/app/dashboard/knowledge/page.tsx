@@ -337,6 +337,7 @@ function KnowledgePageContent() {
 
         await generateKnowledge(selectedDocId, {
           pastQuestionIds: attachedPQs.map((pq) => pq.id),
+          accessToken: session?.access_token,
         });
         if (typeof window !== 'undefined') {
           const optimisticLock: KnowledgeGenerationLockRecord = {
