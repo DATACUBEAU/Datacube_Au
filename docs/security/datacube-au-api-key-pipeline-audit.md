@@ -17,7 +17,7 @@ No raw secret values are included in this report.
 |---|---|---|
 | Browser/provider-key exposure | Green | Admin provider-key DTOs expose only configured status, last4/fingerprint, provider name, timestamps, and status fields. |
 | Legacy Conex admin token pipeline | Green | Custom admin token storage/header flow was removed from the browser. Old stored values are cleanup-only. |
-| Tracked secret exposure cleanup | Yellow | Confirmed tracked historical credential values were removed, and the owner reports credential rotation is complete. Live post-rotation smoke tests are still pending. |
+| Tracked secret exposure cleanup | Yellow | Confirmed tracked historical credential values were removed. The owner reports credential rotation is complete and the browser now uses the corrected Supabase publishable key. Live post-rotation smoke tests are still pending. |
 | Secret table controls | Yellow | Credential metadata/audit hardening and provider-key encryption metadata migrations are applied remotely. New provider-key create/update paths now use server-side encrypted storage metadata and masked DTOs, but the code/env still need deployment/live verification and legacy plaintext rows must be re-entered or rotated. |
 | Public/service-worker exposure | Green | Static checks assert no high-confidence raw secret values or credential plumbing in tracked public files. |
 
@@ -35,7 +35,7 @@ Remote schema metadata confirms the provider key audit table exists, the `au_api
 
 | Secret category | Primary storage | Components that use it | Browser-visible | Status | Required action |
 |---|---|---|---|---|---|
-| Supabase anon/publishable key | `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_ANON_KEY` | Browser client, server proxy calls | Yes, by design | Green | Keep scoped as anon/publishable only. |
+| Supabase anon/publishable key | `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_ANON_KEY` | Browser client, server proxy calls | Yes, by design | Green | Owner reports the browser publishable-key replacement is complete; keep scoped as anon/publishable only. |
 | Supabase service-role / secret key | Server env only | Next.js admin APIs, RAG worker, VPS gateway optional server reads | No | Yellow | Owner reports rotation complete; run frontend/server, Oracle VPS, RAG worker, and cron/background smoke tests before marking Green. |
 | Supabase JWT secret references | Env/config references only | Supabase Auth/JWT validation context | No | Grey | Verify live Supabase project secret never appears in repo, logs, or generated files. |
 | `VPS_SHARED_SECRET` | Next.js server env and Oracle VPS env | `/api/au/vps-ticket`, VPS gateway verifier | No raw value; short-lived ticket is browser-visible by design | Yellow | Ensure matching values on Next.js and Oracle VPS; rotate after deploy if exposure suspected. |
@@ -188,7 +188,7 @@ Bounded git-history review: high-confidence token-shaped values were found in th
 |---|---|---|---:|---:|---:|---|---|
 | `VPS_SHARED_SECRET` | Env | Next.js ticket route + Oracle VPS gateway | No raw value | Yes | Yes | Yellow | Ensure same value on both sides; rotate if exposed. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Env | Next.js admin APIs, RAG worker, optional VPS server reads | No | Yes | Yes | Yellow | Owner reports rotation complete; verify post-rotation live services and logs. |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Env/public config | Browser Supabase client | Yes | No | Yes | Green | Confirm it is anon only. |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Env/public config | Browser Supabase client | Yes | No | Yes | Green | Owner reports browser now uses the corrected publishable key; keep it anon/publishable only. |
 | `QDRANT_API_KEY` | Env | VPS gateway, RAG worker, retention tooling | No | Yes | Yes | Green | Keep off frontend and logs. |
 | `OPENROUTER_API_KEY` | Env or `au_api_keys` | Provider router/gateway | No | Yes | Yes | Yellow | Owner reports rotation complete; verify provider calls and re-enter database rows through encrypted storage. |
 | `OPENAI_API_KEY` | Env | Provider router/gateway | No | Yes | Yes | Green | Keep server-only. |

@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-29
 
-Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`, and `supabase/migrations/20260729120000_provider_key_encryption_columns.sql`; do not create or push another migration for the service-role replacement or provider-key encryption.
+Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`, `supabase/migrations/20260729120000_provider_key_encryption_columns.sql`, and `supabase/migrations/20260729153000_username_uniqueness.sql`; do not create or push another migration for the service-role replacement, provider-key encryption, or username uniqueness.
 
 Do not paste secrets into shell history. Store secret values in your deployment secret manager, PM2 ecosystem file outside git, systemd environment file outside git, or Docker/Compose secret environment that is not committed. `SUPABASE_SERVICE_ROLE_KEY` should now hold the new `sb_secret` value everywhere it is needed server-side.
 
@@ -13,7 +13,7 @@ Do not paste secrets into shell history. Store secret values in your deployment 
 | `vps-ai-gateway` | Yes | Deploy TypeScript gateway changes for ticket verification, CORS, RAG filters, provider sanitization, limits, logging, and atomic usage commit/release. Restart after env replacement. |
 | Frontend deployment | Yes | Redeploy after env replacement so Next.js server routes, middleware, admin routes, billing routes, and background routes use the new service-role credential. |
 | RAG worker | Yes | Restart after env replacement. Worker embedding model must remain compatible with gateway retrieval: `AllMiniLML6V2` unless both sides are intentionally changed together. |
-| Cron/background workers | If used | Restart any process that uses Supabase admin access or caches env at process start. Add/schedule `expire_ai_usage_reservations` cleanup if not already covered. |
+| Cron/background workers | If used | Restart any process that uses Supabase admin access or caches env at process start. Add/schedule `expire_ai_usage_reservations` cleanup and the protected document-retention cleanup route if not already covered. |
 | Environment variables | Yes | Add/check required names below on both frontend server and Oracle VPS. Keep values out of logs and docs. |
 | Nginx/reverse proxy | Verify | Ensure only intended gateway domain/path proxies to the gateway port over HTTPS. |
 | PM2/systemd/Docker service | Yes | Restart the gateway after code/env updates. |
@@ -48,6 +48,8 @@ AI_MAX_HISTORY_CHARS
 AI_MAX_MESSAGE_CHARS
 AI_MAX_PAST_QUESTION_CONTEXT_CHARS
 RATE_LIMIT_MAX_PER_MINUTE
+RETENTION_CRON_SECRET
+CRON_SECRET
 DCAU_ALLOW_INSECURE_DEV_VPS_SECRET
 ```
 
@@ -171,6 +173,14 @@ Atomic usage cleanup:
 - Run it frequently enough that stale reserved quota does not linger, for example every 5-15 minutes.
 - Do not call it from browser code.
 
+Document retention cleanup:
+
+- Schedule a server-side cron/background call to the frontend/server route `/api/cron/retention?dryRun=1` for initial reporting and `/api/cron/retention` for controlled execution after disposable-data verification.
+- Send the cron secret in `x-cron-secret` or an `Authorization: Bearer` header without printing the value in shell history, logs, screenshots, or docs.
+- Keep the batch size bounded with the route `limit` query parameter during rollout.
+- Verify dry-run responses contain aggregate counts only, not document names, file paths, emails, tokens, or private user data.
+- If the live schema is missing retention action/run tables or retention lease RPCs, keep retention Yellow and prepare an owner-reviewed migration before relying on multi-instance scheduling.
+
 ## D. Oracle Cloud Networking Checklist
 
 | Check | Required result |
@@ -205,6 +215,11 @@ Run these after restarting services:
 - Cross-user retrieval attempts return no chunks.
 - Gateway logs do not show Authorization headers, tickets, provider keys, Supabase keys, Qdrant keys, or raw provider responses.
 - Conex provider-key create/update succeeds without echoing the submitted key and subsequent provider routing works with the encrypted stored value.
+- Session-expired reauthentication redirects once to `/session-expired`, preserves a safe local return path, and does not trigger refresh/reload loops.
+- Data Security Notice appears on signup, upload/documents, and settings surfaces with the required wording.
+- Retention dry-run returns counts only; a controlled disposable-document cleanup removes Storage, Postgres metadata/chunks/artifacts, and Qdrant vectors for that owner/document only.
+- Optional AU onboarding respects completed/skipped/maybe-later state and can be restarted from Help.
+- Mobile PWA install control appears at small widths when eligible and hides in standalone mode.
 
 ## Oracle VPS Secret And API Key Checklist
 
@@ -222,6 +237,8 @@ PAYSTACK_SECRET
 FLUTTERWAVE_SECRET_KEY
 FLUTTERWAVE_WEBHOOK_SECRET_HASH
 PROVIDER_KEY_ENCRYPTION_SECRET
+RETENTION_CRON_SECRET
+CRON_SECRET
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` should now be the new `sb_secret` credential. Keep the legacy service-role credential enabled only long enough to complete the restart and live-test checklist.
@@ -248,6 +265,8 @@ FLUTTERWAVE_SECRET_KEY
 FLUTTERWAVE_WEBHOOK_SECRET_HASH
 VPS_SHARED_SECRET
 PROVIDER_KEY_ENCRYPTION_SECRET
+RETENTION_CRON_SECRET
+CRON_SECRET
 ```
 
 Restart after env changes using your supervisor:

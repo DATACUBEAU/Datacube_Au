@@ -26,6 +26,8 @@ const publicEnv = {
 } as const;
 
 let refreshBrowserSessionPromise: Promise<Session | null> | null = null;
+let resolveBrowserSessionPromise: Promise<BrowserSessionResolution> | null = null;
+const BROWSER_SESSION_RESOLVE_TIMEOUT_MS = 12000;
 const USER_ACTIVITY_HEARTBEAT_MS = 5 * 60 * 1000;
 const USER_ACTIVITY_METADATA_SYNC_MS = 15 * 60 * 1000;
 const userActivityHeartbeatAt = new Map<string, number>();
@@ -37,6 +39,10 @@ function requiredEnv(key: PublicEnvKey): string {
   const value = publicEnv[key];
   if (!value) throw new Error(`Missing environment variable: ${key}`);
   return value;
+}
+
+function isClientAuthDebugEnabled(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG === '1';
 }
 
 export function getDeviceId(): string {
@@ -94,8 +100,10 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
           headers.set(key, value);
         }
       });
-    } catch (e) {
-      console.warn('[customFetch] Error merging request headers:', e);
+    } catch {
+      if (isClientAuthDebugEnabled()) {
+        console.warn('[customFetch] Error merging request headers.');
+      }
     }
   }
 
@@ -145,17 +153,24 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
 
       if (attempt < MAX_RETRIES) {
         const delay = 500 * Math.pow(2, attempt);
-        console.warn(`[customFetch] Network error fetching ${url}. Retrying in ${delay}ms...`);
+        if (isClientAuthDebugEnabled()) {
+          console.warn('[customFetch] Supabase network retry scheduled.', {
+            isAuthRequest: isSupabaseAuthRequest,
+            delay,
+          });
+        }
         await new Promise(resolve => setTimeout(resolve, delay));
         attempt += 1;
         continue;
       }
 
-      console.error(`[customFetch] Network error fetching ${url}:`, {
-        name: err?.name,
-        message: err?.message,
-        url: url
-      });
+      if (isClientAuthDebugEnabled()) {
+        console.error('[customFetch] Supabase network request failed.', {
+          name: err?.name,
+          message: err?.message,
+          isAuthRequest: isSupabaseAuthRequest,
+        });
+      }
       throw err;
     }
   }
@@ -255,7 +270,9 @@ export async function refreshBrowserSession(): Promise<Session | null> {
     try {
       const { data, error } = await supabase.auth.refreshSession();
       if (error) {
-        console.warn('[client] refreshBrowserSession failed:', error.message);
+        if (isClientAuthDebugEnabled()) {
+          console.warn('[client] refreshBrowserSession failed.', { hasError: true });
+        }
         return readCurrentUsableBrowserSession();
       }
       const refreshedSession = normalizeUsableSupabaseSession(data.session ?? null);
@@ -264,8 +281,10 @@ export async function refreshBrowserSession(): Promise<Session | null> {
         return refreshedSession;
       }
       return readCurrentUsableBrowserSession();
-    } catch (err: any) {
-      console.error('[client] refreshBrowserSession unexpected error:', err?.message || err);
+    } catch {
+      if (isClientAuthDebugEnabled()) {
+        console.error('[client] refreshBrowserSession unexpected error.');
+      }
       return readCurrentUsableBrowserSession();
     } finally {
       refreshBrowserSessionPromise = null;
@@ -275,7 +294,7 @@ export async function refreshBrowserSession(): Promise<Session | null> {
   return refreshBrowserSessionPromise;
 }
 
-export async function resolveBrowserSession(options?: {
+async function resolveBrowserSessionInternal(options?: {
   forceRefresh?: boolean;
   refreshWindowMs?: number;
 }): Promise<BrowserSessionResolution> {
@@ -325,6 +344,41 @@ export async function resolveBrowserSession(options?: {
     hasLiveSession: Boolean(liveSession?.user),
     hasPersistedSession: Boolean(persistedSession?.user),
   };
+}
+
+function timeoutBrowserSessionResolution(persistedSession: Session | null): Promise<BrowserSessionResolution> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      if (persistedSession) {
+        syncServerAuthSessionCookie(persistedSession);
+      }
+      resolve({
+        session: persistedSession,
+        source: persistedSession ? 'persisted' : 'none',
+        usedCachedSession: Boolean(persistedSession?.user),
+        refreshed: false,
+        hasLiveSession: false,
+        hasPersistedSession: Boolean(persistedSession?.user),
+      });
+    }, BROWSER_SESSION_RESOLVE_TIMEOUT_MS);
+  });
+}
+
+export async function resolveBrowserSession(options?: {
+  forceRefresh?: boolean;
+  refreshWindowMs?: number;
+}): Promise<BrowserSessionResolution> {
+  if (resolveBrowserSessionPromise) return resolveBrowserSessionPromise;
+
+  const persistedSession = normalizeUsableSupabaseSession(readPersistedBrowserSession());
+  resolveBrowserSessionPromise = Promise.race([
+    resolveBrowserSessionInternal(options),
+    timeoutBrowserSessionResolution(persistedSession),
+  ]).finally(() => {
+    resolveBrowserSessionPromise = null;
+  });
+
+  return resolveBrowserSessionPromise;
 }
 
 function supabaseProjectRefFromUrl(url: string): string | null {
@@ -455,10 +509,10 @@ async function validateBrowserAccessToken(accessToken: string | null): Promise<b
     const { data, error } = await supabase.auth.getUser(accessToken);
     if (error) return false;
     return Boolean(data.user?.id);
-  } catch (error: any) {
-    console.warn('[client] access token validation was inconclusive', {
-      message: String(error?.message || error || 'unknown_error'),
-    });
+  } catch {
+    if (isClientAuthDebugEnabled()) {
+      console.warn('[client] access token validation was inconclusive.');
+    }
     return null;
   }
 }
@@ -559,7 +613,11 @@ export async function fetchEdgeFunctionResponse(
   functionName: string,
   options?: EdgeFunctionRequestOptions,
 ): Promise<Response> {
-  console.warn(`[DEPRECATED] fetchEdgeFunctionResponse('${functionName}') called — this route no longer exists. Migrate to VPS ticket architecture.`);
+  if (isClientAuthDebugEnabled()) {
+    console.warn('[DEPRECATED] fetchEdgeFunctionResponse called; migrate caller to VPS ticket architecture.', {
+      functionName,
+    });
+  }
   const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
   const method = options?.method ?? 'POST';
   const timeoutMs = options?.timeoutMs ?? 10000;
@@ -647,17 +705,19 @@ export async function fetchEdgeFunctionResponse(
   }
 
   let authDiagnostics = await readEdgeAuthFailureDiagnostics(response);
-  console.warn('[client] protected edge request returned 401', {
-    functionName,
-    authStage: authDiagnostics.authStage,
-    reason: authDiagnostics.reason,
-    hasAuthorizationHeader: authDiagnostics.hasAuthorizationHeader,
-    hasAuthCookie: authDiagnostics.hasAuthCookie,
-    attemptedSources: authDiagnostics.attemptedSources,
-    failedSources: authDiagnostics.failedSources,
-    validatedSource: authDiagnostics.validatedSource,
-    requestId: authDiagnostics.requestId,
-  });
+  if (isClientAuthDebugEnabled()) {
+    console.warn('[client] protected edge request returned 401', {
+      functionName,
+      authStage: authDiagnostics.authStage,
+      reason: authDiagnostics.reason,
+      hasAuthorizationHeader: authDiagnostics.hasAuthorizationHeader,
+      hasAuthCookie: authDiagnostics.hasAuthCookie,
+      attemptedSources: authDiagnostics.attemptedSources,
+      failedSources: authDiagnostics.failedSources,
+      validatedSource: authDiagnostics.validatedSource,
+      requestId: authDiagnostics.requestId,
+    });
+  }
 
   const currentState = getAuthRuntimeState();
   const enteredRecoveryState = reauthOnAuthFailure && isBrowserOnline() && currentState === 'AUTHENTICATED';
@@ -728,21 +788,23 @@ export async function fetchEdgeFunctionResponse(
       if (enteredRecoveryState) {
         restoreRecoveredAuthState();
       }
-      console.warn('[client] suppressed session expiry for recoverable or endpoint-scoped 401', {
-        functionName,
-        currentState,
-        status: response.status,
-        authStage: authDiagnostics.authStage,
-        reason: authDiagnostics.reason,
-        hasAuthorizationHeader: authDiagnostics.hasAuthorizationHeader,
-        hasAuthCookie: authDiagnostics.hasAuthCookie,
-        validatedSource: authDiagnostics.validatedSource,
-        latestTokenValidated: latestTokenValidation,
-        refreshedSessionSource: refreshedResolution.source,
-        settledSessionSource: settledResolution.source,
-        hasLatestRefreshToken: Boolean(latestSession?.refresh_token),
-        requestId: authDiagnostics.requestId,
-      });
+      if (isClientAuthDebugEnabled()) {
+        console.warn('[client] suppressed session expiry for recoverable or endpoint-scoped 401', {
+          functionName,
+          currentState,
+          status: response.status,
+          authStage: authDiagnostics.authStage,
+          reason: authDiagnostics.reason,
+          hasAuthorizationHeader: authDiagnostics.hasAuthorizationHeader,
+          hasAuthCookie: authDiagnostics.hasAuthCookie,
+          validatedSource: authDiagnostics.validatedSource,
+          latestTokenValidated: latestTokenValidation,
+          refreshedSessionSource: refreshedResolution.source,
+          settledSessionSource: settledResolution.source,
+          hasLatestRefreshToken: Boolean(latestSession?.refresh_token),
+          requestId: authDiagnostics.requestId,
+        });
+      }
     }
   }
 
@@ -803,11 +865,12 @@ export async function recordUserActivityRpc({
       return false;
     }
 
-    const raw = await response.text().catch(() => '');
-    console.warn('[client] record_user_activity failed:', { status: response.status, body: raw });
+    if (isClientAuthDebugEnabled()) {
+      console.warn('[client] record_user_activity failed.', { status: response.status });
+    }
   } catch (error) {
-    if (!(error instanceof OfflineError)) {
-      console.warn('[client] record_user_activity failed:', error);
+    if (!(error instanceof OfflineError) && isClientAuthDebugEnabled()) {
+      console.warn('[client] record_user_activity failed.');
     }
   }
 
@@ -997,14 +1060,17 @@ export async function updateUserActivity(
     });
 
     if (!response.ok) {
-      const raw = await response.text().catch(() => '');
       if (response.status === 406) return;
-      console.warn('[client] Activity update error:', { status: response.status, body: raw });
+      if (isClientAuthDebugEnabled()) {
+        console.warn('[client] Activity update error.', { status: response.status });
+      }
       return;
     }
 
     userActivityMetadataSyncAt.set(userId, now);
-  } catch (e) {
-    console.warn('[client] Failed to update activity:', e);
+  } catch {
+    if (isClientAuthDebugEnabled()) {
+      console.warn('[client] Failed to update activity.');
+    }
   }
 }

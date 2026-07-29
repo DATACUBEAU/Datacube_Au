@@ -234,7 +234,7 @@ export default function SettingsPage() {
       }));
       toast({
         title: enabled ? 'AU Assistant Enabled' : 'AU Assistant Disabled',
-        description: enabled ? 'The guide will now appear to assist you.' : 'The guide has been hidden.',
+        description: enabled ? 'The guide button is available when you need page help.' : 'The guide has been hidden.',
       });
     }
   };
@@ -444,7 +444,7 @@ export default function SettingsPage() {
             Policy Update: Data Security Notice
           </AlertTitle>
           <AlertDescription className="text-red-700 dark:text-red-300">
-            If you stay signed out for <strong>{retentionPolicy.signedOutDays} days</strong>, uploaded documents are deleted. Free and Promo documents expire after <strong>{retentionPolicy.freeDays} days</strong>. Paid Pro documents expire after <strong>{retentionPolicy.paidProDays} days</strong>.
+            {retentionPolicy.summary}
           </AlertDescription>
         </Alert>
       </div>

@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-29
 
-Use this checklist after deploying the VPS/RAG/API-key hardening changes, restarting the Oracle VPS gateway, restarting RAG/background workers, and replacing the legacy Supabase service-role credential with the new `sb_secret` value in server-side secret storage.
+Use this checklist after deploying the VPS/RAG/API-key/auth-entry/retention/onboarding/PWA hardening changes, restarting the Oracle VPS gateway, restarting RAG/background workers, and replacing the legacy Supabase service-role credential with the new `sb_secret` value in server-side secret storage.
 
 Do not print secret values in terminal output, logs, screenshots, tickets, docs, or chat. When checking logs, search for secret-shaped labels and confirm values are redacted or absent.
 
@@ -17,8 +17,9 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm no `SUPABASE_SERVICE_ROLE_KEY`, provider key, Qdrant key, shared secret, webhook secret, or signed ticket is configured as `NEXT_PUBLIC_*`.
 - [ ] Confirm `ALLOWED_ORIGINS` contains the production frontend domain and does not use `*`.
 - [ ] Confirm `QDRANT_URL` is HTTPS in production or private loopback/VPN-only.
-- [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, `20260728160000_atomic_usage_replay_guard.sql`, and `20260729120000_provider_key_encryption_columns.sql` are already applied and the remote database is up to date.
+- [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, `20260728160000_atomic_usage_replay_guard.sql`, `20260729120000_provider_key_encryption_columns.sql`, and `20260729153000_username_uniqueness.sql` are already applied and the remote database is up to date.
 - [ ] Confirm a server-side cron/background path exists for `expire_ai_usage_reservations`; do not expose it to browser clients.
+- [ ] Confirm a server-side cron/background path exists for document retention cleanup at `/api/cron/retention`; it must use a server-only cron secret and must not be callable by unauthenticated browser clients.
 
 ## 2. Restart And Redeploy Order
 
@@ -40,7 +41,15 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Logout and login again succeeds without stale session errors.
 - [ ] If Supabase `/auth/v1/user` returns 401 during bootstrap and no live/persisted session/token exists, the app transitions to unauthenticated and shows a session-expired sign-in path instead of returning to authenticated.
 - [ ] Stale browser auth artifacts are cleared once without an auth loop; refresh again and confirm the dashboard/admin pages are not accessible until sign-in completes.
+- [ ] Expired or invalid authenticated sessions redirect once to `/session-expired?next=<safe-local-path>`.
+- [ ] The session-expired page shows `Your session has expired` and `For your security, please sign in again to renew your session.`
+- [ ] `Re-authenticate` opens `/login?redirectTo=<safe-local-path>` and successful sign-in returns to the safe original page.
+- [ ] Malicious or external `next`/`redirectTo` values are rejected and fall back to `/dashboard`.
+- [ ] Multiple simultaneous authenticated 401 responses produce one reauthentication redirect, not a refresh storm.
+- [ ] Login/signup pages remain usable while unauthenticated and while auth restore completes.
 - [ ] Dashboard loads without blank screens or auth loops.
+- [ ] A slow account snapshot, billing call, feature-flag call, AU initialization, or non-critical API request shows local retry/error UI and does not freeze navigation or the whole dashboard.
+- [ ] Loading overlays exit on success, failure, or timeout and do not leave the page inert.
 - [ ] Account snapshot loads and shows current plan/account state.
 - [ ] Billing status loads and does not expose raw billing/provider config.
 - [ ] Feature flags load for normal user flows.
@@ -49,6 +58,14 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] If a tester lands on a stale session, sign out/sign in should recover. Manual site-data clearing is a fallback, not the first step.
 - [ ] Browser console logs do not show Authorization headers, Supabase service-role/provider keys, Qdrant keys, VPS tickets, cookies, refresh tokens, or stack traces containing env data.
 - [ ] Browser network responses do not include raw keys, raw provider credentials, service-role credentials, cookies, or signed tickets except the expected short-lived VPS ticket response from `/api/au/vps-ticket`.
+
+## 3A. Username And Profile Tests
+
+- [ ] Signup trims the requested username before submit.
+- [ ] Username availability checks are case-insensitive and trim whitespace.
+- [ ] Duplicate usernames are rejected by the database constraint even when casing differs.
+- [ ] OAuth users without a username can complete one later through the profile username flow.
+- [ ] Username/profile API responses do not expose unrelated user lists, emails, tokens, credentials, or private profile data.
 
 ## 4. Admin Panel Tests
 
@@ -67,6 +84,9 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 ## 5. Document Upload And RAG Worker Tests
 
 - [ ] Upload a small test document as User A.
+- [ ] Upload flow shows `Policy Update: Data Security Notice` without blocking the upload UI.
+- [ ] Newly uploaded Free and Promo documents show a deletion/expiry date about 14 days from upload.
+- [ ] Newly uploaded paid Pro documents show a deletion/expiry date about 30 days from upload.
 - [ ] Confirm upload metadata is created.
 - [ ] Confirm the RAG worker claims and processes the job.
 - [ ] Confirm chunk metadata is written to Supabase Postgres.
@@ -75,6 +95,23 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm source file cleanup runs after successful ingestion where cleanup is enabled.
 - [ ] Confirm worker retry behavior is bounded and does not repeatedly download the same completed source.
 - [ ] RAG worker logs do not show document text previews, Authorization headers, Supabase service-role/provider keys, Qdrant keys, cookies, refresh tokens, or raw extracted text.
+
+## 5A. Retention Cleanup Tests
+
+- [ ] Confirm the signup, document upload, document list/details, and settings/account surfaces show the exact `Policy Update: Data Security Notice` heading and readable policy copy.
+- [ ] Call the retention cron route in dry-run/reporting mode from a server-only context; it must return counts only and must not include document names, file paths, emails, tokens, or private profile data.
+- [ ] Confirm dry-run identifies documents whose owner has no verified authenticated activity for seven consecutive days.
+- [ ] Confirm dry-run identifies Free and Promo documents at or after 14 days.
+- [ ] Confirm dry-run identifies paid Pro documents at or after 30 days.
+- [ ] Confirm the earliest applicable deadline wins when both inactivity and plan expiry apply.
+- [ ] Confirm upgrading to Pro can extend unexpired documents and downgrading does not retroactively shorten an already granted later deadline.
+- [ ] Execute one controlled cleanup batch against disposable test data only.
+- [ ] Confirm cleanup removes the source Storage object, document metadata intended for deletion, chunks, generated document artifacts, cached previews, pending/retry work that should not continue, and Qdrant vectors for that owner/document pair.
+- [ ] Confirm repeated cleanup on the same disposable document is idempotent.
+- [ ] Confirm User B data is untouched when cleaning a User A document.
+- [ ] Confirm failed Storage/Qdrant cleanup records bounded retry state without marking the document fully cleaned.
+- [ ] Confirm unauthenticated browser calls to the cron route return 401.
+- [ ] Confirm the retention action/run tables and database lease RPCs exist in the live schema. If they do not, keep retention Yellow and prepare an owner-reviewed migration before relying on multi-instance scheduling.
 
 ## 6. AI And RAG Feature Tests
 
@@ -126,6 +163,22 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Service worker output does not contain the service-role env var name in static client assets.
 - [ ] Offline queue entries do not persist Authorization headers, cookies, API keys, admin tokens, refresh tokens, or signed VPS tickets.
 - [ ] Private Supabase/API GET requests are network-only or no-store.
+
+## 9A. Onboarding And Mobile Install Tests
+
+- [ ] First-time authenticated users are asked `Would you like a quick guided tour of DataCube AU?` with `Start tour`, `Maybe later`, and `Skip tour` actions.
+- [ ] The tour does not auto-launch, block the app, or cover core controls on mobile.
+- [ ] Completed users are not prompted again for the same onboarding version.
+- [ ] Users who choose `Skip tour` are not prompted again for the same onboarding version.
+- [ ] Users who choose `Maybe later` are not prompted again for at least seven days.
+- [ ] Returning users with existing assistant activity are not treated as new users.
+- [ ] `Help -> Take a product tour` manually starts the tour.
+- [ ] Onboarding does not show while auth is restoring, expired, or on `/login`, `/signup`, `/auth/callback`, or `/session-expired`.
+- [ ] At 320px, 360px, 390px, and 430px widths, the mobile PWA install control is visible when eligible and does not overlap account/menu/navigation controls.
+- [ ] The install control has accessible label `Install DataCube AU`.
+- [ ] Chromium install prompt opens only after a user click when `beforeinstallprompt` is available.
+- [ ] iOS Safari shows `Tap Share, then Add to Home Screen.` and remembers dismissal.
+- [ ] The install control hides after installation or when already running in standalone mode.
 
 ## 10. Legacy Service-Role Disable Gate
 

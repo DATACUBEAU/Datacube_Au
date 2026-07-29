@@ -39,6 +39,10 @@ function normalizeRuntimeState(value: unknown): AuthRuntimeState {
   return 'UNAUTHENTICATED';
 }
 
+function isAuthDebugEnabled(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG === '1';
+}
+
 function readRuntimeStateFromStorage(): AuthRuntimeState {
   if (typeof window === 'undefined') return 'AUTHENTICATED';
   try {
@@ -141,13 +145,15 @@ export function setAuthRuntimeState(
     }));
   }
 
-  console.info('[auth-state] transition', {
-    from: previous,
-    to: normalized,
-    source: detail?.source || null,
-    reason: detail?.reason || null,
-    status: detail?.status || null,
-  });
+  if (isAuthDebugEnabled()) {
+    console.info('[auth-state] transition', {
+      from: previous,
+      to: normalized,
+      source: detail?.source || null,
+      reason: detail?.reason || null,
+      status: detail?.status || null,
+    });
+  }
 }
 
 export function setAuthActionsDisabled(disabled: boolean): void {

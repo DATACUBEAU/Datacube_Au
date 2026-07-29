@@ -22,8 +22,10 @@ async function handleRun(req: NextRequest) {
   }
 
   try {
+    const dryRunParam = String(req.nextUrl.searchParams.get('dryRun') || req.nextUrl.searchParams.get('dry_run') || '').trim().toLowerCase();
+    const dryRun = dryRunParam === '1' || dryRunParam === 'true' || dryRunParam === 'yes' || dryRunParam === 'preview';
     const result = await runRetentionCleanup({
-      dryRun: false,
+      dryRun,
       triggerSource: 'cron',
       previewLimit: Math.max(1, Math.min(100, Number(req.nextUrl.searchParams.get('limit') || 50))),
     });
@@ -31,19 +33,26 @@ async function handleRun(req: NextRequest) {
     return NextResponse.json(
       {
         ok: true,
+        dryRun,
         locked: result.locked,
         runId: result.runId,
         execution: result.execution,
-        summary: result.summary,
+        summary: {
+          documentsQueuedForDeletion: result.summary.documentsQueuedForDeletion,
+          failedActions: result.summary.failedActions,
+          activeUsers: result.summary.activeUsers,
+          scheduledFileDeletionUsers: result.summary.scheduledFileDeletionUsers,
+          filesDeletedUsers: result.summary.filesDeletedUsers,
+        },
         generatedAt: result.generatedAt,
       },
       { status: 200 },
     );
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
       {
         error: 'retention_cleanup_failed',
-        message: String(error?.message || 'Retention cleanup failed.'),
+        message: 'Retention cleanup failed.',
       },
       { status: 500 },
     );

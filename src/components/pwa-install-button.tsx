@@ -32,6 +32,8 @@ interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
 }
 
+const IOS_INSTALL_DISMISSED_KEY = 'dcau:pwa-ios-install-dismissed';
+
 const PwaInstallButton = () => {
   // State to hold the captured `beforeinstallprompt` event.
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -60,12 +62,17 @@ const PwaInstallButton = () => {
     // iOS Safari does not support the `beforeinstallprompt` event and requires manual installation.
     const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
     setIsIOS(isIOSDevice);
+    const iosDismissed = localStorage.getItem(IOS_INSTALL_DISMISSED_KEY) === 'true';
+    if (isIOSDevice && iosDismissed) {
+      return;
+    }
 
     // 3. Set up the event listener for `beforeinstallprompt`.
     // This event is fired by the browser when the PWA is installable.
     // It will fire again if the user uninstalls the app.
     const handleBeforeInstallPrompt = (event: BeforeInstallPromptEvent) => {
       // Store the event so we can trigger it later on a button click.
+      event.preventDefault();
       setInstallPrompt(event);
     };
 
@@ -74,7 +81,6 @@ const PwaInstallButton = () => {
     // 4. Set up the event listener for `appinstalled`.
     // This event fires after the app has been successfully installed.
     const handleAppInstalled = () => {
-        console.log('PWA was installed');
         setIsStandalone(true); // Visually update the UI to reflect installation
         setInstallPrompt(null); // The prompt can no longer be used
     };
@@ -102,9 +108,7 @@ const PwaInstallButton = () => {
       // Wait for the user to respond to the prompt.
       const { outcome } = await installPrompt.userChoice;
       if (outcome === 'accepted') {
-        console.log('User accepted the install prompt');
-      } else {
-        console.log('User dismissed the install prompt');
+        setIsStandalone(true);
       }
       // The browser will handle the prompt, so we can clear our reference.
       setInstallPrompt(null);
@@ -125,10 +129,10 @@ const PwaInstallButton = () => {
                         <Button 
                             onClick={handleInstallClick} 
                             disabled={!canInstall || isStandalone}
-                            aria-label="Install App"
+                            aria-label="Install DataCube AU"
                         >
                             <Icons.install className="mr-2 h-4 w-4" aria-hidden="true" />
-                            Install App
+                            Install DataCube AU
                         </Button>
                     </span>
                 </TooltipTrigger>
@@ -148,7 +152,15 @@ const PwaInstallButton = () => {
         </div>
 
         {/* This dialog provides instructions for iOS users. */}
-        <Dialog open={showIOSInstructions} onOpenChange={setShowIOSInstructions}>
+        <Dialog
+          open={showIOSInstructions}
+          onOpenChange={(nextOpen) => {
+            setShowIOSInstructions(nextOpen);
+            if (!nextOpen && isIOS) {
+              localStorage.setItem(IOS_INSTALL_DISMISSED_KEY, 'true');
+            }
+          }}
+        >
             <DialogContent>
                 <DialogHeader>
                     <DialogTitle className="font-headline text-xl">Install on your Device</DialogTitle>
@@ -164,7 +176,7 @@ const PwaInstallButton = () => {
                     </li>
                     <li className="flex items-center gap-3">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">2</span>
-                        <span>Scroll down and tap 'Add to Home Screen'.</span>
+                        <span>Tap Share, then Add to Home Screen.</span>
                     </li>
                     <li className="flex items-center gap-3">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">3</span>

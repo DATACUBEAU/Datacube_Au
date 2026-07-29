@@ -29,6 +29,8 @@ interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
 }
 
+const IOS_INSTALL_DISMISSED_KEY = 'dcau:pwa-ios-install-dismissed';
+
 const PwaInstallButton = () => {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isIOS, setIsIOS] = useState(false);
@@ -37,6 +39,7 @@ const PwaInstallButton = () => {
 
   useEffect(() => {
     const handleBeforeInstallPrompt = (event: BeforeInstallPromptEvent) => {
+      event.preventDefault();
       setInstallPrompt(event);
       if (!window.matchMedia('(display-mode: standalone)').matches) {
         setCanInstall(true);
@@ -46,7 +49,8 @@ const PwaInstallButton = () => {
     const isIOSDevice = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
     setIsIOS(isIOSDevice);
 
-    if (isIOSDevice && !window.matchMedia('(display-mode: standalone)').matches) {
+    const iosDismissed = localStorage.getItem(IOS_INSTALL_DISMISSED_KEY) === 'true';
+    if (isIOSDevice && !iosDismissed && !window.matchMedia('(display-mode: standalone)').matches) {
       setCanInstall(true);
     }
     
@@ -69,10 +73,7 @@ const PwaInstallButton = () => {
       installPrompt.prompt();
       installPrompt.userChoice.then((choiceResult) => {
         if (choiceResult.outcome === 'accepted') {
-          console.log('User accepted the install prompt');
           setCanInstall(false);
-        } else {
-          console.log('User dismissed the install prompt');
         }
       });
     }
@@ -88,10 +89,19 @@ const PwaInstallButton = () => {
     <>
       <Button onClick={handleInstallClick}>
         <Icons.install className="mr-2 h-4 w-4" />
-        Install App
+        Install DataCube AU
       </Button>
 
-      <Dialog open={showIOSInstructions} onOpenChange={setShowIOSInstructions}>
+      <Dialog
+        open={showIOSInstructions}
+        onOpenChange={(nextOpen) => {
+          setShowIOSInstructions(nextOpen);
+          if (!nextOpen && isIOS) {
+            localStorage.setItem(IOS_INSTALL_DISMISSED_KEY, 'true');
+            setCanInstall(false);
+          }
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="font-headline text-xl">Install on your iPhone</DialogTitle>
@@ -107,7 +117,7 @@ const PwaInstallButton = () => {
               </li>
               <li className="flex items-center gap-3">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">2</span>
-                <span>Scroll down and tap 'Add to Home Screen'.</span>
+                <span>Tap Share, then Add to Home Screen.</span>
               </li>
               <li className="flex items-center gap-3">
                 <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">3</span>

@@ -29,11 +29,14 @@ interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
 }
 
+const IOS_INSTALL_DISMISSED_KEY = 'dcau:pwa-ios-install-dismissed';
+
 const HeaderPwaInstallButton = () => {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isIOS, setIsIOS] = useState(false);
   const [isStandalone, setIsStandalone] = useState(false);
   const [showIOSInstructions, setShowIOSInstructions] = useState(false);
+  const [iosInstructionsDismissed, setIosInstructionsDismissed] = useState(false);
 
   useEffect(() => {
     // Check if running in standalone mode
@@ -45,9 +48,11 @@ const HeaderPwaInstallButton = () => {
     // Check for iOS
     const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
     setIsIOS(ios);
+    setIosInstructionsDismissed(localStorage.getItem(IOS_INSTALL_DISMISSED_KEY) === 'true');
 
     // Listen for the install prompt
     const handleBeforeInstallPrompt = (event: BeforeInstallPromptEvent) => {
+      event.preventDefault();
       setInstallPrompt(event);
     };
 
@@ -71,17 +76,12 @@ const HeaderPwaInstallButton = () => {
       setShowIOSInstructions(true);
     } else if (installPrompt) {
       await installPrompt.prompt();
-      const { outcome } = await installPrompt.userChoice;
-      if (outcome === 'accepted') {
-        console.log('PWA installation accepted');
-      } else {
-        console.log('PWA installation dismissed');
-      }
+      await installPrompt.userChoice.catch(() => null);
       setInstallPrompt(null);
     }
   };
 
-  const canInstall = (installPrompt || isIOS) && !isStandalone;
+  const canInstall = (installPrompt || (isIOS && !iosInstructionsDismissed)) && !isStandalone;
 
   if (!canInstall) {
     return null; // Don't render the button if it can't be installed or is already installed
@@ -92,19 +92,34 @@ const HeaderPwaInstallButton = () => {
         <TooltipProvider>
             <Tooltip>
                 <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" onClick={handleInstallClick}>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-9 w-9 shrink-0"
+                      onClick={handleInstallClick}
+                      aria-label="Install DataCube AU"
+                    >
                         <Icons.install className="h-5 w-5" />
-                        <span className="sr-only">Install App</span>
+                        <span className="sr-only">Install DataCube AU</span>
                     </Button>
                 </TooltipTrigger>
                 <TooltipContent>
-                    <p>Install App</p>
+                    <p>Install DataCube AU</p>
                 </TooltipContent>
             </Tooltip>
         </TooltipProvider>
 
-        <Dialog open={showIOSInstructions} onOpenChange={setShowIOSInstructions}>
-            <DialogContent>
+        <Dialog
+          open={showIOSInstructions}
+          onOpenChange={(nextOpen) => {
+            setShowIOSInstructions(nextOpen);
+            if (!nextOpen && isIOS) {
+              localStorage.setItem(IOS_INSTALL_DISMISSED_KEY, 'true');
+              setIosInstructionsDismissed(true);
+            }
+          }}
+        >
+            <DialogContent className="w-[calc(100vw-1.5rem)] max-w-md">
                 <DialogHeader>
                     <DialogTitle className="font-headline text-xl">Install on your Device</DialogTitle>
                     <DialogDescription>
@@ -119,7 +134,7 @@ const HeaderPwaInstallButton = () => {
                     </li>
                     <li className="flex items-center gap-3">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">2</span>
-                        <span>Scroll down and tap 'Add to Home Screen'.</span>
+                        <span>Tap Share, then Add to Home Screen.</span>
                     </li>
                     <li className="flex items-center gap-3">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">3</span>

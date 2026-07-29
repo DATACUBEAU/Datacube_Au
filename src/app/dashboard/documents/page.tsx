@@ -23,6 +23,7 @@ import {
   FileText as FileTextIcon,
   Clock,
   FileStack,
+  ShieldAlert,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -45,6 +46,8 @@ import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
 import { DocumentsPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { FREE_RETENTION_DAYS, resolveDocumentRetentionDays } from '@/lib/au/document-normalization';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { getRetentionPolicyNotice } from '@/lib/plans/subscription-policy';
 
 type DocumentType = "main_textbook" | "past_questions";
 type DocumentStatus = "uploading" | "processing" | "completed" | "failed";
@@ -76,6 +79,7 @@ export default function DocumentsPage() {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [retentionDays, setRetentionDays] = useState<number>(FREE_RETENTION_DAYS);
+  const retentionPolicy = getRetentionPolicyNotice();
 
   useEffect(() => {
     let active = true;
@@ -213,10 +217,11 @@ export default function DocumentsPage() {
         await apiRemove(id);
       }
 
-      // Hard reload after delete for stability
-      window.location.reload();
+      await refresh();
     } catch (error: any) {
-      console.error("[deleteDocument] Error:", error);
+      if (process.env.NODE_ENV !== 'production') {
+        console.error("[deleteDocument] Error:", { message: String(error?.message || error) });
+      }
     }
   };
 
@@ -454,6 +459,12 @@ export default function DocumentsPage() {
         <UploadCenter />
       </div>
 
+      <Alert className="border-primary/30 bg-primary/5">
+        <ShieldAlert className="h-4 w-4" />
+        <AlertTitle>Policy Update: Data Security Notice</AlertTitle>
+        <AlertDescription>{retentionPolicy.summary}</AlertDescription>
+      </Alert>
+
       {loading && !showSkeleton && (
         <div className="flex items-center justify-center p-12">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -508,7 +519,7 @@ export default function DocumentsPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => window.location.reload()}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setConfirmDeleteId(null)}>Cancel</AlertDialogCancel>
             <AlertDialogAction 
               onClick={handleDeleteConfirm}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"

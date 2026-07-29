@@ -12,7 +12,7 @@ import {
 import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldAlert } from 'lucide-react';
 import Link from 'next/link';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
@@ -50,6 +50,8 @@ import {
   normalizeUsername,
   validateUsername,
 } from '@/lib/auth/username';
+import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { getRetentionPolicyNotice } from '@/lib/plans/subscription-policy';
 
 type AuthMode = 'login' | 'signup';
 
@@ -94,12 +96,8 @@ export default function LoginPage() {
   const requestedModeParam = searchParams.get('mode');
   const wasSessionExpired = sessionReasonParam === 'session_expired';
   const hadAuthError = sessionReasonParam === 'auth_error';
-  const safeRedirectPath =
-    typeof redirectToParam === 'string' &&
-    redirectToParam.startsWith('/') &&
-    !redirectToParam.startsWith('//')
-      ? redirectToParam
-      : '/dashboard';
+  const safeRedirectPath = sanitizeLocalRedirectPath(redirectToParam);
+  const retentionPolicy = getRetentionPolicyNotice();
 
   useEffect(() => {
     const nextMode: AuthMode =
@@ -556,6 +554,17 @@ export default function LoginPage() {
                 required
               />
             </div>
+
+            {authMode === 'signup' ? (
+              <Alert className="border-primary/30 bg-primary/5">
+                <ShieldAlert className="h-4 w-4" />
+                <AlertDescription>
+                  <span className="font-medium">Policy Update: Data Security Notice</span>
+                  <br />
+                  {retentionPolicy.summary}
+                </AlertDescription>
+              </Alert>
+            ) : null}
 
             <Button
               type="submit"

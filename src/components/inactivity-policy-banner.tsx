@@ -47,7 +47,7 @@ export function InactivityPolicyBanner() {
               Policy Update: Data Security Notice
             </AlertTitle>
             <AlertDescription className="text-red-700 dark:text-red-300 text-sm leading-relaxed">
-              If you stay signed out for <strong>{retentionPolicy.signedOutDays} DAYS</strong>, uploaded documents are deleted. Free and Promo documents expire after <strong>{retentionPolicy.freeDays} DAYS</strong>. Paid Pro documents expire after <strong>{retentionPolicy.paidProDays} DAYS</strong>.
+              {retentionPolicy.summary}
             </AlertDescription>
           </div>
           <div className="flex flex-col gap-2 min-w-[140px]">

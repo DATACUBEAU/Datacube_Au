@@ -54,6 +54,10 @@ type AccountSnapshotContextValue = {
 const SNAPSHOT_MIN_REFRESH_INTERVAL_MS = 15_000;
 const ACCOUNT_SNAPSHOT_INVALIDATED_EVENT = 'dcau:account-snapshot-invalidated';
 
+function isAccountSnapshotDebugEnabled(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG === '1';
+}
+
 const AccountSnapshotContext = createContext<AccountSnapshotContextValue>({
   snapshot: null,
   loading: true,
@@ -354,7 +358,12 @@ export function AccountSnapshotProvider({ children }: { children: React.ReactNod
         });
         return normalized;
       } catch (error) {
-        console.warn('[AccountSnapshotProvider] Failed to fetch account snapshot.', error);
+        if (isAccountSnapshotDebugEnabled()) {
+          console.warn('[AccountSnapshotProvider] Failed to fetch account snapshot.', {
+            status: Number((error as any)?.status || 0) || null,
+            name: String((error as any)?.name || 'unknown'),
+          });
+        }
         const fallbackCached = await readCachedSnapshot();
         const fallback = resolveFailedAccountSnapshotState({
           error,

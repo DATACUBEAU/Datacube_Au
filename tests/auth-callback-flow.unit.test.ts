@@ -37,11 +37,13 @@ async function main() {
 
   await run('callback safely handles provider errors and local redirects', () => {
     const callback = readRepoFile('src', 'app', 'auth', 'callback', 'page.tsx');
+    const redirects = readRepoFile('src', 'lib', 'auth', 'redirects.ts');
     assert.match(callback, /searchParams\.get\('error'\)/);
     assert.match(callback, /provider_error/);
-    assert.match(callback, /safeNextPath/);
-    assert.match(callback, /!value\.startsWith\('\/'\) \|\| value\.startsWith\('\/\/'\)/);
-    assert.match(callback, /value\.startsWith\('\/login'\)/);
+    assert.match(callback, /sanitizeLocalRedirectPath\(searchParams\.get\('next'\)\)/);
+    assert.match(redirects, /!candidate\.startsWith\('\/'\) \|\| candidate\.startsWith\('\/\/'\)/);
+    assert.match(redirects, /AUTH_PUBLIC_PREFIXES/);
+    assert.match(redirects, /isPublicAuthPath\(parsed\.pathname\)/);
     assert.match(callback, /safeLoginRedirect/);
   });
 

@@ -6,15 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-client/client';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { markAuthSessionRestored, markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
-
-function safeNextPath(value: string | null): string {
-  if (!value) return '/dashboard';
-  if (!value.startsWith('/') || value.startsWith('//')) return '/dashboard';
-  if (value.startsWith('/login') || value.startsWith('/signup') || value.startsWith('/auth/callback')) {
-    return '/dashboard';
-  }
-  return value;
-}
+import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
 function safeLoginRedirect(nextPath: string, reason: 'auth_error' | 'session_expired'): string {
   return `/login?redirectTo=${encodeURIComponent(nextPath)}&reason=${reason}`;
@@ -32,7 +24,7 @@ export default function AuthCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [message, setMessage] = useState('Completing sign in...');
-  const nextPath = useMemo(() => safeNextPath(searchParams.get('next')), [searchParams]);
+  const nextPath = useMemo(() => sanitizeLocalRedirectPath(searchParams.get('next')), [searchParams]);
 
   useEffect(() => {
     let cancelled = false;

@@ -951,6 +951,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               <SidebarTrigger />
               <span className="font-semibold">{currentPageTitle}</span>
               <div className="flex items-center gap-1">
+                 <HeaderPwaInstallButton />
                  <Link href="/dashboard/messages" prefetch className="p-2 relative">
                     <Bell className="h-5 w-5" />
                     {unreadCount > 0 && (

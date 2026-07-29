@@ -92,6 +92,10 @@ const FeatureFlagContext = createContext<FeatureFlagContextType>({
   setFlag: async () => {},
 });
 
+function isFeatureFlagDebugEnabled(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG === '1';
+}
+
 type CachedFeatureFlags = {
   rows: FeatureFlagRecord[];
   cachedAt: number | null;
@@ -334,7 +338,11 @@ export function FeatureFlagProvider({ children }: { children: ReactNode }) {
           reason: opts?.reason || null,
         });
       } catch (error) {
-        console.warn('[FeatureFlagProvider] Failed to fetch feature flags.', error);
+        if (isFeatureFlagDebugEnabled()) {
+          console.warn('[FeatureFlagProvider] Failed to fetch feature flags.', {
+            name: String((error as any)?.name || 'unknown'),
+          });
+        }
         const cached = await readCachedRows();
         if (cached?.rows.length) {
           setRows(cached.rows);

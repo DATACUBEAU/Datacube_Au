@@ -33,7 +33,8 @@ export function GlobalListeners() {
 
   useEffect(() => {
     const handleExpired = (event: Event) => {
-      if (pathname?.startsWith('/login')) return;
+      if (process.env.NODE_ENV !== 'development' && process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG !== '1') return;
+      if (pathname?.startsWith('/login') || pathname?.startsWith('/signup') || pathname?.startsWith('/session-expired')) return;
       const detail = (event as CustomEvent)?.detail || {};
       console.warn('[auth] session expired', {
         source: detail.source || null,

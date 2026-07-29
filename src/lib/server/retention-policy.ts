@@ -1,10 +1,16 @@
-import { resolvePlanExpirationDays } from '../plans/subscription-policy';
+import {
+  FREE_PLAN_EXPIRATION_DAYS,
+  PAID_PRO_PLAN_EXPIRATION_DAYS,
+  PROMO_PLAN_EXPIRATION_DAYS,
+  resolvePlanExpirationDays,
+} from '../plans/subscription-policy';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const FILE_CLEANUP_INACTIVITY_DAYS = 7;
 export const ACCOUNT_DELETION_INACTIVITY_DAYS = 14;
 export const MAX_AUTOMATIC_RETENTION_ATTEMPTS = 5;
+export const RETENTION_POLICY_VERSION = '2026-07-29-data-security-notice';
 
 export type RetentionScope = 'plan_expiry' | 'inactive_files' | 'inactive_account';
 export type RetentionTargetType = 'document' | 'user';
@@ -59,6 +65,155 @@ export function computeUploadExpiryFromPlan(input: {
     entitlementSource: input.entitlementSource,
   });
   return addDaysIso(createdAt, retentionDays);
+}
+
+export function resolveDocumentRetentionDays(input: {
+  plan?: string | null | undefined;
+  entitlementSource?: string | null | undefined;
+}): number {
+  return resolvePlanExpirationDays(input);
+}
+
+export function resolveDocumentRetentionTier(input: {
+  plan?: string | null | undefined;
+  entitlementSource?: string | null | undefined;
+}): 'free' | 'promo' | 'pro' {
+  const source = String(input.entitlementSource || '').trim().toLowerCase();
+  if (source === 'promo') return 'promo';
+  const plan = String(input.plan || '').trim().toLowerCase();
+  if (['pro', 'premium', 'admin', 'paid', 'weekly', 'monthly'].includes(plan)) return 'pro';
+  return 'free';
+}
+
+export function computeDocumentDeletionEligibility(input: {
+  createdAt?: string | Date | null;
+  expiresAt?: string | Date | null;
+  lastSeenAt?: string | Date | null;
+  plan?: string | null;
+  entitlementSource?: string | null;
+  now?: string | Date;
+}): {
+  eligible: boolean;
+  scope: Extract<RetentionScope, 'plan_expiry' | 'inactive_files'> | null;
+  reason: string | null;
+  planExpiryAt: string | null;
+  inactivityDeleteAt: string | null;
+  deleteAfter: string | null;
+} {
+  const nowDate = toValidDate(input.now || new Date());
+  if (!nowDate) {
+    return {
+      eligible: false,
+      scope: null,
+      reason: null,
+      planExpiryAt: null,
+      inactivityDeleteAt: null,
+      deleteAfter: null,
+    };
+  }
+
+  const storedExpiry = toIsoOrNull(input.expiresAt);
+  const fallbackPlanExpiry = computeUploadExpiryFromPlan({
+    createdAt: input.createdAt,
+    plan: input.plan,
+    entitlementSource: input.entitlementSource,
+  });
+  const planExpiryAt = storedExpiry || fallbackPlanExpiry;
+  const inactivityDeleteAt = getFileCleanupDueAt(input.lastSeenAt);
+
+  const candidates: Array<{
+    scope: Extract<RetentionScope, 'plan_expiry' | 'inactive_files'>;
+    dueAt: string;
+    reason: string;
+  }> = [];
+
+  const planExpiryDate = toValidDate(planExpiryAt);
+  if (planExpiryDate && planExpiryDate.getTime() <= nowDate.getTime()) {
+    candidates.push({
+      scope: 'plan_expiry',
+      dueAt: planExpiryDate.toISOString(),
+      reason: 'Document reached its stored retention expiry.',
+    });
+  }
+
+  const inactivityDate = toValidDate(inactivityDeleteAt);
+  if (inactivityDate && inactivityDate.getTime() <= nowDate.getTime()) {
+    candidates.push({
+      scope: 'inactive_files',
+      dueAt: inactivityDate.toISOString(),
+      reason: 'Owner has had no verified authenticated activity for seven days.',
+    });
+  }
+
+  if (candidates.length === 0) {
+    return {
+      eligible: false,
+      scope: null,
+      reason: null,
+      planExpiryAt,
+      inactivityDeleteAt,
+      deleteAfter: null,
+    };
+  }
+
+  candidates.sort((left, right) => new Date(left.dueAt).getTime() - new Date(right.dueAt).getTime());
+  const earliest = candidates[0];
+  return {
+    eligible: true,
+    scope: earliest.scope,
+    reason: earliest.reason,
+    planExpiryAt,
+    inactivityDeleteAt,
+    deleteAfter: earliest.dueAt,
+  };
+}
+
+export function resolveRetentionDeadlineAfterPlanChange(input: {
+  uploadedAt: string | Date | null | undefined;
+  currentExpiresAt?: string | Date | null;
+  previousPlan?: string | null;
+  previousEntitlementSource?: string | null;
+  nextPlan?: string | null;
+  nextEntitlementSource?: string | null;
+}): string | null {
+  const uploadedAt = toValidDate(input.uploadedAt);
+  if (!uploadedAt) return toIsoOrNull(input.currentExpiresAt);
+
+  const currentExpiry = toValidDate(input.currentExpiresAt);
+  const nextDays = resolvePlanExpirationDays({
+    plan: input.nextPlan,
+    entitlementSource: input.nextEntitlementSource,
+  });
+  const previousDays = resolvePlanExpirationDays({
+    plan: input.previousPlan,
+    entitlementSource: input.previousEntitlementSource,
+  });
+  const nextExpiry = toValidDate(addDaysIso(uploadedAt, nextDays));
+  if (!nextExpiry) return currentExpiry?.toISOString() || null;
+
+  if (nextDays > previousDays) {
+    if (!currentExpiry || nextExpiry.getTime() > currentExpiry.getTime()) {
+      return nextExpiry.toISOString();
+    }
+    return currentExpiry.toISOString();
+  }
+
+  if (nextDays < previousDays && currentExpiry) {
+    return currentExpiry.toISOString();
+  }
+
+  return currentExpiry?.toISOString() || nextExpiry.toISOString();
+}
+
+export function getRetentionPolicySnapshot() {
+  return {
+    version: RETENTION_POLICY_VERSION,
+    signedOutDocumentCleanupDays: FILE_CLEANUP_INACTIVITY_DAYS,
+    freeDocumentExpirationDays: FREE_PLAN_EXPIRATION_DAYS,
+    promoDocumentExpirationDays: PROMO_PLAN_EXPIRATION_DAYS,
+    paidProDocumentExpirationDays: PAID_PRO_PLAN_EXPIRATION_DAYS,
+    accountDeletionInactivityDays: null as number | null,
+  };
 }
 
 export function getFileCleanupDueAt(lastSeenAt: string | Date | null | undefined): string | null {
@@ -143,10 +298,6 @@ export function deriveRetentionLifecycleState(input: {
     documentsRemaining === 0
   ) {
     return 'files_deleted';
-  }
-
-  if (isFullDeletionDue(input.lastSeenAt, input.now)) {
-    return 'scheduled_full_deletion';
   }
 
   if (documentsRemaining > 0 && isFileCleanupDue(input.lastSeenAt, input.now)) {

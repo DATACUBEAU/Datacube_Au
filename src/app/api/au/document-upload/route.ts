@@ -11,6 +11,7 @@ import {
   requireEntitlement,
 } from '@/lib/server/authorization';
 import type { AuthorizedRequest } from '@/lib/server/authorization';
+import { computeUploadExpiryFromPlan } from '@/lib/server/retention-policy';
 import { randomUUID } from 'crypto';
 
 export const runtime = 'nodejs';
@@ -144,6 +145,14 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
   // Insert document row — columns MUST match au_documents schema exactly
   // Correct columns: file_path (not storage_path), file_size_bytes (not file_size)
   // DO NOT insert: correlation_id (not on au_documents), metadata (not on au_documents)
+  const createdAt = new Date().toISOString();
+  const uploadExpiresAt = parentId || parentDocumentId
+    ? null
+    : computeUploadExpiryFromPlan({
+        createdAt,
+        plan: limitsResult.effectivePlan.plan,
+        entitlementSource: limitsResult.effectivePlan.entitlementSource,
+      });
   const insertPayload: Record<string, any> = {
     id: documentId,
     user_id: userId,
@@ -154,8 +163,11 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
     document_type: documentType,
     bucket,
     status: 'uploading',
-    created_at: new Date().toISOString(),
+    created_at: createdAt,
   };
+  if (uploadExpiresAt) {
+    insertPayload.expires_at = uploadExpiresAt;
+  }
 
   // Only set parent fields if provided — the inherit_attachment_expiry_from_parent
   // trigger requires the parent to exist AND have expires_at set.

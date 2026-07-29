@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { claimReauthRedirect, releaseReauthRedirect } from '@/lib/auth/session-expiry-events';
+import { buildSessionExpiredPath, isPublicAuthPath, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
 export function AuthLockOverlay() {
   const router = useRouter();
@@ -11,54 +12,36 @@ export function AuthLockOverlay() {
   const { isAuthLocked, runtimeAuthState, startReauth } = useSmartAuth();
   const hasHandledRef = useRef(false);
 
-  const shouldShow = isAuthLocked && !pathname?.startsWith('/login');
-
-  useEffect(() => {
-    const appShell = document.getElementById('app-shell');
-    if (shouldShow) {
-      if (appShell) {
-        appShell.setAttribute('aria-hidden', 'true');
-        (appShell as any).inert = true;
-      }
-      document.body.style.overflow = 'hidden';
-    }
-
-    return () => {
-      if (appShell) {
-        appShell.removeAttribute('aria-hidden');
-        (appShell as any).inert = false;
-      }
-      document.body.style.overflow = '';
-    };
-  }, [shouldShow]);
+  const shouldRedirect = isAuthLocked && !isPublicAuthPath(pathname);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;
-    if (!shouldShow) return;
+    if (!shouldRedirect) return;
     console.info('[auth-overlay] active', {
       runtimeAuthState,
       pathname,
     });
-  }, [runtimeAuthState, pathname, shouldShow]);
+  }, [runtimeAuthState, pathname, shouldRedirect]);
 
   useEffect(() => {
-    if (!shouldShow) {
+    if (!isAuthLocked) {
       hasHandledRef.current = false;
       releaseReauthRedirect();
       return;
     }
+    if (!shouldRedirect) return;
     if (hasHandledRef.current) return;
     if (!claimReauthRedirect()) return;
     hasHandledRef.current = true;
     startReauth('auth-lock-overlay:redirect');
-    const redirectTarget = pathname || '/dashboard';
+    const redirectTarget = sanitizeLocalRedirectPath(pathname || '/dashboard');
     if (process.env.NODE_ENV === 'development') {
       console.info('[auth-overlay] redirecting to reauthenticate', {
         redirectTo: redirectTarget,
       });
     }
-    router.replace(`/login?redirectTo=${encodeURIComponent(redirectTarget)}&reason=session_expired`);
-  }, [pathname, router, shouldShow, startReauth]);
+    router.replace(buildSessionExpiredPath(redirectTarget));
+  }, [isAuthLocked, pathname, router, shouldRedirect, startReauth]);
 
   return null;
 }

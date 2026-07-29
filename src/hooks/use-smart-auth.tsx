@@ -44,6 +44,10 @@ interface SmartAuthContextType {
 
 const SmartAuthContext = createContext<SmartAuthContextType | undefined>(undefined);
 
+function isAuthDebugEnabled(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG === '1';
+}
+
 function sessionToBootstrapUser(nextSession: Session | null): SmartUser | null {
   if (!nextSession?.user) return null;
   return {
@@ -118,13 +122,15 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       const resolved = await resolveBrowserSession();
-      console.log('[useSmartAuth] Resolved session from Supabase', {
-        hasLiveSession: resolved.hasLiveSession,
-        hasPersistedSession: resolved.hasPersistedSession,
-        finalSessionSource: resolved.source,
-        refreshed: resolved.refreshed,
-        hasToken: !!resolved.session?.access_token,
-      });
+      if (isAuthDebugEnabled()) {
+        console.info('[useSmartAuth] Resolved session from Supabase', {
+          hasLiveSession: resolved.hasLiveSession,
+          hasPersistedSession: resolved.hasPersistedSession,
+          finalSessionSource: resolved.source,
+          refreshed: resolved.refreshed,
+          hasToken: !!resolved.session?.access_token,
+        });
+      }
       return {
         session: normalizeSession(resolved.session),
         usedCachedSession: resolved.usedCachedSession,
@@ -348,11 +354,15 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const getToken = useCallback(async () => {
     const normalizedSession = normalizeSession(session);
     if (normalizedSession?.access_token) {
-      console.log('[useSmartAuth] getToken: using existing session token');
+      if (isAuthDebugEnabled()) {
+        console.info('[useSmartAuth] getToken: using existing session token');
+      }
       return normalizedSession.access_token;
     }
 
-    console.log('[useSmartAuth] getToken: no session token, resolving from Supabase');
+    if (isAuthDebugEnabled()) {
+      console.info('[useSmartAuth] getToken: no session token, resolving from Supabase');
+    }
     const resolved = await resolveSessionFromSupabase();
     applySessionState(resolved.session, {
       force: true,
@@ -361,9 +371,11 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     if (!resolved.session) {
       await clearStaleAuthState('useSmartAuth.getToken');
     }
-    console.log('[useSmartAuth] getToken: resolved session from Supabase', {
-      hasToken: !!resolved.session?.access_token,
-    });
+    if (isAuthDebugEnabled()) {
+      console.info('[useSmartAuth] getToken: resolved session from Supabase', {
+        hasToken: !!resolved.session?.access_token,
+      });
+    }
     return resolved.session?.access_token ?? null;
   }, [applySessionState, clearStaleAuthState, normalizeSession, resolveSessionFromSupabase, session]);
 

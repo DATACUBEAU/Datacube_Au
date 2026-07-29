@@ -1,12 +1,11 @@
 import type { User } from '@supabase/supabase-js';
 import { createSupabaseAdminClient, firstEnv } from '@/lib/server/supabase-admin';
 import {
-  ACCOUNT_DELETION_INACTIVITY_DAYS,
+  computeDocumentDeletionEligibility,
   deriveRetentionLifecycleState,
   FILE_CLEANUP_INACTIVITY_DAYS,
   getFileCleanupDueAt,
-  getFullDeletionDueAt,
-  isFullDeletionDue,
+  getRetentionPolicySnapshot,
   isStorageMissingError,
   resolveLastSeenAt,
   scopePriority,
@@ -20,6 +19,9 @@ import { isProtectedOwnerUserId } from '@/lib/admin/protected-owner';
 
 const DEFAULT_BUCKET = firstEnv('BUCKET', 'NEXT_PUBLIC_SUPABASE_BUCKET') || 'documents';
 const DEFAULT_PREVIEW_LIMIT = 50;
+const RETENTION_LOCAL_LEASE_TTL_MS = 15 * 60 * 1000;
+
+let localRetentionLease: { workerId: string; expiresAtMs: number } | null = null;
 
 type SupabaseAdmin = ReturnType<typeof createSupabaseAdminClient>;
 
@@ -43,6 +45,10 @@ type DocumentRow = {
   file_path: string | null;
   status: string | null;
   expires_at: string | null;
+  retention_expires_at?: string | null;
+  retention_tier?: string | null;
+  retention_days?: number | null;
+  retention_policy_version?: string | null;
   created_at: string | null;
   updated_at: string | null;
   cleanup_attempts?: number | null;
@@ -108,6 +114,7 @@ type DocumentCandidate = {
   expiresAt: string | null;
   createdAt: string | null;
   lastSeenAt: string | null;
+  dueAt: string | null;
   scope: RetentionScope;
   reason: string;
   row: DocumentRow;
@@ -137,6 +144,7 @@ export type RetentionDocumentPreview = {
   expiresAt: string | null;
   createdAt: string | null;
   lastSeenAt: string | null;
+  dueAt: string | null;
   scope: RetentionScope;
   reason: string;
 };
@@ -172,8 +180,13 @@ export type RetentionRunPreview = {
 export type RetentionOverview = {
   generatedAt: string;
   policy: {
+    version: string;
+    signedOutDocumentCleanupDays: number;
+    freeDocumentExpirationDays: number;
+    promoDocumentExpirationDays: number;
+    paidProDocumentExpirationDays: number;
     fileCleanupInactivityDays: number;
-    accountDeletionInactivityDays: number;
+    accountDeletionInactivityDays: number | null;
   };
   summary: {
     activeUsers: number;
@@ -271,6 +284,19 @@ function isMissingColumnError(error: unknown): boolean {
   );
 }
 
+function isMissingFunctionError(error: unknown): boolean {
+  const code = String((error as any)?.code || '').trim().toUpperCase();
+  const message = String((error as any)?.message || '').toLowerCase();
+  return (
+    code === '42883' ||
+    code === 'PGRST202' ||
+    (message.includes('function') && message.includes('does not exist')) ||
+    message.includes('could not find the function') ||
+    message.includes('could not find the public.try_claim_retention_lease') ||
+    message.includes('could not find the public.release_retention_lease')
+  );
+}
+
 function isReadOnlyRelationError(error: unknown): boolean {
   const code = String((error as any)?.code || '').trim().toUpperCase();
   const message = String((error as any)?.message || '').toLowerCase();
@@ -282,6 +308,25 @@ function isReadOnlyRelationError(error: unknown): boolean {
     message.includes('not automatically updatable') ||
     message.includes('read-only')
   );
+}
+
+function claimLocalRetentionLease(workerId: string): boolean {
+  const nowMs = Date.now();
+  if (localRetentionLease && localRetentionLease.expiresAtMs > nowMs) {
+    return localRetentionLease.workerId === workerId;
+  }
+
+  localRetentionLease = {
+    workerId,
+    expiresAtMs: nowMs + RETENTION_LOCAL_LEASE_TTL_MS,
+  };
+  return true;
+}
+
+function releaseLocalRetentionLease(workerId: string): void {
+  if (localRetentionLease?.workerId === workerId) {
+    localRetentionLease = null;
+  }
 }
 
 function isAuthUserMissingError(error: unknown): boolean {
@@ -436,7 +481,9 @@ async function fetchDocumentById(
 ): Promise<DocumentRow | null> {
   const { data, error } = await supabase
     .from('au_documents')
-    .select('*')
+    .select(
+      'id,owner_id,user_id,file_name,file_path,status,expires_at,created_at,updated_at,cleanup_attempts,cleanup_last_error,cleanup_last_attempt_at,cleanup_pending,storage_deleted_at,source_deleted_at,source_cleanup_result',
+    )
     .eq('id', documentId)
     .maybeSingle();
 
@@ -613,6 +660,10 @@ async function claimLease(supabase: SupabaseAdmin, workerId: string): Promise<bo
     p_ttl_seconds: 900,
   });
   if (error) {
+    if (isMissingFunctionError(error)) {
+      logRetention('lease-fallback', { reason: 'db_lease_rpc_missing' });
+      return claimLocalRetentionLease(workerId);
+    }
     throw error;
   }
   if (typeof data === 'boolean') {
@@ -626,9 +677,14 @@ async function releaseLease(supabase: SupabaseAdmin, workerId: string): Promise<
     p_lease_key: 'retention_cleanup',
     p_worker_id: workerId,
   });
+  if (error && isMissingFunctionError(error)) {
+    releaseLocalRetentionLease(workerId);
+    return;
+  }
   if (error && !isMissingRelationError(error)) {
     throw error;
   }
+  releaseLocalRetentionLease(workerId);
 }
 
 function buildUserSnapshots(
@@ -679,7 +735,7 @@ function buildUserSnapshots(
       lastActiveAt: activity?.last_active_at || null,
       lastSeenAt,
       fileCleanupDueAt: getFileCleanupDueAt(lastSeenAt),
-      fullDeletionDueAt: getFullDeletionDueAt(lastSeenAt),
+      fullDeletionDueAt: null,
       documents: userDocuments,
       lifecycleState,
       latestAction,
@@ -701,8 +757,8 @@ function sortUsersForPreview(users: UserSnapshot[]): UserSnapshot[] {
     const priorityDelta =
       (priority.get(right.lifecycleState) || 0) - (priority.get(left.lifecycleState) || 0);
     if (priorityDelta !== 0) return priorityDelta;
-    const leftDue = new Date(left.fullDeletionDueAt || left.fileCleanupDueAt || left.lastSeenAt || 0).getTime();
-    const rightDue = new Date(right.fullDeletionDueAt || right.fileCleanupDueAt || right.lastSeenAt || 0).getTime();
+    const leftDue = new Date(left.fileCleanupDueAt || left.lastSeenAt || 0).getTime();
+    const rightDue = new Date(right.fileCleanupDueAt || right.lastSeenAt || 0).getTime();
     return leftDue - rightDue;
   });
 }
@@ -717,9 +773,21 @@ function buildDocumentCandidates(users: UserSnapshot[]): DocumentCandidate[] {
     lastSeenAt: string | null,
     scope: RetentionScope,
     reason: string,
+    dueAt: string | null,
   ) => {
     const current = map.get(row.id);
-    if (current && scopePriority(current.scope) >= scopePriority(scope)) {
+    if (current) {
+      const currentDueMs = new Date(current.dueAt || current.expiresAt || current.lastSeenAt || current.createdAt || 0).getTime();
+      const nextDueMs = new Date(dueAt || row.expires_at || lastSeenAt || row.created_at || 0).getTime();
+      const currentIsEarlier = Number.isFinite(currentDueMs) && Number.isFinite(nextDueMs)
+        ? currentDueMs <= nextDueMs
+        : scopePriority(current.scope) >= scopePriority(scope);
+      if (currentIsEarlier) {
+        return;
+      }
+    }
+
+    if (scope === 'inactive_account') {
       return;
     }
 
@@ -732,6 +800,7 @@ function buildDocumentCandidates(users: UserSnapshot[]): DocumentCandidate[] {
       expiresAt: row.expires_at || null,
       createdAt: row.created_at || null,
       lastSeenAt,
+      dueAt,
       scope,
       reason,
       row,
@@ -741,42 +810,23 @@ function buildDocumentCandidates(users: UserSnapshot[]): DocumentCandidate[] {
   const nowMs = Date.now();
   for (const user of users) {
     if (isProtectedOwnerUserId(user.userId)) continue;
-    const fullDeletionDue = isFullDeletionDue(user.lastSeenAt, new Date());
-    const fileCleanupDue =
-      user.documents.length > 0 && !fullDeletionDue && user.lastSeenAt
-        ? new Date(user.fileCleanupDueAt || 0).getTime() <= nowMs
-        : false;
-
     for (const document of user.documents) {
-      const expiresMs = document.expires_at ? new Date(document.expires_at).getTime() : Number.NaN;
-      if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
+      const eligibility = computeDocumentDeletionEligibility({
+        createdAt: document.created_at,
+        expiresAt: document.retention_expires_at || document.expires_at,
+        lastSeenAt: user.lastSeenAt,
+        plan: document.retention_tier || user.tier,
+        now: new Date(nowMs),
+      });
+      if (eligibility.eligible && eligibility.scope) {
         upsertCandidate(
           document,
           user.userId,
           user.email,
           user.lastSeenAt,
-          'plan_expiry',
-          'Document reached its stored retention expiry.',
-        );
-      }
-
-      if (fullDeletionDue) {
-        upsertCandidate(
-          document,
-          user.userId,
-          user.email,
-          user.lastSeenAt,
-          'inactive_account',
-          'Owner has been inactive long enough for full account deletion.',
-        );
-      } else if (fileCleanupDue) {
-        upsertCandidate(
-          document,
-          user.userId,
-          user.email,
-          user.lastSeenAt,
-          'inactive_files',
-          'Owner has been inactive long enough for file cleanup.',
+          eligibility.scope,
+          eligibility.reason || 'Document is eligible for retention cleanup.',
+          eligibility.deleteAfter,
         );
       }
     }
@@ -785,8 +835,8 @@ function buildDocumentCandidates(users: UserSnapshot[]): DocumentCandidate[] {
   return [...map.values()].sort((left, right) => {
     const priorityDelta = scopePriority(right.scope) - scopePriority(left.scope);
     if (priorityDelta !== 0) return priorityDelta;
-    const leftTime = new Date(left.expiresAt || left.lastSeenAt || left.createdAt || 0).getTime();
-    const rightTime = new Date(right.expiresAt || right.lastSeenAt || right.createdAt || 0).getTime();
+    const leftTime = new Date(left.dueAt || left.expiresAt || left.lastSeenAt || left.createdAt || 0).getTime();
+    const rightTime = new Date(right.dueAt || right.expiresAt || right.lastSeenAt || right.createdAt || 0).getTime();
     return leftTime - rightTime;
   });
 }
@@ -826,7 +876,7 @@ async function buildOverview(
     activeUsers: userSnapshots.filter((row) => row.lifecycleState === 'active').length,
     scheduledFileDeletionUsers: userSnapshots.filter((row) => row.lifecycleState === 'scheduled_file_deletion').length,
     filesDeletedUsers: userSnapshots.filter((row) => row.lifecycleState === 'files_deleted').length,
-    scheduledFullDeletionUsers: userSnapshots.filter((row) => row.lifecycleState === 'scheduled_full_deletion').length,
+    scheduledFullDeletionUsers: 0,
     fullyDeletedUsers,
     failedActions,
     documentsQueuedForDeletion: documentCandidates.length,
@@ -841,11 +891,12 @@ async function buildOverview(
     fullyDeletedUsers,
   });
 
+  const policySnapshot = getRetentionPolicySnapshot();
   return {
     generatedAt: new Date().toISOString(),
     policy: {
+      ...policySnapshot,
       fileCleanupInactivityDays: FILE_CLEANUP_INACTIVITY_DAYS,
-      accountDeletionInactivityDays: ACCOUNT_DELETION_INACTIVITY_DAYS,
     },
     summary,
     users: previewUsers.slice(0, previewLimit).map((row) => ({
@@ -871,6 +922,7 @@ async function buildOverview(
       expiresAt: row.expiresAt,
       createdAt: row.createdAt,
       lastSeenAt: row.lastSeenAt,
+      dueAt: row.dueAt,
       scope: row.scope,
       reason: row.reason,
     })),
@@ -921,6 +973,10 @@ async function upsertAction(
     .from('au_retention_actions')
     .upsert(payload, { onConflict: 'scope,target_type,target_id' });
   if (error) {
+    if (isMissingRelationError(error)) {
+      logRetention('action-log-skipped', { reason: 'retention_actions_table_missing' });
+      return;
+    }
     throw error;
   }
 }
@@ -948,7 +1004,15 @@ async function markDocumentCleanupState(
     payload.source_deleted_at = new Date().toISOString();
   }
 
-  const { error } = await supabase.from('au_documents').update(payload).eq('id', row.id);
+  const ownerId = resolveOwnerId(row);
+  const ownedUpdate = ownerId
+    ? supabase
+        .from('au_documents')
+        .update(payload)
+        .eq('id', row.id)
+        .or(`owner_id.eq.${ownerId},user_id.eq.${ownerId}`)
+    : supabase.from('au_documents').update(payload).eq('id', row.id);
+  const { error } = await ownedUpdate;
   if (error) {
     throw error;
   }
@@ -1267,6 +1331,7 @@ async function markDeletionLogsProcessed(supabase: SupabaseAdmin, documentId: st
 async function deleteVectorsDirect(documentId: string, ownerId: string): Promise<boolean> {
   const qdrantUrl = firstEnv('QDRANT_URL');
   if (!qdrantUrl) return false;
+  const collection = firstEnv('QDRANT_COLLECTION') || 'au_chunks';
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -1276,29 +1341,31 @@ async function deleteVectorsDirect(documentId: string, ownerId: string): Promise
     headers['api-key'] = qdrantApiKey;
   }
 
-  const response = await fetch(
-    `${qdrantUrl.replace(/\/$/, '')}/collections/au_chunks/points/delete?wait=true`,
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({
-        filter: {
-          must: [{ key: 'document_id', match: { value: documentId } }],
-          should: [
-            { key: 'owner_id', match: { value: ownerId } },
-            { key: 'user_id', match: { value: ownerId } },
-          ],
-        },
-      }),
-    },
-  );
+  const deleteForOwnerPayloadKey = async (key: 'owner_id' | 'user_id'): Promise<void> => {
+    const response = await fetch(
+      `${qdrantUrl.replace(/\/$/, '')}/collections/${encodeURIComponent(collection)}/points/delete?wait=true`,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          filter: {
+            must: [
+              { key: 'document_id', match: { value: documentId } },
+              { key, match: { value: ownerId } },
+            ],
+          },
+        }),
+      },
+    );
 
-  if (response.status === 404) {
-    return true;
-  }
-  if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`qdrant_delete_failed: ${response.status} ${body}`);
+    if (response.status === 404) return;
+    if (!response.ok) {
+      throw new Error(`qdrant_delete_failed:${response.status}`);
+    }
+  };
+
+  for (const key of ['user_id', 'owner_id'] as const) {
+    await deleteForOwnerPayloadKey(key);
   }
   return true;
 }
@@ -1364,9 +1431,9 @@ async function processDocumentCandidate(
     attempts,
     metadata: {
       scope: candidate.scope,
-      file_name: candidate.fileName,
-      file_path: candidate.filePath,
       expires_at: candidate.expiresAt,
+      due_at: candidate.dueAt,
+      has_source_file: Boolean(candidate.filePath),
     },
     runId,
     firstDetectedAt: existingAction?.first_detected_at || null,
@@ -1391,8 +1458,8 @@ async function processDocumentCandidate(
       lastError: storageResult.error || 'storage_delete_failed',
       metadata: {
         scope: candidate.scope,
-        file_name: candidate.fileName,
-        file_path: candidate.filePath,
+        due_at: candidate.dueAt,
+        has_source_file: Boolean(candidate.filePath),
       },
       runId,
       firstDetectedAt: existingAction?.first_detected_at || null,
@@ -1412,6 +1479,11 @@ async function processDocumentCandidate(
       ...failedArtifacts.map((row) => `${row.table}: ${row.message || row.status}`),
       ...artifactCleanup.verification.map((row) => `${row.table}: ${row.count} remaining`),
     ].join('; ');
+    await markDocumentCleanupState(supabase, candidate.row, {
+      success: false,
+      sourceCleanupResult: storageResult.result,
+      lastError: artifactError || 'artifact_cleanup_failed',
+    });
     await upsertAction(supabase, {
       scope: candidate.scope,
       targetType: 'document',
@@ -1424,8 +1496,7 @@ async function processDocumentCandidate(
       lastError: artifactError || 'artifact_cleanup_failed',
       metadata: {
         scope: candidate.scope,
-        file_name: candidate.fileName,
-        file_path: candidate.filePath,
+        due_at: candidate.dueAt,
         artifact_results: artifactCleanup.results,
         artifact_verification: artifactCleanup.verification,
       },
@@ -1443,6 +1514,11 @@ async function processDocumentCandidate(
     }
   } catch (error) {
     const message = String((error as any)?.message || error || 'vector_delete_failed');
+    await markDocumentCleanupState(supabase, candidate.row, {
+      success: false,
+      sourceCleanupResult: storageResult.result,
+      lastError: message,
+    });
     await upsertAction(supabase, {
       scope: candidate.scope,
       targetType: 'document',
@@ -1455,8 +1531,7 @@ async function processDocumentCandidate(
       lastError: message,
       metadata: {
         scope: candidate.scope,
-        file_name: candidate.fileName,
-        file_path: candidate.filePath,
+        due_at: candidate.dueAt,
         artifact_results: artifactCleanup.results,
         vector_cleanup: 'failed',
       },
@@ -1466,8 +1541,17 @@ async function processDocumentCandidate(
     return 'failed';
   }
 
-  const { error: deleteError } = await supabase.from('au_documents').delete().eq('id', candidate.documentId);
+  const { error: deleteError } = await supabase
+    .from('au_documents')
+    .delete()
+    .eq('id', candidate.documentId)
+    .or(`owner_id.eq.${candidate.ownerId},user_id.eq.${candidate.ownerId}`);
   if (deleteError) {
+    await markDocumentCleanupState(supabase, candidate.row, {
+      success: false,
+      sourceCleanupResult: storageResult.result,
+      lastError: deleteError.message,
+    });
     await upsertAction(supabase, {
       scope: candidate.scope,
       targetType: 'document',
@@ -1480,8 +1564,7 @@ async function processDocumentCandidate(
       lastError: deleteError.message,
       metadata: {
         scope: candidate.scope,
-        file_name: candidate.fileName,
-        file_path: candidate.filePath,
+        due_at: candidate.dueAt,
       },
       runId,
       firstDetectedAt: existingAction?.first_detected_at || null,
@@ -1505,8 +1588,8 @@ async function processDocumentCandidate(
     completedAt: new Date().toISOString(),
     metadata: {
       scope: candidate.scope,
-      file_name: candidate.fileName,
-      file_path: candidate.filePath,
+      due_at: candidate.dueAt,
+      has_source_file: Boolean(candidate.filePath),
       source_cleanup_result: storageResult.result,
       artifact_results: artifactCleanup.results,
       vector_cleanup: vectorCleanup,
@@ -1805,7 +1888,11 @@ export async function deleteOwnedDocumentNow(input: {
     };
   }
 
-  const { error: deleteError } = await supabase.from('au_documents').delete().eq('id', documentId);
+  const { error: deleteError } = await supabase
+    .from('au_documents')
+    .delete()
+    .eq('id', documentId)
+    .or(`owner_id.eq.${ownerId},user_id.eq.${ownerId}`);
   if (deleteError) {
     const code = String((deleteError as any)?.code || '').trim();
     return {
@@ -1965,31 +2052,9 @@ export async function runRetentionCleanup(options: RunRetentionOptions): Promise
       if (result === 'skipped') skippedDocuments += 1;
     }
 
-    const userActionMap = await fetchActionMapByTarget(
-      supabase,
-      'user',
-      overview.userSnapshots
-        .filter((row) => row.lifecycleState === 'scheduled_full_deletion')
-        .map((row) => row.userId),
-    );
-
-    let processedUsers = 0;
-    let failedUsers = 0;
-    let skippedUsers = 0;
-
-    for (const user of overview.userSnapshots.filter((row) => row.lifecycleState === 'scheduled_full_deletion')) {
-      const result = await processUserDeletion(
-        supabase,
-        user,
-        overview.documentCandidates,
-        userActionMap.get(user.userId),
-        runId,
-        Boolean(options.force),
-      );
-      if (result === 'processed') processedUsers += 1;
-      if (result === 'failed') failedUsers += 1;
-      if (result === 'skipped') skippedUsers += 1;
-    }
+    const processedUsers = 0;
+    const failedUsers = 0;
+    const skippedUsers = 0;
 
     const refreshedOverview = await buildOverview(supabase, previewLimit);
     const runSummary = {
@@ -2014,7 +2079,7 @@ export async function runRetentionCleanup(options: RunRetentionOptions): Promise
     });
 
     await finishRunRecord(supabase, runId, {
-      status: failedDocuments > 0 || failedUsers > 0 ? 'completed_with_errors' : 'completed',
+      status: failedDocuments > 0 ? 'completed_with_errors' : 'completed',
       summary: runSummary,
     });
 
@@ -2105,6 +2170,7 @@ export async function deleteUserAccountWithRetention(
       expiresAt: row.expires_at || null,
       createdAt: row.created_at || null,
       lastSeenAt: targetUser.lastSeenAt,
+      dueAt: new Date().toISOString(),
       scope: 'inactive_account' as const,
       reason: manualReason,
       row,

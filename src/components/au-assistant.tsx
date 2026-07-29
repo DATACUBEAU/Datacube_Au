@@ -6,6 +6,7 @@ import { Bot, X, Lightbulb, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { usePathname } from 'next/navigation';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSmartAuth } from '@/hooks/use-smart-auth';
 
 interface Step {
   target?: string;
@@ -107,9 +108,100 @@ const LONG_PRESS_MS = 650;
 const DRAG_THRESHOLD_PX = 6;
 const EDGE_PADDING_PX = 16;
 const DEFAULT_BOTTOM_OFFSET_PX = 24;
+const ONBOARDING_VERSION = '2026-07-29-core-hardening';
+const ONBOARDING_MAYBE_LATER_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+export const START_PRODUCT_TOUR_EVENT = 'dcau:start-product-tour';
+
+type OnboardingState = {
+  version: string;
+  offeredAt: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  skippedAt: string | null;
+  maybeLaterAt: string | null;
+  currentStep: string | null;
+  lastStep: string | null;
+};
 
 function pageStoragePath(pathname: string | null): string {
   return String(pathname || '/').replace(/[^a-z0-9/_-]/gi, '_');
+}
+
+function onboardingStorageKey(scope: string): string {
+  return `au_onboarding_state_${scope}_${ONBOARDING_VERSION}`;
+}
+
+function defaultOnboardingState(): OnboardingState {
+  return {
+    version: ONBOARDING_VERSION,
+    offeredAt: null,
+    startedAt: null,
+    completedAt: null,
+    skippedAt: null,
+    maybeLaterAt: null,
+    currentStep: null,
+    lastStep: null,
+  };
+}
+
+function readOnboardingState(scope: string): OnboardingState | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(onboardingStorageKey(scope));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<OnboardingState>;
+    if (parsed.version !== ONBOARDING_VERSION) return null;
+    return {
+      ...defaultOnboardingState(),
+      ...parsed,
+      version: ONBOARDING_VERSION,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeOnboardingState(scope: string, state: OnboardingState): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(onboardingStorageKey(scope), JSON.stringify(state));
+  } catch {
+    // Ignore storage failures; the assistant can still run for the current page.
+  }
+}
+
+function hasCompletedOrSkippedOnboarding(state: OnboardingState | null): boolean {
+  return Boolean(state?.completedAt || state?.skippedAt);
+}
+
+function isMaybeLaterCoolingDown(state: OnboardingState | null, nowMs = Date.now()): boolean {
+  const maybeLaterAt = state?.maybeLaterAt ? new Date(state.maybeLaterAt).getTime() : Number.NaN;
+  return Number.isFinite(maybeLaterAt) && nowMs - maybeLaterAt < ONBOARDING_MAYBE_LATER_COOLDOWN_MS;
+}
+
+function shouldSuppressOnboardingForPath(pathname: string | null): boolean {
+  const normalized = String(pathname || '').replace(/\/$/, '') || '/';
+  return (
+    normalized.startsWith('/login') ||
+    normalized.startsWith('/signup') ||
+    normalized.startsWith('/auth/callback') ||
+    normalized.startsWith('/session-expired')
+  );
+}
+
+function hasLegacyAssistantActivity(scope: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    if (localStorage.getItem(`au_assistant_progress_${scope}`)) return true;
+    if (localStorage.getItem(`au_assistant_position_${scope}`)) return true;
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(`au_assistant_dismissed_${scope}_`)) return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
 }
 
 function resolveStep(pathname: string | null): Step | null {
@@ -128,10 +220,13 @@ function resolveStep(pathname: string | null): Step | null {
 
 export function AUAssistant() {
   const [isVisible, setIsVisible] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [showTourOffer, setShowTourOffer] = useState(false);
+  const [onboardingState, setOnboardingState] = useState<OnboardingState | null>(null);
   const [dismissedCurrentPage, setDismissedCurrentPage] = useState(false);
   const pathname = usePathname();
   const [user] = useSupabaseUser();
+  const { authState, runtimeAuthState } = useSmartAuth();
   const [currentStep, setCurrentStep] = useState<Step | null>(null);
   const [offsetY, setOffsetY] = useState(0);
 
@@ -172,18 +267,97 @@ export function AUAssistant() {
 
     const nextStep = resolveStep(pathname);
     setCurrentStep(nextStep);
+    const savedOnboarding = readOnboardingState(assistantScope);
+    setOnboardingState(savedOnboarding);
 
     if (!nextStep) {
       setDismissedCurrentPage(false);
       setIsExpanded(false);
+      setShowTourOffer(false);
       return;
     }
 
     const dismissedKey = `au_assistant_dismissed_${assistantScope}_${pageStoragePath(pathname)}`;
     const dismissed = localStorage.getItem(dismissedKey) === 'true';
     setDismissedCurrentPage(dismissed);
-    if (isVisible) setIsExpanded(!dismissed);
+    const tourActive = Boolean(savedOnboarding?.startedAt && !hasCompletedOrSkippedOnboarding(savedOnboarding));
+    if (isVisible) setIsExpanded(tourActive && !dismissed);
   }, [assistantScope, pathname, isVisible]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isVisible || !currentStep || shouldSuppressOnboardingForPath(pathname)) {
+      setShowTourOffer(false);
+      return;
+    }
+    if (runtimeAuthState === 'RESTORING' || runtimeAuthState === 'EXPIRED' || runtimeAuthState === 'REAUTH_IN_PROGRESS') {
+      setShowTourOffer(false);
+      return;
+    }
+    if (authState === 'loading' && pathname?.startsWith('/dashboard')) {
+      setShowTourOffer(false);
+      return;
+    }
+
+    const saved = readOnboardingState(assistantScope);
+    if (!saved && user?.id && hasLegacyAssistantActivity(assistantScope)) {
+      const establishedState = {
+        ...defaultOnboardingState(),
+        offeredAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        lastStep: pathname || null,
+      };
+      writeOnboardingState(assistantScope, establishedState);
+      setOnboardingState(establishedState);
+      setShowTourOffer(false);
+      return;
+    }
+
+    if (hasCompletedOrSkippedOnboarding(saved) || isMaybeLaterCoolingDown(saved)) {
+      setOnboardingState(saved);
+      setShowTourOffer(false);
+      return;
+    }
+
+    const next = {
+      ...(saved || defaultOnboardingState()),
+      offeredAt: saved?.offeredAt || new Date().toISOString(),
+      currentStep: pathname || null,
+    };
+    writeOnboardingState(assistantScope, next);
+    setOnboardingState(next);
+    setShowTourOffer(true);
+    setIsExpanded(false);
+  }, [assistantScope, authState, currentStep, isVisible, pathname, runtimeAuthState, user?.id]);
+
+  useEffect(() => {
+    const handleStartProductTour = () => {
+      const now = new Date().toISOString();
+      const settingsKey = `au_assistant_settings_${assistantScope}`;
+      const next = {
+        ...(readOnboardingState(assistantScope) || defaultOnboardingState()),
+        offeredAt: onboardingState?.offeredAt || now,
+        startedAt: now,
+        completedAt: null,
+        skippedAt: null,
+        maybeLaterAt: null,
+        currentStep: pathname || null,
+        lastStep: pathname || null,
+      };
+      localStorage.setItem(settingsKey, 'enabled');
+      writeOnboardingState(assistantScope, next);
+      setOnboardingState(next);
+      setShowTourOffer(false);
+      setIsVisible(true);
+      setIsExpanded(true);
+      window.dispatchEvent(new CustomEvent('au_assistant_settings_updated', { detail: { enabled: true } }));
+    };
+
+    window.addEventListener(START_PRODUCT_TOUR_EVENT, handleStartProductTour);
+    return () => {
+      window.removeEventListener(START_PRODUCT_TOUR_EVENT, handleStartProductTour);
+    };
+  }, [assistantScope, onboardingState?.offeredAt, pathname]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -207,7 +381,7 @@ export function AUAssistant() {
     };
   }, []);
 
-  if (!isVisible || !currentStep) return null;
+  if (!isVisible || !currentStep || shouldSuppressOnboardingForPath(pathname)) return null;
 
   const hideAssistant = () => {
     const settingsKey = `au_assistant_settings_${assistantScope}`;
@@ -222,10 +396,75 @@ export function AUAssistant() {
     localStorage.setItem(positionKey, String(nextOffset));
   };
 
+  const persistOnboarding = (patch: Partial<OnboardingState>) => {
+    const next = {
+      ...(onboardingState || defaultOnboardingState()),
+      ...patch,
+      version: ONBOARDING_VERSION,
+    };
+    writeOnboardingState(assistantScope, next);
+    setOnboardingState(next);
+    return next;
+  };
+
+  const startTour = () => {
+    const now = new Date().toISOString();
+    const settingsKey = `au_assistant_settings_${assistantScope}`;
+    localStorage.setItem(settingsKey, 'enabled');
+    persistOnboarding({
+      offeredAt: onboardingState?.offeredAt || now,
+      startedAt: now,
+      completedAt: null,
+      skippedAt: null,
+      maybeLaterAt: null,
+      currentStep: pathname || null,
+      lastStep: pathname || null,
+    });
+    setShowTourOffer(false);
+    setIsVisible(true);
+    setIsExpanded(true);
+    window.dispatchEvent(new CustomEvent('au_assistant_settings_updated', { detail: { enabled: true } }));
+  };
+
+  const maybeLater = () => {
+    persistOnboarding({
+      offeredAt: onboardingState?.offeredAt || new Date().toISOString(),
+      maybeLaterAt: new Date().toISOString(),
+      currentStep: pathname || null,
+    });
+    setShowTourOffer(false);
+    setIsExpanded(false);
+  };
+
+  const skipTour = () => {
+    persistOnboarding({
+      offeredAt: onboardingState?.offeredAt || new Date().toISOString(),
+      skippedAt: new Date().toISOString(),
+      currentStep: pathname || null,
+      lastStep: pathname || null,
+    });
+    setShowTourOffer(false);
+    setIsExpanded(false);
+  };
+
+  const completeTour = () => {
+    persistOnboarding({
+      completedAt: new Date().toISOString(),
+      currentStep: pathname || null,
+      lastStep: pathname || null,
+    });
+    setShowTourOffer(false);
+    setIsExpanded(false);
+  };
+
   const dismissCurrentPage = () => {
     const dismissedKey = `au_assistant_dismissed_${assistantScope}_${pageStoragePath(pathname)}`;
     localStorage.setItem(dismissedKey, 'true');
     setDismissedCurrentPage(true);
+    if (onboardingState?.startedAt && !hasCompletedOrSkippedOnboarding(onboardingState)) {
+      completeTour();
+      return;
+    }
     setIsExpanded(false);
   };
 
@@ -319,6 +558,36 @@ export function AUAssistant() {
         className="pointer-events-none fixed inset-x-3 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-50 flex flex-col items-end gap-2 sm:inset-x-auto sm:right-6 sm:bottom-6"
         style={{ transform: `translateY(${offsetY}px)` }}
       >
+        {showTourOffer && (
+          <motion.div
+            initial={{ opacity: 0, y: 10, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.95 }}
+            className="pointer-events-auto mb-2 w-full max-w-[calc(100vw-1.5rem)] rounded-lg border border-primary/20 bg-card p-4 shadow-xl sm:max-w-[340px]"
+            role="dialog"
+            aria-label="DataCube AU guided tour offer"
+          >
+            <div className="flex items-start gap-3">
+              <div className="rounded-full bg-primary/10 p-2 text-primary">
+                <Bot className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0 flex-1 space-y-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-primary">Would you like a quick guided tour of DataCube AU?</h4>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    I can give you a short, page-aware tour and suggest a few useful next steps.
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button size="sm" className="w-full sm:w-auto" onClick={startTour}>Start tour</Button>
+                  <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={maybeLater}>Maybe later</Button>
+                  <Button size="sm" variant="ghost" className="w-full sm:w-auto" onClick={skipTour}>Skip tour</Button>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {isExpanded && (
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.9 }}
@@ -354,6 +623,13 @@ export function AUAssistant() {
                     </li>
                   ))}
                 </ul>
+                {onboardingState?.startedAt && !hasCompletedOrSkippedOnboarding(onboardingState) ? (
+                  <div className="mt-3">
+                    <Button size="sm" variant="outline" className="h-8" onClick={completeTour}>
+                      Done
+                    </Button>
+                  </div>
+                ) : null}
               </div>
             </div>
           </motion.div>
@@ -371,7 +647,7 @@ export function AUAssistant() {
           onPointerCancel={handlePointerCancel}
           className="pointer-events-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
           type="button"
-          aria-label={isExpanded ? 'Collapse AU guidance' : dismissedCurrentPage ? 'Show AU guidance for this page' : 'Expand AU guidance'}
+          aria-label={isExpanded ? 'Collapse AU guidance' : dismissedCurrentPage ? 'Show AU guidance for this page' : 'Take a product tour'}
           aria-expanded={isExpanded}
         >
           {isExpanded ? <ChevronRight className="h-6 w-6" /> : <Bot className="h-6 w-6" />}

@@ -29,6 +29,7 @@ import {
   Settings
 } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { START_PRODUCT_TOUR_EVENT } from '@/components/au-assistant';
 
 export function SiteManualGuide({
   children,
@@ -151,6 +152,11 @@ export function SiteManualGuide({
     return <p>Could not detect device. Please check browser settings.</p>;
   }, [browserType, deviceType, isPwaInstalled]);
 
+  const startProductTour = useCallback(() => {
+    window.dispatchEvent(new CustomEvent(START_PRODUCT_TOUR_EVENT));
+    setIsOpen(false);
+  }, [setIsOpen]);
+
   const features = useMemo(
     () => [
       {
@@ -264,6 +270,7 @@ export function SiteManualGuide({
         </Tabs>
 
         <DialogFooter className="mt-4 shrink-0 flex flex-col sm:flex-row gap-2">
+          <Button variant="outline" className="w-full sm:w-auto" onClick={startProductTour}>Take a product tour</Button>
           <Button className="w-full sm:w-auto" onClick={() => setIsOpen(false)}>Close Guide</Button>
         </DialogFooter>
       </DialogContent>

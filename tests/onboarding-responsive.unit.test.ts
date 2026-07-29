@@ -61,6 +61,42 @@ run('AU assistant is globally mounted once and keeps page dismissal scoped', () 
   assert.match(assistant, /aria-live="polite"/);
 });
 
+run('AU onboarding is optional, versioned, dismissible, and respects cooldown', () => {
+  const assistant = readRepoFile('src/components/au-assistant.tsx');
+  assert.match(assistant, /ONBOARDING_VERSION/);
+  assert.match(assistant, /ONBOARDING_MAYBE_LATER_COOLDOWN_MS = 7 \* 24 \* 60 \* 60 \* 1000/);
+  assert.match(assistant, /Would you like a quick guided tour of DataCube AU\?/);
+  assert.match(assistant, /Start tour/);
+  assert.match(assistant, /Maybe later/);
+  assert.match(assistant, /Skip tour/);
+  assert.match(assistant, /completedAt/);
+  assert.match(assistant, /skippedAt/);
+  assert.match(assistant, /maybeLaterAt/);
+  assert.match(assistant, /hasLegacyAssistantActivity/);
+  assert.doesNotMatch(assistant, /setIsExpanded\(!dismissed\)/);
+});
+
+run('AU onboarding does not show over auth or expired-session routes', () => {
+  const assistant = readRepoFile('src/components/au-assistant.tsx');
+  assert.match(assistant, /shouldSuppressOnboardingForPath/);
+  assert.match(assistant, /startsWith\('\/login'\)/);
+  assert.match(assistant, /startsWith\('\/signup'\)/);
+  assert.match(assistant, /startsWith\('\/auth\/callback'\)/);
+  assert.match(assistant, /startsWith\('\/session-expired'\)/);
+  assert.match(assistant, /runtimeAuthState === 'RESTORING'/);
+  assert.match(assistant, /runtimeAuthState === 'EXPIRED'/);
+});
+
+run('manual Help guide can restart the product tour', () => {
+  const guide = readRepoFile('src/components/site-manual-guide.tsx');
+  const assistant = readRepoFile('src/components/au-assistant.tsx');
+  assert.match(guide, /START_PRODUCT_TOUR_EVENT/);
+  assert.match(guide, /Take a product tour/);
+  assert.match(guide, /window\.dispatchEvent\(new CustomEvent\(START_PRODUCT_TOUR_EVENT\)\)/);
+  assert.match(assistant, /localStorage\.setItem\(settingsKey, 'enabled'\)/);
+  assert.match(assistant, /detail: \{ enabled: true \}/);
+});
+
 run('AU assistant and shared dialogs use small-screen safe dimensions', () => {
   const assistant = readRepoFile('src/components/au-assistant.tsx');
   const dialog = readRepoFile('src/components/ui/dialog.tsx');

@@ -28,6 +28,10 @@ interface SafeFetchOptions extends RequestInit {
   offlineQueueRequiresAuth?: boolean; // Defaults to true for queued writes
 }
 
+function isSafeFetchDebugEnabled(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG === '1';
+}
+
 function createSafeFetchError(
   message: string,
   extra?: {
@@ -148,8 +152,10 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
             },
           );
         }
-      } catch (queueError) {
-        console.warn('[safeFetch] Failed to enqueue offline write:', queueError);
+      } catch {
+        if (isSafeFetchDebugEnabled()) {
+          console.warn('[safeFetch] Failed to enqueue offline write.');
+        }
       }
     }
 
@@ -238,12 +244,14 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         !suppressAuthError &&
         authIntent === 'interactive'
       ) {
-        console.warn('[safeFetch] auth error detected', {
-          status: response.status,
-          url,
-          requestId: response.headers.get('x-request-id'),
-          correlationId: response.headers.get('x-correlation-id'),
-        });
+        if (isSafeFetchDebugEnabled()) {
+          console.warn('[safeFetch] auth error detected', {
+            status: response.status,
+            sameOrigin: url.startsWith('/'),
+            requestId: response.headers.get('x-request-id'),
+            correlationId: response.headers.get('x-correlation-id'),
+          });
+        }
 
         dispatchSessionExpired({
           status: response.status,

@@ -23,8 +23,13 @@ type RetentionActionStatus = 'eligible' | 'in_progress' | 'deleted' | 'failed' |
 type RetentionOverview = {
   generatedAt: string;
   policy: {
+    version?: string;
+    signedOutDocumentCleanupDays?: number;
+    freeDocumentExpirationDays?: number;
+    promoDocumentExpirationDays?: number;
+    paidProDocumentExpirationDays?: number;
     fileCleanupInactivityDays: number;
-    accountDeletionInactivityDays: number;
+    accountDeletionInactivityDays: number | null;
   };
   summary: {
     activeUsers: number;
@@ -237,7 +242,7 @@ export function ConexRetentionMonitor() {
           title: action === 'preview' ? 'Retention preview ready' : 'Retention cleanup finished',
           description: payload.result.locked
             ? 'Another cleanup run is already active.'
-            : `Documents processed: ${payload.result.execution.processedDocuments}. Users processed: ${payload.result.execution.processedUsers}.`,
+            : `Documents processed: ${payload.result.execution.processedDocuments}.`,
         });
       } catch (runError: any) {
         const message = String(runError?.message || `Retention ${action} failed.`);
@@ -261,8 +266,7 @@ export function ConexRetentionMonitor() {
             { label: 'Active', value: overview.summary.activeUsers },
             { label: 'File cleanup due', value: overview.summary.scheduledFileDeletionUsers },
             { label: 'Files deleted', value: overview.summary.filesDeletedUsers },
-            { label: 'Full deletion due', value: overview.summary.scheduledFullDeletionUsers },
-            { label: 'Fully deleted', value: overview.summary.fullyDeletedUsers },
+            { label: 'Manual account deletes', value: overview.summary.fullyDeletedUsers },
             { label: 'Failures', value: overview.summary.failedActions },
           ]
         : [],
@@ -275,12 +279,13 @@ export function ConexRetentionMonitor() {
         <div className="space-y-1">
           <h3 className="text-lg font-semibold">Retention Enforcement</h3>
           <p className="text-sm text-muted-foreground">
-            Backend cleanup state for upload expiry, 7-day file deletion, and 14-day full account deletion.
+            Backend cleanup state for upload expiry and seven-day signed-out document deletion.
           </p>
           {overview ? (
             <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <Badge variant="outline">Files: {overview.policy.fileCleanupInactivityDays}d inactivity</Badge>
-              <Badge variant="outline">Accounts: {overview.policy.accountDeletionInactivityDays}d inactivity</Badge>
+              <Badge variant="outline">Signed out: {overview.policy.signedOutDocumentCleanupDays ?? overview.policy.fileCleanupInactivityDays}d document cleanup</Badge>
+              <Badge variant="outline">Free/Promo: {overview.policy.freeDocumentExpirationDays ?? 14}d</Badge>
+              <Badge variant="outline">Pro: {overview.policy.paidProDocumentExpirationDays ?? 30}d</Badge>
               <Badge variant="outline">Queued docs: {overview.summary.documentsQueuedForDeletion}</Badge>
             </div>
           ) : null}
@@ -352,7 +357,7 @@ export function ConexRetentionMonitor() {
               <CardContent className="space-y-3">
                 {overview.users.length === 0 ? (
                   <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
-                    No user accounts are currently scheduled for file cleanup or full deletion.
+                    No users are currently scheduled for document cleanup.
                   </div>
                 ) : (
                   overview.users.map((user) => (
@@ -369,7 +374,6 @@ export function ConexRetentionMonitor() {
                       <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
                         <Badge variant="outline">Tier: {user.tier || 'free'}</Badge>
                         <Badge variant="outline">File delete at: {formatDateTime(user.fileCleanupDueAt)}</Badge>
-                        <Badge variant="outline">Full delete at: {formatDateTime(user.fullDeletionDueAt)}</Badge>
                         {user.latestActionError ? <Badge variant="destructive">{user.latestActionError}</Badge> : null}
                       </div>
                     </div>
