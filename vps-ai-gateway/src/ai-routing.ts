@@ -1,6 +1,12 @@
 import { SupabaseClient } from '@supabase/supabase-js';
 import { errorLogDetails, firstEnv, logger } from './utils.js';
 
+const aiGatewayContract = require('../../shared/ai-gateway-contract.cjs') as {
+  defaultAnthropicModelForPlan(plan: unknown): string | null;
+  defaultOpenRouterModelForPlan(plan: unknown): string;
+  isPaidPlanCode(plan: unknown): boolean;
+};
+
 export type RoutingRequestType = 'chat' | 'global_chat' | 'knowledge' | 'prediction_engine' | 'exam_generator';
 
 export type RoutingCandidate = {
@@ -12,21 +18,10 @@ export type RoutingCandidate = {
 };
 
 const DEFAULT_PROVIDER_TYPE = 'openrouter';
-const PAID_PLAN_CODES = new Set(['pro', 'premium', 'promo_pro', 'paid', 'weekly', 'monthly', 'admin']);
-
-function isPaidPlanCode(plan: string | null | undefined): boolean {
-  return PAID_PLAN_CODES.has(String(plan || '').trim().toLowerCase());
-}
-
-function parsePositiveInt(raw: string | undefined, fallback: number): number {
-  const parsed = Number(raw ?? '');
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return Math.floor(parsed);
-}
 
 function getActiveProviderKey(supabase: SupabaseClient, providerType: string): Promise<{ key: string; model: string } | null> {
   return new Promise((resolve) => {
-    resolve({ key: firstEnv('OPENROUTER_API_KEY', 'OPENAI_API_KEY') || '', model: 'meta-llama/llama-3.1-8b-instruct' });
+    resolve({ key: firstEnv('OPENROUTER_API_KEY', 'OPENAI_API_KEY') || '', model: aiGatewayContract.defaultOpenRouterModelForPlan('free') });
   });
 }
 
@@ -38,7 +33,6 @@ export async function selectProviderAndModel(input: {
   requestedModel?: string | null;
 }): Promise<RoutingCandidate> {
   const { supabase, plan, requestType } = input;
-  const isPaidPlan = isPaidPlanCode(plan);
   
   let providerType = DEFAULT_PROVIDER_TYPE;
   
@@ -53,7 +47,7 @@ export async function selectProviderAndModel(input: {
     return {
       service: 'openrouter',
       apiKey: firstEnv('OPENROUTER_API_KEY', '') || '',
-      model: isPaidPlan ? 'meta-llama/llama-3.1-70b-instruct' : 'meta-llama/llama-3.1-8b-instruct',
+      model: aiGatewayContract.defaultOpenRouterModelForPlan(plan),
       errorCount: 0,
       providerType,
     };
@@ -62,14 +56,14 @@ export async function selectProviderAndModel(input: {
   return {
     service: providerType,
     apiKey: '[configured]',
-    model: providerKey.model || (isPaidPlan ? 'meta-llama/llama-3.1-70b-instruct' : 'meta-llama/llama-3.1-8b-instruct'),
+    model: providerKey.model || aiGatewayContract.defaultOpenRouterModelForPlan(plan),
     errorCount: 0,
     providerType,
   };
 }
 
 export function buildRoutingCandidates(supabase: SupabaseClient, plan: string | null): RoutingCandidate[] {
-  const isPaidPlan = isPaidPlanCode(plan);
+  const isPaidPlan = aiGatewayContract.isPaidPlanCode(plan);
   const openRouterKey = firstEnv('OPENROUTER_API_KEY');
   const anthropicKey = firstEnv('ANTHROPIC_API_KEY');
   
@@ -79,17 +73,18 @@ export function buildRoutingCandidates(supabase: SupabaseClient, plan: string | 
     candidates.push({
       service: 'openrouter',
       apiKey: '[configured]',
-      model: isPaidPlan ? 'meta-llama/llama-3.1-70b-instruct' : 'meta-llama/llama-3.1-8b-instruct',
+      model: aiGatewayContract.defaultOpenRouterModelForPlan(plan),
       errorCount: 0,
       providerType: 'openrouter',
     });
   }
 
-  if (anthropicKey && isPaidPlan) {
+  const anthropicModel = aiGatewayContract.defaultAnthropicModelForPlan(plan);
+  if (anthropicKey && isPaidPlan && anthropicModel) {
     candidates.push({
       service: 'anthropic',
       apiKey: '[configured]',
-      model: 'claude-3-haiku-20240307',
+      model: anthropicModel,
       errorCount: 0,
       providerType: 'anthropic',
     });

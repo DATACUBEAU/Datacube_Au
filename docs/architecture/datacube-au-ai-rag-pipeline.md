@@ -100,7 +100,7 @@ flowchart LR
 
   AdminUI --> AdminAPI
   AdminAPI -->|"masked DTOs only"| AdminUI
-  AdminAPI -->|"server-only raw provider key write/read"| Postgres
+  AdminAPI -->|"server-side encrypted provider-key storage"| Postgres
   AdminAPI --> Audit
   Gateway --> Logs
   NextAPI --> Logs
@@ -143,7 +143,7 @@ Oracle VPS owns `VPS_SHARED_SECRET` for ticket verification, Qdrant credentials,
 
 RAG worker owns Supabase service credentials, Qdrant credentials, Storage read/write capability, and the embedding runtime/cache.
 
-Supabase owns Auth state, Postgres records, Storage objects, usage/audit rows, and credential metadata. Raw provider keys are server-only and must not be selected into browser DTOs.
+Supabase owns Auth state, Postgres records, Storage objects, usage/audit rows, and credential metadata. Provider keys are server-only, new admin writes use encrypted storage metadata, and raw values must not be selected into browser DTOs.
 
 Qdrant owns vector payloads and chunk source metadata. Payload filters must enforce `user_id` plus `document_id`.
 

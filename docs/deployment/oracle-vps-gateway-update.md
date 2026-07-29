@@ -1,6 +1,6 @@
 # Oracle VPS Gateway Update
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, and `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`; do not create or push another migration for the service-role replacement.
 
@@ -51,11 +51,18 @@ RATE_LIMIT_MAX_PER_MINUTE
 DCAU_ALLOW_INSECURE_DEV_VPS_SECRET
 ```
 
+Frontend/server-only provider-key management env vars:
+
+```text
+PROVIDER_KEY_ENCRYPTION_SECRET
+```
+
 Production requirements:
 
 - `NODE_ENV` must be `production`.
 - `VPS_SHARED_SECRET` must match the frontend/Next.js server env exactly.
 - `SUPABASE_SERVICE_ROLE_KEY` must contain the new `sb_secret` credential in every server-side runtime that uses Supabase admin access. The VPS gateway now requires this key because atomic usage commit/release RPCs are service-role only.
+- `PROVIDER_KEY_ENCRYPTION_SECRET` must be configured on the frontend/admin server before using Conex provider-key create/update. It is not needed in browser code and must not be sent to the Oracle VPS unless that service is later changed to decrypt database-stored provider keys directly.
 - `ALLOWED_ORIGINS` must be an explicit comma-separated allowlist, never `*`.
 - `QDRANT_URL` should be HTTPS in production. Loopback/private network URLs are acceptable only if Qdrant is not publicly reachable.
 - No provider key or Supabase service-role key may be defined with `NEXT_PUBLIC_*`.
@@ -197,6 +204,7 @@ Run these after restarting services:
 - Successful provider response commits exactly once.
 - Cross-user retrieval attempts return no chunks.
 - Gateway logs do not show Authorization headers, tickets, provider keys, Supabase keys, Qdrant keys, or raw provider responses.
+- Conex provider-key create/update succeeds without echoing the submitted key and subsequent provider routing works with the encrypted stored value.
 
 ## Oracle VPS Secret And API Key Checklist
 
@@ -213,6 +221,7 @@ PAYSTACK_SECRET_KEY
 PAYSTACK_SECRET
 FLUTTERWAVE_SECRET_KEY
 FLUTTERWAVE_WEBHOOK_SECRET_HASH
+PROVIDER_KEY_ENCRYPTION_SECRET
 ```
 
 `SUPABASE_SERVICE_ROLE_KEY` should now be the new `sb_secret` credential. Keep the legacy service-role credential enabled only long enough to complete the restart and live-test checklist.
@@ -238,6 +247,7 @@ PAYSTACK_SECRET
 FLUTTERWAVE_SECRET_KEY
 FLUTTERWAVE_WEBHOOK_SECRET_HASH
 VPS_SHARED_SECRET
+PROVIDER_KEY_ENCRYPTION_SECRET
 ```
 
 Restart after env changes using your supervisor:
@@ -285,6 +295,7 @@ Expected result: health is non-secret; generation/chat routes reject without a v
 Before disabling the legacy Supabase service-role credential:
 
 - Frontend/server has been redeployed with the new `SUPABASE_SERVICE_ROLE_KEY`.
+- Frontend/server has `PROVIDER_KEY_ENCRYPTION_SECRET` configured if database-stored provider keys are managed through Conex.
 - Oracle VPS gateway has been restarted with the new environment.
 - RAG worker has been restarted with the new environment.
 - Cron/background workers using Supabase admin access have been restarted.

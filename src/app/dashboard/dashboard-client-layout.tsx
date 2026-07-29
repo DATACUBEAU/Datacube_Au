@@ -66,7 +66,6 @@ import HeaderPwaInstallButton from '@/components/header-pwa-install-button';
 import { AnimatePresence, motion } from 'framer-motion';
 import { updateUserActivity } from '@/lib/supabase-client/client';
 import { supabase } from '@/lib/supabase-client/client';
-import { AUAssistant } from '@/components/au-assistant';
 import { InactivityPolicyBanner } from '@/components/inactivity-policy-banner';
 import { AuChatProvider } from '@/providers/au-chat-provider';
 import { ChatRuntimeProvider } from '@/components/providers/chat-runtime-provider';
@@ -978,8 +977,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               </div>
             </header>
 
-            <main className="flex-1 overflow-y-auto">
-              <div className="mx-auto max-w-7xl relative">
+            <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
+              <div className="relative mx-auto w-full max-w-7xl min-w-0">
                 {children}
               </div>
               <InactivityPolicyBanner />
@@ -987,7 +986,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <SiteManualGuide open={isSiteGuideOpen} onOpenChange={setIsSiteGuideOpen} />
-      <AUAssistant />
     </>
   );
 }

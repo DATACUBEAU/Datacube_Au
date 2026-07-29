@@ -70,8 +70,13 @@ async function main() {
 
   await run('background analytics logging cannot force a full-page reauthenticate flow', () => {
     const source = readRepoFile('src/lib/analytics.ts');
-    assert.match(source, /authIntent:\s*'background'/);
-    assert.match(source, /reauthOnAuthFailure:\s*false/);
+    assert.match(source, /supabase\.auth\.getSession\(\)/);
+    assert.match(source, /\.from\('au_activity_log'\)/);
+    assert.match(source, /\.insert\(rows\)/);
+    assert.match(source, /LOG_QUEUE\.length = 0/);
+    assert.equal(source.includes('safeFetch'), false);
+    assert.equal(source.includes('reauthOnAuthFailure'), false);
+    assert.equal(source.includes('window.location.href'), false);
   });
 
   await run('feature output waits for auth restore before firing protected requests', () => {
@@ -127,11 +132,16 @@ async function main() {
     assert.match(source, /docTextInFlightRequests/);
   });
 
-  await run('available chat models are cached and prompt starter payloads are budgeted', () => {
+  await run('available chat models are server-routed and prompt starters use the VPS ticket path', () => {
     const source = readRepoFile('src/lib/api/chat.ts');
-    assert.match(source, /AVAILABLE_MODELS_CACHE_TTL_MS/);
-    assert.match(source, /availableModelsInFlight/);
-    assert.match(source, /PROMPT_STARTER_DOCUMENT_BUDGET/);
+    assert.match(source, /getAvailableModels\(\): Promise<string\[\]>/);
+    assert.match(source, /return DEFAULT_MODEL_IDS/);
+    assert.match(source, /createAiIdempotencyKey\('prompt_starters'\)/);
+    assert.match(source, /feature:\s*'generate-prompt-starters'/);
+    assert.match(source, /hasDocId \? undefined : documentContent/);
+    assert.match(source, /\/api\/au\/vps-ticket/);
+    assert.equal(source.includes('AVAILABLE_MODELS_CACHE_TTL_MS'), false);
+    assert.equal(source.includes('availableModelsInFlight'), false);
   });
 
   await run('chat duplicate sends are blocked while the same prompt is already in flight', () => {
@@ -209,25 +219,32 @@ async function main() {
     assert.equal(routeSource.includes('model:'), false);
   });
 
-  await run('generation flows clamp heavy document payloads and use shared user-facing error messaging', () => {
+  await run('generation flows pass document IDs/idempotency keys and use shared user-facing error messaging', () => {
     const storeSource = readRepoFile('src/hooks/use-store.ts');
     const examsHook = readRepoFile('src/hooks/api/use-au-exams.ts');
+    const examsApi = readRepoFile('src/lib/api/exams.ts');
     assert.match(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET/);
     assert.match(storeSource, /PREDICTION_PAST_QUESTIONS_BUDGET/);
     assert.match(storeSource, /describeApiErrorForUser/);
-    assert.match(examsHook, /getAuDocumentChunksText/);
-    assert.match(examsHook, /PRACTICE_DOCUMENT_BUDGET/);
+    assert.doesNotMatch(examsHook, /getAuDocumentChunksText/);
+    assert.match(examsHook, /generatePracticeExam\(\s*['"]{2},\s*['"]{2}/);
     assert.match(examsHook, /describeApiErrorForUser/);
+    assert.match(examsApi, /createAiIdempotencyKey\('practice_exam'\)/);
+    assert.match(examsApi, /createAiIdempotencyKey\('exam_predictions'\)/);
+    assert.match(examsApi, /feature:\s*'generate-practice-exam'/);
+    assert.match(examsApi, /feature:\s*'generate-exam-predictions'/);
+    assert.match(examsApi, /hasDocId \? undefined : \(documentContent \|\| undefined\)/);
+    assert.match(examsApi, /hasPqIds \? undefined : \(pastQuestionsContent \|\| undefined\)/);
   });
 
   await run('dashboard activity heartbeat is throttled so it cannot chatter every minute', () => {
-    const layoutSource = readRepoFile('src/app/dashboard/layout.tsx');
     const clientSource = readRepoFile('src/lib/supabase-client/client.ts');
-    assert.match(layoutSource, /5 \* 60 \* 1000/);
+    const smartAuth = readRepoFile('src/hooks/use-smart-auth.tsx');
     assert.match(clientSource, /USER_ACTIVITY_HEARTBEAT_MS = 5 \* 60 \* 1000/);
     assert.match(clientSource, /USER_ACTIVITY_METADATA_SYNC_MS = 15 \* 60 \* 1000/);
     assert.match(clientSource, /userActivityHeartbeatAt/);
     assert.match(clientSource, /userActivityMetadataSyncAt/);
+    assert.match(smartAuth, /recordUserActivityRpc/);
   });
 
   await run('exam and generation flows require a live access token before protected AI requests', () => {
@@ -255,11 +272,8 @@ async function main() {
     assert.match(globalChatPage, /Restoring session\.\.\./);
   });
 
-  await run('legacy proxy wrappers share a cookie-aware forward helper instead of stripping auth context', () => {
-    const helper = readRepoFile('src/app/api/_proxy-forward.ts');
-    assert.match(helper, /headers\.set\('Cookie', cookie\)/);
-    assert.match(helper, /headers\.set\('Authorization', authorization\)/);
-
+  await run('legacy AI proxy wrappers were removed in favor of the VPS ticket path', () => {
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/_proxy-forward.ts')), false);
     for (const file of [
       'src/app/api/chat/route.ts',
       'src/app/api/generate-knowledge/route.ts',
@@ -267,9 +281,14 @@ async function main() {
       'src/app/api/generate-exam-predictions/route.ts',
       'src/app/api/generate-prompt-starters/route.ts',
     ]) {
-      const source = readRepoFile(file);
-      assert.match(source, /forwardProxyJsonRequest/);
+      assert.equal(fs.existsSync(path.join(repoRoot, file)), false, file);
     }
+    const chat = readRepoFile('src/lib/api/chat.ts');
+    const exams = readRepoFile('src/lib/api/exams.ts');
+    const store = readRepoFile('src/hooks/use-store.ts');
+    assert.match(chat, /\/api\/au\/vps-ticket/);
+    assert.match(exams, /\/api\/au\/vps-ticket/);
+    assert.match(store, /\/api\/au\/vps-ticket/);
   });
 
   await run('chat history route uses canonical request auth and RLS client helpers', () => {
@@ -279,23 +298,22 @@ async function main() {
     assert.equal(source.includes("runtime = 'edge'"), false);
   });
 
-  await run('proxy auth failures now expose request auth diagnostics for runtime debugging', () => {
-    const source = readRepoFile('src/app/api/proxy/[functionName]/route.ts');
-    assert.match(source, /x-dcau-auth-stage/);
-    assert.match(source, /x-dcau-auth-has-authorization/);
-    assert.match(source, /serializeRequestAuthDiagnostics/);
-    assert.match(source, /auth_stage:\s*input\.stage/);
-    assert.match(source, /\[proxy\] auth failure surfaced via catch/);
-    assert.match(source, /const headers = applyRequestAuthDebugHeaders/);
-    assert.match(source, /const normalizedDetails = buildAuthFailureDetails/);
+  await run('removed dynamic proxy route cannot expose raw auth diagnostics to browsers', () => {
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/proxy/[functionName]/route.ts')), false);
+    const proxyAuth = readRepoFile('src/app/api/proxy/_supabase-auth.ts');
+    assert.doesNotMatch(proxyAuth, /tokenPreview/);
+    assert.doesNotMatch(proxyAuth, /token\.slice/);
+    assert.doesNotMatch(proxyAuth, /Authorization:\s*authorization/);
   });
 
-  await run('proxy no longer turns ambiguous post-auth chat failures into false 401 responses', () => {
-    const source = readRepoFile('src/app/api/proxy/[functionName]/route.ts');
-    assert.match(source, /shouldTreatCaughtAuthFailureAsAmbiguousPostAuthFailure/);
-    assert.match(source, /hasValidatedRequestAuth/);
-    assert.match(source, /\[proxy\] suppressing ambiguous auth failure after validated auth/);
-    assert.match(source, /tryLegacyChatFallbackIfEligible\('unexpected_error'\)/);
+  await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
+    const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
+    assert.match(source, /requireEntitlement/);
+    assert.match(source, /accessControlResponse/);
+    assert.match(source, /reserveAiUsage/);
+    assert.match(source, /AI_USAGE_RESERVATION_FAILED/);
+    assert.match(source, /route:\s*operation\.gatewayRoute/);
+    assert.doesNotMatch(source, /console\.log\([^)]*Authorization/);
   });
 
   await run('proxy auth validation prefers the explicit authorization header over ambient cookies after refresh', () => {

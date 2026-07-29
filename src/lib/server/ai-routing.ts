@@ -1,4 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { decryptProviderKey, isEncryptedProviderKeyValue } from '@/lib/server/provider-key-encryption';
+import { isHiddenOrInternalModelId } from '@shared/ai-gateway-contract';
 
 export type RoutingRequestType =
   | 'chat'
@@ -13,6 +15,8 @@ type RoutingTier = 'pro';
 type ProviderKeyRowRaw = {
   service: string | null;
   key_value: string | null;
+  encrypted_key_value?: string | null;
+  key_encryption_version?: string | null;
   is_active: boolean | null;
   error_count: number | null;
   last_used_at: string | null;
@@ -142,7 +146,22 @@ function normalizeAllowedModels(raw: unknown): string[] {
 
 function toProviderKeyRecord(raw: ProviderKeyRowRaw): ProviderKeyRecord | null {
   const service = String(raw?.service || '').trim();
-  const keyValue = String(raw?.key_value || '').trim();
+  const encryptedKeyValue = String(raw?.encrypted_key_value || '').trim();
+  if (encryptedKeyValue && !isEncryptedProviderKeyValue(encryptedKeyValue)) {
+    throw new ModelRoutingError(503, 'provider_key_decrypt_failed', 'Provider key storage format is invalid.', {
+      service,
+    });
+  }
+  let keyValue = '';
+  try {
+    keyValue = encryptedKeyValue
+      ? decryptProviderKey(encryptedKeyValue)
+      : String(raw?.key_value || '').trim();
+  } catch {
+    throw new ModelRoutingError(503, 'provider_key_decrypt_failed', 'Provider key decryption failed.', {
+      service,
+    });
+  }
   const providerType = String(raw?.provider_type || DEFAULT_PROVIDER_TYPE).trim().toLowerCase();
 
   if (!service || !keyValue || !providerType) return null;
@@ -441,7 +460,7 @@ async function fetchActiveProviderKeys(
   for (const table of providerKeyTablesInOrder()) {
     const fullQuery = await supabase
       .from(table)
-      .select('service,key_value,is_active,error_count,last_used_at,provider_type,allowed_models,metadata')
+      .select('service,key_value,encrypted_key_value,key_encryption_version,is_active,error_count,last_used_at,provider_type,allowed_models,metadata')
       .eq('provider_type', normalizedProviderType)
       .eq('is_active', true)
       .order('error_count', { ascending: true, nullsFirst: true })
@@ -565,6 +584,11 @@ export function validateRequestedModel(model: string, allowedModels: string[]): 
     throw new ModelRoutingError(400, 'model_not_allowed', 'model_not_allowed', {
       model: requested,
       reason: 'free_tier_models_forbidden',
+    });
+  }
+  if (isHiddenOrInternalModelId(requested)) {
+    throw new ModelRoutingError(400, 'model_not_allowed', 'model_not_allowed', {
+      reason: 'hidden_or_internal_model',
     });
   }
 

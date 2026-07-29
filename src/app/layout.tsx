@@ -14,6 +14,7 @@ import { SessionDebugPanel } from '@/components/session-debug-panel';
 import { ServiceWorkerRegister } from '@/components/service-worker-register';
 import { ServiceWorkerUpdater } from '@/components/service-worker-updater';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { AUAssistant } from '@/components/au-assistant';
 import './globals.css';
 
 const APP_NAME = 'DataCube AU';
@@ -91,6 +92,7 @@ export default function RootLayout({
                           <SessionDebugPanel />
                           <ServiceWorkerRegister />
                           <ServiceWorkerUpdater />
+                          <AUAssistant />
                           <Toaster />
                         </div>
                       </div>

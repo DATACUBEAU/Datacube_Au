@@ -93,7 +93,7 @@ flowchart LR
 
   AdminUI --> AdminAPI
   AdminAPI -->|"masked DTOs only"| AdminUI
-  AdminAPI -->|"server-only raw provider key write/read"| Postgres
+  AdminAPI -->|"server-side encrypted provider-key storage"| Postgres
   AdminAPI --> Audit
   Gateway --> Logs
   NextAPI --> Logs

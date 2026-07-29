@@ -1,6 +1,11 @@
 import { jwtVerify } from 'jose';
 import { logger } from './utils.js';
 
+const aiGatewayContract = require('../../shared/ai-gateway-contract.cjs') as {
+  normalizeGatewayPath(rawUrl: string): string;
+  routeRequirementForGatewayPath(rawUrl: string): GatewayRouteRequirement | null;
+};
+
 const EXPLICIT_DEV_SECRET_FLAG = 'DCAU_ALLOW_INSECURE_DEV_VPS_SECRET';
 const LOCAL_DEV_SHARED_SECRET = 'dcau-explicit-local-dev-vps-secret';
 const TICKET_ISSUER = 'dcau-next';
@@ -39,16 +44,6 @@ type VpsCorsEnv =
   Partial<Record<'ALLOWED_ORIGINS' | 'NODE_ENV', string | undefined>> &
   Record<string, string | undefined>;
 
-const GATEWAY_ROUTE_REQUIREMENTS: Record<string, GatewayRouteRequirement> = {
-  '/chat/au-chat': { route: '/chat/au-chat', featureKey: 'au_chat' },
-  '/chat/global-chat': { route: '/chat/global-chat', featureKey: 'global_chat' },
-  '/chat/legacy': { route: '/chat/legacy', featureKey: 'au_chat' },
-  '/generate/knowledge': { route: '/generate/knowledge', featureKey: 'knowledge_generation' },
-  '/generate/exam-predictions': { route: '/generate/exam-predictions', featureKey: 'exam_predictions' },
-  '/generate/practice-exam': { route: '/generate/practice-exam', featureKey: 'practice_exam_generation' },
-  '/generate/prompt-starters': { route: '/generate/prompt-starters', featureKey: 'prompt_starters' },
-};
-
 export function resolveVpsSharedSecret(
   env: VpsSharedSecretEnv = process.env,
 ): VpsSecretResolution {
@@ -68,16 +63,11 @@ export function resolveVpsSharedSecret(
 }
 
 export function normalizeGatewayPath(rawUrl: string): string {
-  const raw = String(rawUrl || '').trim() || '/';
-  const withoutQuery = raw.split('?')[0] || '/';
-  return withoutQuery.endsWith('/') && withoutQuery !== '/'
-    ? withoutQuery.slice(0, -1)
-    : withoutQuery;
+  return aiGatewayContract.normalizeGatewayPath(rawUrl);
 }
 
 export function routeRequirementForPath(rawUrl: string): GatewayRouteRequirement | null {
-  const route = normalizeGatewayPath(rawUrl);
-  return GATEWAY_ROUTE_REQUIREMENTS[route] || null;
+  return aiGatewayContract.routeRequirementForGatewayPath(rawUrl);
 }
 
 export function resolveAllowedOrigins(

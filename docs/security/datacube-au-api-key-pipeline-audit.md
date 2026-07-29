@@ -1,6 +1,6 @@
 # DataCube AU API Key Pipeline Audit
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 Status model:
 
@@ -17,8 +17,8 @@ No raw secret values are included in this report.
 |---|---|---|
 | Browser/provider-key exposure | Green | Admin provider-key DTOs expose only configured status, last4/fingerprint, provider name, timestamps, and status fields. |
 | Legacy Conex admin token pipeline | Green | Custom admin token storage/header flow was removed from the browser. Old stored values are cleanup-only. |
-| Tracked secret exposure cleanup | Red | Confirmed tracked historical credential values were removed, but rotation is required because tracked exposure occurred. |
-| Secret table controls | Yellow | Migration is applied remotely and adds credential metadata, audit logs, RLS/revokes, and service-role-only access. Encryption-at-rest and direct live policy catalog verification are still outstanding. |
+| Tracked secret exposure cleanup | Yellow | Confirmed tracked historical credential values were removed, and the owner reports credential rotation is complete. Live post-rotation smoke tests are still pending. |
+| Secret table controls | Yellow | Credential metadata/audit hardening is applied. New provider-key create/update paths now use server-side encrypted storage metadata and masked DTOs, but the new encryption migration/code still needs deployment/live verification and legacy plaintext rows must be re-entered or rotated. |
 | Public/service-worker exposure | Green | Static checks assert no high-confidence raw secret values or credential plumbing in tracked public files. |
 
 ## Supabase Migration Retry Status
@@ -36,12 +36,12 @@ Remote schema metadata confirms the provider key audit table exists, the `au_api
 | Secret category | Primary storage | Components that use it | Browser-visible | Status | Required action |
 |---|---|---|---|---|---|
 | Supabase anon/publishable key | `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `SUPABASE_ANON_KEY` | Browser client, server proxy calls | Yes, by design | Green | Keep scoped as anon/publishable only. |
-| Supabase service-role / secret key | Server env only | Next.js admin APIs, RAG worker, VPS gateway optional server reads | No | Red | Rotate because a service-role-looking value was found in tracked backend scripts. |
+| Supabase service-role / secret key | Server env only | Next.js admin APIs, RAG worker, VPS gateway optional server reads | No | Yellow | Owner reports rotation complete; run frontend/server, Oracle VPS, RAG worker, and cron/background smoke tests before marking Green. |
 | Supabase JWT secret references | Env/config references only | Supabase Auth/JWT validation context | No | Grey | Verify live Supabase project secret never appears in repo, logs, or generated files. |
 | `VPS_SHARED_SECRET` | Next.js server env and Oracle VPS env | `/api/au/vps-ticket`, VPS gateway verifier | No raw value; short-lived ticket is browser-visible by design | Yellow | Ensure matching values on Next.js and Oracle VPS; rotate after deploy if exposure suspected. |
 | Qdrant API key | Server/VPS/worker env | VPS gateway retrieval, RAG worker, retention/repair tools | No | Green | Keep off `NEXT_PUBLIC_*`; verify Oracle VPS log redaction. |
 | OpenAI API key | VPS env or provider table if configured | Gateway provider router / server model router | No | Green | Rotate any historical exposed provider keys; keep server-only. |
-| OpenRouter API key | VPS env or `au_api_keys` / `ai_provider_keys` | Gateway provider router / server model router | No | Red | Rotate confirmed tracked historical provider keys. |
+| OpenRouter API key | VPS env or `au_api_keys` / `ai_provider_keys` | Gateway provider router / server model router | No | Yellow | Owner reports rotation complete; re-enter database-stored provider keys through the encrypted admin path and verify live provider calls. |
 | Anthropic API key | VPS env | Gateway provider router | No | Green | Keep server-only and out of logs. |
 | Google/Gemini API key | Env if present | Provider router if added later | No | Grey | No active repo path confirmed in this pass. |
 | Paystack secret key | Server env | `src/lib/server/paystack.ts`, billing sessions/webhooks | No | Green | Keep server-only, rotate if deployment logs ever exposed. |
@@ -49,9 +49,9 @@ Remote schema metadata confirms the provider key audit table exists, the `au_api
 | Flutterwave secret key | Server env | `src/lib/payments/flutterwave.ts`, webhook route | No | Green | Keep server-only. |
 | Flutterwave public key | Public env/config if used | Browser checkout | Yes, by design | Green | Public key only. |
 | Webhook secrets | Server env | Paystack/Flutterwave webhook verification | No | Green | Keep no-store responses and bounded request bodies. |
-| Admin override credentials | Historical `au_admin_config`; current Supabase admin authorization | Server/db only | No | Red | Rotate historical values and migrate to env/encrypted storage. |
-| Provider registry keys | `au_api_keys` / optional `ai_provider_keys` | Admin handler, server AI routing | No | Yellow | Migration adds metadata/audit. Add encryption-at-rest next. |
-| Model routing provider keys | Same as provider registry | Server AI routing | No | Yellow | Server-only raw read remains necessary for provider calls. |
+| Admin override credentials | Historical `au_admin_config`; current Supabase admin authorization | Server/db only | No | Yellow | Owner reports rotation complete; verify no legacy admin credential remains active in production. |
+| Provider registry keys | `au_api_keys` / optional `ai_provider_keys` | Admin handler, server AI routing | No | Yellow | New create/update stores encrypted values server-side; legacy plaintext rows must be re-entered/rotated. |
+| Model routing provider keys | Same as provider registry | Server AI routing | No | Yellow | Server-side decrypt is used for encrypted rows; plaintext fallback remains only for legacy rows until rotation/re-entry is complete. |
 | Generated signed VPS ticket | Generated by `/api/au/vps-ticket` | Browser sends to VPS gateway | Yes, short-lived bearer | Yellow | Keep 5-minute TTL, route binding, no logging, no persistence. |
 | Authorization bearer token | Supabase session/browser requests; VPS ticket/gateway requests | Browser, Next.js, VPS | Yes for active sessions | Green | Do not persist in offline queue; never log. |
 | Refresh token | Supabase auth storage | Browser Supabase client | Yes, managed by Supabase client | Yellow | Verify browser storage configuration and sign-out cleanup in live clients. |
@@ -61,15 +61,15 @@ Remote schema metadata confirms the provider key audit table exists, the `au_api
 
 | Table | Columns / secret fields | Access and code paths | RLS / service-role status | Browser risk | Status |
 |---|---|---|---|---|---|
-| `public.au_api_keys` | Raw: `key_value`; masked: `key_last4`, `key_fingerprint`; metadata: `rotated_at`, `revoked_at`, `last_used_at`, `created_by`, `updated_by` | `src/app/api/admin/handler/route.ts`, `src/lib/server/ai-routing.ts` | Migration enables RLS, revokes anon/authenticated, grants service_role, and adds audit metadata. Server AI routing reads `key_value` explicitly. | Admin browser gets masked DTO only. | Yellow |
-| `public.ai_provider_keys` | Optional compat table with possible `key_value`; migration adds mask/audit metadata if it is a real table | `src/lib/server/ai-routing.ts` fallback | Migration hardens if table exists as a table. | No browser route should expose it. | Yellow |
-| `public.au_key_groups` | Historical `api_key`; migration adds `api_key_last4`, `api_key_fingerprint`, rotation/revocation metadata if table exists | No active current app path found | Migration hardens if table exists. | Not browser-facing in current repo. | Yellow |
-| `public.au_admin_config` | Historical `challenge_answer` and `admin_access_key` seed values | Legacy backend migration only in tracked repo | Historical raw values removed from migration. Live table may still contain old values if previously applied. | Should never be directly client-readable. | Red |
+| `public.au_api_keys` | Encrypted: `encrypted_key_value`; legacy raw fallback: `key_value`; masked: `key_last4`, `key_fingerprint`; metadata: `rotated_at`, `revoked_at`, `last_used_at`, `created_by`, `updated_by`, `key_encryption_version`, `key_encrypted_at`, `key_reference` | `src/app/api/admin/handler/route.ts`, `src/lib/server/ai-routing.ts` | RLS enabled, anon/authenticated revoked, service_role granted. New admin create/update writes encrypted value and nulls `key_value`; server AI routing decrypts encrypted rows server-side only. | Admin browser gets masked DTO only. | Yellow |
+| `public.ai_provider_keys` | Optional compat table with possible `encrypted_key_value` or legacy `key_value`; metadata columns added if it is a real table | `src/lib/server/ai-routing.ts` fallback | Migration hardens if table exists as a table. | No browser route should expose it. | Yellow |
+| `public.au_key_groups` | Historical `api_key`; migration adds masked metadata, and encryption-reference columns if table exists | No active current app path found | Migration hardens if table exists. | Not browser-facing in current repo. | Yellow |
+| `public.au_admin_config` | Historical `challenge_answer` and `admin_access_key` seed values | Legacy backend migration only in tracked repo | Historical raw values removed from migration; owner reports rotation complete. | Should never be directly client-readable. | Yellow |
 | `public.au_admin_sessions` | Session IDs and lockout state, no provider key | Legacy/admin auth flows | Migration hardens if table exists. | Browser no longer stores returned custom admin token. | Yellow |
 | `public.admin_access_logs` | IP, attempt count, lockout timestamp | `src/app/api/admin/auth/route.ts` | Explicit select only; server-side admin client. | Not browser raw credential data. | Green |
 | `public.au_config` | Billing/config fields and `alert_config`, no raw provider key intended | `src/app/api/admin/handler/route.ts`, `rag-worker/src/worker.ts`, background config route | Admin handler now uses explicit DTO. Existing historical policy may allow public reads; not treated as secret table unless secret data is inserted. | Could leak if secrets are mis-stored there. | Yellow |
 
-RLS alone is not considered sufficient for credential tables. The implemented controls are server-only access, explicit column selection, masked DTOs, no raw key echo on create/update/delete, audit metadata, and static tests. Encryption-at-rest is still a required follow-up.
+RLS alone is not considered sufficient for credential tables. The implemented controls are server-only access, explicit column selection, masked DTOs, no raw key echo on create/update/delete, audit metadata, app-layer encrypted storage for new provider-key writes, and static tests. Legacy plaintext rows remain Yellow until re-entered or rotated through the encrypted path.
 
 ## API Routes And Functions
 
@@ -94,25 +94,26 @@ Current behavior:
 - Admin browser never receives raw provider key values from the model registry.
 - Provider-key list returns configured status, `key_last4`, `key_fingerprint`, provider type, service, model allowlist, timestamps, and non-secret metadata.
 - Create/update accepts a new secret but does not echo it back.
-- Revoke clears server-side `key_value`, marks inactive, and records `revoked_at`.
+- New provider-key create/update encrypts the secret server-side, stores masked metadata, nulls legacy `key_value`, and does not echo the value back.
+- Revoke clears server-side plaintext, encrypted value, encryption metadata/reference fields, marks inactive, and records `revoked_at`.
 - Legacy `conex_admin_token` localStorage/header usage was removed; old stored values are only deleted.
 - Admin auth proxy strips token/secret/key/credential fields from upstream payloads.
 - Admin access-log lookup no longer uses `select('*')`.
 
 Remaining gaps:
 
-- `au_api_keys` and compat provider-key tables still store raw values unless the next encryption migration is implemented.
+- Existing legacy provider-key rows may still contain plaintext `key_value` until an owner/admin re-enters or rotates them through the encrypted path.
 - No admin re-auth UX beyond existing Conex/Supabase admin checks was added in this pass.
 - Provider key `last_used_at` exists, but full use-audit on every provider request is not implemented yet.
-- Direct live policy catalog verification must still be completed after the Supabase pooler temp-role issue clears.
+- Direct live policy catalog verification and live provider-use tests must still be completed after deployment.
 
-Recommended encryption-safe plan:
+Provider-key encrypted storage plan:
 
-1. Add encrypted value column such as `encrypted_key_value`, using Supabase Vault/pgsodium or provider-managed secret references.
-2. Backfill encrypted values server-side without printing raw secrets.
-3. Update `src/lib/server/ai-routing.ts` and gateway deployment to resolve secrets server-side only.
-4. Stop reading plaintext `key_value`, then null or remove it after rotation.
-5. Keep `key_last4`, `key_fingerprint`, rotation metadata, and audit logs for UI/status.
+1. Set `PROVIDER_KEY_ENCRYPTION_SECRET` in server-only runtime secret storage for the Next.js/admin server.
+2. Apply `supabase/migrations/20260729120000_provider_key_encryption_columns.sql` before using the new admin provider-key write path.
+3. Re-enter or rotate existing database-stored provider keys through the admin UI/API so they are stored in `encrypted_key_value` and legacy `key_value` is nulled.
+4. Keep `key_last4`, `key_fingerprint`, rotation metadata, and audit logs for UI/status.
+5. After all legacy rows are rotated and live provider calls pass, remove plaintext fallback in a later migration-safe task.
 
 ## API Key Flow Diagram
 
@@ -145,7 +146,7 @@ flowchart LR
 
   AdminUI -->|"new secret on create/update only"| AdminAPI
   AdminAPI --> Validate
-  Validate -->|"raw secret server-side only"| CredentialTable
+  Validate -->|"encrypt server-side"| CredentialTable
   Validate -->|"masked DTO"| AdminUI
   Validate --> Audit
   Router -->|"server-side raw key use"| CredentialTable
@@ -167,9 +168,9 @@ Confirmed exposure found: yes.
 
 | Location type | File paths | Tracked by git | Action | Rotation |
 |---|---|---:|---|---|
-| Tracked backend diagnostic scripts | `backend/check_env.cjs`, `backend/check_env.ts`, `backend/debug_stuck.cjs`, `backend/requeue_jobs.cjs`, `backend/requeue_jobs.ts`, `backend/verify_pipeline.ts`, `backend/verify_trigger.ps1` | Yes | Replaced with env-only placeholders. | Required for the service-role-looking credential. |
+| Tracked backend diagnostic scripts | `backend/check_env.cjs`, `backend/check_env.ts`, `backend/debug_stuck.cjs`, `backend/requeue_jobs.cjs`, `backend/requeue_jobs.ts`, `backend/verify_pipeline.ts`, `backend/verify_trigger.ps1` | Yes | Replaced with env-only placeholders. | Owner reports rotation complete; live smoke tests pending. |
 | Tracked historical admin credential migration | `backend/supabase/migrations/20260129000001_admin_system.sql` | Yes | Replaced hardcoded seed values with placeholders. | Required for admin challenge/access credentials. |
-| Tracked historical provider-key migration | `backend/supabase/migrations/20260202000001_cleanup_and_sync_keys.sql` | Yes | Removed provider key seeding and replaced with no-op-safe migration note. | Required for the provider keys. |
+| Tracked historical provider-key migration | `backend/supabase/migrations/20260202000001_cleanup_and_sync_keys.sql` | Yes | Removed provider key seeding and replaced with no-op-safe migration note. | Owner reports rotation complete; live provider smoke tests pending. |
 | Tracked Supabase temp metadata | `supabase/.temp/*` | Was tracked | Removed from git index; already gitignored. | No key rotation based on temp paths alone. |
 | Generated migration helper scripts | `scripts/apply_migration_temp.ts`, `scripts/apply_migration_via_handler.ts` | Yes | Deleted to enforce Supabase CLI-only migration workflow. | Not required from these files alone; they used env names, not raw values. |
 | Browser build artifact | `.next/static/chunks/*` | No | JWT-shaped Supabase key decoded locally as `role: anon`; no raw value printed. | No rotation if live value is truly anon/publishable; rotate immediately if service-role was ever used in `NEXT_PUBLIC_SUPABASE_ANON_KEY`. |
@@ -179,17 +180,17 @@ Raw value printed in this report: no.
 
 External API validation with exposed keys: not performed.
 
-Bounded git-history review: high-confidence token-shaped values were found in the known exposure files' history using fingerprint-only output. Rotation remains required for the affected service-role-looking and provider-key-looking credentials. Historical admin challenge/access seed values were also removed from the tracked migration and must be rotated if ever deployed.
+Bounded git-history review: high-confidence token-shaped values were found in the known exposure files' history using fingerprint-only output. The owner reports rotation is now complete for the affected credentials. Historical admin challenge/access seed values were also removed from the tracked migration; live systems must still confirm no legacy credential remains active.
 
 ## Runtime Secret Ownership Map
 
 | Secret name | Stored in env/table/provider | Used by component | Browser-visible | Server-only | Rotatable | Current risk | Required action |
 |---|---|---|---:|---:|---:|---|---|
 | `VPS_SHARED_SECRET` | Env | Next.js ticket route + Oracle VPS gateway | No raw value | Yes | Yes | Yellow | Ensure same value on both sides; rotate if exposed. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Env | Next.js admin APIs, RAG worker, optional VPS server reads | No | Yes | Yes | Red | Rotate due tracked exposure evidence. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Env | Next.js admin APIs, RAG worker, optional VPS server reads | No | Yes | Yes | Yellow | Owner reports rotation complete; verify post-rotation live services and logs. |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Env/public config | Browser Supabase client | Yes | No | Yes | Green | Confirm it is anon only. |
 | `QDRANT_API_KEY` | Env | VPS gateway, RAG worker, retention tooling | No | Yes | Yes | Green | Keep off frontend and logs. |
-| `OPENROUTER_API_KEY` | Env or `au_api_keys` | Provider router/gateway | No | Yes | Yes | Red | Rotate historical exposed keys. |
+| `OPENROUTER_API_KEY` | Env or `au_api_keys` | Provider router/gateway | No | Yes | Yes | Yellow | Owner reports rotation complete; verify provider calls and re-enter database rows through encrypted storage. |
 | `OPENAI_API_KEY` | Env | Provider router/gateway | No | Yes | Yes | Green | Keep server-only. |
 | `ANTHROPIC_API_KEY` | Env | Provider router/gateway | No | Yes | Yes | Green | Keep server-only. |
 | `PAYSTACK_SECRET_KEY` / `PAYSTACK_SECRET` | Env | Billing server routes | No | Yes | Yes | Green | Keep server-only. |
@@ -209,6 +210,23 @@ Bounded git-history review: high-confidence token-shaped values were found in th
 - Admin handler static checks assert no `select('*')`, no raw provider-key response, masked DTOs, and audit metadata.
 - Offline queue static tests assert Authorization/cookie/key/token headers are stripped and fresh auth is resolved at replay time.
 
+## Provider-Key Encryption Implementation Status
+
+Current storage model:
+
+- Environment provider keys remain server-only env values.
+- Database provider keys now have nullable encrypted/provider-reference columns.
+- New admin create/update stores `encrypted_key_value`, `key_encryption_version`, `key_encrypted_at`, `key_last4`, `key_fingerprint`, and rotation metadata.
+- New admin create/update sets legacy `key_value` to null.
+- Server AI routing decrypts encrypted rows only in server code immediately before provider use.
+- Legacy plaintext `key_value` fallback remains for existing rows until owners rotate/re-enter those rows.
+
+Required server-only env var names:
+
+- `PROVIDER_KEY_ENCRYPTION_SECRET`
+
+Do not define this as `NEXT_PUBLIC_*`.
+
 ## Final Addendum Status
 
-API key pipeline partially safe; listed rotations/fixes required.
+API key pipeline partially safe; post-rotation live checks and legacy provider-key re-entry are still required before Green.

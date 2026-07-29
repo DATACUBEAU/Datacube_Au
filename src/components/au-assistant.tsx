@@ -11,54 +11,91 @@ interface Step {
   target?: string;
   title: string;
   content: string;
+  actions: string[];
 }
 
 const TOUR_STEPS: Record<string, Step> = {
   '/dashboard': {
-    title: 'Welcome to Dashboard',
-    content: 'This is your control center. Start with Documents, then move into AU Chat, Knowledge Hub, Predictions, Practice, Global Chat, and Settings as you study.',
+    title: 'Your Dashboard',
+    content: 'This is your study home. It brings together your documents, chats, generated study tools, plan status, and account activity.',
+    actions: ['Upload a document', 'Open AU Chat', 'Check your plan status'],
   },
   '/dashboard/documents': {
-    title: 'Document Management',
-    content: 'Upload textbooks, notes, slides, and question papers here. Document versions drive chat grounding, cached feature outputs, storage limits, and practice attempts.',
+    title: 'Documents',
+    content: 'Upload files here so AU can read them and use them for summaries, questions, practice exams, and predictions.',
+    actions: ['Upload a PDF or document', 'Wait for processing to finish', 'Ask a document question'],
   },
   '/dashboard/chat': {
     title: 'AU Chat',
-    content: 'This is document-grounded chat. Ask about the selected material and AU answers from your uploaded content first, with retrieval and usage limits enforced server-side.',
+    content: 'Ask questions about your uploaded material. AU answers from the selected document and keeps citations attached when sources are available.',
+    actions: ['Choose a processed document', 'Ask a specific question', 'Open cited sources'],
   },
   '/dashboard/global-chat': {
-    title: 'Datacube AU Global Chat',
-    content: 'Use this for app-wide help and navigation. Keep document-specific questions in AU Chat for grounded answers.',
+    title: 'Global Chat',
+    content: 'Use this for general study help, planning, and app guidance. Keep document-specific questions in AU Chat for grounded answers.',
+    actions: ['Ask for a study plan', 'Clarify a concept', 'Switch to AU Chat for document answers'],
   },
   '/dashboard/knowledge': {
     title: 'Knowledge Hub',
-    content: 'Generate summaries, key points, concept maps, topic relationships, and study roadmaps. Each document version generates once and then reuses the saved output.',
+    content: 'Turn a processed document into compact study material such as summaries, key points, concept links, and roadmaps.',
+    actions: ['Select a document', 'Generate the study pack', 'Review saved output before chat'],
   },
   '/dashboard/predictions': {
     title: 'Exam Predictions',
-    content: 'This Pro feature combines your past questions and textbook to produce one saved exam briefing per document version. It will not regenerate unless the source version changes.',
+    content: 'Create a focused exam briefing from your materials. Use it after uploading the textbook or past questions you want AU to compare.',
+    actions: ['Pick source documents', 'Generate predictions', 'Review before practice'],
   },
   '/dashboard/practice': {
     title: 'Practice Exams',
-    content: 'Generate one compact question pack per document version, then retry it without extra token cost. Attempts are saved separately from generation.',
+    content: 'Generate practice questions from your document, then attempt and retry them while keeping your results separate from the source material.',
+    actions: ['Select a document', 'Generate questions', 'Submit and review answers'],
   },
   '/dashboard/messages': {
     title: 'Messages',
-    content: 'Use Messages for notifications, alerts, and system updates tied to your account activity.',
+    content: 'Check account alerts, upload updates, and system messages tied to your activity.',
+    actions: ['Review unread messages', 'Open important alerts', 'Return to your study flow'],
   },
   '/dashboard/settings': {
     title: 'Settings',
-    content: 'Manage your preferences, assistant behavior, onboarding toggle, and account-level controls here.',
+    content: 'Manage account preferences, assistant behavior, security settings, and study defaults from one place.',
+    actions: ['Review your preferences', 'Adjust assistant settings', 'Check subscription options'],
   },
   '/dashboard/settings/subscription': {
     title: 'Subscription',
-    content: 'Review your current plan, billing status, and feature access. Limits and Pro-only capabilities are enforced from here across the system.',
+    content: 'Review your current plan, billing status, feature access, and usage limits.',
+    actions: ['Confirm billing status', 'Compare plan limits', 'Update your plan if needed'],
+  },
+  '/conex': {
+    title: 'Conex Console',
+    content: 'This admin area is for operational oversight: users, plans, feature flags, provider configuration, activity, and system health.',
+    actions: ['Review system health', 'Check provider configuration', 'Open user management'],
+  },
+  '/conex/users': {
+    title: 'User Management',
+    content: 'Review user access, plan assignment, and account status without exposing private credentials or session values.',
+    actions: ['Search for a user', 'Review plan status', 'Apply only necessary changes'],
+  },
+  '/conex/plan-limits': {
+    title: 'Plan Limits',
+    content: 'Tune feature limits and plan behavior for the product. Changes here affect what users can do across AI and document workflows.',
+    actions: ['Review the active plan', 'Compare limit values', 'Save only intentional updates'],
+  },
+  '/pricing': {
+    title: 'Plans and Pricing',
+    content: 'Compare the available plans and choose the level that matches your document volume, AI usage, and study needs.',
+    actions: ['Compare feature access', 'Check limits', 'Choose a plan when ready'],
+  },
+  '/login': {
+    title: 'Sign In',
+    content: 'Sign in to reach your dashboard, documents, chats, and saved study outputs. If your session expired, signing in again refreshes access.',
+    actions: ['Enter your account details', 'Complete sign in', 'Return to your dashboard'],
   },
 };
 
 const DEFAULT_STEP: Step = {
   title: 'AU Onboarding Assistant',
-  content: 'Follow along as you explore the dashboard. I will explain what each page does, what is cached, and which features are document-grounded or Pro-only.',
+  content: 'Follow along as you explore DataCube AU. I will explain the current page and suggest useful next steps.',
+  actions: ['Explore the page', 'Open help when needed', 'Dismiss this card anytime'],
 };
 
 const LONG_PRESS_MS = 650;
@@ -66,9 +103,28 @@ const DRAG_THRESHOLD_PX = 6;
 const EDGE_PADDING_PX = 16;
 const DEFAULT_BOTTOM_OFFSET_PX = 24;
 
+function pageStoragePath(pathname: string | null): string {
+  return String(pathname || '/').replace(/[^a-z0-9/_-]/gi, '_');
+}
+
+function resolveStep(pathname: string | null): Step | null {
+  const normalized = String(pathname || '').replace(/\/$/, '') || '/';
+  if (TOUR_STEPS[normalized]) return TOUR_STEPS[normalized];
+
+  if (normalized.startsWith('/conex/users')) return TOUR_STEPS['/conex/users'];
+  if (normalized.startsWith('/conex/plan-limits')) return TOUR_STEPS['/conex/plan-limits'];
+  if (normalized.startsWith('/conex')) return TOUR_STEPS['/conex'];
+  if (normalized.startsWith('/dashboard/settings/subscription')) return TOUR_STEPS['/dashboard/settings/subscription'];
+  if (normalized.startsWith('/dashboard/settings')) return TOUR_STEPS['/dashboard/settings'];
+  if (normalized.startsWith('/dashboard')) return TOUR_STEPS['/dashboard'];
+
+  return null;
+}
+
 export function AUAssistant() {
   const [isVisible, setIsVisible] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
+  const [dismissedCurrentPage, setDismissedCurrentPage] = useState(false);
   const pathname = usePathname();
   const [user] = useSupabaseUser();
   const [currentStep, setCurrentStep] = useState<Step | null>(null);
@@ -80,14 +136,16 @@ export function AUAssistant() {
   const longPressTriggeredRef = useRef(false);
   const dragStateRef = useRef<{ startClientY: number; startOffsetY: number; dragging: boolean } | null>(null);
 
-  useEffect(() => {
-    if (!user) return;
+  const assistantScope = user?.id || 'guest';
 
-    const settingsKey = `au_assistant_settings_${user.id}`;
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const settingsKey = `au_assistant_settings_${assistantScope}`;
     const savedSetting = localStorage.getItem(settingsKey);
     setIsVisible(savedSetting !== 'disabled');
 
-    const positionKey = `au_assistant_position_${user.id}`;
+    const positionKey = `au_assistant_position_${assistantScope}`;
     const savedOffset = localStorage.getItem(positionKey);
     if (savedOffset != null) {
       const parsed = Number(savedOffset);
@@ -102,16 +160,25 @@ export function AUAssistant() {
     return () => {
       window.removeEventListener('au_assistant_settings_updated', handleSettingsUpdate as EventListener);
     };
-  }, [user]);
+  }, [assistantScope]);
 
   useEffect(() => {
-    if (TOUR_STEPS[pathname]) {
-      setCurrentStep(TOUR_STEPS[pathname]);
-      if (isVisible) setIsExpanded(true);
-    } else {
-      setCurrentStep(null);
+    if (typeof window === 'undefined') return;
+
+    const nextStep = resolveStep(pathname);
+    setCurrentStep(nextStep);
+
+    if (!nextStep) {
+      setDismissedCurrentPage(false);
+      setIsExpanded(false);
+      return;
     }
-  }, [pathname, isVisible]);
+
+    const dismissedKey = `au_assistant_dismissed_${assistantScope}_${pageStoragePath(pathname)}`;
+    const dismissed = localStorage.getItem(dismissedKey) === 'true';
+    setDismissedCurrentPage(dismissed);
+    if (isVisible) setIsExpanded(!dismissed);
+  }, [assistantScope, pathname, isVisible]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -135,11 +202,10 @@ export function AUAssistant() {
     };
   }, []);
 
-  if (!isVisible) return null;
+  if (!isVisible || !currentStep) return null;
 
   const hideAssistant = () => {
-    if (!user) return;
-    const settingsKey = `au_assistant_settings_${user.id}`;
+    const settingsKey = `au_assistant_settings_${assistantScope}`;
     localStorage.setItem(settingsKey, 'disabled');
     window.dispatchEvent(new CustomEvent('au_assistant_settings_updated', { detail: { enabled: false } }));
     setIsExpanded(false);
@@ -147,9 +213,15 @@ export function AUAssistant() {
   };
 
   const persistOffset = (nextOffset: number) => {
-    if (!user) return;
-    const positionKey = `au_assistant_position_${user.id}`;
+    const positionKey = `au_assistant_position_${assistantScope}`;
     localStorage.setItem(positionKey, String(nextOffset));
+  };
+
+  const dismissCurrentPage = () => {
+    const dismissedKey = `au_assistant_dismissed_${assistantScope}_${pageStoragePath(pathname)}`;
+    localStorage.setItem(dismissedKey, 'true');
+    setDismissedCurrentPage(true);
+    setIsExpanded(false);
   };
 
   const clampOffset = (nextOffset: number) => {
@@ -219,6 +291,14 @@ export function AUAssistant() {
       return;
     }
 
+    if (dismissedCurrentPage) {
+      const dismissedKey = `au_assistant_dismissed_${assistantScope}_${pageStoragePath(pathname)}`;
+      localStorage.removeItem(dismissedKey);
+      setDismissedCurrentPage(false);
+      setIsExpanded(true);
+      return;
+    }
+
     setIsExpanded((prev) => !prev);
   };
 
@@ -231,7 +311,7 @@ export function AUAssistant() {
     <AnimatePresence>
       <div
         ref={containerRef}
-        className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none"
+        className="pointer-events-none fixed inset-x-3 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-50 flex flex-col items-end gap-2 sm:inset-x-auto sm:right-6 sm:bottom-6"
         style={{ transform: `translateY(${offsetY}px)` }}
       >
         {isExpanded && (
@@ -239,13 +319,16 @@ export function AUAssistant() {
             initial={{ opacity: 0, y: 10, scale: 0.9 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.9 }}
-            className="pointer-events-auto bg-card border border-primary/20 shadow-xl rounded-2xl p-4 max-w-[300px] mb-2 relative"
+            className="pointer-events-auto relative mb-2 max-h-[min(70dvh,26rem)] w-full max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-primary/20 bg-card p-4 shadow-xl sm:max-w-[340px]"
+            role="status"
+            aria-live="polite"
           >
             <Button
               variant="ghost"
               size="icon"
               className="absolute top-1 right-1 h-6 w-6 text-muted-foreground hover:text-foreground"
-              onClick={() => setIsExpanded(false)}
+              onClick={dismissCurrentPage}
+              aria-label={`Dismiss ${currentStep.title} guidance`}
             >
               <X className="h-3 w-3" />
             </Button>
@@ -253,11 +336,19 @@ export function AUAssistant() {
               <div className="bg-primary/10 p-2 rounded-full shrink-0">
                 <Lightbulb className="h-5 w-5 text-primary" />
               </div>
-              <div>
-                <h4 className="font-semibold text-sm mb-1 text-primary">{(currentStep ?? DEFAULT_STEP).title}</h4>
+              <div className="min-w-0 pr-5">
+                <h4 className="mb-1 text-sm font-semibold text-primary">{(currentStep ?? DEFAULT_STEP).title}</h4>
                 <p className="text-xs text-muted-foreground leading-relaxed">
                   {(currentStep ?? DEFAULT_STEP).content}
                 </p>
+                <ul className="mt-3 space-y-1.5 text-xs text-foreground/85" aria-label="Suggested next actions">
+                  {(currentStep ?? DEFAULT_STEP).actions.slice(0, 3).map((action) => (
+                    <li key={action} className="flex gap-2">
+                      <span className="mt-[0.45rem] h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" aria-hidden="true" />
+                      <span className="min-w-0 leading-relaxed">{action}</span>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           </motion.div>
@@ -273,7 +364,10 @@ export function AUAssistant() {
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerCancel}
-          className="pointer-events-auto h-12 w-12 rounded-full bg-primary text-primary-foreground shadow-lg flex items-center justify-center hover:bg-primary/90 transition-colors"
+          className="pointer-events-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-colors hover:bg-primary/90"
+          type="button"
+          aria-label={isExpanded ? 'Collapse AU guidance' : dismissedCurrentPage ? 'Show AU guidance for this page' : 'Expand AU guidance'}
+          aria-expanded={isExpanded}
         >
           {isExpanded ? <ChevronRight className="h-6 w-6" /> : <Bot className="h-6 w-6" />}
         </motion.button>

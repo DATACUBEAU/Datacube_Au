@@ -1,12 +1,12 @@
 # DataCube AU Next Critical Sprint
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 ## Recommendation
 
-The next must-fix sprint is **Atomic Usage Accounting and Cost-Control Hardening**.
+The previously recommended must-fix sprint, **Atomic Usage Accounting and Cost-Control Hardening**, has now been implemented in code and migration files.
 
-This should be completed before serious public user load. The current hardening pass tightened VPS tickets, RAG boundaries, egress, and credential exposure, but usage accounting remains the largest Red operational risk because generation can be pre-charged or retried without a concurrency-safe reserve/commit lifecycle.
+This remains the reference design for the implemented reserve -> begin -> commit/release lifecycle. The remaining readiness work is live Oracle VPS/frontend/RAG verification, scheduling expired reservation cleanup, and provider cost monitoring.
 
 ## Why This Is Next
 
@@ -118,4 +118,4 @@ Recommended fields:
 
 ## Status
 
-Red until implemented and verified. This is the next critical fix before broad public traffic.
+Implemented and locally verified. Keep this Yellow for deployment readiness until Oracle VPS live retry/reconnect tests, expired reservation cleanup scheduling, and provider cost monitoring pass.

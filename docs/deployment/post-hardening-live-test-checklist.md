@@ -13,6 +13,7 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm the RAG worker deployment has the latest worker code.
 - [ ] Confirm cron/background workers are using the updated runtime environment if they use Supabase admin access.
 - [ ] Confirm `SUPABASE_SERVICE_ROLE_KEY` is set only in server-side secret storage and now contains the new `sb_secret` credential.
+- [ ] Confirm `PROVIDER_KEY_ENCRYPTION_SECRET` is set only in server-side frontend/admin runtime secret storage if database-stored provider keys are managed through Conex.
 - [ ] Confirm no `SUPABASE_SERVICE_ROLE_KEY`, provider key, Qdrant key, shared secret, webhook secret, or signed ticket is configured as `NEXT_PUBLIC_*`.
 - [ ] Confirm `ALLOWED_ORIGINS` contains the production frontend domain and does not use `*`.
 - [ ] Confirm `QDRANT_URL` is HTTPS in production or private loopback/VPN-only.
@@ -22,6 +23,7 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 ## 2. Restart And Redeploy Order
 
 - [ ] Deploy/restart the frontend server after the env replacement.
+- [ ] Deploy/restart the frontend server after adding or rotating `PROVIDER_KEY_ENCRYPTION_SECRET`.
 - [ ] Restart the Oracle VPS gateway after the env replacement.
 - [ ] Restart the RAG worker after the env replacement.
 - [ ] Restart any cron/background worker process that uses Supabase admin access.
@@ -52,6 +54,8 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Admin create/update/delete/reset actions work only for authorized admin users.
 - [ ] Provider key page lists provider status, provider name, timestamps, masked metadata, and configured/not configured state only.
 - [ ] Provider key create/update accepts a new key but does not echo it back.
+- [ ] Provider key create/update succeeds with `PROVIDER_KEY_ENCRYPTION_SECRET` configured and stores only encrypted credential data plus masked metadata for newly rotated rows.
+- [ ] Existing database-stored provider keys have been re-entered or rotated through the admin path so legacy plaintext rows are no longer needed.
 - [ ] Provider key revoke/delete does not expose the old key.
 - [ ] Admin API responses do not include raw credential rows, service-role keys, provider keys, Authorization headers, cookies, refresh tokens, or signed VPS tickets.
 - [ ] Admin server logs do not print raw provider errors, raw upstream responses, stack traces with env data, or secret values.

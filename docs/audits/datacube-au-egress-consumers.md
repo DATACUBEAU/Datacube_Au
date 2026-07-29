@@ -1,6 +1,6 @@
 # DataCube AU Egress Consumer Audit
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 Status model:
 
@@ -16,7 +16,7 @@ Status model:
 | VPS AI Gateway | Yellow | Ticket/CORS/provider/RAG hardening and reserve/commit/release accounting are in code. Live Oracle VPS env, service restart, and logs still need verification. |
 | RAG retrieval | Green | Gateway retrieval requires `user_id` and `document_id`, uses Qdrant top-k/bounded coverage, and has strict limited Supabase fallback. |
 | Browser/PWA private caching | Green | Protected API and Supabase requests are network-only; offline queued writes strip Authorization and credential headers. |
-| Admin/provider-key pipeline | Yellow | Browser DTOs are masked and legacy admin token storage was removed. Encryption-at-rest upgrade remains. |
+| Admin/provider-key pipeline | Yellow | Browser DTOs are masked, legacy admin token storage was removed, and new provider-key writes use server-side encrypted storage metadata. Live migration/app verification and legacy row re-entry remain. |
 | Supabase live policy state | Yellow | Credential-hardening and atomic usage migrations, including the daily/total scope fix and replay guard, were pushed; final dry run reports the remote database is up to date. Direct policy catalog verification and staging behavior checks still remain. |
 
 ## Supabase Consumers

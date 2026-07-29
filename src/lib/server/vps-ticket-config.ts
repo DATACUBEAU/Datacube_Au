@@ -1,4 +1,5 @@
 import type { TierFeatureKey } from '../tier/policy';
+import { resolveAiGatewayOperation } from '../../../shared/ai-gateway-contract';
 
 export type VpsTicketOperation = {
   requestFeature: string;
@@ -7,32 +8,8 @@ export type VpsTicketOperation = {
   usageFeature: string;
 };
 
-type OperationDefinition = Omit<VpsTicketOperation, 'requestFeature'>;
-
 const EXPLICIT_DEV_SECRET_FLAG = 'DCAU_ALLOW_INSECURE_DEV_VPS_SECRET';
 const LOCAL_DEV_SHARED_SECRET = 'dcau-explicit-local-dev-vps-secret';
-
-const VPS_TICKET_OPERATIONS = {
-  chat: { featureKey: 'au_chat', gatewayRoute: '/chat/au-chat', usageFeature: 'au-chat' },
-  'au-chat': { featureKey: 'au_chat', gatewayRoute: '/chat/au-chat', usageFeature: 'au-chat' },
-  au_chat: { featureKey: 'au_chat', gatewayRoute: '/chat/au-chat', usageFeature: 'au-chat' },
-  'global-chat': { featureKey: 'global_chat', gatewayRoute: '/chat/global-chat', usageFeature: 'global-chat' },
-  global_chat: { featureKey: 'global_chat', gatewayRoute: '/chat/global-chat', usageFeature: 'global-chat' },
-  'generate-knowledge': { featureKey: 'knowledge_generation', gatewayRoute: '/generate/knowledge', usageFeature: 'generate-knowledge' },
-  knowledge: { featureKey: 'knowledge_generation', gatewayRoute: '/generate/knowledge', usageFeature: 'generate-knowledge' },
-  knowledge_hub: { featureKey: 'knowledge_generation', gatewayRoute: '/generate/knowledge', usageFeature: 'generate-knowledge' },
-  knowledge_generation: { featureKey: 'knowledge_generation', gatewayRoute: '/generate/knowledge', usageFeature: 'generate-knowledge' },
-  'exam-generator': { featureKey: 'practice_exam_generation', gatewayRoute: '/generate/practice-exam', usageFeature: 'generate-practice-exam' },
-  'generate-practice-exam': { featureKey: 'practice_exam_generation', gatewayRoute: '/generate/practice-exam', usageFeature: 'generate-practice-exam' },
-  practice: { featureKey: 'practice_exam_generation', gatewayRoute: '/generate/practice-exam', usageFeature: 'generate-practice-exam' },
-  practice_exam_generation: { featureKey: 'practice_exam_generation', gatewayRoute: '/generate/practice-exam', usageFeature: 'generate-practice-exam' },
-  'prediction-engine': { featureKey: 'exam_predictions', gatewayRoute: '/generate/exam-predictions', usageFeature: 'generate-exam-predictions' },
-  'generate-exam-predictions': { featureKey: 'exam_predictions', gatewayRoute: '/generate/exam-predictions', usageFeature: 'generate-exam-predictions' },
-  exam_prediction: { featureKey: 'exam_predictions', gatewayRoute: '/generate/exam-predictions', usageFeature: 'generate-exam-predictions' },
-  exam_predictions: { featureKey: 'exam_predictions', gatewayRoute: '/generate/exam-predictions', usageFeature: 'generate-exam-predictions' },
-  'generate-prompt-starters': { featureKey: 'prompt_starters', gatewayRoute: '/generate/prompt-starters', usageFeature: 'generate-prompt-starters' },
-  prompt_starters: { featureKey: 'prompt_starters', gatewayRoute: '/generate/prompt-starters', usageFeature: 'generate-prompt-starters' },
-} satisfies Record<string, OperationDefinition>;
 
 export type VpsSharedSecretResolution =
   | { ok: true; secret: Uint8Array; source: 'env' | 'explicit_dev' }
@@ -42,17 +19,14 @@ type VpsSharedSecretEnv =
   Partial<Record<'VPS_SHARED_SECRET' | 'NODE_ENV' | 'DCAU_ALLOW_INSECURE_DEV_VPS_SECRET', string | undefined>> &
   Record<string, string | undefined>;
 
-function normalizeToken(value: unknown): string {
-  return String(value ?? '').trim().toLowerCase();
-}
-
 export function resolveVpsTicketOperation(value: unknown): VpsTicketOperation | null {
-  const requestFeature = normalizeToken(value || 'chat');
-  const operation = VPS_TICKET_OPERATIONS[requestFeature as keyof typeof VPS_TICKET_OPERATIONS];
+  const operation = resolveAiGatewayOperation(value || 'chat');
   if (!operation) return null;
   return {
-    requestFeature,
-    ...operation,
+    requestFeature: operation.requestFeature,
+    featureKey: operation.featureKey as TierFeatureKey,
+    gatewayRoute: operation.gatewayRoute,
+    usageFeature: operation.usageFeature,
   };
 }
 

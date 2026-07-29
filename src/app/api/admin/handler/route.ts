@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
-import { createHash } from 'node:crypto';
+import {
+  encryptProviderKey,
+  providerKeyFingerprint,
+  providerKeyLast4,
+} from '@/lib/server/provider-key-encryption';
 
 export const runtime = 'nodejs';
 
@@ -71,7 +75,7 @@ function maskProviderKey(raw: unknown): {
   }
 
   const last4 = key.slice(-4);
-  const fingerprint = createHash('sha256').update(key).digest('hex').slice(0, 12);
+  const fingerprint = providerKeyFingerprint(key).slice(0, 12);
   return {
     configured: true,
     key_last4: last4,
@@ -433,9 +437,12 @@ async function handleUpdateApiKey(supabase: any, body: any, requestId: string, a
     payload.created_by = actorUserId || null;
   }
   if (newKeyValue) {
-    payload.key_value = newKeyValue;
-    payload.key_last4 = newKeyValue.slice(-4);
-    payload.key_fingerprint = createHash('sha256').update(newKeyValue).digest('hex');
+    payload.encrypted_key_value = encryptProviderKey(newKeyValue);
+    payload.key_encryption_version = 'app_aes_256_gcm_v1';
+    payload.key_encrypted_at = new Date().toISOString();
+    payload.key_value = null;
+    payload.key_last4 = providerKeyLast4(newKeyValue);
+    payload.key_fingerprint = providerKeyFingerprint(newKeyValue);
     payload.rotated_at = new Date().toISOString();
   }
 
@@ -479,6 +486,10 @@ async function handleDeleteApiKey(supabase: any, body: any, requestId: string, a
     .from('au_api_keys')
     .update({
       key_value: null,
+      encrypted_key_value: null,
+      key_encryption_version: null,
+      key_encrypted_at: null,
+      key_reference: null,
       is_active: false,
       revoked_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),

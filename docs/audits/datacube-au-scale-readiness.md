@@ -112,5 +112,5 @@ Atomic usage accounting is now implemented through a Supabase-backed reserve -> 
 
 - Full provider quota scheduler.
 - Dedicated embedding service.
-- Encryption-at-rest migration for provider key values.
+- Legacy provider-key plaintext fallback removal after encrypted re-entry/rotation.
 - Large-scale realtime replacement.

@@ -1016,7 +1016,7 @@ const AdminBilling = (_props: { token?: string }) => {
                                 <CardTitle>Stripe Configuration</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                     <div className="space-y-2">
                                         <Label>Weekly Price ID</Label>
                                         <Input value={config.stripe_price_weekly || ''} onChange={(e) => setConfig({...config, stripe_price_weekly: e.target.value})} placeholder="price_..." />
@@ -1039,7 +1039,7 @@ const AdminBilling = (_props: { token?: string }) => {
                                 <CardDescription>Displayed to users in the payment modal.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-4">
-                                <div className="grid grid-cols-2 gap-4">
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                     <div className="space-y-2">
                                         <Label>Bank Name</Label>
                                         <Input value={config.bank_name || ''} onChange={(e) => setConfig({...config, bank_name: e.target.value})} placeholder="e.g. Moniepoint" />
@@ -2307,7 +2307,7 @@ const ModelForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (da
           placeholder="Friendly Name"
         />
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>Provider</Label>
           <Input 
@@ -2326,7 +2326,7 @@ const ModelForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (da
           </Select>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-2">
            <Label>Context Window</Label>
            <Input type="number" value={data.context_window} onChange={e => setData({...data, context_window: parseInt(e.target.value)})} />
@@ -2336,7 +2336,7 @@ const ModelForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (da
            <Input type="number" value={data.rate_limit_rpm} onChange={e => setData({...data, rate_limit_rpm: parseInt(e.target.value)})} />
         </div>
       </div>
-      <div className="flex items-center gap-4 pt-4">
+      <div className="flex flex-wrap items-center gap-4 pt-4">
         <div className="flex items-center gap-2">
           <Switch checked={data.is_free} onCheckedChange={c => setData({...data, is_free: c})} />
           <Label>Free Tier</Label>
@@ -2362,10 +2362,11 @@ const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data
   });
 
   return (
-    <div className="space-y-4 py-4">
+    <div className="min-w-0 space-y-4 py-4">
       <div className="space-y-2">
         <Label>Service Name</Label>
         <Input 
+          className="min-w-0"
           value={data.service} 
           onChange={e => setData({...data, service: e.target.value})} 
           placeholder="e.g. openrouter-primary"
@@ -2375,6 +2376,7 @@ const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data
       <div className="space-y-2">
         <Label>API Key</Label>
         <Input 
+          className="min-w-0"
           type="password"
           value={data.key_value} 
           onChange={e => setData({...data, key_value: e.target.value})} 
@@ -2384,7 +2386,7 @@ const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data
       <div className="space-y-2">
         <Label>Provider Type</Label>
         <select 
-          className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex h-10 w-full min-w-0 items-center justify-between rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
           value={data.provider_type} 
           onChange={e => setData({...data, provider_type: e.target.value})}
         >
@@ -2394,7 +2396,7 @@ const KeyForm = ({ initialData, onSubmit }: { initialData?: any, onSubmit: (data
           <option value="google">Google</option>
         </select>
       </div>
-      <div className="flex items-center gap-2 pt-4">
+      <div className="flex flex-wrap items-center gap-2 pt-4">
           <Switch checked={data.is_active} onCheckedChange={c => setData({...data, is_active: c})} />
           <Label>Active</Label>
       </div>
