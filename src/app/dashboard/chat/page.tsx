@@ -62,6 +62,7 @@ import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import type { AuDocumentRow } from '@/lib/au/types';
 import { safeFetch } from '@/lib/api/safe-fetch';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { validateQuery } from '@/lib/upload/file-types';
 import { cn } from '@/lib/utils';
 import { FileNameText } from '@/components/FileNameText';
@@ -78,6 +79,7 @@ import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
 import { LimitToast } from '@/components/limits/limit-toast';
 import { toApiRequestError, type ApiRequestError } from '@/lib/api/api-contract';
+import { openSupportEmail } from '@/lib/support/contact';
 import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 
 import { generatePromptStarters, type ChatMessage } from '@/lib/api/chat';
@@ -623,10 +625,11 @@ export default function ChatPage() {
     setIsPromptStudioOpen(false);
 
     try {
+      const accessToken = await getSupabaseAccessToken();
       const documentTitle = selectedDocName || 'Current Document';
       const prompts = await generatePromptStarters(documentTitle, '', promptStudioInput, {
         documentId: selectedDocId,
-        accessToken: session?.access_token,
+        accessToken,
       });
       
       if (prompts.length > 0) {
@@ -637,11 +640,16 @@ export default function ChatPage() {
         });
       }
     } catch (error: any) {
-      console.error("[handleEnhancePrompt] Error:", error);
-      const errorDetail = error.response?.error || error.message || "Unknown error";
+      const normalizedError = toApiRequestError(error, 'Prompt generation failed.');
+      console.error('[handleEnhancePrompt] Error:', {
+        code: normalizedError.code,
+        status: normalizedError.status,
+        requestId: normalizedError.requestId,
+        correlationId: normalizedError.correlationId,
+      });
       toast({ 
         title: "Generation failed", 
-        description: `AU encountered an error: ${errorDetail}. Please try again.`, 
+        description: `AU encountered an error: ${normalizedError.message.slice(0, 160)}. Please try again.`,
         variant: "destructive" 
       });
     } finally {
@@ -770,7 +778,19 @@ export default function ChatPage() {
               }
             } catch (e) {
               // Fallback to ticket template if not admin or failed
-              window.open(`mailto:support@datacube-au.vercel.app?subject=Generation Error ${correlationId}&body=Hello, I encountered a generation error with Correlation ID: ${correlationId}. Please clear the cache for this document.`);
+              const opened = openSupportEmail({
+                subject: `Generation Error ${correlationId || ''}`.trim(),
+                body: `Hello, I encountered a generation error${correlationId ? ` with Correlation ID: ${correlationId}` : ''}. Please clear the cache for the affected document.`,
+              });
+              if (!opened) {
+                toast({
+                  variant: 'destructive',
+                  title: 'Support email not configured',
+                  description: correlationId
+                    ? `Share Correlation ID ${correlationId} with an administrator.`
+                    : 'Please contact an administrator to clear the affected generation cache.',
+                });
+              }
             }
           }}
         >

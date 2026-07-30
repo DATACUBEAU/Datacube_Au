@@ -1,24 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { timingSafeEqual } from 'crypto';
 import { runRetentionCleanup } from '@/lib/server/retention';
-import { firstEnv } from '@/lib/server/supabase-admin';
 
 export const runtime = 'nodejs';
 
+function jsonNoStore(body: unknown, init: ResponseInit = {}): NextResponse {
+  const headers = new Headers(init.headers);
+  headers.set('Cache-Control', 'no-store, private');
+  return NextResponse.json(body, { ...init, headers });
+}
+
+function configuredCronSecrets(): string[] {
+  return ['RETENTION_CRON_SECRET', 'CRON_SECRET']
+    .map((key) => String(process.env[key] || '').trim())
+    .filter(Boolean);
+}
+
+function safeSecretEquals(received: string, expected: string): boolean {
+  const receivedBuffer = Buffer.from(received);
+  const expectedBuffer = Buffer.from(expected);
+  return receivedBuffer.length === expectedBuffer.length && timingSafeEqual(receivedBuffer, expectedBuffer);
+}
+
 function authorized(req: NextRequest): boolean {
-  const expected = firstEnv('RETENTION_CRON_SECRET', 'CRON_SECRET');
-  if (!expected) {
+  const expectedSecrets = configuredCronSecrets();
+  if (expectedSecrets.length === 0) {
     return false;
   }
 
   const headerToken =
     req.headers.get('x-cron-secret') || req.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
 
-  return Boolean(headerToken && headerToken === expected);
+  return Boolean(headerToken && expectedSecrets.some((expected) => safeSecretEquals(headerToken, expected)));
 }
 
 async function handleRun(req: NextRequest) {
   if (!authorized(req)) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    return jsonNoStore({ error: 'unauthorized' }, { status: 401 });
   }
 
   try {
@@ -30,7 +48,7 @@ async function handleRun(req: NextRequest) {
       previewLimit: Math.max(1, Math.min(100, Number(req.nextUrl.searchParams.get('limit') || 50))),
     });
 
-    return NextResponse.json(
+    return jsonNoStore(
       {
         ok: true,
         dryRun,
@@ -49,7 +67,7 @@ async function handleRun(req: NextRequest) {
       { status: 200 },
     );
   } catch {
-    return NextResponse.json(
+    return jsonNoStore(
       {
         error: 'retention_cleanup_failed',
         message: 'Retention cleanup failed.',

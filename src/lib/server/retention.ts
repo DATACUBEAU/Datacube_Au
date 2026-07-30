@@ -247,6 +247,7 @@ type RunRetentionOptions = {
 type TableDeleteSpec = {
   table: string;
   columns: string[];
+  ownerColumns?: string[];
   treatReadOnlyAsSkipped?: boolean;
 };
 
@@ -456,7 +457,7 @@ async function listAllDocuments(supabase: SupabaseAdmin): Promise<DocumentRow[]>
     const { data, error } = await supabase
       .from('au_documents')
       .select(
-        'id,owner_id,user_id,file_name,file_path,status,expires_at,created_at,updated_at,cleanup_attempts,cleanup_last_error,cleanup_last_attempt_at,cleanup_pending,storage_deleted_at,source_deleted_at,source_cleanup_result',
+        'id,owner_id,user_id,file_name,file_path,status,expires_at,retention_expires_at,retention_tier,retention_days,retention_policy_version,created_at,updated_at,cleanup_attempts,cleanup_last_error,cleanup_last_attempt_at,cleanup_pending,storage_deleted_at,source_deleted_at,source_cleanup_result',
       )
       .order('created_at', { ascending: false })
       .range(start, end);
@@ -482,7 +483,7 @@ async function fetchDocumentById(
   const { data, error } = await supabase
     .from('au_documents')
     .select(
-      'id,owner_id,user_id,file_name,file_path,status,expires_at,created_at,updated_at,cleanup_attempts,cleanup_last_error,cleanup_last_attempt_at,cleanup_pending,storage_deleted_at,source_deleted_at,source_cleanup_result',
+      'id,owner_id,user_id,file_name,file_path,status,expires_at,retention_expires_at,retention_tier,retention_days,retention_policy_version,created_at,updated_at,cleanup_attempts,cleanup_last_error,cleanup_last_attempt_at,cleanup_pending,storage_deleted_at,source_deleted_at,source_cleanup_result',
     )
     .eq('id', documentId)
     .maybeSingle();
@@ -957,7 +958,7 @@ async function upsertAction(
     target_type: input.targetType,
     target_id: input.targetId,
     owner_id: input.ownerId,
-    email_snapshot: input.email,
+    email_snapshot: null,
     status: input.status,
     reason: input.reason,
     attempts: input.attempts,
@@ -1043,60 +1044,82 @@ async function deleteRowsForValue(
   supabase: SupabaseAdmin,
   value: string,
   specs: TableDeleteSpec[],
+  ownerId?: string | null,
 ): Promise<TableDeleteResult[]> {
-  return deleteRowsForValues(supabase, [value], specs);
+  return deleteRowsForValues(supabase, [value], specs, ownerId);
 }
 
 async function deleteRowsForValues(
   supabase: SupabaseAdmin,
   values: string[],
   specs: TableDeleteSpec[],
+  ownerId?: string | null,
 ): Promise<TableDeleteResult[]> {
   const targets = Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
   if (targets.length === 0) return [];
+  const normalizedOwnerId = String(ownerId || '').trim();
 
   const results: TableDeleteResult[] = [];
 
   for (const spec of specs) {
     let handled = false;
     let lastError: unknown = null;
+    const ownerColumns = spec.ownerColumns || [];
+    if (ownerColumns.length > 0 && !normalizedOwnerId) {
+      results.push({
+        table: spec.table,
+        status: 'skipped',
+        message: 'owner_filter_required',
+      });
+      continue;
+    }
 
     for (const column of spec.columns) {
-      let error: unknown = null;
-      for (const batch of chunk(targets)) {
-        const response = await supabase.from(spec.table).delete().in(column, batch);
-        if (response.error) {
-          error = response.error;
+      const ownerColumnCandidates = ownerColumns.length > 0 ? ownerColumns : [null];
+
+      for (const ownerColumn of ownerColumnCandidates) {
+        let error: unknown = null;
+        for (const batch of chunk(targets)) {
+          let query = supabase.from(spec.table).delete().in(column, batch);
+          if (ownerColumn) {
+            query = query.eq(ownerColumn, normalizedOwnerId);
+          }
+          const response = await query;
+          if (response.error) {
+            error = response.error;
+            break;
+          }
+        }
+
+        if (!error) {
+          results.push({ table: spec.table, status: 'deleted' });
+          handled = true;
           break;
         }
-      }
-
-      if (!error) {
-        results.push({ table: spec.table, status: 'deleted' });
-        handled = true;
-        break;
-      }
-      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        if (isMissingRelationError(error) || isMissingColumnError(error)) {
+          lastError = error;
+          continue;
+        }
+        if (spec.treatReadOnlyAsSkipped && isReadOnlyRelationError(error)) {
+          results.push({
+            table: spec.table,
+            status: 'skipped',
+            message: String((error as any)?.message || error),
+          });
+          handled = true;
+          break;
+        }
         lastError = error;
-        continue;
-      }
-      if (spec.treatReadOnlyAsSkipped && isReadOnlyRelationError(error)) {
         results.push({
           table: spec.table,
-          status: 'skipped',
+          status: 'failed',
           message: String((error as any)?.message || error),
         });
         handled = true;
         break;
       }
-      lastError = error;
-      results.push({
-        table: spec.table,
-        status: 'failed',
-        message: String((error as any)?.message || error),
-      });
-      handled = true;
-      break;
+
+      if (handled) break;
     }
 
     if (!handled) {
@@ -1115,40 +1138,58 @@ async function countRowsForValues(
   supabase: SupabaseAdmin,
   values: string[],
   specs: TableDeleteSpec[],
+  ownerId?: string | null,
 ): Promise<Array<{ table: string; count: number }>> {
   const targets = Array.from(new Set(values.map((value) => String(value || '').trim()).filter(Boolean)));
   if (targets.length === 0) return [];
+  const normalizedOwnerId = String(ownerId || '').trim();
 
   const counts: Array<{ table: string; count: number }> = [];
   for (const spec of specs) {
     let counted = false;
     let total = 0;
+    const ownerColumns = spec.ownerColumns || [];
+    if (ownerColumns.length > 0 && !normalizedOwnerId) {
+      continue;
+    }
 
     for (const column of spec.columns) {
-      let columnCount = 0;
-      let failed = false;
-      for (const batch of chunk(targets)) {
-        const { count, error } = await supabase
-          .from(spec.table)
-          .select(column, { count: 'exact', head: true })
-          .in(column, batch);
+      const ownerColumnCandidates = ownerColumns.length > 0 ? ownerColumns : [null];
 
-        if (error) {
-          if (isMissingRelationError(error) || isMissingColumnError(error)) {
-            failed = true;
-            break;
+      for (const ownerColumn of ownerColumnCandidates) {
+        let columnCount = 0;
+        let failed = false;
+        for (const batch of chunk(targets)) {
+          let query = supabase
+            .from(spec.table)
+            .select(column, { count: 'exact', head: true })
+            .in(column, batch);
+          if (ownerColumn) {
+            query = query.eq(ownerColumn, normalizedOwnerId);
           }
-          throw error;
+          const { count, error } = await query;
+
+          if (error) {
+            if (isMissingRelationError(error) || isMissingColumnError(error)) {
+              failed = true;
+              break;
+            }
+            throw error;
+          }
+
+          columnCount += Number(count || 0);
         }
 
-        columnCount += Number(count || 0);
+        if (!failed) {
+          total = columnCount;
+          counted = true;
+          break;
+        }
+
+        if (failed) continue;
       }
 
-      if (!failed) {
-        total = columnCount;
-        counted = true;
-        break;
-      }
+      if (counted) break;
     }
 
     if (counted) {
@@ -1185,6 +1226,7 @@ async function listDocumentVersionIds(supabase: SupabaseAdmin, documentId: strin
 async function cleanupDocumentArtifacts(
   supabase: SupabaseAdmin,
   documentId: string,
+  ownerId: string,
 ): Promise<{ results: TableDeleteResult[]; verification: Array<{ table: string; count: number }> }> {
   const versionIds = await listDocumentVersionIds(supabase, documentId);
   const results: TableDeleteResult[] = [];
@@ -1192,40 +1234,36 @@ async function cleanupDocumentArtifacts(
   if (versionIds.length > 0) {
     results.push(
       ...(await deleteRowsForValues(supabase, versionIds, [
-        { table: 'au_document_insights', columns: ['version_id'] },
-        { table: 'au_feature_outputs', columns: ['doc_version_id'] },
-        { table: 'au_practice_attempts', columns: ['doc_version_id'] },
-      ])),
+        { table: 'au_feature_outputs', columns: ['doc_version_id'], ownerColumns: ['user_id', 'owner_id'] },
+        { table: 'au_practice_attempts', columns: ['doc_version_id'], ownerColumns: ['user_id', 'owner_id'] },
+      ], ownerId)),
     );
   }
 
   results.push(
     ...(await deleteRowsForValue(supabase, documentId, [
-      { table: 'memory_summaries', columns: ['doc_id'] },
-      { table: 'au_document_embeddings', columns: ['document_id'] },
-      { table: 'au_document_chunks', columns: ['document_id'] },
-      { table: 'au_document_versions', columns: ['document_id'] },
-      { table: 'au_worker_jobs', columns: ['document_id'] },
-      { table: 'au_upload_jobs', columns: ['document_id'], treatReadOnlyAsSkipped: true },
-      { table: 'au_upload_audit_log', columns: ['document_id'] },
-    ])),
+      { table: 'memory_summaries', columns: ['doc_id'], ownerColumns: ['user_id', 'owner_id'] },
+      { table: 'au_document_embeddings', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+      { table: 'au_document_chunks', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+      { table: 'au_worker_jobs', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+      { table: 'au_upload_jobs', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'], treatReadOnlyAsSkipped: true },
+      { table: 'au_upload_audit_log', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+    ], ownerId)),
   );
 
   const verification = [
     ...(await countRowsForValues(supabase, [documentId], [
-      { table: 'memory_summaries', columns: ['doc_id'] },
-      { table: 'au_document_embeddings', columns: ['document_id'] },
-      { table: 'au_document_chunks', columns: ['document_id'] },
-      { table: 'au_document_versions', columns: ['document_id'] },
-      { table: 'au_worker_jobs', columns: ['document_id'] },
-      { table: 'au_upload_audit_log', columns: ['document_id'] },
-    ])),
+      { table: 'memory_summaries', columns: ['doc_id'], ownerColumns: ['user_id', 'owner_id'] },
+      { table: 'au_document_embeddings', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+      { table: 'au_document_chunks', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+      { table: 'au_worker_jobs', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+      { table: 'au_upload_audit_log', columns: ['document_id'], ownerColumns: ['owner_id', 'user_id'] },
+    ], ownerId)),
     ...(versionIds.length > 0
       ? await countRowsForValues(supabase, versionIds, [
-          { table: 'au_document_insights', columns: ['version_id'] },
-          { table: 'au_feature_outputs', columns: ['doc_version_id'] },
-          { table: 'au_practice_attempts', columns: ['doc_version_id'] },
-        ])
+          { table: 'au_feature_outputs', columns: ['doc_version_id'], ownerColumns: ['user_id', 'owner_id'] },
+          { table: 'au_practice_attempts', columns: ['doc_version_id'], ownerColumns: ['user_id', 'owner_id'] },
+        ], ownerId)
       : []),
   ].filter((row) => row.count > 0);
 
@@ -1472,7 +1510,7 @@ async function processDocumentCandidate(
     sourceCleanupResult: storageResult.result,
   });
 
-  const artifactCleanup = await cleanupDocumentArtifacts(supabase, candidate.documentId);
+  const artifactCleanup = await cleanupDocumentArtifacts(supabase, candidate.documentId, candidate.ownerId);
   const failedArtifacts = artifactCleanup.results.filter((row) => row.status === 'failed');
   if (failedArtifacts.length > 0 || artifactCleanup.verification.length > 0) {
     const artifactError = [
@@ -1854,7 +1892,7 @@ export async function deleteOwnedDocumentNow(input: {
     };
   }
 
-  const artifactCleanup = await cleanupDocumentArtifacts(supabase, documentId);
+  const artifactCleanup = await cleanupDocumentArtifacts(supabase, documentId, ownerId);
   const failedArtifacts = artifactCleanup.results.filter((entry) => entry.status === 'failed');
   if (failedArtifacts.length > 0 || artifactCleanup.verification.length > 0) {
     return {

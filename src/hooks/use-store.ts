@@ -19,7 +19,7 @@ function requireAiAccessToken(accessToken: string | null | undefined): string {
   if (!token) {
     throw toApiRequestError({
       code: 'AUTH_REQUIRED',
-      message: 'Session expired. Please sign in again.',
+      message: 'Sign in required.',
       status: 401,
       retryable: false,
     });
@@ -188,9 +188,18 @@ export const useStore = create<AppState>()(
               idempotencyKey,
               documentId: docId,
               pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
-            })
+            }),
+            authIntent: 'interactive',
+            suppressAuthError: true,
           });
-          if (!ticketRes.ok) throw new Error('Ticket generation failed');
+          if (!ticketRes.ok) {
+            throw toApiRequestError({
+              code: 'VPS_TICKET_FAILED',
+              message: 'AI ticket request failed.',
+              status: ticketRes.status,
+              retryable: ticketRes.status >= 500,
+            });
+          }
 
           const ticketData = await ticketRes.json();
           const { ticket, vpsUrl } = ticketData.data || ticketData;
@@ -212,7 +221,12 @@ export const useStore = create<AppState>()(
 
           let data, error = null;
           if (!res.ok) {
-            error = { message: await res.text() };
+            error = toApiRequestError({
+              code: 'KNOWLEDGE_GENERATION_FAILED',
+              message: 'Knowledge generation failed.',
+              status: res.status,
+              retryable: res.status >= 500 || res.status === 408 || res.status === 429,
+            });
           } else {
             data = await res.json();
           }
@@ -230,8 +244,14 @@ export const useStore = create<AppState>()(
           toast({ title: 'Knowledge materials generated successfully!' });
 
         } catch (error: any) {
-          const userFacingError = describeApiErrorForUser(error, { context: 'generation' });
-          console.error('Failed to generate study materials:', error);
+          const normalizedError = toApiRequestError(error, 'Knowledge generation failed.');
+          const userFacingError = describeApiErrorForUser(normalizedError, { context: 'generation' });
+          console.error('Failed to generate study materials:', {
+            code: normalizedError.code,
+            status: normalizedError.status,
+            requestId: normalizedError.requestId,
+            correlationId: normalizedError.correlationId,
+          });
           toast({
             variant: 'destructive',
             title: userFacingError.title,
@@ -277,8 +297,17 @@ export const useStore = create<AppState>()(
               mainTextbookId: options?.mainTextbookId || undefined,
               pastQuestionIds: hasPqIds ? options!.pastQuestionIds : undefined,
             }),
+            authIntent: 'interactive',
+            suppressAuthError: true,
           });
-          if (!ticketRes.ok) throw new Error('Ticket generation failed: ' + await ticketRes.text());
+          if (!ticketRes.ok) {
+            throw toApiRequestError({
+              code: 'VPS_TICKET_FAILED',
+              message: 'AI ticket request failed.',
+              status: ticketRes.status,
+              retryable: ticketRes.status >= 500,
+            });
+          }
 
           const ticketData = await ticketRes.json();
           const { ticket, vpsUrl } = ticketData.data || ticketData;
@@ -306,8 +335,12 @@ export const useStore = create<AppState>()(
           });
 
           if (!res.ok) {
-            const errText = await res.text();
-            throw new Error(errText || 'Prediction generation failed');
+            throw toApiRequestError({
+              code: 'EXAM_PREDICTION_GENERATION_FAILED',
+              message: 'Exam prediction generation failed.',
+              status: res.status,
+              retryable: res.status >= 500 || res.status === 408 || res.status === 429,
+            });
           }
 
           const result = await res.json() as GeneratePredictionsOutput;
@@ -316,8 +349,14 @@ export const useStore = create<AppState>()(
           
           toast({ title: 'Exam intelligence briefing generated!' });
         } catch (error: any) {
-          const userFacingError = describeApiErrorForUser(error, { context: 'generation' });
-          console.error('Failed to generate exam predictions:', error);
+          const normalizedError = toApiRequestError(error, 'Exam prediction generation failed.');
+          const userFacingError = describeApiErrorForUser(normalizedError, { context: 'generation' });
+          console.error('Failed to generate exam predictions:', {
+            code: normalizedError.code,
+            status: normalizedError.status,
+            requestId: normalizedError.requestId,
+            correlationId: normalizedError.correlationId,
+          });
           toast({
             variant: 'destructive',
             title: userFacingError.title,

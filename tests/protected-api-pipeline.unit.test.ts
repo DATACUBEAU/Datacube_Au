@@ -28,6 +28,9 @@ async function main() {
     const source = readRepoFile('src/lib/api/safe-fetch.ts');
     assert.equal(source.includes('window.location.href = loginUrl'), false);
     assert.match(source, /authIntent = 'background'/);
+    assert.match(source, /responseIndicatesSessionExpiry/);
+    assert.match(source, /SESSION_EXPIRY_AUTH_REASONS/);
+    assert.match(source, /if \(!sessionExpiry\) \{\s*return response;\s*\}/);
   });
 
   await run('safeFetch disables blind retries for interactive and non-idempotent traffic by default', () => {
@@ -96,9 +99,58 @@ async function main() {
     const source = readRepoFile('src/hooks/api/use-au-chat.ts');
     assert.equal(source.includes('missing_access_token'), false);
     assert.match(source, /isAuthLoading \|\| isRestoringAuth/);
-    assert.match(source, /accessToken:\s*session\?\.access_token/);
+    assert.match(source, /await getSupabaseAccessToken\(\)/);
+    assert.match(source, /\baccessToken,\s*\n/);
+    assert.match(source, /sendChatMessageStream[\s\S]+\{ signal: abortControllerRef\.current\?\.signal, accessToken \}/);
+    assert.match(source, /isSessionExpiryAuthFailure/);
+    assert.doesNotMatch(source, /tokenExpiresAt/);
+    const debugStart = source.indexOf('[useAuChat] Preparing to send message');
+    assert.ok(debugStart >= 0, 'missing sanitized chat debug block');
+    const debugBlock = source.slice(debugStart, source.indexOf('});', debugStart) + 3);
+    assert.doesNotMatch(debugBlock, /userId/);
     assert.doesNotMatch(source, /__cookie_session__/);
     assert.equal(source.includes("source: 'useAuChat.sendMessage'"), false);
+  });
+
+  await run('AI ticket requests suppress global 401 expiry and preserve structured error handling', () => {
+    const chat = readRepoFile('src/lib/api/chat.ts');
+    const exams = readRepoFile('src/lib/api/exams.ts');
+    const store = readRepoFile('src/hooks/use-store.ts');
+
+    assert.match(chat, /throwResponseApiError/);
+    assert.match(chat, /message:\s*'Sign in required\.'/);
+    assert.match(chat, /suppressAuthError:\s*true/);
+    assert.match(exams, /message:\s*'Sign in required\.'/);
+    assert.match(exams, /suppressAuthError:\s*true/);
+    assert.match(store, /message:\s*'Sign in required\.'/);
+    assert.match(store, /suppressAuthError:\s*true/);
+  });
+
+  await run('support escalation uses configured public email and does not hardcode the deployment domain', () => {
+    const support = readRepoFile('src/lib/support/contact.ts');
+    assert.match(support, /NEXT_PUBLIC_SUPPORT_EMAIL/);
+    assert.doesNotMatch(support, /support@datacube-au\.vercel\.app/);
+    for (const file of [
+      'src/app/dashboard/chat/page.tsx',
+      'src/app/dashboard/knowledge/page.tsx',
+      'src/app/dashboard/practice/page.tsx',
+      'src/app/dashboard/predictions/page.tsx',
+    ]) {
+      const source = readRepoFile(file);
+      assert.match(source, /openSupportEmail/);
+      assert.doesNotMatch(source, /support@datacube-au\.vercel\.app/);
+      assert.doesNotMatch(source, /mailto:support/);
+    }
+  });
+
+  await run('admin auth failures include safe request IDs without leaking lockout internals', () => {
+    const source = readRepoFile('src/app/api/admin/auth/route.ts');
+    assert.match(source, /createSafeRequestId/);
+    assert.match(source, /const requestId = createSafeRequestId\(\)/);
+    assert.match(source, /accessControlResponse\(error, requestId\)/);
+    assert.match(source, /requestId/);
+    assert.match(source, /admin_auth_rate_limited/);
+    assert.doesNotMatch(source, /toLocaleTimeString/);
   });
 
   await run('document bootstrap defers realtime and polling while auth is restoring', () => {
@@ -253,10 +305,13 @@ async function main() {
     const practicePage = readRepoFile('src/app/dashboard/practice/page.tsx');
     const predictionsPage = readRepoFile('src/app/dashboard/predictions/page.tsx');
 
-    assert.match(examsHook, /accessToken:\s*session\?\.access_token/);
+    assert.match(examsHook, /await getSupabaseAccessToken\(\)/);
+    assert.match(examsHook, /\baccessToken\s*\}/);
     assert.doesNotMatch(examsHook, /__cookie_session__/);
-    assert.match(knowledgePage, /accessToken:\s*session\?\.access_token/);
-    assert.match(predictionsPage, /accessToken:\s*session\?\.access_token/);
+    assert.match(knowledgePage, /await getSupabaseAccessToken\(\)/);
+    assert.match(knowledgePage, /\baccessToken,\s*\n/);
+    assert.match(predictionsPage, /await getSupabaseAccessToken\(\)/);
+    assert.match(predictionsPage, /\baccessToken,\s*\n/);
     assert.match(knowledgePage, /enabled:\s*Boolean\(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);
     assert.match(practicePage, /enabled:\s*Boolean\(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);
     assert.match(predictionsPage, /enabled:\s*Boolean\(\(selectedTextbookId \|\| selectedPastQuestionsId\) && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);

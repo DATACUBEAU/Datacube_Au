@@ -5,6 +5,7 @@ import {
   registerAuthBoundAbortController,
 } from '@/lib/auth/session-expiry-events';
 import type { SessionExpiryTriggerIntent } from '@/lib/auth/session-expiry-policy';
+import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
 
 export class OfflineError extends Error {
   constructor(message = "You are offline") {
@@ -47,6 +48,46 @@ function createSafeFetchError(
   if (typeof extra?.retryable === 'boolean') error.retryable = extra.retryable;
   if (extra?.cause !== undefined) error.cause = extra.cause;
   return error;
+}
+
+const SESSION_EXPIRY_AUTH_REASONS = new Set([
+  'session_expired',
+  'reauth_required',
+  'invalid_token',
+  'token_expired',
+  'jwt_expired',
+  'refresh_failed',
+]);
+
+async function responseIndicatesSessionExpiry(response: Response): Promise<{ reason: string } | null> {
+  let payload: unknown = null;
+  try {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('application/json')) {
+      payload = await response.clone().json();
+    } else {
+      const text = await response.clone().text();
+      payload = text ? { message: text } : null;
+    }
+  } catch {
+    payload = null;
+  }
+
+  const payloadRecord =
+    payload && typeof payload === 'object' && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+
+  const authFailure = classifyAuthFailure({
+    ...payloadRecord,
+    status: response.status,
+  });
+  if (authFailure?.status !== 401) return null;
+  if (SESSION_EXPIRY_AUTH_REASONS.has(authFailure.reason)) return { reason: authFailure.reason };
+  if (authFailure.originalCode === 'SESSION_EXPIRED' || authFailure.originalCode === 'REAUTH_REQUIRED') {
+    return { reason: authFailure.reason };
+  }
+  return null;
 }
 
 /**
@@ -244,19 +285,25 @@ export async function safeFetch(url: string, options: SafeFetchOptions = {}): Pr
         !suppressAuthError &&
         authIntent === 'interactive'
       ) {
+        const sessionExpiry = await responseIndicatesSessionExpiry(response);
+        if (!sessionExpiry) {
+          return response;
+        }
+
         if (isSafeFetchDebugEnabled()) {
           console.warn('[safeFetch] auth error detected', {
             status: response.status,
             sameOrigin: url.startsWith('/'),
             requestId: response.headers.get('x-request-id'),
             correlationId: response.headers.get('x-correlation-id'),
+            reason: sessionExpiry.reason,
           });
         }
 
         dispatchSessionExpired({
           status: response.status,
           source: 'safeFetch',
-          reason: 'http_auth_error',
+          reason: sessionExpiry.reason,
           intent: authIntent,
         });
       }

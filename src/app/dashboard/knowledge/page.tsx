@@ -27,6 +27,7 @@ import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { useStore } from '@/hooks/use-store';
 import { safeFetch } from '@/lib/api/safe-fetch';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import type { GenerateKnowledgeOutput } from '@/app/actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useOnlineStatus } from '@/hooks/use-online-status';
@@ -51,6 +52,7 @@ import {
   writeKnowledgeGenerationLockRecord,
   type KnowledgeGenerationLockRecord,
 } from '@/lib/knowledge/generation-lock';
+import { openSupportEmail } from '@/lib/support/contact';
 
 // Lazy-load the animation components to keep the initial bundle small
 const AnimatedText = dynamic(() => import('@/components/animated-text'), {
@@ -333,11 +335,12 @@ function KnowledgePageContent() {
     }
 
     try {
+        const accessToken = await getSupabaseAccessToken();
         const attachedPQs = apiDocuments.filter(d => d.parent_id === selectedDocId && (d.document_type === 'past_questions' || d.document_type === 'exam_questions') && d.status === 'completed');
 
         await generateKnowledge(selectedDocId, {
           pastQuestionIds: attachedPQs.map((pq) => pq.id),
-          accessToken: session?.access_token,
+          accessToken,
         });
         if (typeof window !== 'undefined') {
           const optimisticLock: KnowledgeGenerationLockRecord = {
@@ -397,7 +400,17 @@ function KnowledgePageContent() {
         throw new Error('Failed to clear cache');
       }
     } catch (e) {
-      window.open(`mailto:support@datacube-au.vercel.app?subject=Knowledge Generation Locked&body=Hello, I encountered a generation lock for document ${selectedDocId}. Please clear the cache.`);
+      const opened = openSupportEmail({
+        subject: 'Knowledge Generation Locked',
+        body: 'Hello, I encountered a generation lock for the selected document. Please clear the cache.',
+      });
+      if (!opened) {
+        toast({
+          variant: 'destructive',
+          title: 'Support email not configured',
+          description: 'Please contact an administrator to clear the affected generation cache.',
+        });
+      }
     }
   }, [knowledgeOutput, selectedDocId, session?.access_token, toast, user]);
 

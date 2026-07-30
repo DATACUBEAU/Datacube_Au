@@ -41,6 +41,7 @@ import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { getDashboardFeatureAccess } from '@/lib/feature-access';
 import { safeFetch } from '@/lib/api/safe-fetch';
 import { useFeatureOutput } from '@/hooks/api/use-feature-output';
+import { openSupportEmail } from '@/lib/support/contact';
 
 
 type AnswerState = 'unanswered' | 'correct' | 'incorrect';
@@ -320,7 +321,17 @@ function PracticePageContent() {
         throw new Error('Failed to clear cache');
       }
     } catch (e) {
-      window.open(`mailto:support@datacube-au.vercel.app?subject=Practice Generation Locked&body=Hello, I encountered a generation lock for document ${selectedDocId}. Please clear the cache.`);
+      const opened = openSupportEmail({
+        subject: 'Practice Generation Locked',
+        body: 'Hello, I encountered a generation lock for the selected document. Please clear the cache.',
+      });
+      if (!opened) {
+        toast({
+          variant: 'destructive',
+          title: 'Support email not configured',
+          description: 'Please contact an administrator to clear the affected generation cache.',
+        });
+      }
     }
   }, [practiceOutput, selectedDocId, session?.access_token, toast, user]);
 

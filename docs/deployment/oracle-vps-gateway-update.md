@@ -1,8 +1,8 @@
 # Oracle VPS Gateway Update
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
-Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`, `supabase/migrations/20260729120000_provider_key_encryption_columns.sql`, and `supabase/migrations/20260729153000_username_uniqueness.sql`; do not create or push another migration for the service-role replacement, provider-key encryption, or username uniqueness.
+Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`, `supabase/migrations/20260729120000_provider_key_encryption_columns.sql`, and `supabase/migrations/20260729153000_username_uniqueness.sql`; do not create or push another migration for the service-role replacement, provider-key encryption, or username uniqueness. The retention production runtime migration `supabase/migrations/20260730120000_retention_production_runtime.sql` is new in this worktree and must be owner-reviewed, dry-run, and pushed before deploying the retention runtime code.
 
 Do not paste secrets into shell history. Store secret values in your deployment secret manager, PM2 ecosystem file outside git, systemd environment file outside git, or Docker/Compose secret environment that is not committed. `SUPABASE_SERVICE_ROLE_KEY` should now hold the new `sb_secret` value everywhere it is needed server-side.
 
@@ -13,7 +13,7 @@ Do not paste secrets into shell history. Store secret values in your deployment 
 | `vps-ai-gateway` | Yes | Deploy TypeScript gateway changes for ticket verification, CORS, RAG filters, provider sanitization, limits, logging, and atomic usage commit/release. Restart after env replacement. |
 | Frontend deployment | Yes | Redeploy after env replacement so Next.js server routes, middleware, admin routes, billing routes, and background routes use the new service-role credential. |
 | RAG worker | Yes | Restart after env replacement. Worker embedding model must remain compatible with gateway retrieval: `AllMiniLML6V2` unless both sides are intentionally changed together. |
-| Cron/background workers | If used | Restart any process that uses Supabase admin access or caches env at process start. Add/schedule `expire_ai_usage_reservations` cleanup and the protected document-retention cleanup route if not already covered. |
+| Cron/background workers | If used | Restart any process that uses Supabase admin access or caches env at process start. Add/schedule `expire_ai_usage_reservations` cleanup if not already covered. Document retention cleanup is already configured for Vercel Cron in `vercel.json`; do not add a competing Oracle scheduler unless Vercel Cron is intentionally disabled. |
 | Environment variables | Yes | Add/check required names below on both frontend server and Oracle VPS. Keep values out of logs and docs. |
 | Nginx/reverse proxy | Verify | Ensure only intended gateway domain/path proxies to the gateway port over HTTPS. |
 | PM2/systemd/Docker service | Yes | Restart the gateway after code/env updates. |
@@ -175,11 +175,13 @@ Atomic usage cleanup:
 
 Document retention cleanup:
 
-- Schedule a server-side cron/background call to the frontend/server route `/api/cron/retention?dryRun=1` for initial reporting and `/api/cron/retention` for controlled execution after disposable-data verification.
-- Send the cron secret in `x-cron-secret` or an `Authorization: Bearer` header without printing the value in shell history, logs, screenshots, or docs.
+- Use the existing Vercel Cron configuration in `vercel.json`: `/api/cron/retention` once per day.
+- Configure either `RETENTION_CRON_SECRET` or `CRON_SECRET` in the frontend/server deployment secret storage; Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` when `CRON_SECRET` is configured.
+- For initial reporting, call `/api/cron/retention?dryRun=1` from a server-only context. Send the cron secret in `x-cron-secret` or an `Authorization: Bearer` header without printing the value in shell history, logs, screenshots, or docs.
 - Keep the batch size bounded with the route `limit` query parameter during rollout.
 - Verify dry-run responses contain aggregate counts only, not document names, file paths, emails, tokens, or private user data.
-- If the live schema is missing retention action/run tables or retention lease RPCs, keep retention Yellow and prepare an owner-reviewed migration before relying on multi-instance scheduling.
+- Apply `20260730120000_retention_production_runtime.sql` before relying on retention cleanup in production. It creates retention action/run tables, owner metadata, lease RPCs, RLS/revokes/grants, and indexes.
+- Do not configure a second Oracle cron/systemd timer for document retention while Vercel Cron is active.
 
 ## D. Oracle Cloud Networking Checklist
 

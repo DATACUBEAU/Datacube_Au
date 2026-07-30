@@ -15,7 +15,7 @@ function requireAiAccessToken(accessToken: string | null | undefined): string {
   if (!token) {
     throw toApiRequestError({
       code: 'AUTH_REQUIRED',
-      message: 'Session expired. Please sign in again.',
+      message: 'Sign in required.',
       status: 401,
       retryable: false,
     });
@@ -53,9 +53,18 @@ export async function generatePracticeExam(
       idempotencyKey,
       documentId: opts?.documentId || undefined,
       pastQuestionIds: hasPqIds ? opts!.pastQuestionIds : undefined,
-    })
+    }),
+    authIntent: 'interactive',
+    suppressAuthError: true,
   });
-  if (!ticketRes.ok) throw { message: 'Ticket generation failed', status: ticketRes.status };
+  if (!ticketRes.ok) {
+    throw toApiRequestError({
+      code: 'VPS_TICKET_FAILED',
+      message: 'AI ticket request failed.',
+      status: ticketRes.status,
+      retryable: ticketRes.status >= 500,
+    });
+  }
   
   const ticketData = await ticketRes.json();
   const { ticket, vpsUrl } = ticketData.data || ticketData;
@@ -77,7 +86,12 @@ export async function generatePracticeExam(
 
   let data, error = null;
   if (!res.ok) {
-    error = { message: await res.text(), status: res.status };
+    error = toApiRequestError({
+      code: 'PRACTICE_EXAM_GENERATION_FAILED',
+      message: 'Practice exam generation failed.',
+      status: res.status,
+      retryable: res.status >= 500 || res.status === 408 || res.status === 429,
+    });
   } else {
     data = await res.json();
   }
@@ -117,9 +131,18 @@ export async function generatePredictions(
       documentId: opts?.documentId || opts?.mainTextbookId || undefined,
       mainTextbookId: opts?.mainTextbookId || undefined,
       pastQuestionIds: hasPqIds ? opts!.pastQuestionIds : undefined,
-    })
+    }),
+    authIntent: 'interactive',
+    suppressAuthError: true,
   });
-  if (!ticketRes.ok) throw { message: 'Ticket generation failed', status: ticketRes.status };
+  if (!ticketRes.ok) {
+    throw toApiRequestError({
+      code: 'VPS_TICKET_FAILED',
+      message: 'AI ticket request failed.',
+      status: ticketRes.status,
+      retryable: ticketRes.status >= 500,
+    });
+  }
   
   const ticketData = await ticketRes.json();
   const { ticket, vpsUrl } = ticketData.data || ticketData;
@@ -142,7 +165,12 @@ export async function generatePredictions(
 
   let data, error = null;
   if (!res.ok) {
-    error = { message: await res.text(), status: res.status };
+    error = toApiRequestError({
+      code: 'EXAM_PREDICTION_GENERATION_FAILED',
+      message: 'Exam prediction generation failed.',
+      status: res.status,
+      retryable: res.status >= 500 || res.status === 408 || res.status === 429,
+    });
   } else {
     data = await res.json();
   }

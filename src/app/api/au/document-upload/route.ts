@@ -11,7 +11,12 @@ import {
   requireEntitlement,
 } from '@/lib/server/authorization';
 import type { AuthorizedRequest } from '@/lib/server/authorization';
-import { computeUploadExpiryFromPlan } from '@/lib/server/retention-policy';
+import {
+  computeUploadExpiryFromPlan,
+  resolveDocumentRetentionDays,
+  resolveDocumentRetentionTier,
+  RETENTION_POLICY_VERSION,
+} from '@/lib/server/retention-policy';
 import { randomUUID } from 'crypto';
 
 export const runtime = 'nodejs';
@@ -153,6 +158,18 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
         plan: limitsResult.effectivePlan.plan,
         entitlementSource: limitsResult.effectivePlan.entitlementSource,
       });
+  const uploadRetentionTier = parentId || parentDocumentId
+    ? null
+    : resolveDocumentRetentionTier({
+        plan: limitsResult.effectivePlan.plan,
+        entitlementSource: limitsResult.effectivePlan.entitlementSource,
+      });
+  const uploadRetentionDays = parentId || parentDocumentId
+    ? null
+    : resolveDocumentRetentionDays({
+        plan: limitsResult.effectivePlan.plan,
+        entitlementSource: limitsResult.effectivePlan.entitlementSource,
+      });
   const insertPayload: Record<string, any> = {
     id: documentId,
     user_id: userId,
@@ -167,6 +184,11 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
   };
   if (uploadExpiresAt) {
     insertPayload.expires_at = uploadExpiresAt;
+    insertPayload.retention_granted_at = createdAt;
+    insertPayload.retention_expires_at = uploadExpiresAt;
+    insertPayload.retention_tier = uploadRetentionTier;
+    insertPayload.retention_days = uploadRetentionDays;
+    insertPayload.retention_policy_version = RETENTION_POLICY_VERSION;
   }
 
   // Only set parent fields if provided — the inherit_attachment_expiry_from_parent

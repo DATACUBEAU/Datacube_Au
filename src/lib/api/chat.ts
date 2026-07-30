@@ -17,7 +17,6 @@ import {
 import type { ChatDocumentContext } from '@shared/document-chat-context';
 import type { GlobalChatNavAction } from '@shared/global-chat-routing';
 import { normalizeAssistantCitations } from '@/lib/chat/assistant-response';
-import { classifyAuthFailure } from '@/lib/auth/auth-error-classification';
 import { createAiIdempotencyKey } from '@/lib/api/ai-idempotency';
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
@@ -269,12 +268,61 @@ function requireAiAccessToken(accessToken: string | null | undefined): string {
   if (!token) {
     throw toApiRequestError({
       code: 'AUTH_REQUIRED',
-      message: 'Session expired. Please sign in again.',
+      message: 'Sign in required.',
       status: 401,
       retryable: false,
     });
   }
   return token;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function readResponseErrorPayload(response: Response): Promise<unknown> {
+  const text = await response.text().catch(() => '');
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function throwResponseApiError(
+  response: Response,
+  fallbackMessage: string,
+  opts?: { correlationId?: string | null; code?: string },
+): Promise<never> {
+  const payload = await readResponseErrorPayload(response);
+  const retryAfter = response.headers.get('retry-after');
+  const input = isRecord(payload)
+    ? {
+        ...payload,
+        status: response.status,
+        retryAfter,
+        correlationId: (payload as any).correlationId || (payload as any).correlation_id || opts?.correlationId || null,
+      }
+    : {
+        code: opts?.code || (response.status === 401 ? 'AUTH_REQUIRED' : 'AI_REQUEST_FAILED'),
+        message: fallbackMessage,
+        status: response.status,
+        retryAfter,
+        correlationId: opts?.correlationId || null,
+        retryable: response.status >= 500 || response.status === 408 || response.status === 429,
+      };
+
+  const normalized = normalizeThrownChatError(input, fallbackMessage);
+  throw toApiRequestError(
+    {
+      ...normalized,
+      status: response.status,
+      retryAfter,
+      correlationId: normalized.correlationId || opts?.correlationId || null,
+    },
+    fallbackMessage,
+  );
 }
 
 /**
@@ -312,11 +360,14 @@ export async function sendChatMessage(
     },
     body: JSON.stringify({ ...legacyPayload, feature: endpoint, idempotencyKey: legacyPayload.idempotencyKey }),
     authIntent: 'interactive',
+    suppressAuthError: true,
   });
 
   if (!ticketRes.ok) {
-    const errText = await ticketRes.text();
-    throw new Error('Ticket generation failed: ' + errText);
+    await throwResponseApiError(ticketRes, 'AI ticket request failed.', {
+      correlationId,
+      code: 'VPS_TICKET_FAILED',
+    });
   }
 
   const ticketData = await ticketRes.json();
@@ -336,7 +387,10 @@ export async function sendChatMessage(
   let error: any = null;
 
   if (!res.ok) {
-    error = { status: res.status, message: await res.text() };
+    await throwResponseApiError(res, 'Chat request failed.', {
+      correlationId,
+      code: 'CHAT_REQUEST_FAILED',
+    });
   } else {
     data = await res.json();
   }
@@ -400,11 +454,14 @@ export async function sendChatMessageStream(
     },
     body: JSON.stringify({ ...payload, feature: endpoint, idempotencyKey: payload.idempotencyKey }),
     authIntent: 'interactive',
+    suppressAuthError: true,
   });
 
   if (!ticketRes.ok) {
-    const errText = await ticketRes.text();
-    throw new Error('Ticket generation failed: ' + errText);
+    await throwResponseApiError(ticketRes, 'AI ticket request failed.', {
+      correlationId,
+      code: 'VPS_TICKET_FAILED',
+    });
   }
 
   const ticketData = await ticketRes.json();
@@ -424,34 +481,10 @@ export async function sendChatMessageStream(
 
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    const retryAfter = res.headers.get('retry-after');
-    let details: any = text;
-    try {
-      details = JSON.parse(text);
-    } catch {
-      // keep raw text
-    }
-
-    const normalizedError = normalizeThrownChatError(
-      details && typeof details === 'object'
-        ? { ...(details as Record<string, unknown>), status: res.status, retryAfter }
-        : { message: text || res.statusText || 'Chat stream failed', status: res.status, retryAfter, details },
-      res.statusText || 'Chat stream failed',
-    );
-    const message = normalizedError.message;
-
-    // Legacy proxy fallback removed — VPS is the sole path. Throw the error directly.
-
-    throw toApiRequestError(
-      {
-        ...normalizedError,
-        status: res.status,
-        details,
-        retryAfter,
-      },
-      message,
-    );
+    await throwResponseApiError(res, 'Chat stream failed.', {
+      correlationId,
+      code: 'CHAT_STREAM_FAILED',
+    });
   }
 
   const responseContentType = String(res.headers.get('content-type') || '').toLowerCase();
@@ -588,10 +621,13 @@ export async function generatePromptStarters(
       documentId: opts?.documentId || undefined,
     }),
     authIntent: 'interactive',
+    suppressAuthError: true,
   });
 
   if (!ticketRes.ok) {
-    throw new Error('Ticket generation failed');
+    await throwResponseApiError(ticketRes, 'AI ticket request failed.', {
+      code: 'VPS_TICKET_FAILED',
+    });
   }
 
   const ticketData = await ticketRes.json();
@@ -613,7 +649,9 @@ export async function generatePromptStarters(
 
   let data, error = null;
   if (!res.ok) {
-    error = { message: await res.text() };
+    await throwResponseApiError(res, 'Prompt starter generation failed.', {
+      code: 'PROMPT_STARTERS_FAILED',
+    });
   } else {
     data = await res.json();
   }

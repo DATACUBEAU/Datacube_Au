@@ -235,6 +235,15 @@ async function main() {
     assert.equal(next, '2026-03-31T00:00:00.000Z');
   });
 
+  await run('new uploads after downgrade use the current downgraded plan', () => {
+    const nextUploadExpiry = computeUploadExpiryFromPlan({
+      createdAt: '2026-03-20T00:00:00.000Z',
+      plan: 'free',
+      entitlementSource: 'none',
+    });
+    assert.equal(nextUploadExpiry, '2026-04-03T00:00:00.000Z');
+  });
+
   await run('users without documents do not show scheduled file deletion once files are gone', () => {
     const state = deriveRetentionLifecycleState({
       lastSeenAt: '2026-03-01T00:00:00.000Z',

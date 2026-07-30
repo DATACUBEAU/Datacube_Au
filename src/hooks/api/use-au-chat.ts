@@ -3,6 +3,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { toApiRequestError, type ApiRequestError } from '@/lib/api/api-contract';
 import { sendChatMessage, sendChatMessageStream, generatePromptStarters, getAvailableModels, type ChatMessage } from '@/lib/api/chat';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { useToast } from '@/hooks/use-toast';
 import { ToastAction } from '@/components/ui/toast';
 import { useStore } from '@/hooks/use-store';
@@ -27,6 +28,14 @@ const CHAT_EVENT_STARTED = 'au-chat:started';
 const CHAT_EVENT_COMPLETED = 'au-chat:completed';
 const CHAT_EVENT_FAILED = 'au-chat:failed';
 const CHAT_EVENT_CANCELED = 'au-chat:canceled';
+const SESSION_EXPIRY_AUTH_REASONS = new Set([
+  'session_expired',
+  'reauth_required',
+  'invalid_token',
+  'token_expired',
+  'jwt_expired',
+  'refresh_failed',
+]);
 
 type ChatLifecycleDetail = {
   requestId: string;
@@ -40,6 +49,16 @@ type ChatLifecycleDetail = {
 function emitChatLifecycleEvent(eventName: string, detail: ChatLifecycleDetail) {
   if (typeof window === 'undefined') return;
   window.dispatchEvent(new CustomEvent(eventName, { detail }));
+}
+
+function isChatDebugEnabled(): boolean {
+  return process.env.NODE_ENV === 'development' || process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG === '1';
+}
+
+function isSessionExpiryAuthFailure(authFailure: ReturnType<typeof classifyAuthFailure>): boolean {
+  if (authFailure?.status !== 401) return false;
+  if (SESSION_EXPIRY_AUTH_REASONS.has(authFailure.reason)) return true;
+  return authFailure.originalCode === 'SESSION_EXPIRED' || authFailure.originalCode === 'REAUTH_REQUIRED';
 }
 
 // Simple string hash for local cache keys
@@ -350,30 +369,36 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     }
     lastSubmitRef.current = { hash: promptHash, at: now };
     activePromptHashRef.current = promptHash;
+    const accessToken = await getSupabaseAccessToken();
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token,
+      accessToken,
       warnKey: 'chat:send',
       context: 'chat send',
     });
     if (!gate.ok) {
+      if (activePromptHashRef.current === promptHash) {
+        activePromptHashRef.current = null;
+      }
       if (gate.reason === 'offline') {
         logOnce('warn', 'chat:send:offline', '[chat] Send blocked (offline)');
       }
       return;
     }
 
-    console.log('[useAuChat] Preparing to send message', {
-      selectedDocId,
-      userId: user.id,
-      isAuthLoading,
-      isRestoringAuth,
-      isAuthLocked,
-      hasSession: !!session,
-      tokenExists: !!session?.access_token,
-      tokenExpiresAt: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null,
-    });
+    if (isChatDebugEnabled()) {
+      console.debug('[useAuChat] Preparing to send message', {
+        route: selectedDocId === 'global' ? '/dashboard/global-chat' : '/dashboard/chat',
+        hasSelectedDocument: Boolean(selectedDocId && selectedDocId !== 'global'),
+        isAuthLoading,
+        isRestoringAuth,
+        isAuthLocked,
+        hasUser: Boolean(user),
+        hasSession: Boolean(accessToken),
+        hasAccessToken: Boolean(accessToken),
+      });
+    }
 
     // Create new AbortController for this request
     abortControllerRef.current = new AbortController();
@@ -439,7 +464,9 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     if (cachedRaw) {
         try {
             cachedResult = JSON.parse(cachedRaw);
-            console.log('[useAuChat] Local cache hit');
+            if (isChatDebugEnabled()) {
+              console.debug('[useAuChat] Local cache hit');
+            }
         } catch (e) {
             localStorage.removeItem(cacheKey);
         }
@@ -528,7 +555,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
                 }
               }
             },
-            { signal: abortControllerRef.current?.signal }
+            { signal: abortControllerRef.current?.signal, accessToken }
           );
 
           result = {
@@ -618,7 +645,9 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       setAuThinkingStatus('Analytical engine error.');
       setAuThinkingSteps([]); // Clear steps on error
       if (err.name === 'AbortError') {
-        console.log('[useAuChat] Message aborted');
+        if (isChatDebugEnabled()) {
+          console.debug('[useAuChat] Message aborted');
+        }
         setHistory(prev => prev.filter(m => m.id !== loadingId));
         setAuAnimationState('idle');
         emitChatLifecycleEvent(CHAT_EVENT_CANCELED, {
@@ -675,14 +704,15 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           code: normalizedError.code,
           message: normalizedError.message,
           requestId: normalizedError.requestId,
-          details: normalizedError.details,
         });
-        dispatchSessionExpired({
-          status: 401,
-          source: 'useAuChat',
-          reason: 'http_auth_error',
-          intent: 'interactive',
-        });
+        if (isSessionExpiryAuthFailure(authFailure)) {
+          dispatchSessionExpired({
+            status: 401,
+            source: 'useAuChat',
+            reason: authFailure.reason,
+            intent: 'interactive',
+          });
+        }
       } else if (authFailure?.status === 403) {
         logOnce('warn', 'chat:send:forbidden', '[useAuChat] Message forbidden', {
           status,
@@ -699,7 +729,6 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
             retryable: normalizedError.retryable,
             requestId: normalizedError.requestId,
             correlationId: normalizedError.correlationId,
-            details: normalizedError.details,
           })}`,
         );
       }
@@ -752,7 +781,6 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     isOnline,
     selectedDocId,
     selectedModel,
-    session?.access_token,
     setAuAnimationState,
     setAuThinkingStatus,
     setAuThinkingSteps,
@@ -765,10 +793,11 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
     if (!selectedDocId || !user) return;
     if (isAuthLoading || isRestoringAuth) return;
     if (isAuthLocked) return;
+    const accessToken = await getSupabaseAccessToken();
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token,
+      accessToken,
       warnKey: 'chat:greet',
       context: 'chat greet',
     });
@@ -818,7 +847,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
             selectedDocId,
             action: 'scan_and_greet',
             model: selectedModel === 'auto' ? undefined : selectedModel
-        }, { signal: abortControllerRef.current?.signal, accessToken: session?.access_token });
+        }, { signal: abortControllerRef.current?.signal, accessToken });
 
         if (thinkingInterval) clearInterval(thinkingInterval);
         setAuAnimationState('responding');
@@ -843,7 +872,13 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
             setAuAnimationState('idle');
             return;
         }
-        console.error('[useAuChat] Greeting failed:', err);
+        const normalizedError = toApiRequestError(err, 'Greeting failed.');
+        console.error('[useAuChat] Greeting failed:', {
+          code: normalizedError.code,
+          status: normalizedError.status,
+          requestId: normalizedError.requestId,
+          correlationId: normalizedError.correlationId,
+        });
         setHistory(prev => prev.filter(m => m.id !== loadingId));
         setAuAnimationState('error');
     } finally {
@@ -853,7 +888,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
           setAuAnimationState('idle');
         }, 1200);
     }
-  }, [history.length, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, selectedModel, session?.access_token, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, user]);
+  }, [history.length, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, selectedModel, setAuAnimationState, setAuThinkingStatus, setAuThinkingSteps, updateAuThinkingStep, user]);
 
   const setHistoryPersisted = useCallback((next: ChatMessage[]) => {
     setHistory(next);
@@ -873,10 +908,11 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       if (isAuthLoading || isRestoringAuth || isAuthLocked) {
         return [];
       }
+      const accessToken = await getSupabaseAccessToken();
       const gate = guardRequest({
         isOnline,
         requireAuth: true,
-        accessToken: session?.access_token,
+        accessToken,
         warnKey: 'chat:prompts',
         context: 'prompt generation',
       });
@@ -890,7 +926,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
       if (idea) {
         return await generatePromptStarters(title, content, idea, {
           documentId: selectedDocId,
-          accessToken: session?.access_token,
+          accessToken,
         });
       }
 
@@ -905,7 +941,7 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
             content: `Based on the document "${title}" and the recent chat history:\n${historyContext}\n\nGenerate 4 smart and relevant next questions the user might want to ask. The questions should be accurate and tied to the document content. Return ONLY a JSON array of strings.` 
           }],
           selectedDocId: selectedDocId!
-        }, { accessToken: session?.access_token });
+        }, { accessToken });
 
         const parsed = JSON.parse(result.answer);
         if (Array.isArray(parsed)) return parsed;
@@ -915,13 +951,19 @@ export function useAuChat(selectedDocId: string | null, config: UseAuChatOptions
 
       return await generatePromptStarters(title, content, undefined, {
         documentId: selectedDocId,
-        accessToken: session?.access_token,
+        accessToken,
       });
     } catch (err: any) {
-      console.error('[useAuChat] Prompt generation failed:', err);
+      const normalizedError = toApiRequestError(err, 'Prompt generation failed.');
+      console.error('[useAuChat] Prompt generation failed:', {
+        code: normalizedError.code,
+        status: normalizedError.status,
+        requestId: normalizedError.requestId,
+        correlationId: normalizedError.correlationId,
+      });
       return [];
     }
-  }, [history, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, session?.access_token]);
+  }, [history, isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId]);
 
   return {
     history,

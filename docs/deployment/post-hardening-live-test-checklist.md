@@ -1,6 +1,6 @@
 # DataCube AU Post-Hardening Live Test Checklist
 
-Last updated: 2026-07-29
+Last updated: 2026-07-30
 
 Use this checklist after deploying the VPS/RAG/API-key/auth-entry/retention/onboarding/PWA hardening changes, restarting the Oracle VPS gateway, restarting RAG/background workers, and replacing the legacy Supabase service-role credential with the new `sb_secret` value in server-side secret storage.
 
@@ -18,6 +18,7 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm `ALLOWED_ORIGINS` contains the production frontend domain and does not use `*`.
 - [ ] Confirm `QDRANT_URL` is HTTPS in production or private loopback/VPN-only.
 - [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, `20260728160000_atomic_usage_replay_guard.sql`, `20260729120000_provider_key_encryption_columns.sql`, and `20260729153000_username_uniqueness.sql` are already applied and the remote database is up to date.
+- [ ] Before deploying the retention runtime code, review and apply `20260730120000_retention_production_runtime.sql` with the Supabase CLI migration workflow. This migration creates retention run/action tables, lease RPCs, retention metadata columns, and indexes; it does not delete data.
 - [ ] Confirm a server-side cron/background path exists for `expire_ai_usage_reservations`; do not expose it to browser clients.
 - [ ] Confirm a server-side cron/background path exists for document retention cleanup at `/api/cron/retention`; it must use a server-only cron secret and must not be callable by unauthenticated browser clients.
 
@@ -55,6 +56,8 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Feature flags load for normal user flows.
 - [ ] Old service worker cleanup works after deploy: refresh twice, close/reopen the app, and confirm protected API responses are not served from stale caches. Only unregister the service worker or clear site data manually if the new cleanup cannot recover automatically.
 - [ ] AU Chat, Global Chat, Knowledge Hub, Practice Exam, Exam Prediction, and Prompt Starters do not request `/api/au/vps-ticket` while auth state is loading/restoring/unauthenticated or when `session.access_token` is missing.
+- [ ] Immediately after email/password login, signup, OAuth callback, and `/session-expired` reauthentication, AU Chat can request `/api/au/vps-ticket` with the current bearer token and does not return `AUTH_REQUIRED` from a stale React session snapshot.
+- [ ] Generic protected-route `401` responses, Conex/admin denials, VPS-ticket route mismatches, and provider/auth configuration failures stay endpoint-scoped and are not mislabeled as expired sessions unless the response explicitly indicates an expired or invalid Supabase session.
 - [ ] If a tester lands on a stale session, sign out/sign in should recover. Manual site-data clearing is a fallback, not the first step.
 - [ ] Browser console logs do not show Authorization headers, Supabase service-role/provider keys, Qdrant keys, VPS tickets, cookies, refresh tokens, or stack traces containing env data.
 - [ ] Browser network responses do not include raw keys, raw provider credentials, service-role credentials, cookies, or signed tickets except the expected short-lived VPS ticket response from `/api/au/vps-ticket`.
@@ -111,7 +114,7 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm User B data is untouched when cleaning a User A document.
 - [ ] Confirm failed Storage/Qdrant cleanup records bounded retry state without marking the document fully cleaned.
 - [ ] Confirm unauthenticated browser calls to the cron route return 401.
-- [ ] Confirm the retention action/run tables and database lease RPCs exist in the live schema. If they do not, keep retention Yellow and prepare an owner-reviewed migration before relying on multi-instance scheduling.
+- [ ] Confirm `au_retention_runs`, `au_retention_actions`, `au_runtime_leases`, `try_claim_retention_lease`, and `release_retention_lease` exist in the live schema after `20260730120000_retention_production_runtime.sql` is applied.
 
 ## 6. AI And RAG Feature Tests
 

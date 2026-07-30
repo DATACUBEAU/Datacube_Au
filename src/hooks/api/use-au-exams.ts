@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { generatePracticeExam, generatePredictions } from '@/lib/api/exams';
-import { useSupabaseSession, useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { useToast } from '@/hooks/use-toast';
 import type { GeneratePracticeExamOutput, GenerateExamPredictionsOutput } from '@shared/schemas';
@@ -8,10 +8,10 @@ import { useNetworkStatus } from '@/components/providers/network-status-provider
 import { logOnce } from '@/lib/log/dedupe';
 import { guardRequest } from '@/lib/api/request-guard';
 import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 
 export function useAuExams(selectedDocId: string | null) {
   const [user] = useSupabaseUser();
-  const { session } = useSupabaseSession();
   const { toast } = useToast();
   const { isOnline } = useNetworkStatus();
   const { isLoading: isAuthLoading, isRestoringAuth, isAuthLocked } = useSmartAuth();
@@ -23,10 +23,11 @@ export function useAuExams(selectedDocId: string | null) {
   const startExamGeneration = useCallback(async (pastQuestionIds: string[] = []) => {
     if (!selectedDocId || !user) return;
     if (isAuthLoading || isRestoringAuth || isAuthLocked) return;
+    const accessToken = await getSupabaseAccessToken();
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token,
+      accessToken,
       warnKey: 'exams:practice',
       context: 'practice exam',
     });
@@ -45,7 +46,7 @@ export function useAuExams(selectedDocId: string | null) {
       const result = await generatePracticeExam(
         '',
         '',
-        { documentId: selectedDocId, pastQuestionIds, accessToken: session?.access_token }
+        { documentId: selectedDocId, pastQuestionIds, accessToken }
       );
       setExamData(result);
       toast({ title: 'Practice exam generated!' });
@@ -59,15 +60,16 @@ export function useAuExams(selectedDocId: string | null) {
     } finally {
       setIsGenerating(false);
     }
-  }, [isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, user, session?.access_token, toast]);
+  }, [isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, user, toast]);
 
   const startPredictionGeneration = useCallback(async (pastQuestionIds: string[]) => {
     if (!selectedDocId || !user || pastQuestionIds.length === 0) return;
     if (isAuthLoading || isRestoringAuth || isAuthLocked) return;
+    const accessToken = await getSupabaseAccessToken();
     const gate = guardRequest({
       isOnline,
       requireAuth: true,
-      accessToken: session?.access_token,
+      accessToken,
       warnKey: 'exams:predictions',
       context: 'predictions',
     });
@@ -86,7 +88,7 @@ export function useAuExams(selectedDocId: string | null) {
       const result = await generatePredictions(
         '',
         '',
-        { documentId: selectedDocId, mainTextbookId: selectedDocId, pastQuestionIds, accessToken: session?.access_token }
+        { documentId: selectedDocId, mainTextbookId: selectedDocId, pastQuestionIds, accessToken }
       );
       setPredictions(result);
       toast({ title: 'Predictions generated!' });
@@ -100,7 +102,7 @@ export function useAuExams(selectedDocId: string | null) {
     } finally {
       setIsGenerating(false);
     }
-  }, [isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, user, session?.access_token, toast]);
+  }, [isAuthLoading, isAuthLocked, isOnline, isRestoringAuth, selectedDocId, user, toast]);
 
   return {
     isGenerating,

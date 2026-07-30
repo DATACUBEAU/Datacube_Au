@@ -7,6 +7,13 @@ import {
 
 export const runtime = 'nodejs';
 
+function createSafeRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req_${Date.now().toString(36)}`;
+}
+
 function firstEnv(...keys: string[]): string | null {
   for (const key of keys) {
     const value = process.env[key];
@@ -64,13 +71,14 @@ function safeUpstreamResponse(payload: unknown, fallbackError?: string): Record<
 }
 
 export async function POST(req: NextRequest) {
+  const requestId = createSafeRequestId();
   try {
     const SUPABASE_URL = firstEnv('NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_URL');
     const SUPABASE_ANON_KEY = firstEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_ANON_KEY');
 
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
       return NextResponse.json(
-        { error: 'server_misconfigured', message: 'Missing Supabase URL or anon key.' },
+        { error: 'server_misconfigured', message: 'Missing Supabase URL or anon key.', requestId },
         { status: 503 }
       );
     }
@@ -94,7 +102,11 @@ export async function POST(req: NextRequest) {
 
     if (latestLog && latestLog.locked_until && new Date(latestLog.locked_until) > new Date()) {
       return NextResponse.json(
-        { error: `Too many attempts. Access locked until ${new Date(latestLog.locked_until).toLocaleTimeString()}` },
+        {
+          error: 'admin_auth_rate_limited',
+          message: 'Too many attempts. Access is temporarily locked.',
+          requestId,
+        },
         { status: 429 }
       );
     }
@@ -164,7 +176,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        safeUpstreamResponse(data, 'admin_auth_failed'),
+        { ...safeUpstreamResponse(data, 'admin_auth_failed'), requestId },
         { status: res.status, headers: { 'Cache-Control': 'no-store' } },
       );
     }
@@ -180,11 +192,11 @@ export async function POST(req: NextRequest) {
 
   } catch (error: any) {
     if (isAccessControlError(error)) {
-      return accessControlResponse(error);
+      return accessControlResponse(error, requestId);
     }
     console.error('[API /api/admin/auth] Error.');
     return NextResponse.json(
-      { error: 'admin_auth_failed', message: 'Admin authentication failed.' },
+      { error: 'admin_auth_failed', message: 'Admin authentication failed.', requestId },
       { status: 500, headers: { 'Cache-Control': 'no-store' } },
     );
   }

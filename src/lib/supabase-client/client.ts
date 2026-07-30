@@ -838,19 +838,15 @@ export async function recordUserActivityRpc({
   if (!token) return false;
 
   try {
-    const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
-    const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-    const response = await safeFetch(`${supabaseUrl}/rest/v1/rpc/record_user_activity`, {
+    const response = await safeFetch('/api/auth/activity', {
       method: 'POST',
       headers: {
-        apikey: anonKey,
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        p_user_id: normalizedUserId,
-        p_event: String(event || 'activity'),
-        p_metadata: metadata,
+        event: String(event || 'activity'),
+        metadata,
       }),
       timeout: timeoutMs,
       silent: true,
@@ -1016,58 +1012,30 @@ export async function updateUserActivity(
     const accessToken = await getSupabaseAccessToken();
     if (!accessToken) return;
 
-    await recordUserActivityRpc({
-      userId,
-      event: 'activity',
-      metadata: {
-        connection: metadata.connection,
-        pwa: metadata.pwa,
-      },
-      accessToken,
-      timeoutMs: 6000,
-    });
-
     const lastMetadataSyncAt = userActivityMetadataSyncAt.get(userId) ?? 0;
     const shouldSyncMetadata =
       opts?.force ||
       now - lastMetadataSyncAt >= USER_ACTIVITY_METADATA_SYNC_MS;
-    if (!shouldSyncMetadata) {
-      return;
-    }
-
-    const supabaseUrl = requiredEnv('NEXT_PUBLIC_SUPABASE_URL').replace(/\/$/, '');
-    const anonKey = requiredEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY');
-    const payload = {
-      user_id: userId,
-      last_active_at: new Date().toISOString(),
-      user_agent: userAgent,
-      is_pwa: isStandalone,
-      metadata,
-    };
-
-    const response = await safeFetch(`${supabaseUrl}/rest/v1/au_user_activity?on_conflict=user_id`, {
-      method: 'POST',
-      headers: {
-        apikey: anonKey,
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        Prefer: 'resolution=merge-duplicates',
-      },
-      body: JSON.stringify(payload),
-      timeout: 8000,
-      silent: true,
-      retries: 0,
+    const recorded = await recordUserActivityRpc({
+      userId,
+      event: 'activity',
+      metadata: shouldSyncMetadata
+        ? metadata
+        : {
+            connection: metadata.connection,
+            pwa: metadata.pwa,
+          },
+      accessToken,
+      timeoutMs: 6000,
     });
 
-    if (!response.ok) {
-      if (response.status === 406) return;
-      if (isClientAuthDebugEnabled()) {
-        console.warn('[client] Activity update error.', { status: response.status });
-      }
+    if (!recorded) {
       return;
     }
 
-    userActivityMetadataSyncAt.set(userId, now);
+    if (shouldSyncMetadata) {
+      userActivityMetadataSyncAt.set(userId, now);
+    }
   } catch {
     if (isClientAuthDebugEnabled()) {
       console.warn('[client] Failed to update activity.');

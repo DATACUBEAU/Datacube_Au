@@ -58,6 +58,8 @@ import { FeatureGatePanel } from '@/components/feature-gate-panel';
 import { buildUpgradeContext, getDashboardFeatureAccess } from '@/lib/feature-access';
 import { describeApiErrorForUser } from '@/lib/api/user-facing-error';
 import { useFeatureOutput } from '@/hooks/api/use-feature-output';
+import { openSupportEmail } from '@/lib/support/contact';
+import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 
 import { FeedbackSection } from "@/components/au-feedback";
 import {
@@ -345,12 +347,13 @@ function PredictionsPageContent() {
         toast({ variant: 'destructive', title: 'Authentication Error', description: 'Wait for session restore to finish, then try again.' });
         return;
       }
+      const accessToken = await getSupabaseAccessToken();
 
       await generatePredictions({
         documentId: selectedTextbookId || selectedPastQuestionsId,
         mainTextbookId: selectedTextbookId || undefined,
         pastQuestionIds: [selectedPastQuestionsId],
-        accessToken: session?.access_token,
+        accessToken,
       });
 
     } catch (err: any) {
@@ -393,7 +396,17 @@ function PredictionsPageContent() {
         throw new Error('Failed to clear cache');
       }
     } catch (e) {
-      window.open(`mailto:support@datacube-au.vercel.app?subject=Prediction Generation Locked&body=Hello, I encountered a generation lock for document ${selectedPastQuestionsId}. Please clear the cache.`);
+      const opened = openSupportEmail({
+        subject: 'Prediction Generation Locked',
+        body: 'Hello, I encountered a generation lock for the selected document. Please clear the cache.',
+      });
+      if (!opened) {
+        toast({
+          variant: 'destructive',
+          title: 'Support email not configured',
+          description: 'Please contact an administrator to clear the affected generation cache.',
+        });
+      }
     }
   }, [predictionOutput, selectedPastQuestionsId, session?.access_token, toast, user]);
 
