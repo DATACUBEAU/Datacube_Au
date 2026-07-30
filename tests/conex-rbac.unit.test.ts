@@ -1,5 +1,18 @@
 import assert from 'node:assert/strict';
-import { CONEX_ROOT_ADMIN_EMAIL, CONEX_ROOT_ADMIN_USER_ID, hasConexAccess, isRootConexAdmin, normalizeConexTier, toConexTierFromToggle } from '../src/lib/conex-rbac.js';
+
+const TEST_OWNER_USER_ID = '11111111-1111-4111-8111-111111111111';
+const TEST_OWNER_EMAIL = 'owner@example.test';
+process.env.DATACUBE_OWNER_ADMIN_USER_ID = TEST_OWNER_USER_ID;
+process.env.CONEX_ROOT_ADMIN_EMAIL = TEST_OWNER_EMAIL;
+
+const {
+  CONEX_ROOT_ADMIN_EMAIL,
+  CONEX_ROOT_ADMIN_USER_ID,
+  hasConexAccess,
+  isRootConexAdmin,
+  normalizeConexTier,
+  toConexTierFromToggle,
+} = require('../src/lib/conex-rbac.js') as typeof import('../src/lib/conex-rbac.js');
 
 let failed = 0;
 
@@ -22,8 +35,8 @@ run('isRootConexAdmin allows bootstrap identity by known id or known email alias
 });
 
 run('hasConexAccess allows admin tier and denies free tier', () => {
-  assert.equal(hasConexAccess({ userId: '11111111-1111-4111-8111-111111111111', email: 'user@example.com', tier: 'admin' }), true);
-  assert.equal(hasConexAccess({ userId: '11111111-1111-4111-8111-111111111111', email: 'user@example.com', tier: 'free' }), false);
+  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'admin' }), true);
+  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'free' }), false);
 });
 
 run('normalizeConexTier and toggle mapping are strict', () => {

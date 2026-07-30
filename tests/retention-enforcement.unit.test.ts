@@ -129,11 +129,15 @@ async function main() {
     assert.doesNotMatch(client, /\/rest\/v1\/au_user_activity\?/);
     assert.match(route, /requireUserFromRequest\(req\)/);
     assert.match(route, /createSupabaseAdminClient\(\)/);
-    assert.match(route, /\.rpc\('record_user_activity'/);
+    assert.doesNotMatch(route, /\.rpc\('record_user_activity'/);
     assert.match(route, /\.from\('au_user_activity'\)/);
+    assert.match(route, /\.from\('au_user_profiles'\)/);
     assert.match(route, /user_id:\s*auth\.userId/);
     assert.doesNotMatch(route, /user_id:\s*body/);
-    assert.match(route, /isMissingActivityTableError/);
+    assert.match(route, /ACTIVITY_RPC_SIGNATURE_MISMATCH/);
+    assert.match(route, /activity_update_degraded/);
+    assert.match(route, /status:\s*202/);
+    assert.match(route, /requestId/);
     assert.match(route, /Cache-Control/);
     assert.match(route, /no-store/);
   });

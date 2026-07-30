@@ -2,22 +2,28 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ADMIN_OVERRIDE_PLANS = exports.PLATFORM_OWNER_USER_ID = void 0;
 exports.getProtectedOwnerUserId = getProtectedOwnerUserId;
+exports.hasProtectedOwnerConfigured = hasProtectedOwnerConfigured;
 exports.isProtectedOwnerUserId = isProtectedOwnerUserId;
 exports.normalizeAdminOverridePlan = normalizeAdminOverridePlan;
 exports.isAdminOverridePlan = isAdminOverridePlan;
 exports.isPaidAdminOverridePlan = isPaidAdminOverridePlan;
 exports.adminOverridePlanLabel = adminOverridePlanLabel;
-exports.PLATFORM_OWNER_USER_ID = '05ad2f16-b3ce-48eb-bf24-41b407556ffd';
+const OWNER_ADMIN_USER_ID_ENV = 'DATACUBE_OWNER_ADMIN_USER_ID';
 function getProtectedOwnerUserId() {
     const configured = typeof process !== 'undefined'
-        ? process.env?.DATACUBE_OWNER_ADMIN_USER_ID
+        ? process.env?.[OWNER_ADMIN_USER_ID_ENV]
         : null;
-    return String(configured || exports.PLATFORM_OWNER_USER_ID).trim().toLowerCase();
+    return String(configured || '').trim().toLowerCase();
+}
+exports.PLATFORM_OWNER_USER_ID = getProtectedOwnerUserId();
+function hasProtectedOwnerConfigured() {
+    return Boolean(getProtectedOwnerUserId());
 }
 exports.ADMIN_OVERRIDE_PLANS = ['free', 'pro_weekly', 'pro_monthly', 'premium'];
 const ADMIN_OVERRIDE_PLAN_SET = new Set(exports.ADMIN_OVERRIDE_PLANS);
 function isProtectedOwnerUserId(userId) {
-    return String(userId || '').trim().toLowerCase() === getProtectedOwnerUserId();
+    const ownerUserId = getProtectedOwnerUserId();
+    return Boolean(ownerUserId && String(userId || '').trim().toLowerCase() === ownerUserId);
 }
 function normalizeAdminOverridePlan(value) {
     const normalized = String(value ?? '').trim().toLowerCase();

@@ -5,11 +5,15 @@ import {
   normalizeAdminAssignablePlan,
   resolveAdminPlanChangeType,
 } from '../src/lib/server/admin-user-management.js';
-import {
+
+const TEST_OWNER_USER_ID = '11111111-1111-4111-8111-111111111111';
+process.env.DATACUBE_OWNER_ADMIN_USER_ID = TEST_OWNER_USER_ID;
+
+const {
   PLATFORM_OWNER_USER_ID,
   isProtectedOwnerUserId,
-} from '../src/lib/admin/protected-owner.js';
-import { isRootConexAdmin } from '../src/lib/conex-rbac.js';
+} = require('../src/lib/admin/protected-owner.js') as typeof import('../src/lib/admin/protected-owner.js');
+const { isRootConexAdmin } = require('../src/lib/conex-rbac.js') as typeof import('../src/lib/conex-rbac.js');
 
 let failed = 0;
 
@@ -31,10 +35,10 @@ function run(name: string, fn: () => void) {
 }
 
 run('protected owner id is authoritative for admin recognition', () => {
-  assert.equal(PLATFORM_OWNER_USER_ID, '05ad2f16-b3ce-48eb-bf24-41b407556ffd');
+  assert.equal(PLATFORM_OWNER_USER_ID, TEST_OWNER_USER_ID);
   assert.equal(isProtectedOwnerUserId(PLATFORM_OWNER_USER_ID), true);
   assert.equal(isRootConexAdmin(PLATFORM_OWNER_USER_ID), true);
-  assert.equal(isProtectedOwnerUserId('11111111-1111-4111-8111-111111111111'), false);
+  assert.equal(isProtectedOwnerUserId('22222222-2222-4222-8222-222222222222'), false);
 });
 
 run('owner plan switcher uses existing internal plan identifiers', () => {
@@ -77,7 +81,7 @@ run('server route only allows protected owner self-targeting through the existin
 run('subscription page exposes owner-only controls and refreshes only owner caches after success', () => {
   const source = readRepoFile('src/app/dashboard/settings/subscription/page.tsx');
 
-  assert.match(source, /user\?\.id === PLATFORM_OWNER_USER_ID/);
+  assert.match(source, /accountSnapshot\?\.isProtectedOwner === true/);
   assert.match(source, /action: 'set_owner_self_plan'/);
   assert.match(source, /targetUserId: user\.id/);
   assert.match(source, /OWNER_PLAN_OPTIONS/);

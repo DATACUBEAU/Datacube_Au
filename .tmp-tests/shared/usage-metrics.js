@@ -31,6 +31,7 @@ exports.TRACKED_USAGE_METRIC_KEYS = [
     'practice_exam_generations',
     'max_knowledge_hub',
     'knowledge_generations',
+    'prompt_starters_per_day',
     'audio_seconds',
     'image_generations',
 ];
@@ -41,6 +42,7 @@ exports.USAGE_METRIC_ALIASES = {
     max_exam_predictions: ['max_exam_predictions', 'prediction_generations', 'used_exams', 'exams_count'],
     max_practice_exams: ['max_practice_exams', 'practice_exam_generations'],
     max_knowledge_hub: ['max_knowledge_hub', 'knowledge_generations'],
+    prompt_starters_per_day: ['prompt_starters_per_day'],
     api_calls: ['api_calls'],
     audio_seconds: ['audio_seconds'],
     image_generations: ['image_generations'],

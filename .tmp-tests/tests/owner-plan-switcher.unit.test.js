@@ -7,8 +7,10 @@ const strict_1 = __importDefault(require("node:assert/strict"));
 const node_fs_1 = __importDefault(require("node:fs"));
 const node_path_1 = __importDefault(require("node:path"));
 const admin_user_management_js_1 = require("../src/lib/server/admin-user-management.js");
-const protected_owner_js_1 = require("../src/lib/admin/protected-owner.js");
-const conex_rbac_js_1 = require("../src/lib/conex-rbac.js");
+const TEST_OWNER_USER_ID = '11111111-1111-4111-8111-111111111111';
+process.env.DATACUBE_OWNER_ADMIN_USER_ID = TEST_OWNER_USER_ID;
+const { PLATFORM_OWNER_USER_ID, isProtectedOwnerUserId, } = require('../src/lib/admin/protected-owner.js');
+const { isRootConexAdmin } = require('../src/lib/conex-rbac.js');
 let failed = 0;
 const repoRoot = process.cwd();
 function readRepoFile(relativePath) {
@@ -26,10 +28,10 @@ function run(name, fn) {
     }
 }
 run('protected owner id is authoritative for admin recognition', () => {
-    strict_1.default.equal(protected_owner_js_1.PLATFORM_OWNER_USER_ID, '05ad2f16-b3ce-48eb-bf24-41b407556ffd');
-    strict_1.default.equal((0, protected_owner_js_1.isProtectedOwnerUserId)(protected_owner_js_1.PLATFORM_OWNER_USER_ID), true);
-    strict_1.default.equal((0, conex_rbac_js_1.isRootConexAdmin)(protected_owner_js_1.PLATFORM_OWNER_USER_ID), true);
-    strict_1.default.equal((0, protected_owner_js_1.isProtectedOwnerUserId)('11111111-1111-4111-8111-111111111111'), false);
+    strict_1.default.equal(PLATFORM_OWNER_USER_ID, TEST_OWNER_USER_ID);
+    strict_1.default.equal(isProtectedOwnerUserId(PLATFORM_OWNER_USER_ID), true);
+    strict_1.default.equal(isRootConexAdmin(PLATFORM_OWNER_USER_ID), true);
+    strict_1.default.equal(isProtectedOwnerUserId('22222222-2222-4222-8222-222222222222'), false);
 });
 run('owner plan switcher uses existing internal plan identifiers', () => {
     strict_1.default.equal((0, admin_user_management_js_1.normalizeAdminAssignablePlan)('free'), 'free');
@@ -66,7 +68,7 @@ run('server route only allows protected owner self-targeting through the existin
 });
 run('subscription page exposes owner-only controls and refreshes only owner caches after success', () => {
     const source = readRepoFile('src/app/dashboard/settings/subscription/page.tsx');
-    strict_1.default.match(source, /user\?\.id === PLATFORM_OWNER_USER_ID/);
+    strict_1.default.match(source, /accountSnapshot\?\.isProtectedOwner === true/);
     strict_1.default.match(source, /action: 'set_owner_self_plan'/);
     strict_1.default.match(source, /targetUserId: user\.id/);
     strict_1.default.match(source, /OWNER_PLAN_OPTIONS/);

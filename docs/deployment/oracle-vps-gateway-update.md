@@ -2,7 +2,7 @@
 
 Last updated: 2026-07-30
 
-Use this after the code and Supabase migrations are deployed. The remote database is already up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`, `supabase/migrations/20260729120000_provider_key_encryption_columns.sql`, and `supabase/migrations/20260729153000_username_uniqueness.sql`; do not create or push another migration for the service-role replacement, provider-key encryption, or username uniqueness. The retention production runtime migration `supabase/migrations/20260730120000_retention_production_runtime.sql` is new in this worktree and must be owner-reviewed, dry-run, and pushed before deploying the retention runtime code.
+Use this after the code and Supabase migrations are deployed. The owner-confirmed remote database is up to date for `supabase/migrations/20260728120000_api_key_pipeline_hardening.sql`, `supabase/migrations/20260728153000_atomic_usage_accounting.sql`, `supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql`, `supabase/migrations/20260728160000_atomic_usage_replay_guard.sql`, `supabase/migrations/20260729120000_provider_key_encryption_columns.sql`, `supabase/migrations/20260729153000_username_uniqueness.sql`, and `supabase/migrations/20260730120000_retention_production_runtime.sql`; do not create or push another migration for the service-role replacement, provider-key encryption, username uniqueness, or retention runtime unless a new schema blocker is proven.
 
 Do not paste secrets into shell history. Store secret values in your deployment secret manager, PM2 ecosystem file outside git, systemd environment file outside git, or Docker/Compose secret environment that is not committed. `SUPABASE_SERVICE_ROLE_KEY` should now hold the new `sb_secret` value everywhere it is needed server-side.
 
@@ -48,8 +48,10 @@ AI_MAX_HISTORY_CHARS
 AI_MAX_MESSAGE_CHARS
 AI_MAX_PAST_QUESTION_CONTEXT_CHARS
 RATE_LIMIT_MAX_PER_MINUTE
-RETENTION_CRON_SECRET
+# Retention cron authorization is frontend/server-side for Vercel Cron,
+# not normally required on the Oracle VPS gateway when Vercel Cron is active:
 CRON_SECRET
+RETENTION_CRON_SECRET
 DCAU_ALLOW_INSECURE_DEV_VPS_SECRET
 ```
 
@@ -176,11 +178,11 @@ Atomic usage cleanup:
 Document retention cleanup:
 
 - Use the existing Vercel Cron configuration in `vercel.json`: `/api/cron/retention` once per day.
-- Configure either `RETENTION_CRON_SECRET` or `CRON_SECRET` in the frontend/server deployment secret storage; Vercel Cron sends `Authorization: Bearer <CRON_SECRET>` when `CRON_SECRET` is configured.
+- Configure one cron authorization secret in the frontend/server deployment secret storage. Prefer `CRON_SECRET` for Vercel Cron; use `RETENTION_CRON_SECRET` only if intentionally separating document-retention authorization. The route accepts either configured name, but do not configure both unless you intentionally want either value accepted.
 - For initial reporting, call `/api/cron/retention?dryRun=1` from a server-only context. Send the cron secret in `x-cron-secret` or an `Authorization: Bearer` header without printing the value in shell history, logs, screenshots, or docs.
 - Keep the batch size bounded with the route `limit` query parameter during rollout.
 - Verify dry-run responses contain aggregate counts only, not document names, file paths, emails, tokens, or private user data.
-- Apply `20260730120000_retention_production_runtime.sql` before relying on retention cleanup in production. It creates retention action/run tables, owner metadata, lease RPCs, RLS/revokes/grants, and indexes.
+- Confirm `20260730120000_retention_production_runtime.sql` remains applied before relying on retention cleanup in production. It creates retention action/run tables, owner metadata, lease RPCs, RLS/revokes/grants, and indexes.
 - Do not configure a second Oracle cron/systemd timer for document retention while Vercel Cron is active.
 
 ## D. Oracle Cloud Networking Checklist

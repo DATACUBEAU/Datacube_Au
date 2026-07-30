@@ -1,12 +1,12 @@
 import { getProtectedOwnerUserId, isProtectedOwnerUserId } from './admin/protected-owner';
 
 export const CONEX_ROOT_ADMIN_EMAIL = String(
-  process.env.NEXT_PUBLIC_CONEX_ROOT_ADMIN_EMAIL ?? process.env.CONEX_ROOT_ADMIN_EMAIL ?? ''
+  process.env.CONEX_ROOT_ADMIN_EMAIL ?? ''
 )
   .trim()
   .toLowerCase();
 export const CONEX_ROOT_ADMIN_EMAIL_FALLBACK = String(
-  process.env.NEXT_PUBLIC_CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? process.env.CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? ''
+  process.env.CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? ''
 )
   .trim()
   .toLowerCase();

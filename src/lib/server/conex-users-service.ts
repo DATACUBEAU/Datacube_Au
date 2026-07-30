@@ -1,4 +1,5 @@
-import { CONEX_ROOT_ADMIN_USER_ID, hasConexAccess, normalizeConexTier, type ConexTier } from '../conex-rbac';
+import { isProtectedOwnerUserId } from '../admin/protected-owner';
+import { hasConexAccess, normalizeConexTier, type ConexTier } from '../conex-rbac';
 
 export type ConexActor = {
   userId: string;
@@ -18,6 +19,7 @@ export type ConexDashboardUser = {
   full_name: string | null;
   avatar_url: string | null;
   is_authorized: boolean;
+  is_protected_owner: boolean;
 };
 
 export interface ConexUsersRepository {
@@ -69,6 +71,7 @@ export function buildConexDashboardUsers(rows: ConexProfileRow[]): {
       full_name: row.full_name ?? null,
       avatar_url: row.avatar_url ?? null,
       is_authorized: tier === 'admin',
+      is_protected_owner: isProtectedOwnerUserId(row.user_id),
     };
     return item;
   });
@@ -111,7 +114,7 @@ export async function setConexTierForUser(
     throw new ConexAccessError(400, 'invalid_tier', "Invalid tier. Expected 'admin' or 'free'.");
   }
 
-  if (targetUserId === CONEX_ROOT_ADMIN_USER_ID && nextTier !== 'admin') {
+  if (isProtectedOwnerUserId(targetUserId) && nextTier !== 'admin') {
     throw new ConexAccessError(400, 'protected_user', 'Cannot revoke root admin access.');
   }
 
@@ -127,5 +130,6 @@ export async function setConexTierForUser(
     full_name: updated.full_name ?? null,
     avatar_url: updated.avatar_url ?? null,
     is_authorized: tier === 'admin',
+    is_protected_owner: isProtectedOwnerUserId(updated.user_id),
   };
 }

@@ -1,11 +1,17 @@
-export const PLATFORM_OWNER_USER_ID = '05ad2f16-b3ce-48eb-bf24-41b407556ffd';
+const OWNER_ADMIN_USER_ID_ENV = 'DATACUBE_OWNER_ADMIN_USER_ID';
 
 export function getProtectedOwnerUserId(): string {
   const configured =
     typeof process !== 'undefined'
-      ? process.env?.DATACUBE_OWNER_ADMIN_USER_ID
+      ? process.env?.[OWNER_ADMIN_USER_ID_ENV]
       : null;
-  return String(configured || PLATFORM_OWNER_USER_ID).trim().toLowerCase();
+  return String(configured || '').trim().toLowerCase();
+}
+
+export const PLATFORM_OWNER_USER_ID = getProtectedOwnerUserId();
+
+export function hasProtectedOwnerConfigured(): boolean {
+  return Boolean(getProtectedOwnerUserId());
 }
 
 export const ADMIN_OVERRIDE_PLANS = ['free', 'pro_weekly', 'pro_monthly', 'premium'] as const;
@@ -15,7 +21,8 @@ export type AdminOverridePlan = (typeof ADMIN_OVERRIDE_PLANS)[number];
 const ADMIN_OVERRIDE_PLAN_SET = new Set<string>(ADMIN_OVERRIDE_PLANS);
 
 export function isProtectedOwnerUserId(userId: unknown): boolean {
-  return String(userId || '').trim().toLowerCase() === getProtectedOwnerUserId();
+  const ownerUserId = getProtectedOwnerUserId();
+  return Boolean(ownerUserId && String(userId || '').trim().toLowerCase() === ownerUserId);
 }
 
 export function normalizeAdminOverridePlan(value: unknown): AdminOverridePlan | null {

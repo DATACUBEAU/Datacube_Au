@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
       snapshot: {
         userId: snapshot.userId,
         validatedAt: snapshot.validatedAt,
+        isProtectedOwner: snapshot.isProtectedOwner,
         plan: snapshot.plan,
         effectivePlan: snapshot.effectivePlan,
         entitlements: snapshot.entitlements,

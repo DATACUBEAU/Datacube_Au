@@ -73,6 +73,7 @@ function formatExpirationWindowLabel(days) {
 function getRetentionPolicyNotice() {
     const freeAndPromoLabel = `Free and Promo documents expire after ${exports.FREE_PLAN_EXPIRATION_DAYS} days.`;
     const paidProLabel = `Paid Pro documents expire after ${exports.PAID_PRO_PLAN_EXPIRATION_DAYS} days.`;
+    const summary = `If you stay signed out for ${exports.SIGNED_OUT_DOCUMENT_CLEANUP_DAYS} days, your uploaded documents will be deleted. Documents uploaded on Free and Promo plans expire after ${exports.FREE_PLAN_EXPIRATION_DAYS} days. Documents uploaded on the paid Pro plan expire after ${exports.PAID_PRO_PLAN_EXPIRATION_DAYS} days.`;
     return {
         signedOutDays: exports.SIGNED_OUT_DOCUMENT_CLEANUP_DAYS,
         freeDays: exports.FREE_PLAN_EXPIRATION_DAYS,
@@ -80,7 +81,7 @@ function getRetentionPolicyNotice() {
         paidProDays: exports.PAID_PRO_PLAN_EXPIRATION_DAYS,
         freeAndPromoLabel,
         paidProLabel,
-        summary: `Signed-out uploads are deleted after ${exports.SIGNED_OUT_DOCUMENT_CLEANUP_DAYS} days. ${freeAndPromoLabel} ${paidProLabel}`,
+        summary,
     };
 }
 function prorateExpirationTimestamp(input) {

@@ -35,6 +35,20 @@ function codeIncludes(code: string, value: string): boolean {
   return code.includes(value);
 }
 
+function isExplicitSessionExpiry(code: string, message: string): boolean {
+  if (
+    code === 'SESSION_EXPIRED' ||
+    code === 'REAUTH_REQUIRED' ||
+    code === 'TOKEN_EXPIRED' ||
+    code === 'JWT_EXPIRED' ||
+    code === 'REFRESH_FAILED'
+  ) {
+    return true;
+  }
+
+  return /\bsession expired\b|\bre-?authentication required\b|\bre-?login required\b|\btoken expired\b|\bjwt expired\b/i.test(message);
+}
+
 export function describeApiErrorForUser(
   input: unknown,
   options?: UserFacingErrorOptions,
@@ -77,11 +91,14 @@ export function describeApiErrorForUser(
     code === 'AUTH_REQUIRED' ||
     code === 'AUTHENTICATION_FAILED'
   ) {
+    const sessionExpired = isExplicitSessionExpiry(code, message);
     return {
       ...base,
       kind: 'unauthorized',
-      title: 'Session expired',
-      description: 'Your session expired. Please refresh the page and sign in again.',
+      title: sessionExpired ? 'Session expired' : 'Sign in required',
+      description: sessionExpired
+        ? 'Your session expired. Please sign in again.'
+        : 'Please sign in again, then retry this action.',
       retryable: false,
     };
   }

@@ -10,7 +10,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
-import { CONEX_ROOT_ADMIN_USER_ID } from '@/lib/conex-rbac';
 import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 
 type ConexUser = {
@@ -19,6 +18,7 @@ type ConexUser = {
   full_name: string | null;
   avatar_url: string | null;
   is_authorized: boolean;
+  is_protected_owner?: boolean;
 };
 
 type ConexUsersResponse = {
@@ -192,7 +192,7 @@ export function ConexAccessControl() {
         ) : (
           <div className="space-y-2">
             {filteredUsers.map((user) => {
-              const isRootAdmin = user.user_id === CONEX_ROOT_ADMIN_USER_ID;
+              const isRootAdmin = Boolean(user.is_protected_owner);
               const toggleDisabled = isRootAdmin || savingUserId === user.user_id;
 
               return (

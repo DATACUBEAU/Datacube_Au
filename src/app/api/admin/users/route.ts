@@ -24,7 +24,6 @@ import {
 import { deleteUserAccountWithRetention } from '@/lib/server/retention';
 import {
   ADMIN_OVERRIDE_PLANS,
-  PLATFORM_OWNER_USER_ID,
   isProtectedOwnerUserId,
   normalizeAdminOverridePlan,
   type AdminOverridePlan,
@@ -490,7 +489,9 @@ const activitySchema = z.object({
 
 const setOwnerAdminOverrideSchema = z.object({
   action: z.literal('set_owner_admin_override_plan'),
-  userId: z.literal(PLATFORM_OWNER_USER_ID),
+  userId: z.string().uuid().refine((value) => isProtectedOwnerUserId(value), {
+    message: 'Protected owner account required.',
+  }),
   adminOverridePlan: z.enum(ADMIN_OVERRIDE_PLANS),
 });
 

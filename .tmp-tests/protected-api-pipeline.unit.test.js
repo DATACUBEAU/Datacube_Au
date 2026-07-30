@@ -27,6 +27,9 @@ async function main() {
         const source = readRepoFile('src/lib/api/safe-fetch.ts');
         strict_1.default.equal(source.includes('window.location.href = loginUrl'), false);
         strict_1.default.match(source, /authIntent = 'background'/);
+        strict_1.default.match(source, /responseIndicatesSessionExpiry/);
+        strict_1.default.match(source, /SESSION_EXPIRY_AUTH_REASONS/);
+        strict_1.default.match(source, /if \(!sessionExpiry\) \{\s*return response;\s*\}/);
     });
     await run('safeFetch disables blind retries for interactive and non-idempotent traffic by default', () => {
         const source = readRepoFile('src/lib/api/safe-fetch.ts');
@@ -64,8 +67,13 @@ async function main() {
     });
     await run('background analytics logging cannot force a full-page reauthenticate flow', () => {
         const source = readRepoFile('src/lib/analytics.ts');
-        strict_1.default.match(source, /authIntent:\s*'background'/);
-        strict_1.default.match(source, /reauthOnAuthFailure:\s*false/);
+        strict_1.default.match(source, /supabase\.auth\.getSession\(\)/);
+        strict_1.default.match(source, /\.from\('au_activity_log'\)/);
+        strict_1.default.match(source, /\.insert\(rows\)/);
+        strict_1.default.match(source, /LOG_QUEUE\.length = 0/);
+        strict_1.default.equal(source.includes('safeFetch'), false);
+        strict_1.default.equal(source.includes('reauthOnAuthFailure'), false);
+        strict_1.default.equal(source.includes('window.location.href'), false);
     });
     await run('feature output waits for auth restore before firing protected requests', () => {
         const source = readRepoFile('src/hooks/api/use-feature-output.ts');
@@ -78,12 +86,58 @@ async function main() {
         strict_1.default.match(source, /useState<'loading' \| 'authenticated' \| 'unauthenticated'>\('loading'\)/);
         strict_1.default.match(source, /resolveBrowserSession\(\)/);
     });
-    await run('chat pipeline does not force expiry on a transient missing token during restore', () => {
+    await run('chat pipeline blocks protected ticket requests without a live access token', () => {
         const source = readRepoFile('src/hooks/api/use-au-chat.ts');
         strict_1.default.equal(source.includes('missing_access_token'), false);
         strict_1.default.match(source, /isAuthLoading \|\| isRestoringAuth/);
-        strict_1.default.match(source, /accessToken:\s*session\?\.access_token \?\? '__cookie_session__'/);
+        strict_1.default.match(source, /await getSupabaseAccessToken\(\)/);
+        strict_1.default.match(source, /\baccessToken,\s*\n/);
+        strict_1.default.match(source, /sendChatMessageStream[\s\S]+\{ signal: abortControllerRef\.current\?\.signal, accessToken \}/);
+        strict_1.default.match(source, /isSessionExpiryAuthFailure/);
+        strict_1.default.doesNotMatch(source, /tokenExpiresAt/);
+        const debugStart = source.indexOf('[useAuChat] Preparing to send message');
+        strict_1.default.ok(debugStart >= 0, 'missing sanitized chat debug block');
+        const debugBlock = source.slice(debugStart, source.indexOf('});', debugStart) + 3);
+        strict_1.default.doesNotMatch(debugBlock, /userId/);
+        strict_1.default.doesNotMatch(source, /__cookie_session__/);
         strict_1.default.equal(source.includes("source: 'useAuChat.sendMessage'"), false);
+    });
+    await run('AI ticket requests suppress global 401 expiry and preserve structured error handling', () => {
+        const chat = readRepoFile('src/lib/api/chat.ts');
+        const exams = readRepoFile('src/lib/api/exams.ts');
+        const store = readRepoFile('src/hooks/use-store.ts');
+        strict_1.default.match(chat, /throwResponseApiError/);
+        strict_1.default.match(chat, /message:\s*'Sign in required\.'/);
+        strict_1.default.match(chat, /suppressAuthError:\s*true/);
+        strict_1.default.match(exams, /message:\s*'Sign in required\.'/);
+        strict_1.default.match(exams, /suppressAuthError:\s*true/);
+        strict_1.default.match(store, /message:\s*'Sign in required\.'/);
+        strict_1.default.match(store, /suppressAuthError:\s*true/);
+    });
+    await run('support escalation uses configured public email and does not hardcode the deployment domain', () => {
+        const support = readRepoFile('src/lib/support/contact.ts');
+        strict_1.default.match(support, /NEXT_PUBLIC_SUPPORT_EMAIL/);
+        strict_1.default.doesNotMatch(support, /support@datacube-au\.vercel\.app/);
+        for (const file of [
+            'src/app/dashboard/chat/page.tsx',
+            'src/app/dashboard/knowledge/page.tsx',
+            'src/app/dashboard/practice/page.tsx',
+            'src/app/dashboard/predictions/page.tsx',
+        ]) {
+            const source = readRepoFile(file);
+            strict_1.default.match(source, /openSupportEmail/);
+            strict_1.default.doesNotMatch(source, /support@datacube-au\.vercel\.app/);
+            strict_1.default.doesNotMatch(source, /mailto:support/);
+        }
+    });
+    await run('admin auth failures include safe request IDs without leaking lockout internals', () => {
+        const source = readRepoFile('src/app/api/admin/auth/route.ts');
+        strict_1.default.match(source, /createSafeRequestId/);
+        strict_1.default.match(source, /const requestId = createSafeRequestId\(\)/);
+        strict_1.default.match(source, /accessControlResponse\(error, requestId\)/);
+        strict_1.default.match(source, /requestId/);
+        strict_1.default.match(source, /admin_auth_rate_limited/);
+        strict_1.default.doesNotMatch(source, /toLocaleTimeString/);
     });
     await run('document bootstrap defers realtime and polling while auth is restoring', () => {
         const source = readRepoFile('src/hooks/api/use-au-documents.ts');
@@ -112,11 +166,16 @@ async function main() {
         strict_1.default.match(source, /docTextMemoryCache/);
         strict_1.default.match(source, /docTextInFlightRequests/);
     });
-    await run('available chat models are cached and prompt starter payloads are budgeted', () => {
+    await run('available chat models are server-routed and prompt starters use the VPS ticket path', () => {
         const source = readRepoFile('src/lib/api/chat.ts');
-        strict_1.default.match(source, /AVAILABLE_MODELS_CACHE_TTL_MS/);
-        strict_1.default.match(source, /availableModelsInFlight/);
-        strict_1.default.match(source, /PROMPT_STARTER_DOCUMENT_BUDGET/);
+        strict_1.default.match(source, /getAvailableModels\(\): Promise<string\[\]>/);
+        strict_1.default.match(source, /return DEFAULT_MODEL_IDS/);
+        strict_1.default.match(source, /createAiIdempotencyKey\('prompt_starters'\)/);
+        strict_1.default.match(source, /feature:\s*'generate-prompt-starters'/);
+        strict_1.default.match(source, /hasDocId \? undefined : documentContent/);
+        strict_1.default.match(source, /\/api\/au\/vps-ticket/);
+        strict_1.default.equal(source.includes('AVAILABLE_MODELS_CACHE_TTL_MS'), false);
+        strict_1.default.equal(source.includes('availableModelsInFlight'), false);
     });
     await run('chat duplicate sends are blocked while the same prompt is already in flight', () => {
         const source = readRepoFile('src/hooks/api/use-au-chat.ts');
@@ -186,31 +245,44 @@ async function main() {
         strict_1.default.equal(routeSource.includes('tokens:'), false);
         strict_1.default.equal(routeSource.includes('model:'), false);
     });
-    await run('generation flows clamp heavy document payloads and use shared user-facing error messaging', () => {
+    await run('generation flows pass document IDs/idempotency keys and use shared user-facing error messaging', () => {
         const storeSource = readRepoFile('src/hooks/use-store.ts');
         const examsHook = readRepoFile('src/hooks/api/use-au-exams.ts');
+        const examsApi = readRepoFile('src/lib/api/exams.ts');
         strict_1.default.match(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET/);
         strict_1.default.match(storeSource, /PREDICTION_PAST_QUESTIONS_BUDGET/);
         strict_1.default.match(storeSource, /describeApiErrorForUser/);
-        strict_1.default.match(examsHook, /getAuDocumentChunksText/);
-        strict_1.default.match(examsHook, /PRACTICE_DOCUMENT_BUDGET/);
+        strict_1.default.doesNotMatch(examsHook, /getAuDocumentChunksText/);
+        strict_1.default.match(examsHook, /generatePracticeExam\(\s*['"]{2},\s*['"]{2}/);
         strict_1.default.match(examsHook, /describeApiErrorForUser/);
+        strict_1.default.match(examsApi, /createAiIdempotencyKey\('practice_exam'\)/);
+        strict_1.default.match(examsApi, /createAiIdempotencyKey\('exam_predictions'\)/);
+        strict_1.default.match(examsApi, /feature:\s*'generate-practice-exam'/);
+        strict_1.default.match(examsApi, /feature:\s*'generate-exam-predictions'/);
+        strict_1.default.match(examsApi, /hasDocId \? undefined : \(documentContent \|\| undefined\)/);
+        strict_1.default.match(examsApi, /hasPqIds \? undefined : \(pastQuestionsContent \|\| undefined\)/);
     });
     await run('dashboard activity heartbeat is throttled so it cannot chatter every minute', () => {
-        const layoutSource = readRepoFile('src/app/dashboard/layout.tsx');
         const clientSource = readRepoFile('src/lib/supabase-client/client.ts');
-        strict_1.default.match(layoutSource, /5 \* 60 \* 1000/);
+        const smartAuth = readRepoFile('src/hooks/use-smart-auth.tsx');
         strict_1.default.match(clientSource, /USER_ACTIVITY_HEARTBEAT_MS = 5 \* 60 \* 1000/);
         strict_1.default.match(clientSource, /USER_ACTIVITY_METADATA_SYNC_MS = 15 \* 60 \* 1000/);
         strict_1.default.match(clientSource, /userActivityHeartbeatAt/);
         strict_1.default.match(clientSource, /userActivityMetadataSyncAt/);
+        strict_1.default.match(smartAuth, /recordUserActivityRpc/);
     });
-    await run('exam and generation flows no longer hard-require a local access token before protected requests', () => {
+    await run('exam and generation flows require a live access token before protected AI requests', () => {
         const examsHook = readRepoFile('src/hooks/api/use-au-exams.ts');
         const knowledgePage = readRepoFile('src/app/dashboard/knowledge/page.tsx');
         const practicePage = readRepoFile('src/app/dashboard/practice/page.tsx');
         const predictionsPage = readRepoFile('src/app/dashboard/predictions/page.tsx');
-        strict_1.default.match(examsHook, /accessToken:\s*session\?\.access_token \?\? '__cookie_session__'/);
+        strict_1.default.match(examsHook, /await getSupabaseAccessToken\(\)/);
+        strict_1.default.match(examsHook, /\baccessToken\s*\}/);
+        strict_1.default.doesNotMatch(examsHook, /__cookie_session__/);
+        strict_1.default.match(knowledgePage, /await getSupabaseAccessToken\(\)/);
+        strict_1.default.match(knowledgePage, /\baccessToken,\s*\n/);
+        strict_1.default.match(predictionsPage, /await getSupabaseAccessToken\(\)/);
+        strict_1.default.match(predictionsPage, /\baccessToken,\s*\n/);
         strict_1.default.match(knowledgePage, /enabled:\s*Boolean\(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);
         strict_1.default.match(practicePage, /enabled:\s*Boolean\(selectedDocId && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);
         strict_1.default.match(predictionsPage, /enabled:\s*Boolean\(\(selectedTextbookId \|\| selectedPastQuestionsId\) && user && !isAuthLoading && !isRestoringAuth && !isAuthLocked\)/);
@@ -223,10 +295,8 @@ async function main() {
         strict_1.default.match(globalChatPage, /const canChat = isOnline && Boolean\(user\) && !isLoadingAuth && !isRestoringAuth && !isAuthLocked;/);
         strict_1.default.match(globalChatPage, /Restoring session\.\.\./);
     });
-    await run('legacy proxy wrappers share a cookie-aware forward helper instead of stripping auth context', () => {
-        const helper = readRepoFile('src/app/api/_proxy-forward.ts');
-        strict_1.default.match(helper, /headers\.set\('Cookie', cookie\)/);
-        strict_1.default.match(helper, /headers\.set\('Authorization', authorization\)/);
+    await run('legacy AI proxy wrappers were removed in favor of the VPS ticket path', () => {
+        strict_1.default.equal(node_fs_1.default.existsSync(node_path_1.default.join(repoRoot, 'src/app/api/_proxy-forward.ts')), false);
         for (const file of [
             'src/app/api/chat/route.ts',
             'src/app/api/generate-knowledge/route.ts',
@@ -234,9 +304,14 @@ async function main() {
             'src/app/api/generate-exam-predictions/route.ts',
             'src/app/api/generate-prompt-starters/route.ts',
         ]) {
-            const source = readRepoFile(file);
-            strict_1.default.match(source, /forwardProxyJsonRequest/);
+            strict_1.default.equal(node_fs_1.default.existsSync(node_path_1.default.join(repoRoot, file)), false, file);
         }
+        const chat = readRepoFile('src/lib/api/chat.ts');
+        const exams = readRepoFile('src/lib/api/exams.ts');
+        const store = readRepoFile('src/hooks/use-store.ts');
+        strict_1.default.match(chat, /\/api\/au\/vps-ticket/);
+        strict_1.default.match(exams, /\/api\/au\/vps-ticket/);
+        strict_1.default.match(store, /\/api\/au\/vps-ticket/);
     });
     await run('chat history route uses canonical request auth and RLS client helpers', () => {
         const source = readRepoFile('src/app/api/chat/history/route.ts');
@@ -244,22 +319,21 @@ async function main() {
         strict_1.default.match(source, /createSupabaseRlsClient/);
         strict_1.default.equal(source.includes("runtime = 'edge'"), false);
     });
-    await run('proxy auth failures now expose request auth diagnostics for runtime debugging', () => {
-        const source = readRepoFile('src/app/api/proxy/[functionName]/route.ts');
-        strict_1.default.match(source, /x-dcau-auth-stage/);
-        strict_1.default.match(source, /x-dcau-auth-has-authorization/);
-        strict_1.default.match(source, /serializeRequestAuthDiagnostics/);
-        strict_1.default.match(source, /auth_stage:\s*input\.stage/);
-        strict_1.default.match(source, /\[proxy\] auth failure surfaced via catch/);
-        strict_1.default.match(source, /const headers = applyRequestAuthDebugHeaders/);
-        strict_1.default.match(source, /const normalizedDetails = buildAuthFailureDetails/);
+    await run('removed dynamic proxy route cannot expose raw auth diagnostics to browsers', () => {
+        strict_1.default.equal(node_fs_1.default.existsSync(node_path_1.default.join(repoRoot, 'src/app/api/proxy/[functionName]/route.ts')), false);
+        const proxyAuth = readRepoFile('src/app/api/proxy/_supabase-auth.ts');
+        strict_1.default.doesNotMatch(proxyAuth, /tokenPreview/);
+        strict_1.default.doesNotMatch(proxyAuth, /token\.slice/);
+        strict_1.default.doesNotMatch(proxyAuth, /Authorization:\s*authorization/);
     });
-    await run('proxy no longer turns ambiguous post-auth chat failures into false 401 responses', () => {
-        const source = readRepoFile('src/app/api/proxy/[functionName]/route.ts');
-        strict_1.default.match(source, /shouldTreatCaughtAuthFailureAsAmbiguousPostAuthFailure/);
-        strict_1.default.match(source, /hasValidatedRequestAuth/);
-        strict_1.default.match(source, /\[proxy\] suppressing ambiguous auth failure after validated auth/);
-        strict_1.default.match(source, /tryLegacyChatFallbackIfEligible\('unexpected_error'\)/);
+    await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
+        const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
+        strict_1.default.match(source, /requireEntitlement/);
+        strict_1.default.match(source, /accessControlResponse/);
+        strict_1.default.match(source, /reserveAiUsage/);
+        strict_1.default.match(source, /AI_USAGE_RESERVATION_FAILED/);
+        strict_1.default.match(source, /route:\s*operation\.gatewayRoute/);
+        strict_1.default.doesNotMatch(source, /console\.log\([^)]*Authorization/);
     });
     await run('proxy auth validation prefers the explicit authorization header over ambient cookies after refresh', () => {
         const source = readRepoFile('src/app/api/proxy/_supabase-auth.ts');

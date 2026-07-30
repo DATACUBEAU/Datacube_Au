@@ -6,10 +6,10 @@ exports.isRootConexAdmin = isRootConexAdmin;
 exports.hasConexAccess = hasConexAccess;
 exports.toConexTierFromToggle = toConexTierFromToggle;
 const protected_owner_1 = require("./admin/protected-owner");
-exports.CONEX_ROOT_ADMIN_EMAIL = String(process.env.NEXT_PUBLIC_CONEX_ROOT_ADMIN_EMAIL ?? process.env.CONEX_ROOT_ADMIN_EMAIL ?? '')
+exports.CONEX_ROOT_ADMIN_EMAIL = String(process.env.CONEX_ROOT_ADMIN_EMAIL ?? '')
     .trim()
     .toLowerCase();
-exports.CONEX_ROOT_ADMIN_EMAIL_FALLBACK = String(process.env.NEXT_PUBLIC_CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? process.env.CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? '')
+exports.CONEX_ROOT_ADMIN_EMAIL_FALLBACK = String(process.env.CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? '')
     .trim()
     .toLowerCase();
 exports.CONEX_ROOT_ADMIN_USER_ID = (0, protected_owner_1.getProtectedOwnerUserId)();

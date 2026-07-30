@@ -44,7 +44,6 @@ import type {
   AccountPlanSnapshot,
   PersistedCanonicalAccountSnapshot,
 } from '@/lib/account/account-snapshot-cache';
-import { PLATFORM_OWNER_USER_ID } from '@/lib/admin/protected-owner';
 import {
   buildPromoCopy,
   formatPromoEndsAtLabel,
@@ -342,7 +341,7 @@ export default function SubscriptionPage() {
   const isPromoUnlocked = promoActive;
   const hasPaidProAccess = currentPlan.managedPlan === 'pro' && currentPlan.hasPaidEntitlement;
   const hasPremiumAccess = currentPlan.managedPlan === 'premium' && currentPlan.hasPaidEntitlement;
-  const isProtectedOwner = user?.id === PLATFORM_OWNER_USER_ID;
+  const isProtectedOwner = accountSnapshot?.isProtectedOwner === true;
   const ownerBillingPlanLabel = subscription?.plan_key ? ownerPlanLabel(subscription.plan_key) : 'No active billing plan';
   const ownerAdminOverrideLabel = accountSnapshot?.entitlements.adminOverridePlan
     ? ownerPlanLabel(accountSnapshot.entitlements.adminOverridePlan)

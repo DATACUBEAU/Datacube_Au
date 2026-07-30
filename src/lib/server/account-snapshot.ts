@@ -12,6 +12,7 @@ import {
   type CanonicalAccountPlanAuthority,
   resolveCanonicalAccountPlanAuthority,
 } from '@/lib/server/account-plan-authority';
+import { isProtectedOwnerUserId } from '@/lib/admin/protected-owner';
 
 type BillingSubscriptionSummary = {
   planKey: string | null;
@@ -25,6 +26,7 @@ type BillingSubscriptionSummary = {
 export type CanonicalAccountSnapshot = {
   userId: string;
   validatedAt: string;
+  isProtectedOwner: boolean;
   plan: CanonicalAccountPlanAuthority['limits']['plan'];
   effectivePlan: CanonicalAccountPlanAuthority['effectivePlan'];
   entitlements: CanonicalAccountPlanAuthority['entitlements'];
@@ -134,6 +136,7 @@ export async function resolveCanonicalAccountSnapshot(
   return {
     userId,
     validatedAt: authority.validatedAt,
+    isProtectedOwner: isProtectedOwnerUserId(userId),
     plan: authority.limits.plan,
     effectivePlan: authority.effectivePlan,
     entitlements: authority.entitlements,

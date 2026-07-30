@@ -17,8 +17,8 @@ Do not print secret values in terminal output, logs, screenshots, tickets, docs,
 - [ ] Confirm no `SUPABASE_SERVICE_ROLE_KEY`, provider key, Qdrant key, shared secret, webhook secret, or signed ticket is configured as `NEXT_PUBLIC_*`.
 - [ ] Confirm `ALLOWED_ORIGINS` contains the production frontend domain and does not use `*`.
 - [ ] Confirm `QDRANT_URL` is HTTPS in production or private loopback/VPN-only.
-- [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, `20260728160000_atomic_usage_replay_guard.sql`, `20260729120000_provider_key_encryption_columns.sql`, and `20260729153000_username_uniqueness.sql` are already applied and the remote database is up to date.
-- [ ] Before deploying the retention runtime code, review and apply `20260730120000_retention_production_runtime.sql` with the Supabase CLI migration workflow. This migration creates retention run/action tables, lease RPCs, retention metadata columns, and indexes; it does not delete data.
+- [ ] Confirm the Supabase migrations `20260728120000_api_key_pipeline_hardening.sql`, `20260728153000_atomic_usage_accounting.sql`, `20260728154500_atomic_usage_limit_scope_fix.sql`, `20260728160000_atomic_usage_replay_guard.sql`, `20260729120000_provider_key_encryption_columns.sql`, `20260729153000_username_uniqueness.sql`, and `20260730120000_retention_production_runtime.sql` are already applied and the remote database is up to date.
+- [ ] Confirm the deployed frontend/server code includes the hardened `/api/auth/activity` route so authenticated activity writes return a safe success or degraded non-critical response, not a 500 loop.
 - [ ] Confirm a server-side cron/background path exists for `expire_ai_usage_reservations`; do not expose it to browser clients.
 - [ ] Confirm a server-side cron/background path exists for document retention cleanup at `/api/cron/retention`; it must use a server-only cron secret and must not be callable by unauthenticated browser clients.
 

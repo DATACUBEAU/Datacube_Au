@@ -62,7 +62,7 @@ import {
 import { getEffectiveEntitlementsSnapshot } from '@/lib/server/effective-entitlements';
 import { applyPlanTransition } from '@/lib/server/plan-sync';
 import {
-  PLATFORM_OWNER_USER_ID,
+  getProtectedOwnerUserId,
   isProtectedOwnerUserId,
 } from '@/lib/admin/protected-owner';
 
@@ -2306,32 +2306,41 @@ export async function reconcileBilling(
     }
   }
 
-  const { data: expiredRows, error: expiredErr } = await supabase
+  const protectedOwnerUserId = getProtectedOwnerUserId();
+  let expiredGrantQuery = supabase
     .from('entitlement_grants')
     .update({ status: 'expired' })
-    .eq('status', 'active')
-    .neq('user_id', PLATFORM_OWNER_USER_ID)
+    .eq('status', 'active');
+  if (protectedOwnerUserId) {
+    expiredGrantQuery = expiredGrantQuery.neq('user_id', protectedOwnerUserId);
+  }
+  const { data: expiredRows, error: expiredErr } = await expiredGrantQuery
     .lt('ends_at', nowIso)
     .select('user_id');
   if (expiredErr) throw expiredErr;
   const expiredGrants = expiredRows?.length || 0;
 
-  await supabase
+  let subscriptionExpiryQuery = supabase
     .from('billing_subscriptions')
     .update({ status: 'expired', updated_at: nowIso })
     .in('status', ['active', 'non_renewing'])
-    .eq('cancel_at_period_end', true)
-    .neq('user_id', PLATFORM_OWNER_USER_ID)
-    .lt('ends_at', nowIso);
+    .eq('cancel_at_period_end', true);
+  if (protectedOwnerUserId) {
+    subscriptionExpiryQuery = subscriptionExpiryQuery.neq('user_id', protectedOwnerUserId);
+  }
+  await subscriptionExpiryQuery.lt('ends_at', nowIso);
 
   let downgradedUsers = 0;
   const promoModeActive = await isPromoModeActive(supabase);
   if (!promoModeActive) {
-    const { data: proProfiles, error: profileErr } = await supabase
+    let proProfilesQuery = supabase
       .from('au_user_profiles')
       .select('user_id')
-      .eq('tier', 'pro')
-      .neq('user_id', PLATFORM_OWNER_USER_ID);
+      .eq('tier', 'pro');
+    if (protectedOwnerUserId) {
+      proProfilesQuery = proProfilesQuery.neq('user_id', protectedOwnerUserId);
+    }
+    const { data: proProfiles, error: profileErr } = await proProfilesQuery;
     if (profileErr) throw profileErr;
 
     for (const row of proProfiles || []) {

@@ -60,6 +60,7 @@ export type AccountUsageSnapshot = {
 export type PersistedCanonicalAccountSnapshot = {
   userId: string;
   validatedAt: string | null;
+  isProtectedOwner?: boolean;
   plan: string;
   effectivePlan: {
     plan: string;
@@ -295,6 +296,7 @@ export function normalizeAccountSnapshotPayload(
   return {
     userId,
     validatedAt,
+    isProtectedOwner: root.isProtectedOwner === true,
     plan,
     effectivePlan: {
       plan: asString(effectivePlanRow.plan) || plan,

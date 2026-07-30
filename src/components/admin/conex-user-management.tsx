@@ -24,7 +24,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { getSupabaseAccessToken } from '@/lib/supabase-client/client';
 import { dispatchAccountSnapshotInvalidated } from '@/components/providers/account-snapshot-provider';
-import { PLATFORM_OWNER_USER_ID, adminOverridePlanLabel, type AdminOverridePlan } from '@/lib/admin/protected-owner';
+import { adminOverridePlanLabel, type AdminOverridePlan } from '@/lib/admin/protected-owner';
 import {
   ADMIN_ASSIGNABLE_PLAN_KEYS,
   adminAssignablePlanLabel,
@@ -333,8 +333,12 @@ export function ConexUserManagement() {
 
   const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
   const selectedCount = selectedIds.size;
+  const protectedUserIds = useMemo(
+    () => new Set(users.filter((user) => user.is_protected_owner).map((user) => user.user_id)),
+    [users],
+  );
   const selectableUserIds = useMemo(
-    () => users.filter((user) => user.user_id !== PLATFORM_OWNER_USER_ID).map((user) => user.user_id),
+    () => users.filter((user) => !user.is_protected_owner).map((user) => user.user_id),
     [users],
   );
   const isReadOnlyMode = sourceMode === 'au_users_fallback';
@@ -344,7 +348,7 @@ export function ConexUserManagement() {
   );
   const offlineCount = Math.max(0, users.length - onlineNowCount);
   const selectedUserIsProtectedOwner = Boolean(
-    selectedUser?.is_protected_owner || selectedUser?.user_id === PLATFORM_OWNER_USER_ID,
+    selectedUser?.is_protected_owner,
   );
   const selectedUserCurrentPlan = useMemo<AdminAssignablePlanKey>(() => {
     if (!selectedUser) return 'free';
@@ -362,14 +366,14 @@ export function ConexUserManagement() {
   const hasBulkPatch = Boolean(bulkStatus || bulkRole || bulkPermissions.trim());
 
   const toggleSelectUser = useCallback((userId: string, checked: boolean) => {
-    if (userId === PLATFORM_OWNER_USER_ID) return;
+    if (protectedUserIds.has(userId)) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (checked) next.add(userId);
       else next.delete(userId);
       return next;
     });
-  }, []);
+  }, [protectedUserIds]);
 
   const toggleSelectAllOnPage = useCallback((checked: boolean) => {
     if (checked) setSelectedIds(new Set(selectableUserIds));
@@ -861,7 +865,7 @@ export function ConexUserManagement() {
                         <Checkbox
                           checked={selectedIds.has(user.user_id)}
                           onCheckedChange={(value) => toggleSelectUser(user.user_id, Boolean(value))}
-                          disabled={user.user_id === PLATFORM_OWNER_USER_ID}
+                          disabled={Boolean(user.is_protected_owner)}
                           aria-label={`Select ${user.email || user.user_id}`}
                         />
                       </div>
@@ -879,7 +883,7 @@ export function ConexUserManagement() {
                         {user.account_status}
                       </Badge>
                       <Badge variant="outline">{user.role}</Badge>
-                      {user.user_id === PLATFORM_OWNER_USER_ID ? <Badge variant="secondary">owner</Badge> : null}
+                      {user.is_protected_owner ? <Badge variant="secondary">owner</Badge> : null}
                       {user.admin_override_plan ? <Badge variant="outline">{adminOverridePlanLabel(user.admin_override_plan)}</Badge> : null}
                       <span className="text-[11px] text-muted-foreground">
                         Last seen: {formatLastSeen(user.last_active_at)} ({formatDate(user.last_active_at)})
@@ -927,7 +931,7 @@ export function ConexUserManagement() {
                           <Checkbox
                             checked={selectedIds.has(user.user_id)}
                             onCheckedChange={(value) => toggleSelectUser(user.user_id, Boolean(value))}
-                            disabled={user.user_id === PLATFORM_OWNER_USER_ID}
+                            disabled={Boolean(user.is_protected_owner)}
                             aria-label={`Select ${user.email || user.user_id}`}
                           />
                         </td>
@@ -952,7 +956,7 @@ export function ConexUserManagement() {
                         </td>
                         <td className="p-2">
                           <Badge variant="outline">{user.role}</Badge>
-                          {user.user_id === PLATFORM_OWNER_USER_ID ? <Badge variant="secondary" className="ml-1">owner</Badge> : null}
+                          {user.is_protected_owner ? <Badge variant="secondary" className="ml-1">owner</Badge> : null}
                           {user.admin_override_plan ? <Badge variant="outline" className="ml-1">{adminOverridePlanLabel(user.admin_override_plan)}</Badge> : null}
                         </td>
                         <td className="p-2 text-xs text-muted-foreground">
