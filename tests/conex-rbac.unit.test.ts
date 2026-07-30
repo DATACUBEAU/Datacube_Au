@@ -27,16 +27,28 @@ function run(name: string, fn: () => void) {
   }
 }
 
-run('isRootConexAdmin allows bootstrap identity by known id or known email aliases', () => {
+run('isRootConexAdmin allows only the protected owner id', () => {
   assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, CONEX_ROOT_ADMIN_EMAIL), true);
   assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, 'wrong@example.com'), true);
-  assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', CONEX_ROOT_ADMIN_EMAIL), true);
+  assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', CONEX_ROOT_ADMIN_EMAIL), false);
   assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', 'not-admin@example.com'), false);
 });
 
-run('hasConexAccess allows admin tier and denies free tier', () => {
-  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'admin' }), true);
+run('hasConexAccess allows only the protected owner and ignores browser-visible tier claims', () => {
+  assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: 'user@example.com', tier: 'free' }), true);
+  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'admin' }), false);
   assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'free' }), false);
+});
+
+run('missing protected owner configuration fails closed', () => {
+  const previous = process.env.DATACUBE_OWNER_ADMIN_USER_ID;
+  delete process.env.DATACUBE_OWNER_ADMIN_USER_ID;
+  try {
+    assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, CONEX_ROOT_ADMIN_EMAIL), false);
+    assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), false);
+  } finally {
+    process.env.DATACUBE_OWNER_ADMIN_USER_ID = previous;
+  }
 });
 
 run('normalizeConexTier and toggle mapping are strict', () => {

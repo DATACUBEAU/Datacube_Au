@@ -55,7 +55,7 @@ export function assertActorCanManageConex(actor: ConexActor, profile: ConexProfi
   });
 
   if (!isAllowed) {
-    throw new ConexAccessError(403, 'forbidden', 'Forbidden: admin tier required for /conex access management.');
+    throw new ConexAccessError(403, 'forbidden', 'Forbidden: protected owner access required for /conex access management.');
   }
 }
 

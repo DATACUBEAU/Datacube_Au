@@ -59,6 +59,7 @@ Frontend/server-only provider-key management env vars:
 
 ```text
 PROVIDER_KEY_ENCRYPTION_SECRET
+DATACUBE_OWNER_ADMIN_USER_ID
 ```
 
 Production requirements:
@@ -67,6 +68,7 @@ Production requirements:
 - `VPS_SHARED_SECRET` must match the frontend/Next.js server env exactly.
 - `SUPABASE_SERVICE_ROLE_KEY` must contain the new `sb_secret` credential in every server-side runtime that uses Supabase admin access. The VPS gateway now requires this key because atomic usage commit/release RPCs are service-role only.
 - `PROVIDER_KEY_ENCRYPTION_SECRET` must be configured on the frontend/admin server before using Conex provider-key create/update. It is not needed in browser code and must not be sent to the Oracle VPS unless that service is later changed to decrypt database-stored provider keys directly.
+- `DATACUBE_OWNER_ADMIN_USER_ID` must be configured only in server-side frontend/API and worker runtimes that need protected-owner checks. It must not be exposed as a `NEXT_PUBLIC_*` variable.
 - `ALLOWED_ORIGINS` must be an explicit comma-separated allowlist, never `*`.
 - `QDRANT_URL` should be HTTPS in production. Loopback/private network URLs are acceptable only if Qdrant is not publicly reachable.
 - No provider key or Supabase service-role key may be defined with `NEXT_PUBLIC_*`.

@@ -335,6 +335,23 @@ async function main() {
         strict_1.default.match(source, /route:\s*operation\.gatewayRoute/);
         strict_1.default.doesNotMatch(source, /console\.log\([^)]*Authorization/);
     });
+    await run('admin access is tied to the server-only owner override, not profile tier or browser claims', () => {
+        const accessControl = readRepoFile('src/lib/authz/access-control.ts');
+        const conexRbac = readRepoFile('src/lib/conex-rbac.ts');
+        strict_1.default.match(accessControl, /export function isAdminSubject/);
+        strict_1.default.match(accessControl, /return Boolean\(subject\.adminOverride\);/);
+        strict_1.default.doesNotMatch(accessControl, /isAdminSubject[\s\S]+profileTier\)\s*===\s*'admin'/);
+        strict_1.default.doesNotMatch(accessControl, /isAdminSubject[\s\S]+plan\)\s*===\s*'admin'/);
+        strict_1.default.match(conexRbac, /return isProtectedOwnerUserId\(userId\);/);
+        strict_1.default.match(conexRbac, /export function hasConexAccess/);
+        strict_1.default.match(conexRbac, /return isRootConexAdmin\(subject\.userId, subject\.email\);/);
+    });
+    await run('Conex user management route returns admin data with no-store responses only', () => {
+        const source = readRepoFile('src/app/conex/users/route.ts');
+        strict_1.default.match(source, /requireAdmin\(req\)/);
+        strict_1.default.match(source, /headers:\s*\{\s*'Cache-Control': 'no-store'\s*\}/);
+        strict_1.default.doesNotMatch(source, /message\s*=\s*error instanceof Error \? error\.message/);
+    });
     await run('proxy auth validation prefers the explicit authorization header over ambient cookies after refresh', () => {
         const source = readRepoFile('src/app/api/proxy/_supabase-auth.ts');
         const headerIndex = source.indexOf("candidates.push({ token: headerToken, source: 'header' })");

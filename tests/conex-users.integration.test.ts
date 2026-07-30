@@ -81,6 +81,13 @@ const freeActor = {
   avatar_url: 'https://example.com/noaccess.png',
 } satisfies ConexProfileRow;
 
+const adminTierActor = {
+  user_id: '58037f4e-f13c-4025-b203-042101cbb5ac',
+  tier: 'admin',
+  full_name: 'Tier Admin',
+  avatar_url: 'https://example.com/tieradmin.png',
+} satisfies ConexProfileRow;
+
 run('access control cannot be bypassed by non-admin actor', async () => {
   const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser, freeActor]);
 
@@ -89,6 +96,25 @@ run('access control cannot be bypassed by non-admin actor', async () => {
       await setConexTierForUser(
         repo,
         { userId: freeActor.user_id, email: 'unauthorized@example.com' },
+        targetUser.user_id,
+        'admin'
+      );
+    },
+    (error: any) =>
+      error instanceof ConexAccessError &&
+      error.status === 403 &&
+      error.code === 'forbidden'
+  );
+});
+
+run('access control cannot be bypassed by admin tier without protected owner id', async () => {
+  const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser, adminTierActor]);
+
+  await assert.rejects(
+    async () => {
+      await setConexTierForUser(
+        repo,
+        { userId: adminTierActor.user_id, email: 'tier-admin@example.com' },
         targetUser.user_id,
         'admin'
       );

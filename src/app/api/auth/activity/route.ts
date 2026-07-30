@@ -157,7 +157,7 @@ export async function POST(req: NextRequest) {
       .update(profilePatch)
       .eq('user_id', auth.userId);
 
-    if (profileError && process.env.NODE_ENV !== 'production') {
+    if (profileError) {
       console.warn('[auth-activity] profile activity sync degraded.', {
         requestId,
         code: classifyActivityError(profileError),
@@ -170,12 +170,10 @@ export async function POST(req: NextRequest) {
     );
   } catch (error) {
     const code = classifyActivityError(error);
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('[auth-activity] server activity update failed.', {
-        requestId,
-        code,
-      });
-    }
+    console.warn('[auth-activity] server activity update failed.', {
+      requestId,
+      code,
+    });
     return jsonNoStore(
       {
         ok: true,

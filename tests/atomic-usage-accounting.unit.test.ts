@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
   buildAiUsageReservationPayload,
   normalizeAiIdempotencyKey,
+  releaseReservedAiUsage,
   reserveAiUsage,
   reserveFailureStatus,
 } from '../src/lib/server/ai-usage-accounting.js';
@@ -132,6 +133,34 @@ async function main() {
     assert.equal((supabase.calls[0]?.payload.p_metric_increments as any).max_chats_total, 1);
   });
 
+  await run('failed Next.js ticket issuance can release a reserved usage claim', async () => {
+    const supabase = new FakeSupabase();
+    supabase.response = {
+      ok: true,
+      code: null,
+      status: 'released',
+    };
+
+    const result = await releaseReservedAiUsage({
+      supabase: supabase as any,
+      userId: '00000000-0000-4000-8000-000000000001',
+      featureKey: 'au_chat',
+      route: '/chat/au-chat',
+      idempotencyKey: 'chat_123456789abc',
+      ticketId: 'ticket-1',
+      reservationId: '11111111-1111-4111-8111-111111111111',
+      failureCode: 'TICKET_UNKNOWN_SERVER_ERROR',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(supabase.calls.length, 1);
+    assert.equal(supabase.calls[0]?.name, 'release_ai_usage');
+    assert.equal(supabase.calls[0]?.payload.p_user_id, '00000000-0000-4000-8000-000000000001');
+    assert.equal(supabase.calls[0]?.payload.p_feature_key, 'au_chat');
+    assert.equal(supabase.calls[0]?.payload.p_route, '/chat/au-chat');
+    assert.equal(supabase.calls[0]?.payload.p_status, 'released');
+  });
+
   await run('reserve failure maps limit and inactive reservation states safely', () => {
     assert.equal(reserveFailureStatus('USAGE_LIMIT_EXCEEDED', 'rejected'), 429);
     assert.equal(reserveFailureStatus('USAGE_RESERVATION_FINGERPRINT_MISMATCH', 'reserved'), 409);
@@ -178,6 +207,9 @@ async function main() {
   await run('VPS ticket route reserves before signing and includes reservation claims', () => {
     const source = readFileSync('src/app/api/au/vps-ticket/route.ts', 'utf8');
     assert.match(source, /reserveAiUsage/);
+    assert.match(source, /releaseReservationAfterTicketFailure/);
+    assert.match(source, /TICKET_USAGE_RESERVATION_FAILED/);
+    assert.match(source, /stage = 'reserve_usage'/);
     assert.doesNotMatch(source, /trackUsageEvent/);
     assert.match(source, /reservation_id:\s*reservation\.reservationId/);
     assert.match(source, /idempotency_key:\s*reservation\.idempotencyKey/);

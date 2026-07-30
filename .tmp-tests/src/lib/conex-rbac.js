@@ -22,17 +22,11 @@ function normalizeConexTier(value) {
     return null;
 }
 function isRootConexAdmin(userId, email) {
-    const normalizedEmail = String(email ?? '').trim().toLowerCase();
-    const emailMatch = normalizedEmail === exports.CONEX_ROOT_ADMIN_EMAIL || normalizedEmail === exports.CONEX_ROOT_ADMIN_EMAIL_FALLBACK;
-    const idMatch = (0, protected_owner_1.isProtectedOwnerUserId)(userId);
-    // Allow either verified root email or known root user_id.
-    // This prevents lockout when auth provider/user migration changes one side.
-    return emailMatch || idMatch;
+    void email;
+    return (0, protected_owner_1.isProtectedOwnerUserId)(userId);
 }
 function hasConexAccess(subject) {
-    if (isRootConexAdmin(subject.userId, subject.email))
-        return true;
-    return normalizeConexTier(subject.tier) === 'admin';
+    return isRootConexAdmin(subject.userId, subject.email);
 }
 function toConexTierFromToggle(enabled) {
     return enabled ? 'admin' : 'free';

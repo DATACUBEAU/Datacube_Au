@@ -1,5 +1,16 @@
-export const PLATFORM_OWNER_USER_ID = '05ad2f16-b3ce-48eb-bf24-41b407556ffd';
+const OWNER_ADMIN_USER_ID_ENV = 'DATACUBE_OWNER_ADMIN_USER_ID';
+
+export function getProtectedOwnerUserId(): string {
+  const configured =
+    typeof process !== 'undefined'
+      ? process.env?.[OWNER_ADMIN_USER_ID_ENV]
+      : null;
+  return String(configured || '').trim().toLowerCase();
+}
+
+export const PLATFORM_OWNER_USER_ID = getProtectedOwnerUserId();
 
 export function isProtectedOwnerUserId(userId: unknown): boolean {
-  return String(userId || '').trim().toLowerCase() === PLATFORM_OWNER_USER_ID;
+  const ownerUserId = getProtectedOwnerUserId();
+  return Boolean(ownerUserId && String(userId || '').trim().toLowerCase() === ownerUserId);
 }

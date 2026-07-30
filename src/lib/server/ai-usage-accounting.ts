@@ -42,6 +42,12 @@ export type AiUsageReservationResult = {
   requested?: number | null;
 };
 
+export type AiUsageReleaseResult = {
+  ok: boolean;
+  code: string | null;
+  status: string | null;
+};
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
   if (!value || typeof value !== 'object') return JSON.stringify(value);
@@ -267,6 +273,37 @@ export async function reserveAiUsage(input: {
 
   if (error) throw error;
   return normalizeReservationResult(data, input.idempotencyKey);
+}
+
+export async function releaseReservedAiUsage(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  featureKey: string;
+  route: string;
+  idempotencyKey: string;
+  ticketId: string;
+  reservationId: string;
+  failureCode: string;
+  status?: 'released' | 'disputed';
+}): Promise<AiUsageReleaseResult> {
+  const { data, error } = await input.supabase.rpc('release_ai_usage', {
+    p_reservation_id: input.reservationId,
+    p_user_id: input.userId,
+    p_feature_key: input.featureKey,
+    p_route: input.route,
+    p_idempotency_key: input.idempotencyKey,
+    p_ticket_id: input.ticketId,
+    p_failure_code: input.failureCode,
+    p_status: input.status || 'released',
+  });
+
+  if (error) throw error;
+  const payload = (data || {}) as Record<string, unknown>;
+  return {
+    ok: payload.ok === true,
+    code: typeof payload.code === 'string' ? payload.code : null,
+    status: typeof payload.status === 'string' ? payload.status : null,
+  };
 }
 
 export function reserveFailureStatus(code: string | null | undefined, status: string | null | undefined): number {

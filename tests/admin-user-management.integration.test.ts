@@ -20,7 +20,7 @@ function run(name: string, fn: () => void) {
   }
 }
 
-run('permission-level checks deny free users and allow admin tier for Conex management', () => {
+run('permission-level checks deny non-owner users even when tier claims are admin', () => {
   const freeAccess = hasConexAccess({
     userId: '33333333-3333-4333-8333-333333333333',
     email: 'free@example.com',
@@ -33,7 +33,7 @@ run('permission-level checks deny free users and allow admin tier for Conex mana
   });
 
   assert.equal(freeAccess, false);
-  assert.equal(adminAccess, true);
+  assert.equal(adminAccess, false);
 });
 
 run('bulk metadata patch stays bounded to approved role/status/permission values', () => {
@@ -57,4 +57,3 @@ run('invalid role/status values cannot escalate privileges during normalization'
 });
 
 if (failed > 0) process.exit(1);
-

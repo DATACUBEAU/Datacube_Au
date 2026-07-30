@@ -97,10 +97,15 @@ function toErrorResponse(error: unknown): NextResponse {
     return accessControlResponse(error);
   }
   if (error instanceof ConexAccessError) {
-    return NextResponse.json({ error: error.code, message: error.message }, { status: error.status });
+    return NextResponse.json(
+      { error: error.code, message: error.message },
+      { status: error.status, headers: { 'Cache-Control': 'no-store' } },
+    );
   }
-  const message = error instanceof Error ? error.message : 'internal_server_error';
-  return NextResponse.json({ error: 'internal_server_error', message }, { status: 500 });
+  return NextResponse.json(
+    { error: 'internal_server_error', message: 'Failed to complete Conex user request.' },
+    { status: 500, headers: { 'Cache-Control': 'no-store' } },
+  );
 }
 
 async function requireActor(req: NextRequest): Promise<
@@ -139,7 +144,7 @@ export async function GET(req: NextRequest) {
 
     const repo = createConexUsersRepo(actorResult.actor.accessToken);
     const data = await listConexDashboardUsers(repo, actorResult.actor);
-    return NextResponse.json(data);
+    return NextResponse.json(data, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     return toErrorResponse(error);
   }
@@ -165,11 +170,14 @@ export async function POST(req: NextRequest) {
     const allRows = await repo.listProfiles();
     const dashboard = buildConexDashboardUsers(allRows);
 
-    return NextResponse.json({
-      ok: true,
-      updated,
-      ...dashboard,
-    });
+    return NextResponse.json(
+      {
+        ok: true,
+        updated,
+        ...dashboard,
+      },
+      { headers: { 'Cache-Control': 'no-store' } },
+    );
   } catch (error) {
     return toErrorResponse(error);
   }

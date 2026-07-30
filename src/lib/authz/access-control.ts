@@ -503,7 +503,7 @@ export function isAccessEntitlementExpired(subject: EntitlementSubject | null | 
 
 export function isAdminSubject(subject: EntitlementSubject | null | undefined): boolean {
   if (!subject?.userId) return false;
-  return Boolean(subject.adminOverride) || normalizeToken(subject.plan) === 'admin' || normalizeToken(subject.profileTier) === 'admin';
+  return Boolean(subject.adminOverride);
 }
 
 export function evaluateAccess(
