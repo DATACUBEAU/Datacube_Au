@@ -215,6 +215,20 @@ async function main() {
     assert.match(source, /idempotency_key:\s*reservation\.idempotencyKey/);
   });
 
+  await run('VPS ticket route emits sanitized stage traces with correlation IDs', () => {
+    const source = readFileSync('src/app/api/au/vps-ticket/route.ts', 'utf8');
+    assert.match(source, /function logTicketStage/);
+    assert.match(source, /correlationId/);
+    assert.match(source, /stage:\s*input\.stage/);
+    assert.match(source, /status:\s*input\.status/);
+    assert.match(source, /TICKET_RESERVATION_RPC_SIGNATURE_MISMATCH/);
+    assert.match(source, /TICKET_RESERVATION_PERMISSION_DENIED/);
+    assert.match(source, /TICKET_SIGNING_SECRET_MISSING/);
+    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*auth\.userId/);
+    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*secretResolution\.secret/);
+    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*jwt/);
+  });
+
   await run('gateway verifies reservation claims and commits or releases reservations', () => {
     const auth = readFileSync('vps-ai-gateway/src/auth.ts', 'utf8');
     const index = readFileSync('vps-ai-gateway/src/index.ts', 'utf8');

@@ -329,11 +329,30 @@ async function main() {
     await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
         const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
         strict_1.default.match(source, /requireEntitlement/);
-        strict_1.default.match(source, /accessControlResponse/);
+        strict_1.default.match(source, /isAccessControlError/);
+        strict_1.default.match(source, /buildApiErrorBody/);
+        strict_1.default.match(source, /correlationId/);
         strict_1.default.match(source, /reserveAiUsage/);
         strict_1.default.match(source, /AI_USAGE_RESERVATION_FAILED/);
         strict_1.default.match(source, /route:\s*operation\.gatewayRoute/);
         strict_1.default.doesNotMatch(source, /console\.log\([^)]*Authorization/);
+    });
+    await run('middleware API denials include safe opaque request IDs for correlation', () => {
+        const source = readRepoFile('src/middleware.ts');
+        const unauthorizedStart = source.indexOf('function unauthorizedResponse');
+        const forbiddenStart = source.indexOf('function forbiddenResponse');
+        strict_1.default.ok(unauthorizedStart >= 0, 'missing unauthorizedResponse');
+        strict_1.default.ok(forbiddenStart >= 0, 'missing forbiddenResponse');
+        const unauthorizedBlock = source.slice(unauthorizedStart, forbiddenStart);
+        const forbiddenBlock = source.slice(forbiddenStart, source.indexOf('function getServiceClient'));
+        strict_1.default.match(source, /function createSafeRequestId/);
+        strict_1.default.match(source, /const requestId = createSafeRequestId\(\)/);
+        strict_1.default.match(source, /requestId,/);
+        strict_1.default.match(source, /'X-Request-Id': requestId/);
+        strict_1.default.doesNotMatch(unauthorizedBlock, /userId:\s*auth\.userId/);
+        strict_1.default.doesNotMatch(forbiddenBlock, /userId:\s*auth\.userId/);
+        strict_1.default.doesNotMatch(unauthorizedBlock, /accessToken/);
+        strict_1.default.doesNotMatch(forbiddenBlock, /accessToken/);
     });
     await run('admin access is tied to the server-only owner override, not profile tier or browser claims', () => {
         const accessControl = readRepoFile('src/lib/authz/access-control.ts');

@@ -364,11 +364,32 @@ async function main() {
   await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
     const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
     assert.match(source, /requireEntitlement/);
-    assert.match(source, /accessControlResponse/);
+    assert.match(source, /isAccessControlError/);
+    assert.match(source, /buildApiErrorBody/);
+    assert.match(source, /correlationId/);
     assert.match(source, /reserveAiUsage/);
     assert.match(source, /AI_USAGE_RESERVATION_FAILED/);
     assert.match(source, /route:\s*operation\.gatewayRoute/);
     assert.doesNotMatch(source, /console\.log\([^)]*Authorization/);
+  });
+
+  await run('middleware API denials include safe opaque request IDs for correlation', () => {
+    const source = readRepoFile('src/middleware.ts');
+    const unauthorizedStart = source.indexOf('function unauthorizedResponse');
+    const forbiddenStart = source.indexOf('function forbiddenResponse');
+    assert.ok(unauthorizedStart >= 0, 'missing unauthorizedResponse');
+    assert.ok(forbiddenStart >= 0, 'missing forbiddenResponse');
+    const unauthorizedBlock = source.slice(unauthorizedStart, forbiddenStart);
+    const forbiddenBlock = source.slice(forbiddenStart, source.indexOf('function getServiceClient'));
+
+    assert.match(source, /function createSafeRequestId/);
+    assert.match(source, /const requestId = createSafeRequestId\(\)/);
+    assert.match(source, /requestId,/);
+    assert.match(source, /'X-Request-Id': requestId/);
+    assert.doesNotMatch(unauthorizedBlock, /userId:\s*auth\.userId/);
+    assert.doesNotMatch(forbiddenBlock, /userId:\s*auth\.userId/);
+    assert.doesNotMatch(unauthorizedBlock, /accessToken/);
+    assert.doesNotMatch(forbiddenBlock, /accessToken/);
   });
 
   await run('admin access is tied to the server-only owner override, not profile tier or browser claims', () => {

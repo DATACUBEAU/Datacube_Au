@@ -4,7 +4,6 @@ import { resolveCanonicalEffectiveLimits, throwChatLimitIfNeeded, throwKnowledge
 import { buildApiErrorBody, buildApiSuccessBody, extractApiError } from '@/lib/api/api-contract';
 import { nanoid } from 'nanoid';
 import {
-  accessControlResponse,
   isAccessControlError,
   requireEntitlement,
   withNoStore,
@@ -27,12 +26,17 @@ export const runtime = 'nodejs';
 type TicketFailureCategory =
   | 'TICKET_USER_VALIDATION_FAILED'
   | 'TICKET_ENTITLEMENT_LOOKUP_FAILED'
+  | 'TICKET_PLAN_LOOKUP_FAILED'
   | 'TICKET_USAGE_RESERVATION_FAILED'
-  | 'TICKET_SIGNING_CONFIG_MISSING'
+  | 'TICKET_RESERVATION_RPC_MISSING'
+  | 'TICKET_RESERVATION_RPC_SIGNATURE_MISMATCH'
+  | 'TICKET_RESERVATION_PERMISSION_DENIED'
+  | 'TICKET_SIGNING_SECRET_MISSING'
+  | 'TICKET_SIGNING_FAILED'
   | 'TICKET_GATEWAY_URL_MISSING'
-  | 'TICKET_SHARED_SECRET_MISSING'
-  | 'TICKET_CONTRACT_MISMATCH'
+  | 'TICKET_CONTRACT_CONFIG_MISSING'
   | 'TICKET_DATABASE_ERROR'
+  | 'TICKET_RUNTIME_CONFIGURATION_ERROR'
   | 'TICKET_UNKNOWN_SERVER_ERROR';
 
 type TicketStage =
@@ -46,6 +50,8 @@ type TicketStage =
   | 'sign_ticket'
   | 'build_response';
 
+type TicketStageStatus = 'start' | 'success' | 'failure';
+
 type ReservedTicketUsage = {
   supabase: Awaited<ReturnType<typeof requireEntitlement>>['supabase'];
   userId: string;
@@ -55,6 +61,40 @@ type ReservedTicketUsage = {
   ticketId: string;
   reservationId: string;
 };
+
+function safeOpaqueId(value: unknown, fallback: string): string {
+  const raw = typeof value === 'string' ? value.trim() : '';
+  if (/^[A-Za-z0-9._:-]{6,160}$/.test(raw)) return raw.slice(0, 160);
+  return fallback;
+}
+
+function logTicketStage(input: {
+  requestId: string;
+  correlationId: string;
+  stage: TicketStage;
+  status: TicketStageStatus;
+  code?: string | null;
+  httpStatus?: number | null;
+  featureKey?: string | null;
+  route?: string | null;
+}): void {
+  const payload = {
+    requestId: input.requestId,
+    correlationId: input.correlationId,
+    stage: input.stage,
+    status: input.status,
+    ...(input.code ? { code: input.code } : {}),
+    ...(input.httpStatus ? { httpStatus: input.httpStatus } : {}),
+    ...(input.featureKey ? { featureKey: input.featureKey } : {}),
+    ...(input.route ? { route: input.route } : {}),
+  };
+
+  if (input.status === 'failure') {
+    console.error('[VPS Ticket Stage]', payload);
+  } else {
+    console.info('[VPS Ticket Stage]', payload);
+  }
+}
 
 function reserveFailureMessage(code: string | null, status: string | null): string {
   if (code === 'USAGE_LIMIT_EXCEEDED') return 'AI usage limit reached for this account.';
@@ -94,33 +134,49 @@ function classifyTicketFailure(stage: TicketStage, error: unknown): TicketFailur
   const code = String((error as any)?.code || '').trim().toUpperCase();
   const message = String((error as any)?.message || '').toLowerCase();
 
-  if (code === 'VPS_SHARED_SECRET_MISSING') return 'TICKET_SHARED_SECRET_MISSING';
-  if (code === 'INVALID_REQUEST_PAYLOAD') return 'TICKET_CONTRACT_MISMATCH';
+  if (code === 'VPS_SHARED_SECRET_MISSING') return 'TICKET_SIGNING_SECRET_MISSING';
+  if (code === 'INVALID_REQUEST_PAYLOAD') return 'TICKET_CONTRACT_CONFIG_MISSING';
   if (message.includes('missing supabase') || message.includes('service role') || message.includes('environment variable')) {
-    return 'TICKET_DATABASE_ERROR';
+    return 'TICKET_RUNTIME_CONFIGURATION_ERROR';
+  }
+
+  if (stage === 'reserve_usage') {
+    if (code === '42883') return 'TICKET_RESERVATION_RPC_SIGNATURE_MISMATCH';
+    if (code === 'PGRST202' || (message.includes('function') && message.includes('does not exist'))) {
+      return 'TICKET_RESERVATION_RPC_MISSING';
+    }
+    if (code === '42501' || message.includes('permission denied') || message.includes('service_role_required')) {
+      return 'TICKET_RESERVATION_PERMISSION_DENIED';
+    }
+    return isDatabaseLikeError(error) ? 'TICKET_DATABASE_ERROR' : 'TICKET_USAGE_RESERVATION_FAILED';
   }
 
   if (stage === 'authorize_request') return isDatabaseLikeError(error) ? 'TICKET_DATABASE_ERROR' : 'TICKET_USER_VALIDATION_FAILED';
-  if (stage === 'load_limits' || stage === 'check_limits') {
-    return isDatabaseLikeError(error) ? 'TICKET_DATABASE_ERROR' : 'TICKET_ENTITLEMENT_LOOKUP_FAILED';
-  }
-  if (stage === 'resolve_signing_secret') return 'TICKET_SIGNING_CONFIG_MISSING';
-  if (stage === 'reserve_usage') return 'TICKET_USAGE_RESERVATION_FAILED';
-  if (stage === 'sign_ticket') return 'TICKET_UNKNOWN_SERVER_ERROR';
+  if (stage === 'load_limits') return isDatabaseLikeError(error) ? 'TICKET_DATABASE_ERROR' : 'TICKET_ENTITLEMENT_LOOKUP_FAILED';
+  if (stage === 'check_limits') return isDatabaseLikeError(error) ? 'TICKET_DATABASE_ERROR' : 'TICKET_PLAN_LOOKUP_FAILED';
+  if (stage === 'resolve_signing_secret') return 'TICKET_SIGNING_SECRET_MISSING';
+  if (stage === 'sign_ticket') return 'TICKET_SIGNING_FAILED';
   if (stage === 'build_response') return 'TICKET_GATEWAY_URL_MISSING';
-  if (stage === 'resolve_operation') return 'TICKET_CONTRACT_MISMATCH';
+  if (stage === 'resolve_operation') return 'TICKET_CONTRACT_CONFIG_MISSING';
   return 'TICKET_UNKNOWN_SERVER_ERROR';
 }
 
 function ticketFailureMessage(code: TicketFailureCategory): string {
   if (code === 'TICKET_USAGE_RESERVATION_FAILED') return 'AI usage reservation failed.';
+  if (code === 'TICKET_RESERVATION_RPC_MISSING' || code === 'TICKET_RESERVATION_RPC_SIGNATURE_MISMATCH') {
+    return 'AI usage reservation is not compatible with the database schema.';
+  }
+  if (code === 'TICKET_RESERVATION_PERMISSION_DENIED') return 'AI usage reservation is not authorized.';
   if (code === 'TICKET_ENTITLEMENT_LOOKUP_FAILED') return 'AI entitlement check failed.';
+  if (code === 'TICKET_PLAN_LOOKUP_FAILED') return 'AI plan limit check failed.';
   if (code === 'TICKET_USER_VALIDATION_FAILED') return 'Authentication could not be verified.';
-  if (code === 'TICKET_SIGNING_CONFIG_MISSING' || code === 'TICKET_SHARED_SECRET_MISSING') {
+  if (code === 'TICKET_SIGNING_SECRET_MISSING') {
     return 'AI gateway ticket signing is not configured.';
   }
+  if (code === 'TICKET_SIGNING_FAILED') return 'AI gateway ticket could not be signed.';
   if (code === 'TICKET_GATEWAY_URL_MISSING') return 'AI gateway URL is not configured.';
-  if (code === 'TICKET_CONTRACT_MISMATCH') return 'AI route contract mismatch.';
+  if (code === 'TICKET_CONTRACT_CONFIG_MISSING') return 'AI route contract mismatch.';
+  if (code === 'TICKET_RUNTIME_CONFIGURATION_ERROR') return 'AI ticket runtime configuration failed.';
   if (code === 'TICKET_DATABASE_ERROR') return 'AI ticket database check failed.';
   return 'VPS ticket request failed.';
 }
@@ -129,6 +185,7 @@ async function releaseReservationAfterTicketFailure(input: {
   usage: ReservedTicketUsage | null;
   failureCode: TicketFailureCategory;
   requestId: string;
+  correlationId: string;
 }): Promise<void> {
   if (!input.usage) return;
   try {
@@ -140,6 +197,7 @@ async function releaseReservationAfterTicketFailure(input: {
     if (!result.ok) {
       console.warn('[VPS Ticket Usage Release Rejected]', {
         requestId: input.requestId,
+        correlationId: input.correlationId,
         code: result.code,
         status: result.status,
       });
@@ -147,6 +205,7 @@ async function releaseReservationAfterTicketFailure(input: {
   } catch (releaseError) {
     console.error('[VPS Ticket Usage Release Error]', {
       requestId: input.requestId,
+      correlationId: input.correlationId,
       code: safeErrorCode(releaseError),
       status: safeErrorStatus(releaseError),
     });
@@ -155,17 +214,23 @@ async function releaseReservationAfterTicketFailure(input: {
 
 export async function POST(req: NextRequest) {
   const requestId = nanoid();
+  let correlationId = safeOpaqueId(req.headers.get('x-correlation-id'), requestId);
   let stage: TicketStage = 'parse_request';
   let reservedUsage: ReservedTicketUsage | null = null;
+  logTicketStage({ requestId, correlationId, stage, status: 'start' });
   try {
     stage = 'parse_request';
     const parsedBody = await req.json().catch(() => ({}));
     const body = parsedBody && typeof parsedBody === 'object' && !Array.isArray(parsedBody)
       ? (parsedBody as Record<string, unknown>)
       : {};
+    correlationId = safeOpaqueId((body as any).correlationId || (body as any).correlation_id, correlationId);
+    logTicketStage({ requestId, correlationId, stage, status: 'success' });
+
     stage = 'resolve_operation';
     const operation = resolveVpsTicketOperation(body.feature || 'chat');
     if (!operation) {
+      logTicketStage({ requestId, correlationId, stage, status: 'failure', code: 'INVALID_REQUEST_PAYLOAD', httpStatus: 400 });
       return withNoStore(
         NextResponse.json(
           buildApiErrorBody({
@@ -173,39 +238,57 @@ export async function POST(req: NextRequest) {
             code: 'INVALID_REQUEST_PAYLOAD',
             message: 'Unknown AI feature.',
             requestId,
+            correlationId,
           }),
           { status: 400 },
         ),
       );
     }
+    logTicketStage({
+      requestId,
+      correlationId,
+      stage,
+      status: 'success',
+      featureKey: operation.featureKey,
+      route: operation.gatewayRoute,
+    });
 
     stage = 'authorize_request';
     const authorization = await requireEntitlement(req, operation.featureKey);
     const { auth, supabase } = authorization;
+    logTicketStage({ requestId, correlationId, stage, status: 'success', featureKey: operation.featureKey, route: operation.gatewayRoute });
     
     // Validate limits
     stage = 'load_limits';
     const limitsResult = await resolveCanonicalEffectiveLimits({ supabase, userId: auth.userId });
+    logTicketStage({ requestId, correlationId, stage, status: 'success', featureKey: operation.featureKey, route: operation.gatewayRoute });
 
     // Check specific limits based on feature
     stage = 'check_limits';
     if (operation.featureKey === 'au_chat' || operation.featureKey === 'global_chat') {
       const chatUsage = buildAiUsageIncrements(operation, body);
-      throwChatLimitIfNeeded({ limits: limitsResult, correlationId: requestId, tokenIncrement: chatUsage.estimatedTokens });
+      throwChatLimitIfNeeded({ limits: limitsResult, correlationId, tokenIncrement: chatUsage.estimatedTokens });
     } else if (operation.featureKey === 'knowledge_generation') {
-      throwKnowledgeHubLimitIfNeeded({ limits: limitsResult, correlationId: requestId });
+      throwKnowledgeHubLimitIfNeeded({ limits: limitsResult, correlationId });
     } else if (operation.featureKey === 'practice_exam_generation') {
-      throwPracticeExamLimitIfNeeded({ limits: limitsResult, correlationId: requestId });
+      throwPracticeExamLimitIfNeeded({ limits: limitsResult, correlationId });
     } else if (operation.featureKey === 'exam_predictions') {
-      throwExamPredictionLimitIfNeeded({ limits: limitsResult, correlationId: requestId });
+      throwExamPredictionLimitIfNeeded({ limits: limitsResult, correlationId });
     }
+    logTicketStage({ requestId, correlationId, stage, status: 'success', featureKey: operation.featureKey, route: operation.gatewayRoute });
 
     stage = 'resolve_signing_secret';
     const secretResolution = resolveVpsSharedSecretForSigning();
     if (!secretResolution.ok) {
-      console.error('[VPS Ticket Config Error]', {
-        code: secretResolution.code,
+      logTicketStage({
         requestId,
+        correlationId,
+        stage,
+        status: 'failure',
+        code: secretResolution.code,
+        httpStatus: secretResolution.status,
+        featureKey: operation.featureKey,
+        route: operation.gatewayRoute,
       });
       return withNoStore(
         NextResponse.json(
@@ -214,11 +297,13 @@ export async function POST(req: NextRequest) {
             code: secretResolution.code,
             message: secretResolution.message,
             requestId,
+            correlationId,
           }),
           { status: secretResolution.status },
         ),
       );
     }
+    logTicketStage({ requestId, correlationId, stage, status: 'success', featureKey: operation.featureKey, route: operation.gatewayRoute });
 
     stage = 'reserve_usage';
     const idempotencyKey = normalizeAiIdempotencyKey(
@@ -243,6 +328,16 @@ export async function POST(req: NextRequest) {
 
     if (!reservation.ok || !reservation.reservationId) {
       const status = reserveFailureStatus(reservation.code, reservation.status);
+      logTicketStage({
+        requestId,
+        correlationId,
+        stage,
+        status: 'failure',
+        code: reservation.code || 'AI_USAGE_RESERVATION_FAILED',
+        httpStatus: status,
+        featureKey: operation.featureKey,
+        route: operation.gatewayRoute,
+      });
       return withNoStore(
         NextResponse.json(
           buildApiErrorBody({
@@ -250,6 +345,7 @@ export async function POST(req: NextRequest) {
             code: reservation.code || 'AI_USAGE_RESERVATION_FAILED',
             message: reserveFailureMessage(reservation.code, reservation.status),
             requestId,
+            correlationId,
             retryable: status >= 500,
           }),
           { status },
@@ -265,6 +361,7 @@ export async function POST(req: NextRequest) {
       ticketId: requestId,
       reservationId: reservation.reservationId,
     };
+    logTicketStage({ requestId, correlationId, stage, status: 'success', featureKey: operation.featureKey, route: operation.gatewayRoute });
 
     // Sign the JWT ticket
     stage = 'sign_ticket';
@@ -285,23 +382,43 @@ export async function POST(req: NextRequest) {
       .setIssuedAt()
       .setExpirationTime('5m') // 5 minutes validity to absorb skew and network latency
       .sign(secretResolution.secret);
+    logTicketStage({ requestId, correlationId, stage, status: 'success', featureKey: operation.featureKey, route: operation.gatewayRoute });
 
     stage = 'build_response';
     const vpsUrl = (process.env.VPS_AI_GATEWAY_URL || process.env.NEXT_PUBLIC_VPS_GATEWAY_URL || 'https://vps.datacube.au').replace(/\/+$/, '');
+    logTicketStage({ requestId, correlationId, stage, status: 'success', featureKey: operation.featureKey, route: operation.gatewayRoute });
 
-    return withNoStore(NextResponse.json(buildApiSuccessBody({ ticket: jwt, vpsUrl, idempotencyKey: reservation.idempotencyKey })));
+    return withNoStore(NextResponse.json(buildApiSuccessBody({ ticket: jwt, vpsUrl, idempotencyKey: reservation.idempotencyKey, requestId, correlationId })));
   } catch (error: any) {
     if (isAccessControlError(error)) {
-      return accessControlResponse(error, requestId);
+      logTicketStage({ requestId, correlationId, stage, status: 'failure', code: error.decision.code, httpStatus: error.status });
+      return withNoStore(
+        NextResponse.json(
+          buildApiErrorBody({
+            status: error.status,
+            code: error.decision.code || 'FORBIDDEN',
+            message: error.decision.reason || 'Access denied.',
+            requestId,
+            correlationId,
+            upgrade: error.decision.upgradeUrl ? { href: error.decision.upgradeUrl } : null,
+            extra: {
+              feature: error.decision.feature || null,
+              routeId: error.decision.routeId || null,
+            },
+          }),
+          { status: error.status },
+        ),
+      );
     }
     const failureCode = classifyTicketFailure(stage, error);
-    await releaseReservationAfterTicketFailure({ usage: reservedUsage, failureCode, requestId });
-    console.error('[VPS Ticket Error]', {
+    await releaseReservationAfterTicketFailure({ usage: reservedUsage, failureCode, requestId, correlationId });
+    logTicketStage({
       requestId,
+      correlationId,
       stage,
+      status: 'failure',
       code: failureCode,
-      errorCode: safeErrorCode(error),
-      status: safeErrorStatus(error),
+      httpStatus: safeErrorStatus(error),
     });
     const apiError = extractApiError(error);
     const status = Number.isFinite(Number(apiError.status)) && Number(apiError.status) >= 400
@@ -314,6 +431,7 @@ export async function POST(req: NextRequest) {
           code: status >= 500 ? failureCode : apiError.code,
           message: status >= 500 ? ticketFailureMessage(failureCode) : apiError.message,
           requestId,
+          correlationId,
           retryable: apiError.retryable,
         }),
         { status },

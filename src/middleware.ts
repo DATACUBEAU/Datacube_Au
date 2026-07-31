@@ -50,6 +50,13 @@ function applyProtectedHeaders(response: NextResponse): NextResponse {
   return response;
 }
 
+function createSafeRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `req_${Date.now().toString(36)}`;
+}
+
 function isApiLikeRoute(pathname: string): boolean {
   return pathname.startsWith('/api/') || pathname === '/conex/users' || pathname.startsWith('/conex/users/');
 }
@@ -67,6 +74,7 @@ function forbiddenRedirect(req: NextRequest): NextResponse {
 
 function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse {
   if (isApiLikeRoute(req.nextUrl.pathname)) {
+    const requestId = createSafeRequestId();
     return applyProtectedHeaders(
       NextResponse.json(
         {
@@ -75,8 +83,9 @@ function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse 
           error: 'unauthorized',
           message: 'Authentication required.',
           routeId: rule.id,
+          requestId,
         },
-        { status: 401 },
+        { status: 401, headers: { 'X-Request-Id': requestId } },
       ),
     );
   }
@@ -85,6 +94,7 @@ function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse 
 
 function forbiddenResponse(req: NextRequest, decision: AccessDecision): NextResponse {
   if (isApiLikeRoute(req.nextUrl.pathname)) {
+    const requestId = createSafeRequestId();
     return applyProtectedHeaders(
       NextResponse.json(
         {
@@ -95,8 +105,9 @@ function forbiddenResponse(req: NextRequest, decision: AccessDecision): NextResp
           feature: decision.feature || null,
           routeId: decision.routeId || null,
           upgradeUrl: decision.upgradeUrl || null,
+          requestId,
         },
-        { status: decision.status === 401 ? 401 : 403 },
+        { status: decision.status === 401 ? 401 : 403, headers: { 'X-Request-Id': requestId } },
       ),
     );
   }

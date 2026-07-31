@@ -2,8 +2,6 @@ import { RAGWorker } from '../src/worker';
 import { IngestionService } from '../src/ingestion';
 import { SupabaseClient } from '@supabase/supabase-js';
 
-import { PDFDocument } from 'pdf-lib';
-
 describe('Ingestion Validation', () => {
   let worker: RAGWorker;
   let ingestion: IngestionService;
@@ -102,8 +100,7 @@ describe('Ingestion Validation', () => {
       bucket: 'documents',
       owner_id: 'user-id',
     };
-    const pdfDoc = await PDFDocument.create();
-    const buffer = await pdfDoc.save();
+    const buffer = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n');
 
     (supabase.storage.from('documents').download as jest.Mock).mockResolvedValueOnce({ data: { arrayBuffer: () => Promise.resolve(buffer) } });
     worker['extractPdfText'] = jest.fn().mockResolvedValue('short pdf text');
