@@ -219,6 +219,7 @@ export default function SettingsPage() {
   }, [
     entitlements.entitlementEndsAt,
     entitlements.entitlementSource,
+    entitlements.plan,
     entitlements.promoActive,
     entitlements.promoEndsAtLagos,
     hasPaidPro,
@@ -228,7 +229,6 @@ export default function SettingsPage() {
     setIsAssistantEnabled(enabled);
     if (user) {
       localStorage.setItem(`au_assistant_settings_${user.id}`, enabled ? 'enabled' : 'disabled');
-      // Dispatch custom event for real-time update in AUAssistant
       window.dispatchEvent(new CustomEvent('au_assistant_settings_updated', { 
         detail: { enabled } 
       }));
@@ -242,8 +242,6 @@ export default function SettingsPage() {
   const handleGoogleSignIn = async () => {
     setIsLoadingGoogle(true);
     setShowAuthPopup(true);
-    
-    // Artificial delay to show the animation
     await new Promise(resolve => setTimeout(resolve, 1500));
 
     try {
@@ -336,7 +334,6 @@ export default function SettingsPage() {
         throw new Error(data?.message || 'Account deletion failed.');
       }
 
-      // Clear all local storage
       if (typeof localStorage !== 'undefined') {
         localStorage.clear();
       }
@@ -346,7 +343,6 @@ export default function SettingsPage() {
         description: 'Your account has been permanently removed.',
       });
 
-      // Redirect to home
       if (typeof window !== 'undefined') {
         window.location.replace('/');
         return;
@@ -652,7 +648,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Google Auth Popup */}
       <AnimatePresence>
         {showAuthPopup && (
           <Dialog open={showAuthPopup} onOpenChange={handleAuthCancelAttempt}>
@@ -703,7 +698,6 @@ export default function SettingsPage() {
         )}
       </AnimatePresence>
 
-      {/* Auth Cancel Confirmation */}
       <AlertDialog open={showAuthCancelConfirm} onOpenChange={setShowAuthCancelConfirm}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -744,7 +738,6 @@ export default function SettingsPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Account Deletion Confirmation */}
       <AlertDialog open={showDeletePopup} onOpenChange={(open) => {
         if (!isDeleting) {
           setShowDeletePopup(open);
