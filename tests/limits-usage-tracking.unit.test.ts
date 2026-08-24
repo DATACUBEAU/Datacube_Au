@@ -354,6 +354,8 @@ async function main() {
     supabase.todayCounters = { max_chats_total: 2, api_calls: 5, max_uploads_total: 9 };
     supabase.totalCounters = { max_chats_total: 2, api_calls: 5, max_uploads_total: 9 };
     supabase.windowTotals = { api_calls: 5 };
+    const todayWindowStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+    const tomorrowWindowEnd = new Date(new Date(todayWindowStart).getTime() + 24 * 60 * 60 * 1000).toISOString();
 
     const rows = await buildUsageHealthReport({
       supabase: supabase as any,
@@ -365,8 +367,8 @@ async function main() {
           used: 1,
           mode: 'usage',
           reset: {
-            window_start: '2026-03-15T00:00:00.000Z',
-            window_end: '2026-03-16T00:00:00.000Z',
+            window_start: todayWindowStart,
+            window_end: tomorrowWindowEnd,
           },
         },
         max_uploads_total: {
