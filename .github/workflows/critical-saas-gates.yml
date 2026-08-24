@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, billing and usage
+    name: Typecheck, lint, security, billing and usage
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -43,6 +43,12 @@ jobs:
 
       - name: Lint
         run: pnpm lint
+
+      - name: Protected API security tests
+        run: pnpm test:protected-api-pipeline
+
+      - name: Auth state hardening tests
+        run: pnpm test:auth-state-hardening
 
       - name: Usage metering tests
         run: pnpm test:limits-usage
