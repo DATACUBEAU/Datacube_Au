@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, security, billing and usage
+    name: Typecheck, lint, security, billing, usage and UX
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -61,3 +61,15 @@ jobs:
 
       - name: Billing pipeline tests
         run: pnpm test:billing-pipeline
+
+      - name: Account snapshot and plan state tests
+        run: pnpm test:account-snapshot-state
+
+      - name: User-facing error recovery tests
+        run: pnpm test:user-facing-error
+
+      - name: Responsive onboarding tests
+        run: pnpm test:onboarding-responsive
+
+      - name: UI freeze prevention tests
+        run: pnpm test:ui-freeze-prevention
