@@ -56,6 +56,12 @@ jobs:
       - name: Auth callback flow tests
         run: pnpm test:auth-callback-flow
 
+      - name: Auth runtime and refresh tests
+        run: pnpm test:auth-runtime
+
+      - name: Server auth session cookie tests
+        run: pnpm test:auth-session-cookie
+
       - name: Service worker lifecycle tests
         run: pnpm test:service-worker-lifecycle
 
