@@ -68,6 +68,9 @@ jobs:
       - name: Billing pipeline tests
         run: pnpm test:billing-pipeline
 
+      - name: Subscription usage UX tests
+        run: pnpm test:subscription-page
+
       - name: Account snapshot and plan state tests
         run: pnpm test:account-snapshot-state
 
