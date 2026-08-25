@@ -21,11 +21,17 @@ async function main() {
     assert.equal(normalizeAiIdempotencyKey('   ', 'chat'), '');
   });
 
+  await run('malformed AI idempotency identity is rejected instead of regenerated', () => {
+    assert.equal(normalizeAiIdempotencyKey('short', 'chat'), '');
+    assert.equal(normalizeAiIdempotencyKey('contains spaces 123456', 'chat'), '');
+    assert.equal(normalizeAiIdempotencyKey('invalid/slash/123456', 'chat'), '');
+  });
+
   await run('valid stable AI idempotency identity is preserved', () => {
     assert.equal(normalizeAiIdempotencyKey('chat_123456789abc', 'chat'), 'chat_123456789abc');
   });
 
-  await run('missing identity is rejected before the reservation RPC can record usage', async () => {
+  await run('invalid identity is rejected before the reservation RPC can record usage', async () => {
     const calls: Array<{ name: string; payload: Record<string, unknown> }> = [];
     const supabase = {
       async rpc(name: string, payload: Record<string, unknown>) {
@@ -33,24 +39,28 @@ async function main() {
         return { data: null, error: null };
       },
     };
-    const idempotencyKey = normalizeAiIdempotencyKey(undefined, 'chat');
-    const result = await reserveAiUsage({
-      supabase: supabase as any,
-      userId: '00000000-0000-4000-8000-000000000001',
-      featureKey: 'au_chat',
-      route: '/chat/au-chat',
-      idempotencyKey,
-      ticketId: 'ticket-1',
-      reservation: {
-        estimatedUnits: 768,
-        increments: { max_chats_total: 1, api_calls: 1 },
-        limitChecks: [],
-        requestFingerprint: 'fingerprint',
-      },
-    });
 
-    assert.equal(result.ok, false);
-    assert.equal(result.code, 'INVALID_USAGE_RESERVATION');
+    for (const rawKey of [undefined, 'short', 'contains spaces 123456']) {
+      const idempotencyKey = normalizeAiIdempotencyKey(rawKey, 'chat');
+      const result = await reserveAiUsage({
+        supabase: supabase as any,
+        userId: '00000000-0000-4000-8000-000000000001',
+        featureKey: 'au_chat',
+        route: '/chat/au-chat',
+        idempotencyKey,
+        ticketId: 'ticket-1',
+        reservation: {
+          estimatedUnits: 768,
+          increments: { max_chats_total: 1, api_calls: 1 },
+          limitChecks: [],
+          requestFingerprint: 'fingerprint',
+        },
+      });
+
+      assert.equal(result.ok, false);
+      assert.equal(result.code, 'INVALID_USAGE_RESERVATION');
+    }
+
     assert.equal(calls.length, 0);
   });
 
