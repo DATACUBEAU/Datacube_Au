@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, security, auth lifecycle, billing, usage, AI routing, RAG, ingestion, retention, UX and build
+    name: Typecheck, lint, security, auth lifecycle, admin authorization, billing, usage, AI routing, RAG, ingestion, retention, UX and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -61,6 +61,18 @@ jobs:
 
       - name: Server auth session cookie tests
         run: pnpm test:auth-session-cookie
+
+      - name: Account activity API tests
+        run: pnpm test:activity-api
+
+      - name: Conex RBAC tests
+        run: pnpm test:conex-rbac
+
+      - name: Admin user management tests
+        run: pnpm test:admin-users
+
+      - name: Protected owner plan switcher tests
+        run: pnpm test:owner-plan-switcher
 
       - name: Service worker lifecycle tests
         run: pnpm test:service-worker-lifecycle
