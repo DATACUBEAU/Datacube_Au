@@ -134,6 +134,9 @@ jobs:
       - name: Chat routing and ingestion recovery tests
         run: pnpm test:chat-routing
 
+      - name: Assistant response and citation presentation tests
+        run: pnpm test:assistant-response
+
       - name: Retention and deletion safety tests
         run: pnpm test:retention
 
