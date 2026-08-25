@@ -81,4 +81,12 @@ jobs:
         run: pnpm test:ui-freeze-prevention
 
       - name: Production build
+        env:
+          # Non-secret build fixtures. Runtime database access is not expected in CI;
+          # these values only let server-rendered routes initialize Supabase safely.
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
         run: pnpm build
