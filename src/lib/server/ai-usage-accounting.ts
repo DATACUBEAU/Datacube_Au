@@ -67,6 +67,7 @@ function safeStringList(value: unknown): string[] {
 export function normalizeAiIdempotencyKey(raw: unknown, prefix = 'ai'): string {
   const candidate = safeString(raw);
   if (IDEMPOTENCY_KEY_PATTERN.test(candidate)) return candidate;
+  if (!candidate) return '';
   return `${prefix}_${nanoid(24)}`;
 }
 
