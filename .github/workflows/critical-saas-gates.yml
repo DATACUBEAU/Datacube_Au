@@ -17,7 +17,7 @@ jobs:
   critical-gates:
     name: Typecheck, lint, security, auth lifecycle, admin authorization, account integrity, billing, usage, AI routing, RAG, ingestion, retention, UX and build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -115,6 +115,18 @@ jobs:
 
       - name: Billing callback and cancellation hardening tests
         run: pnpm test:billing-hardening
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Billing plan refresh browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm test:billing-refresh-e2e
 
       - name: Knowledge generation and document query tests
         run: pnpm test:knowledge-generation
