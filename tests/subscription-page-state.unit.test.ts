@@ -188,6 +188,44 @@ async function main() {
     assert.deepEqual(result.resetSummary, ['Resets monthly']);
   });
 
+  await run('fallback labels and non-consumptive limits use plain-language guidance', () => {
+    const result = buildSubscriptionUsageRows({
+      snapshot: { managedPlan: 'pro' },
+      currentPlanManagedPlan: 'pro',
+      tier: 'pro',
+      usage: {
+        plan: 'pro',
+        limits: {
+          max_chats_total: 100,
+          max_uploads_total: 25,
+          max_tokens_total: 50000,
+          max_file_size_mb: 50,
+          max_concurrent_jobs: 3,
+        },
+        limitRules: {},
+        usageByLimit: {
+          max_chats_total: { used: 12 },
+          max_uploads_total: { used: 4 },
+          max_tokens_total: { used: 7500 },
+          max_file_size_mb: { used: 0 },
+          max_concurrent_jobs: { used: 1 },
+        },
+      },
+    });
+
+    assert.equal(result.rows.find((row) => row.key === 'max_chats_total')?.label, 'AI chats');
+    assert.equal(result.rows.find((row) => row.key === 'max_uploads_total')?.label, 'Document uploads');
+    assert.equal(result.rows.find((row) => row.key === 'max_tokens_total')?.label, 'AI tokens');
+
+    const fileSizeRow = result.rows.find((row) => row.key === 'max_file_size_mb');
+    assert.equal(fileSizeRow?.label, 'File size per upload');
+    assert.equal(fileSizeRow?.resetText, 'Up to 50 MB per file');
+
+    const concurrentJobsRow = result.rows.find((row) => row.key === 'max_concurrent_jobs');
+    assert.equal(concurrentJobsRow?.label, 'Simultaneous processing jobs');
+    assert.equal(concurrentJobsRow?.resetText, '1 of 3 processing slots active · 2 available');
+  });
+
   if (failed > 0) {
     process.exit(1);
   }
