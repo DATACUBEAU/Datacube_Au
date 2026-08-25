@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, security, billing, usage, RAG, ingestion, UX and build
+    name: Typecheck, lint, security, billing, usage, RAG, ingestion, retention, UX and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -73,6 +73,9 @@ jobs:
 
       - name: Chat routing and ingestion recovery tests
         run: pnpm test:chat-routing
+
+      - name: Retention and deletion safety tests
+        run: pnpm test:retention
 
       - name: Subscription usage UX tests
         run: pnpm test:subscription-page
