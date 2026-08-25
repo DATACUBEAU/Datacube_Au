@@ -57,7 +57,10 @@ jobs:
         run: pnpm test:atomic-usage
 
       - name: AI idempotency boundary tests
-        run: pnpm exec tsx tests/ai-idempotency-boundary.unit.test.ts
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/ai-idempotency-boundary.unit.test.ts src/lib/server/ai-usage-accounting.ts src/lib/server/usage-tracking.ts src/lib/server/vps-ticket-config.ts src/lib/limits/plan-limit-model.ts src/lib/tier/policy.ts shared/usage-metrics.ts
+          node -e "const fs=require('node:fs'); fs.mkdirSync('.tmp-tests/shared', {recursive:true}); fs.copyFileSync('shared/ai-gateway-contract.cjs', '.tmp-tests/shared/ai-gateway-contract.cjs'); fs.writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/ai-idempotency-boundary.unit.test.js
 
       - name: Billing subscription state tests
         run: pnpm test:billing-subscription-state
