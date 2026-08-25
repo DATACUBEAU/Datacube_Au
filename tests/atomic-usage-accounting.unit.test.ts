@@ -66,11 +66,11 @@ function limitsFixture(overrides?: Record<string, Partial<Record<'value' | 'isEn
 }
 
 async function main() {
-  await run('idempotency keys are reused when safe and regenerated when invalid', () => {
+  await run('idempotency keys are reused when valid and rejected when malformed', () => {
     assert.equal(normalizeAiIdempotencyKey('chat_123456789abc'), 'chat_123456789abc');
-    const generated = normalizeAiIdempotencyKey('short', 'chat');
-    assert.match(generated, /^chat_/);
-    assert.notEqual(generated, 'short');
+    assert.equal(normalizeAiIdempotencyKey('short', 'chat'), '');
+    assert.equal(normalizeAiIdempotencyKey('bad key with spaces', 'chat'), '');
+    assert.equal(normalizeAiIdempotencyKey('', 'chat'), '');
   });
 
   await run('chat reservation payload reserves one chat plus a bounded token estimate', () => {
