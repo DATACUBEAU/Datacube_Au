@@ -1,10 +1,5 @@
 import assert from 'node:assert/strict';
-import {
-  buildAiUsageReservationPayload,
-  normalizeAiIdempotencyKey,
-  reserveAiUsage,
-} from '../src/lib/server/ai-usage-accounting.js';
-import { resolveVpsTicketOperation } from '../src/lib/server/vps-ticket-config.js';
+import { normalizeAiIdempotencyKey, reserveAiUsage } from '../src/lib/server/ai-usage-accounting.js';
 
 let failed = 0;
 
@@ -19,28 +14,6 @@ async function run(name: string, fn: () => void | Promise<void>) {
   }
 }
 
-function limitsFixture() {
-  const rule = (value: number) => ({
-    value,
-    isEnabled: true,
-    isUnlimited: false,
-    mode: 'usage',
-    resetPolicy: 'daily',
-    resetIntervalValue: null,
-    resetIntervalUnit: null,
-  });
-  return {
-    effectivePlan: { hasPro: false },
-    limitRules: {
-      max_chats_total: rule(3),
-      max_tokens_total: rule(2000),
-      max_knowledge_hub: rule(4),
-      max_practice_exams: rule(2),
-      max_exam_predictions: rule(2),
-    },
-  } as any;
-}
-
 async function main() {
   await run('missing AI idempotency identity is not replaced with a random billable key', () => {
     assert.equal(normalizeAiIdempotencyKey(undefined, 'chat'), '');
@@ -53,8 +26,6 @@ async function main() {
   });
 
   await run('missing identity is rejected before the reservation RPC can record usage', async () => {
-    const operation = resolveVpsTicketOperation('au-chat');
-    assert.ok(operation);
     const calls: Array<{ name: string; payload: Record<string, unknown> }> = [];
     const supabase = {
       async rpc(name: string, payload: Record<string, unknown>) {
@@ -63,20 +34,19 @@ async function main() {
       },
     };
     const idempotencyKey = normalizeAiIdempotencyKey(undefined, 'chat');
-    const reservation = buildAiUsageReservationPayload({
-      limits: limitsFixture(),
-      operation,
-      idempotencyKey,
-      body: { feature: 'au-chat', messages: [{ role: 'user', content: 'Hello' }] },
-    });
     const result = await reserveAiUsage({
       supabase: supabase as any,
       userId: '00000000-0000-4000-8000-000000000001',
-      featureKey: operation.featureKey,
-      route: operation.gatewayRoute,
+      featureKey: 'au_chat',
+      route: '/chat/au-chat',
       idempotencyKey,
       ticketId: 'ticket-1',
-      reservation,
+      reservation: {
+        estimatedUnits: 768,
+        increments: { max_chats_total: 1, api_calls: 1 },
+        limitChecks: [],
+        requestFingerprint: 'fingerprint',
+      },
     });
 
     assert.equal(result.ok, false);
