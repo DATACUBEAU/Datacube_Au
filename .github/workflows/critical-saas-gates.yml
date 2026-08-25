@@ -74,6 +74,9 @@ jobs:
       - name: Billing pipeline tests
         run: pnpm test:billing-pipeline
 
+      - name: Billing callback and cancellation hardening tests
+        run: pnpm test:billing-hardening
+
       - name: Knowledge generation and document query tests
         run: pnpm test:knowledge-generation
 
