@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, security, billing, usage, AI routing, RAG, ingestion, retention, UX and build
+    name: Typecheck, lint, security, auth lifecycle, billing, usage, AI routing, RAG, ingestion, retention, UX and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -49,6 +49,15 @@ jobs:
 
       - name: Auth state hardening tests
         run: pnpm test:auth-state-hardening
+
+      - name: Auth entry flow tests
+        run: pnpm test:auth-entry-flow
+
+      - name: Auth callback flow tests
+        run: pnpm test:auth-callback-flow
+
+      - name: Service worker lifecycle tests
+        run: pnpm test:service-worker-lifecycle
 
       - name: Provider key encryption and storage tests
         run: pnpm test:provider-key-storage
