@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, security, billing, usage, RAG, ingestion, retention, UX and build
+    name: Typecheck, lint, security, billing, usage, AI routing, RAG, ingestion, retention, UX and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -52,6 +52,9 @@ jobs:
 
       - name: Provider key encryption and storage tests
         run: pnpm test:provider-key-storage
+
+      - name: AI routing contract tests
+        run: pnpm test:ai-routing-contract
 
       - name: Usage metering tests
         run: pnpm test:limits-usage
