@@ -52,6 +52,29 @@ function humanizeUsageKey(key: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatUsageAmount(value: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Math.max(0, value));
+}
+
+function buildUsageGuidance(used: number, limit: number | null): string {
+  if (limit === null) return 'Unlimited usage';
+
+  const safeLimit = Math.max(0, limit);
+  const safeUsed = Math.max(0, used);
+  if (safeLimit === 0) {
+    return safeUsed > 0 ? 'Limit reached' : 'No usage available';
+  }
+
+  const remaining = Math.max(0, safeLimit - safeUsed);
+  const percentUsed = Math.min(100, Math.round((safeUsed / safeLimit) * 100));
+  const remainingLabel = `${formatUsageAmount(remaining)} remaining`;
+
+  if (safeUsed >= safeLimit) return 'Limit reached · 100% used';
+  if (percentUsed >= 90) return `Almost at limit · ${remainingLabel} · ${percentUsed}% used`;
+  if (percentUsed >= 75) return `Approaching limit · ${remainingLabel} · ${percentUsed}% used`;
+  return `${remainingLabel} · ${percentUsed}% used`;
+}
+
 function buildPaymentReturnSignature(paymentReturn: BillingReturnState): string {
   return [
     paymentReturn.reference || '',
@@ -116,6 +139,7 @@ export function buildSubscriptionUsageRows(input: {
     };
   }
 
+  const resetSummary: string[] = [];
   const rows = SUBSCRIPTION_USAGE_KEYS.reduce<SubscriptionUsageRow[]>((acc, key) => {
       const rule = asRecord(input.usage.limitRules[key]);
       const presentation = asRecord(rule.presentation);
@@ -126,12 +150,12 @@ export function buildSubscriptionUsageRows(input: {
           ? null
           : (usageEntry.limit ?? input.usage.limits[key] ?? rule.value);
       const parsedLimit = rawLimit === null ? null : asFiniteNumber(rawLimit);
-      const used = asFiniteNumber(usageEntry.used) ?? 0;
+      const used = Math.max(0, asFiniteNumber(usageEntry.used) ?? 0);
       const label =
         asString(presentation.label) ||
         asString(rule.label) ||
         humanizeUsageKey(key);
-      const resetText =
+      const baseResetText =
         asString(reset.label) ||
         asString(presentation.reset_description) ||
         asString(presentation.reset_label);
@@ -143,12 +167,17 @@ export function buildSubscriptionUsageRows(input: {
 
       if (!hasAnyData) return acc;
 
+      if (baseResetText && !resetSummary.includes(baseResetText) && resetSummary.length < 2) {
+        resetSummary.push(baseResetText);
+      }
+
+      const usageGuidance = buildUsageGuidance(used, parsedLimit);
       acc.push({
         key,
         label,
         used,
         limit: parsedLimit,
-        resetText,
+        resetText: [baseResetText, usageGuidance].filter(Boolean).join(' · '),
       });
       return acc;
     }, []);
@@ -157,10 +186,7 @@ export function buildSubscriptionUsageRows(input: {
     planCode,
     isFreePlan: planCode === 'free',
     hasData: rows.length > 0,
-    resetSummary: rows
-      .map((row) => row.resetText)
-      .filter(Boolean)
-      .slice(0, 2),
+    resetSummary,
     rows,
   };
 }
