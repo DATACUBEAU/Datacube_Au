@@ -31,6 +31,17 @@ export type SubscriptionUsageRow = {
   resetText: string;
 };
 
+const USAGE_FALLBACK_LABELS: Record<SubscriptionUsageKey, string> = {
+  max_chats_total: 'AI chats',
+  max_uploads_total: 'Document uploads',
+  max_tokens_total: 'AI tokens',
+  max_file_size_mb: 'File size per upload',
+  max_concurrent_jobs: 'Simultaneous processing jobs',
+  max_exam_predictions: 'Exam predictions',
+  max_practice_exams: 'Practice exams',
+  max_knowledge_hub: 'Knowledge Hub items',
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -56,11 +67,26 @@ function formatUsageAmount(value: number): string {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(Math.max(0, value));
 }
 
-function buildUsageGuidance(used: number, limit: number | null): string {
+function buildUsageGuidance(key: SubscriptionUsageKey, used: number, limit: number | null): string {
+  const safeUsed = Math.max(0, used);
+
+  if (key === 'max_file_size_mb') {
+    if (limit === null) return 'No file-size limit';
+    return `Up to ${formatUsageAmount(limit)} MB per file`;
+  }
+
+  if (key === 'max_concurrent_jobs') {
+    if (limit === null) return 'Unlimited simultaneous processing';
+    const safeLimit = Math.max(0, limit);
+    if (safeLimit === 0) return 'No simultaneous processing slots';
+    const active = Math.min(safeUsed, safeLimit);
+    const available = Math.max(0, safeLimit - active);
+    return `${formatUsageAmount(active)} of ${formatUsageAmount(safeLimit)} processing slots active · ${formatUsageAmount(available)} available`;
+  }
+
   if (limit === null) return 'Unlimited usage';
 
   const safeLimit = Math.max(0, limit);
-  const safeUsed = Math.max(0, used);
   if (safeLimit === 0) {
     return safeUsed > 0 ? 'Limit reached' : 'No usage available';
   }
@@ -154,6 +180,7 @@ export function buildSubscriptionUsageRows(input: {
       const label =
         asString(presentation.label) ||
         asString(rule.label) ||
+        USAGE_FALLBACK_LABELS[key] ||
         humanizeUsageKey(key);
       const baseResetText =
         asString(reset.label) ||
@@ -171,7 +198,7 @@ export function buildSubscriptionUsageRows(input: {
         resetSummary.push(baseResetText);
       }
 
-      const usageGuidance = buildUsageGuidance(used, parsedLimit);
+      const usageGuidance = buildUsageGuidance(key, used, parsedLimit);
       acc.push({
         key,
         label,
