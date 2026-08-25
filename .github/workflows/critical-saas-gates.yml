@@ -50,6 +50,9 @@ jobs:
       - name: Auth state hardening tests
         run: pnpm test:auth-state-hardening
 
+      - name: Provider key encryption and storage tests
+        run: pnpm test:provider-key-storage
+
       - name: Usage metering tests
         run: pnpm test:limits-usage
 
