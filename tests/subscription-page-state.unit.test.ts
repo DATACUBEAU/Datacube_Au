@@ -139,7 +139,7 @@ async function main() {
       label: 'Saved uploads',
       used: 9,
       limit: 25,
-      resetText: 'Resets every month',
+      resetText: 'Resets every month · 16 remaining · 36% used',
     });
 
     const unlimitedRow = result.rows.find((row) => row.key === 'max_tokens_total');
@@ -148,8 +148,44 @@ async function main() {
       label: 'Tokens',
       used: 1450,
       limit: null,
-      resetText: 'Unlimited',
+      resetText: 'Unlimited · Unlimited usage',
     });
+  });
+
+  await run('usage guidance becomes actionable near and at finite plan limits', () => {
+    const result = buildSubscriptionUsageRows({
+      snapshot: { managedPlan: 'pro' },
+      currentPlanManagedPlan: 'pro',
+      tier: 'pro',
+      usage: {
+        plan: 'pro',
+        limits: {
+          max_chats_total: 100,
+          max_uploads_total: 100,
+          max_exam_predictions: 100,
+        },
+        limitRules: {},
+        usageByLimit: {
+          max_chats_total: { used: 76, reset: { label: 'Resets monthly' } },
+          max_uploads_total: { used: 92, reset: { label: 'Resets monthly' } },
+          max_exam_predictions: { used: 100, reset: { label: 'Resets monthly' } },
+        },
+      },
+    });
+
+    assert.equal(
+      result.rows.find((row) => row.key === 'max_chats_total')?.resetText,
+      'Resets monthly · Approaching limit · 24 remaining · 76% used',
+    );
+    assert.equal(
+      result.rows.find((row) => row.key === 'max_uploads_total')?.resetText,
+      'Resets monthly · Almost at limit · 8 remaining · 92% used',
+    );
+    assert.equal(
+      result.rows.find((row) => row.key === 'max_exam_predictions')?.resetText,
+      'Resets monthly · Limit reached · 100% used',
+    );
+    assert.deepEqual(result.resetSummary, ['Resets monthly']);
   });
 
   if (failed > 0) {
