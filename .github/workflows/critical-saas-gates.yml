@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, security, auth lifecycle, admin authorization, account integrity, billing, usage, AI routing, RAG, ingestion, retention, UX and build
+    name: Typecheck, lint, security, auth lifecycle, admin authorization, account integrity, billing, usage, limits, AI routing, RAG, ingestion, retention, UX and build
     runs-on: ubuntu-latest
     timeout-minutes: 35
 
@@ -88,6 +88,9 @@ jobs:
 
       - name: Admin plan limits and promo validation tests
         run: pnpm test:conex-plan-management
+
+      - name: Canonical plan limit enforcement tests
+        run: pnpm test:plan-limits-canonical
 
       - name: Subscription plan synchronization tests
         run: pnpm test:subscription-sync
