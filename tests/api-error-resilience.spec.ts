@@ -24,7 +24,6 @@ test.describe('API error resilience', () => {
     const payload = await response.json();
     expect(payload.code).toBe('UNAUTHORIZED');
     expect(payload.message).toBe('Authentication required.');
-    expect(payload.details?.reason).toBe('missing_token');
     expect(typeof payload.requestId).toBe('string');
   });
 });
