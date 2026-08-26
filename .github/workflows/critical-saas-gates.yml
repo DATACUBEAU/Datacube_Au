@@ -89,6 +89,12 @@ jobs:
       - name: Service worker lifecycle tests
         run: pnpm test:service-worker-lifecycle
 
+      - name: Offline queue account isolation and secret-scrubbing tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/offline-queue-security.unit.test.ts src/lib/offline/write-queue.ts src/lib/offline/db.ts
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/offline-queue-security.unit.test.js
+
       - name: Provider key encryption and storage tests
         run: pnpm test:provider-key-storage
 
