@@ -164,6 +164,15 @@ jobs:
           SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
         run: pnpm exec playwright test tests/clickjacking-headers.spec.ts
 
+      - name: Authenticated route guard browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm exec playwright test tests/auth-guard.spec.ts
+
       - name: Billing plan refresh browser tests
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
