@@ -141,10 +141,7 @@ jobs:
         run: pnpm test:filename-display
 
       - name: Document title overflow tests
-        run: |
-          pnpm exec tsc --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/document-title-overflow.unit.test.tsx
-          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
-          node .tmp-tests/tests/document-title-overflow.unit.test.js
+        run: pnpm test:document-titles
 
       - name: Chat composer sizing tests
         run: pnpm test:chat-composer
