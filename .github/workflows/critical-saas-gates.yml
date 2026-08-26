@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   critical-gates:
-    name: Typecheck, lint, security, auth lifecycle, admin authorization, account integrity, billing, usage, limits, AI routing, RAG, ingestion, retention, UX and build
+    name: Typecheck, lint, security, auth lifecycle, admin authorization, account integrity, billing, usage, limits, AI routing, RAG, ingestion, retention, observability, UX and build
     runs-on: ubuntu-latest
     timeout-minutes: 35
 
@@ -157,6 +157,15 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
           SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
         run: pnpm test:billing-refresh-e2e
+
+      - name: API error resilience browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm exec playwright test tests/api-error-resilience.spec.ts
 
       - name: Knowledge generation and document query tests
         run: pnpm test:knowledge-generation
