@@ -95,6 +95,12 @@ jobs:
           node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
           node -r ./tests/register-test-aliases.cjs .tmp-tests/tests/plan-limits-canonical.unit.test.js
 
+      - name: Worker concurrency slot enforcement tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/max-jobs-concurrent.unit.test.ts src/lib/server/worker-job-concurrency.ts
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/max-jobs-concurrent.unit.test.js
+
       - name: Subscription plan synchronization tests
         run: pnpm test:subscription-sync
 
