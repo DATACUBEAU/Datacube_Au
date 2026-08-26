@@ -137,6 +137,15 @@ jobs:
       - name: Assistant response and citation presentation tests
         run: pnpm test:assistant-response
 
+      - name: Document filename presentation tests
+        run: pnpm test:filename-display
+
+      - name: Document title overflow tests
+        run: pnpm test:document-titles
+
+      - name: Chat composer sizing tests
+        run: pnpm test:chat-composer
+
       - name: Retention and deletion safety tests
         run: pnpm test:retention
 
