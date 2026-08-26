@@ -90,7 +90,10 @@ jobs:
         run: pnpm test:conex-plan-management
 
       - name: Canonical plan limit enforcement tests
-        run: pnpm test:plan-limits-canonical
+        run: |
+          pnpm exec tsc -p tests/tsconfig.plan-limits-canonical.json
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node -r ./tests/register-test-aliases.cjs .tmp-tests/tests/plan-limits-canonical.unit.test.js
 
       - name: Subscription plan synchronization tests
         run: pnpm test:subscription-sync
