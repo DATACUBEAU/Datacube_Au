@@ -22,13 +22,15 @@ function readProjectFile(relativePath: string): string {
 }
 
 async function main() {
-  await run('shared document select value keeps truncation classes centralized for compact filename headers', () => {
+  await run('shared document select value keeps truncation responsibilities centralized for compact filename headers', () => {
     const componentSource = readProjectFile('src/components/document-select-value.tsx');
+    const fileNameSource = readProjectFile('src/components/FileNameText.tsx');
 
     assert.equal(componentSource.includes('FileNameText'), true);
     assert.equal(componentSource.includes('truncate'), true);
     assert.equal(componentSource.includes('min-w-0'), true);
-    assert.equal(componentSource.includes('max-w-full'), true);
+    assert.equal(fileNameSource.includes("maxWidthClass = 'max-w-full'"), true);
+    assert.equal(fileNameSource.includes("className={cn('min-w-0 flex-1'"), true);
   });
 
   await run('chat, upload, knowledge, practice, and predictions use the shared truncation renderer', () => {
@@ -42,11 +44,11 @@ async function main() {
 
     for (const file of files) {
       const source = readProjectFile(file);
-      assert.equal(source.includes("DocumentSelectValue"), true, `expected ${file} to use DocumentSelectValue`);
+      assert.equal(source.includes('DocumentSelectValue'), true, `expected ${file} to use DocumentSelectValue`);
     }
   });
 
-  await run('document rows still enforce overflow-hidden containers around filename text', () => {
+  await run('document rows still enforce overflow-safe filename containers', () => {
     const documentsPage = readProjectFile('src/app/dashboard/documents/page.tsx');
     const uploadCenter = readProjectFile('src/components/upload/upload-center.tsx');
     const chatPage = readProjectFile('src/app/dashboard/chat/page.tsx');
@@ -54,7 +56,7 @@ async function main() {
     assert.equal(documentsPage.includes('flex min-w-0 items-center gap-2 overflow-hidden'), true);
     assert.equal(uploadCenter.includes('flex min-w-0 items-center gap-2 overflow-hidden'), true);
     assert.equal(chatPage.includes('Chatting with:'), true);
-    assert.equal(chatPage.includes('max-w-full'), true);
+    assert.equal(chatPage.includes('DocumentSelectValue'), true);
   });
 
   if (failed > 0) {
