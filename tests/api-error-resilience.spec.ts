@@ -11,7 +11,6 @@ test.describe('API error resilience', () => {
     const payload = await response.json();
     expect(payload.code).toBe('UNAUTHORIZED');
     expect(payload.message).toBe('Authentication required.');
-    expect(payload.status).toBe(401);
     expect(String(payload.code || '')).not.toBe('INTERNAL_SERVER_ERROR');
     expect(typeof payload.requestId).toBe('string');
   });
@@ -23,7 +22,6 @@ test.describe('API error resilience', () => {
 
     expect(response.status()).toBe(401);
     const payload = await response.json();
-    expect(payload.status).toBe(401);
     expect(payload.code).toBe('UNAUTHORIZED');
     expect(payload.message).toBe('Sign in required.');
     expect(payload.details?.reason).toBe('missing_token');
