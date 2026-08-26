@@ -95,6 +95,12 @@ jobs:
       - name: AI routing contract tests
         run: pnpm test:ai-routing-contract
 
+      - name: VPS ticket, route binding, and CORS security tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/vps-ticket-security.unit.test.ts src/lib/server/vps-ticket-config.ts vps-ai-gateway/src/auth.ts vps-ai-gateway/src/utils.ts
+          node -e "const fs=require('node:fs'); fs.mkdirSync('.tmp-tests/shared', {recursive:true}); fs.copyFileSync('shared/ai-gateway-contract.cjs', '.tmp-tests/shared/ai-gateway-contract.cjs'); fs.writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/vps-ticket-security.unit.test.js
+
       - name: Usage metering tests
         run: pnpm test:limits-usage
 
