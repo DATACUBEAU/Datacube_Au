@@ -1,12 +1,6 @@
 name: Strix Security Scan
 
 on:
-  push:
-    branches:
-      - automation/ci-critical-saas-gates-20260824
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
