@@ -34,6 +34,20 @@ async function main() {
     assert.doesNotMatch(source, /title:\s*'Session expired'[\s\S]+description:\s*'Your session expired\. Please refresh the page and sign in again\.'/);
   });
 
+  await run('unknown internal API errors never echo raw backend messages to users', () => {
+    const source = readRepoFile('src', 'lib', 'api', 'user-facing-error.ts');
+    assert.match(
+      source,
+      /kind:\s*'internal'[\s\S]+description:\s*'We hit an unexpected problem while processing that request\. Please try again shortly\.'/,
+    );
+    assert.doesNotMatch(
+      source,
+      /kind:\s*'internal'[\s\S]+description:[\s\S]+loweredMessage[\s\S]+\? message/,
+    );
+    assert.match(source, /requestId:\s*error\.requestId \?\? null/);
+    assert.match(source, /correlationId:\s*error\.correlationId \?\? null/);
+  });
+
   await run('protected API test suite asserts generic AI 401 stays endpoint scoped', () => {
     const source = readRepoFile('tests', 'protected-api-pipeline.unit.test.ts');
     assert.match(source, /safeFetch no longer hard-redirects on every 401 response/);
