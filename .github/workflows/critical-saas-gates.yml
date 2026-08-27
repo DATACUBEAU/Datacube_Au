@@ -1,0 +1,269 @@
+name: Critical SaaS Gates
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: critical-saas-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  critical-gates:
+    name: Typecheck, lint, security, auth lifecycle, admin authorization, account integrity, billing, usage, limits, feature flags, AI routing, RAG, ingestion, retention, observability, UX and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Protected API security tests
+        run: pnpm test:protected-api-pipeline
+
+      - name: Static secret, logging, and cleanup security tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/security-hotfix-static.unit.test.ts
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/security-hotfix-static.unit.test.js
+
+      - name: Auth state hardening tests
+        run: pnpm test:auth-state-hardening
+
+      - name: Auth entry flow tests
+        run: pnpm test:auth-entry-flow
+
+      - name: Auth callback flow tests
+        run: pnpm test:auth-callback-flow
+
+      - name: Auth runtime and refresh tests
+        run: pnpm test:auth-runtime
+
+      - name: Session expiry reauthentication tests
+        run: pnpm test:session-expired-reauth
+
+      - name: Server auth session cookie tests
+        run: pnpm test:auth-session-cookie
+
+      - name: Account activity API tests
+        run: pnpm test:activity-api
+
+      - name: Username uniqueness and profile privacy tests
+        run: pnpm test:username-uniqueness
+
+      - name: Password input accessibility and visibility tests
+        run: pnpm test:password-visibility
+
+      - name: Conex RBAC tests
+        run: pnpm test:conex-rbac
+
+      - name: Admin user management tests
+        run: pnpm test:admin-users
+
+      - name: Protected owner plan switcher tests
+        run: pnpm test:owner-plan-switcher
+
+      - name: Admin plan limits and promo validation tests
+        run: pnpm test:conex-plan-management
+
+      - name: Canonical plan limit enforcement tests
+        run: |
+          pnpm exec tsc -p tests/tsconfig.plan-limits-canonical.json
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node -r ./tests/register-test-aliases.cjs .tmp-tests/tests/plan-limits-canonical.unit.test.js
+
+      - name: Paid feature entitlement enforcement tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/feature-access.unit.test.ts src/lib/feature-access.ts
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/feature-access.unit.test.js
+
+      - name: Feature flag cache integrity tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/feature-flags-cache.unit.test.ts src/lib/feature-flags/http-cache.ts
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/feature-flags-cache.unit.test.js
+
+      - name: Worker concurrency slot enforcement tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/max-jobs-concurrent.unit.test.ts src/lib/server/worker-job-concurrency.ts
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/max-jobs-concurrent.unit.test.js
+
+      - name: Subscription plan synchronization tests
+        run: pnpm test:subscription-sync
+
+      - name: Service worker lifecycle tests
+        run: pnpm test:service-worker-lifecycle
+
+      - name: Offline queue account isolation and secret-scrubbing tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/offline-queue-security.unit.test.ts src/lib/offline/write-queue.ts src/lib/offline/db.ts
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/offline-queue-security.unit.test.js
+
+      - name: Provider key encryption and storage tests
+        run: pnpm test:provider-key-storage
+
+      - name: AI routing contract tests
+        run: pnpm test:ai-routing-contract
+
+      - name: VPS ticket, route binding, and CORS security tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/vps-ticket-security.unit.test.ts src/lib/server/vps-ticket-config.ts vps-ai-gateway/src/auth.ts vps-ai-gateway/src/utils.ts
+          node -e "const fs=require('node:fs'); fs.mkdirSync('.tmp-tests/shared', {recursive:true}); fs.copyFileSync('shared/ai-gateway-contract.cjs', '.tmp-tests/shared/ai-gateway-contract.cjs'); fs.writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/vps-ticket-security.unit.test.js
+
+      - name: Usage metering tests
+        run: pnpm test:limits-usage
+
+      - name: Atomic usage accounting tests
+        run: pnpm test:atomic-usage
+
+      - name: AI idempotency boundary tests
+        run: |
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/ai-idempotency-boundary.unit.test.ts src/lib/server/ai-usage-accounting.ts src/lib/server/usage-tracking.ts src/lib/server/vps-ticket-config.ts src/lib/limits/plan-limit-model.ts src/lib/tier/policy.ts shared/usage-metrics.ts
+          node -e "const fs=require('node:fs'); fs.mkdirSync('.tmp-tests/shared', {recursive:true}); fs.copyFileSync('shared/ai-gateway-contract.cjs', '.tmp-tests/shared/ai-gateway-contract.cjs'); fs.writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/ai-idempotency-boundary.unit.test.js
+
+      - name: Billing subscription state tests
+        run: pnpm test:billing-subscription-state
+
+      - name: Billing pipeline tests
+        run: pnpm test:billing-pipeline
+
+      - name: Billing callback and cancellation hardening tests
+        run: pnpm test:billing-hardening
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Clickjacking protection browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm exec playwright test tests/clickjacking-headers.spec.ts
+
+      - name: Authenticated route guard browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm exec playwright test tests/auth-guard.spec.ts
+
+      - name: Billing plan refresh browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm test:billing-refresh-e2e
+
+      - name: API error resilience browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm exec playwright test tests/api-error-resilience.spec.ts
+
+      - name: Network health and offline resilience browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm exec playwright test tests/network-health.spec.ts
+
+      - name: Knowledge generation and document query tests
+        run: pnpm test:knowledge-generation
+
+      - name: Chat routing and ingestion recovery tests
+        run: pnpm test:chat-routing
+
+      - name: Assistant response and citation presentation tests
+        run: pnpm test:assistant-response
+
+      - name: Document filename presentation tests
+        run: pnpm test:filename-display
+
+      - name: Document title overflow tests
+        run: pnpm test:document-titles
+
+      - name: Chat composer sizing tests
+        run: pnpm test:chat-composer
+
+      - name: Retention and deletion safety tests
+        run: pnpm test:retention
+
+      - name: Subscription usage UX tests
+        run: pnpm test:subscription-page
+
+      - name: Account snapshot and plan state tests
+        run: pnpm test:account-snapshot-state
+
+      - name: Account snapshot cache integrity tests
+        run: pnpm test:account-snapshot-cache
+
+      - name: Account snapshot bootstrap browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm test:account-snapshot-bootstrap
+
+      - name: User-facing error recovery tests
+        run: pnpm test:user-facing-error
+
+      - name: Responsive onboarding tests
+        run: pnpm test:onboarding-responsive
+
+      - name: UI freeze prevention tests
+        run: pnpm test:ui-freeze-prevention
+
+      - name: Production build
+        env:
+          # Non-secret build fixtures. Runtime database access is not expected in CI;
+          # these values only let server-rendered routes initialize Supabase safely.
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm build

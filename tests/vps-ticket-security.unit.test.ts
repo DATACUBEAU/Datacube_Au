@@ -211,7 +211,9 @@ await run('tampered ticket is rejected', async () => {
     featureKey: 'au_chat',
     route: '/chat/au-chat',
   });
-  const tampered = `${ticket.slice(0, -1)}x`;
+  const [header, payload, signature] = ticket.split('.');
+  const tamperedSignature = `${signature[0] === 'a' ? 'b' : 'a'}${signature.slice(1)}`;
+  const tampered = `${header}.${payload}.${tamperedSignature}`;
   const verified = await verifyVpsTicket(
     tampered,
     configuredSecret,

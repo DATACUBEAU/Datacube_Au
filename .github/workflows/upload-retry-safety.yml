@@ -1,0 +1,56 @@
+name: Upload Retry Safety
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upload-retry-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  upload-retry-safety:
+    name: Upload retry and retry-storm boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile upload retry policy regression
+        run: |
+          rm -rf .tmp-upload-retry-tests
+          pnpm exec tsc \
+            --skipLibCheck \
+            --module commonjs \
+            --target es2020 \
+            --moduleResolution node \
+            --esModuleInterop \
+            --outDir .tmp-upload-retry-tests \
+            tests/upload-retry-policy.unit.test.ts \
+            src/lib/upload/retry-policy.ts
+          node -e "require('node:fs').writeFileSync('.tmp-upload-retry-tests/package.json', '{\"type\":\"commonjs\"}')"
+
+      - name: Upload retry policy tests
+        run: node .tmp-upload-retry-tests/tests/upload-retry-policy.unit.test.js

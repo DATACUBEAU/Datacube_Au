@@ -1,0 +1,21 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "module": "commonjs",
+    "target": "ES2020",
+    "moduleResolution": "node",
+    "outDir": "../.tmp-tests",
+    "rootDir": "..",
+    "isolatedModules": false,
+    "incremental": false
+  },
+  "include": [
+    "../tests/plan-limits-canonical.unit.test.ts"
+  ],
+  "exclude": [
+    "../node_modules",
+    "../.next",
+    "../.tmp-tests"
+  ]
+}

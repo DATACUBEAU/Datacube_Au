@@ -102,7 +102,7 @@ function withEnv(
 async function main() {
   await run('rotated Paystack plan codes are the canonical defaults', () => {
     assert.equal(BILLING_PLAN_CODES.pro_weekly, 'PLN_h3teb0z285iuyet');
-    assert.equal(BILLING_PLAN_CODES.pro_monthly, 'PLN_bo7k3ulauwdhzjl');
+    assert.equal(BILLING_PLAN_CODES.pro_monthly, 'PLN_bo7k3ulauwdhzjli');
     assert.equal(
       DEFAULT_BILLING_PLAN_CATALOG.find((plan) => plan.planKey === 'pro_weekly')?.fallbackPaystackPlanCode,
       BILLING_PLAN_CODES.pro_weekly,

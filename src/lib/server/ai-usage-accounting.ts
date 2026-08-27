@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
-import { nanoid } from 'nanoid';
 import { getQuotaPolicy } from '../tier/policy';
 import { getLimitCap, type ApprovedLimitKey } from '../limits/plan-limit-model';
 import type { VpsTicketOperation } from './vps-ticket-config';
@@ -67,7 +66,7 @@ function safeStringList(value: unknown): string[] {
 export function normalizeAiIdempotencyKey(raw: unknown, prefix = 'ai'): string {
   const candidate = safeString(raw);
   if (IDEMPOTENCY_KEY_PATTERN.test(candidate)) return candidate;
-  return `${prefix}_${nanoid(24)}`;
+  return '';
 }
 
 export function buildAiRequestFingerprint(input: {

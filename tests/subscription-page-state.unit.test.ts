@@ -139,7 +139,7 @@ async function main() {
       label: 'Saved uploads',
       used: 9,
       limit: 25,
-      resetText: 'Resets every month',
+      resetText: 'Resets every month · 16 remaining · 36% used',
     });
 
     const unlimitedRow = result.rows.find((row) => row.key === 'max_tokens_total');
@@ -148,8 +148,82 @@ async function main() {
       label: 'Tokens',
       used: 1450,
       limit: null,
-      resetText: 'Unlimited',
+      resetText: 'Unlimited · Unlimited usage',
     });
+  });
+
+  await run('usage guidance becomes actionable near and at finite plan limits', () => {
+    const result = buildSubscriptionUsageRows({
+      snapshot: { managedPlan: 'pro' },
+      currentPlanManagedPlan: 'pro',
+      tier: 'pro',
+      usage: {
+        plan: 'pro',
+        limits: {
+          max_chats_total: 100,
+          max_uploads_total: 100,
+          max_exam_predictions: 100,
+        },
+        limitRules: {},
+        usageByLimit: {
+          max_chats_total: { used: 76, reset: { label: 'Resets monthly' } },
+          max_uploads_total: { used: 92, reset: { label: 'Resets monthly' } },
+          max_exam_predictions: { used: 100, reset: { label: 'Resets monthly' } },
+        },
+      },
+    });
+
+    assert.equal(
+      result.rows.find((row) => row.key === 'max_chats_total')?.resetText,
+      'Resets monthly · Approaching limit · 24 remaining · 76% used',
+    );
+    assert.equal(
+      result.rows.find((row) => row.key === 'max_uploads_total')?.resetText,
+      'Resets monthly · Almost at limit · 8 remaining · 92% used',
+    );
+    assert.equal(
+      result.rows.find((row) => row.key === 'max_exam_predictions')?.resetText,
+      'Resets monthly · Limit reached · 100% used',
+    );
+    assert.deepEqual(result.resetSummary, ['Resets monthly']);
+  });
+
+  await run('fallback labels and non-consumptive limits use plain-language guidance', () => {
+    const result = buildSubscriptionUsageRows({
+      snapshot: { managedPlan: 'pro' },
+      currentPlanManagedPlan: 'pro',
+      tier: 'pro',
+      usage: {
+        plan: 'pro',
+        limits: {
+          max_chats_total: 100,
+          max_uploads_total: 25,
+          max_tokens_total: 50000,
+          max_file_size_mb: 50,
+          max_concurrent_jobs: 3,
+        },
+        limitRules: {},
+        usageByLimit: {
+          max_chats_total: { used: 12 },
+          max_uploads_total: { used: 4 },
+          max_tokens_total: { used: 7500 },
+          max_file_size_mb: { used: 0 },
+          max_concurrent_jobs: { used: 1 },
+        },
+      },
+    });
+
+    assert.equal(result.rows.find((row) => row.key === 'max_chats_total')?.label, 'AI chats');
+    assert.equal(result.rows.find((row) => row.key === 'max_uploads_total')?.label, 'Document uploads');
+    assert.equal(result.rows.find((row) => row.key === 'max_tokens_total')?.label, 'AI tokens');
+
+    const fileSizeRow = result.rows.find((row) => row.key === 'max_file_size_mb');
+    assert.equal(fileSizeRow?.label, 'File size per upload');
+    assert.equal(fileSizeRow?.resetText, 'Up to 50 MB per file');
+
+    const concurrentJobsRow = result.rows.find((row) => row.key === 'max_concurrent_jobs');
+    assert.equal(concurrentJobsRow?.label, 'Simultaneous processing jobs');
+    assert.equal(concurrentJobsRow?.resetText, '1 of 3 processing slots active · 2 available');
   });
 
   if (failed > 0) {

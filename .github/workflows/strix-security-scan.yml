@@ -1,0 +1,120 @@
+name: Strix Security Scan
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+permissions:
+  contents: read
+
+concurrency:
+  group: strix-security-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  strix-security-scan:
+    name: Strix source security scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check Strix LLM configuration
+        id: config
+        env:
+          STRIX_LLM: ${{ secrets.STRIX_LLM }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ -z "${LLM_API_KEY:-}" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Strix security scan"
+              echo
+              echo "⚠️ **Scan not executed:** repository secret \`LLM_API_KEY\` is not configured."
+              echo
+              echo "No Strix vulnerability result exists for this run. Configure \`LLM_API_KEY\` (and optionally \`STRIX_LLM\`) to enable the scan."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+              echo "A manually requested Strix scan must not report success without running."
+              exit 1
+            fi
+
+            echo "Pull-request scan is non-blocking while Strix is unconfigured; the job summary records that no assessment occurred."
+            exit 0
+          fi
+
+          echo "configured=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Strix security scan"
+            echo
+            echo "✅ Strix is configured and will execute a non-destructive, diff-scoped source assessment."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -z "${STRIX_LLM:-}" ]; then
+            echo "STRIX_LLM is not configured; using the workflow's documented default."
+          fi
+
+      - name: Install Strix
+        if: steps.config.outputs.configured == 'true'
+        run: curl -fsSL https://strix.ai/install | bash
+
+      - name: Run Strix non-destructive source scan
+        if: steps.config.outputs.configured == 'true'
+        id: strix
+        continue-on-error: true
+        env:
+          STRIX_LLM: ${{ secrets.STRIX_LLM || 'openai/gpt-5.4' }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: |
+          set +e
+          strix -n \
+            --target ./ \
+            --scan-mode quick \
+            --scope-mode diff \
+            --diff-base origin/main \
+            --instruction "Authorized, non-destructive security review of the Datacube AU source tree only. Do not target deployed production systems or external services. Focus on authentication/authorization bypass, tenant isolation/IDOR, Supabase/RLS trust boundaries, billing and usage-metering manipulation, upload/worker ingestion, SSRF/file parsing, RAG/document access leakage, secret exposure, unsafe redirects, and privilege escalation. Validate findings against local source evidence and avoid destructive exploitation."
+          code=$?
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: Upload Strix results
+        if: always() && steps.config.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: strix-security-results
+          path: strix_runs/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Enforce Strix result
+        if: always() && steps.config.outputs.configured == 'true'
+        env:
+          STRIX_EXIT_CODE: ${{ steps.strix.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ -z "${STRIX_EXIT_CODE:-}" ]; then
+            echo "Strix did not run to completion. Review the earlier workflow steps."
+            exit 1
+          fi
+          if [ "$STRIX_EXIT_CODE" -ne 0 ]; then
+            echo "Strix exited with code $STRIX_EXIT_CODE. Review the uploaded Strix results before merging."
+            exit "$STRIX_EXIT_CODE"
+          fi
+          echo "Strix completed without a blocking finding."
+          {
+            echo
+            echo "✅ Strix completed without a blocking finding."
+          } >> "$GITHUB_STEP_SUMMARY"

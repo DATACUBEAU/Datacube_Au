@@ -219,6 +219,7 @@ export default function SettingsPage() {
   }, [
     entitlements.entitlementEndsAt,
     entitlements.entitlementSource,
+    entitlements.plan,
     entitlements.promoActive,
     entitlements.promoEndsAtLagos,
     hasPaidPro,

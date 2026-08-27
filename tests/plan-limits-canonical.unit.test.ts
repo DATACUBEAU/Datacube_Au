@@ -227,7 +227,7 @@ async function main() {
       mirroredExpiresAt: null,
       entitlementPlan: 'promo_pro',
       entitlementSource: 'promo',
-      entitlementEndsAt: '2026-04-01T23:00:00.000Z',
+      entitlementEndsAt: '2099-04-01T23:00:00.000Z',
     });
     assert.equal(promoPlan.plan, 'free');
     assert.equal(promoPlan.entitlementSource, 'none');
@@ -239,7 +239,7 @@ async function main() {
       mirroredExpiresAt: null,
       entitlementPlan: 'promo_pro',
       entitlementSource: 'promo',
-      entitlementEndsAt: '2026-04-01T23:00:00.000Z',
+      entitlementEndsAt: '2099-04-01T23:00:00.000Z',
     });
     assert.equal(promoFallbackPlan.plan, 'free');
     assert.equal(promoFallbackPlan.source, 'billing');
@@ -252,7 +252,7 @@ async function main() {
       mirroredExpiresAt: null,
       entitlementPlan: 'pro',
       entitlementSource: 'paid',
-      entitlementEndsAt: '2026-04-18T00:00:00.000Z',
+      entitlementEndsAt: '2099-04-18T00:00:00.000Z',
     });
     assert.equal(paidPlan.plan, 'pro');
     assert.equal(paidPlan.source, 'billing');

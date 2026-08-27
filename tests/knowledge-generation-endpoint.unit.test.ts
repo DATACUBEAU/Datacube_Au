@@ -68,7 +68,7 @@ async function main() {
           },
         },
         {
-          data: [{ id: 'doc-1', created_at: '2026-03-07T12:00:00.000Z' }],
+          data: [{ id: 'doc-1', created_at: '2026-03-07T12:00:00.000Z', status: 'ready' }],
           error: null,
         },
       ],
@@ -82,11 +82,12 @@ async function main() {
         id: 'doc-1',
         created_at: '2026-03-07T12:00:00.000Z',
         file_size_bytes: null,
+        status: 'ready',
       },
     ]);
     assert.equal(calls.length, 2);
-    assert.equal(calls[0].columns, 'id,file_size_bytes,created_at');
-    assert.equal(calls[1].columns, 'id,created_at');
+    assert.equal(calls[0].columns, 'id,file_size_bytes,created_at,status');
+    assert.equal(calls[1].columns, 'id,created_at,status');
     assert.equal(calls[0].filterType, 'or');
     assert.equal(calls[1].filterType, 'or');
   });
@@ -115,6 +116,7 @@ async function main() {
               id: 'doc-2',
               created_at: '2026-03-07T13:00:00.000Z',
               file_size_bytes: 2048,
+              status: 'processing',
             },
           ],
           error: null,
@@ -130,9 +132,11 @@ async function main() {
         id: 'doc-2',
         created_at: '2026-03-07T13:00:00.000Z',
         file_size_bytes: 2048,
+        status: 'processing',
       },
     ]);
     assert.equal(calls.length, 3);
+    assert.equal(calls[2].columns, 'id,file_size_bytes,created_at,status');
     assert.equal(calls[2].filterType, 'eq');
     assert.equal(calls[2].filterValue, 'user_id:user-2');
   });
