@@ -1,0 +1,56 @@
+name: Usage Admin Safety
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usage-admin-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  usage-admin-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile admin usage safety regression
+        run: >-
+          pnpm exec tsc
+          --skipLibCheck
+          --module commonjs
+          --target es2022
+          --moduleResolution node
+          --esModuleInterop
+          --outDir .tmp-tests
+          tests/admin-usage-adjustments.unit.test.ts
+          src/lib/server/usage-tracking.ts
+          src/lib/limits/plan-limit-model.ts
+          shared/usage-metrics.ts
+
+      - name: Run admin usage safety regression
+        run: |
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/admin-usage-adjustments.unit.test.js
