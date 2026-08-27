@@ -65,6 +65,9 @@ jobs:
       - name: Auth runtime and refresh tests
         run: pnpm test:auth-runtime
 
+      - name: Session expiry reauthentication tests
+        run: pnpm test:session-expired-reauth
+
       - name: Server auth session cookie tests
         run: pnpm test:auth-session-cookie
 
