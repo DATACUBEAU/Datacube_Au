@@ -221,6 +221,15 @@ jobs:
       - name: Account snapshot cache integrity tests
         run: pnpm test:account-snapshot-cache
 
+      - name: Account snapshot bootstrap browser tests
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_URL: https://ci-build.invalid
+          SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+          SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
+        run: pnpm test:account-snapshot-bootstrap
+
       - name: User-facing error recovery tests
         run: pnpm test:user-facing-error
 
