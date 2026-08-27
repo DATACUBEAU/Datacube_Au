@@ -55,6 +55,32 @@ function serializeUsage(effective: Awaited<ReturnType<typeof resolveCanonicalEff
   });
 }
 
+function sameResetWindow(
+  left: { window_start: string | null; window_end: string | null },
+  right: { window_start: string | null; window_end: string | null },
+) {
+  return left.window_start === right.window_start && left.window_end === right.window_end;
+}
+
+async function loadAdjustmentTotal(input: {
+  supabase: any;
+  userId: string;
+  metricKey: ApprovedLimitKey;
+  windowStart: string | null;
+  windowEnd: string | null;
+}) {
+  if (!input.windowStart) return 0;
+  const { data, error } = await input.supabase.rpc('get_usage_admin_adjustment_total', {
+    p_user_id: input.userId,
+    p_metric_key: input.metricKey,
+    p_window_start: input.windowStart,
+    p_window_end: input.windowEnd,
+  });
+  if (error) throw error;
+  const parsed = Number(data ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 async function applyAdjustment(input: {
   supabase: any;
   actorUserId: string;
@@ -65,6 +91,7 @@ async function applyAdjustment(input: {
   amount?: number;
   reason: string;
   requestId: string;
+  expectedAdjustmentTotal: number;
   effective: Awaited<ReturnType<typeof resolveCanonicalEffectiveLimits>>;
 }) {
   const rule = input.effective.limitRules[input.metricKey];
@@ -88,11 +115,11 @@ async function applyAdjustment(input: {
   if (input.action === 'reset') target = 0;
 
   const delta = target - current;
-  if (delta === 0) {
+  if (delta === 0 && (input.action === 'increase' || input.action === 'decrease')) {
     return { ok: true, changed: false, current, target, delta: 0 } as const;
   }
 
-  const { data, error } = await input.supabase.rpc('admin_adjust_usage', {
+  const { data, error } = await input.supabase.rpc('admin_adjust_usage_checked', {
     p_actor_user_id: input.actorUserId,
     p_actor_email: input.actorEmail,
     p_target_user_id: input.userId,
@@ -103,6 +130,7 @@ async function applyAdjustment(input: {
     p_window_end: usage.reset.window_end,
     p_reason: input.reason,
     p_request_id: input.requestId,
+    p_expected_adjustment_total: input.expectedAdjustmentTotal,
     p_context: {
       previous_usage: current,
       requested_target: target,
@@ -112,7 +140,14 @@ async function applyAdjustment(input: {
   });
 
   if (error) throw error;
-  return { ok: true, changed: true, current, target, delta, rpc: data } as const;
+  return { ok: true, changed: delta !== 0, current, target, delta, rpc: data } as const;
+}
+
+function isUsageConflict(error: unknown) {
+  const candidate = error as { code?: unknown; message?: unknown; details?: unknown } | null;
+  const code = String(candidate?.code || '');
+  const message = `${String(candidate?.message || '')} ${String(candidate?.details || '')}`.toLowerCase();
+  return code === '40001' || message.includes('usage_adjustment_conflict');
 }
 
 export async function GET(req: NextRequest) {
@@ -153,7 +188,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = adjustmentSchema.parse(await req.json());
-    const effective = await resolveCanonicalEffectiveLimits({
+    const initialEffective = await resolveCanonicalEffectiveLimits({
       supabase: adminResult.supabase,
       userId: body.userId,
     });
@@ -162,22 +197,61 @@ export async function POST(req: NextRequest) {
     const rootRequestId = body.requestId || requestId;
 
     if (body.action === 'reset_all') {
-      const results = [];
-      for (const key of APPROVED_LIMIT_KEYS) {
-        const rule = effective.limitRules[key];
-        if (rule.mode !== 'usage' || !rule.isEnabled) continue;
-        const result = await applyAdjustment({
+      const adjustableKeys = APPROVED_LIMIT_KEYS.filter((key) => {
+        const rule = initialEffective.limitRules[key];
+        return rule.mode === 'usage' && rule.isEnabled;
+      });
+
+      const expectedTotals = Object.fromEntries(await Promise.all(adjustableKeys.map(async (key) => {
+        const reset = initialEffective.usage.by_limit[key].reset;
+        const total = await loadAdjustmentTotal({
           supabase: adminResult.supabase,
-          actorUserId,
-          actorEmail,
           userId: body.userId,
           metricKey: key,
-          action: 'reset',
-          reason: body.reason,
-          requestId: scopedUsageAdjustmentRequestId(rootRequestId, key),
-          effective,
+          windowStart: reset.window_start,
+          windowEnd: reset.window_end,
         });
-        results.push({ key, ...result });
+        return [key, total] as const;
+      }))) as Partial<Record<ApprovedLimitKey, number>>;
+
+      const mutationEffective = await resolveCanonicalEffectiveLimits({
+        supabase: adminResult.supabase,
+        userId: body.userId,
+      });
+
+      const items = adjustableKeys.map((key) => {
+        const beforeReset = initialEffective.usage.by_limit[key].reset;
+        const usage = mutationEffective.usage.by_limit[key];
+        if (!sameResetWindow(beforeReset, usage.reset)) {
+          throw Object.assign(new Error('usage_adjustment_conflict'), { code: '40001' });
+        }
+        const current = Math.max(0, Number(usage.used || 0));
+        return {
+          metricKey: key,
+          delta: -current,
+          action: 'reset',
+          windowStart: usage.reset.window_start,
+          windowEnd: usage.reset.window_end,
+          requestId: scopedUsageAdjustmentRequestId(rootRequestId, key),
+          expectedAdjustmentTotal: expectedTotals[key] ?? 0,
+          context: {
+            previous_usage: current,
+            requested_target: 0,
+            effective_plan: mutationEffective.plan,
+            source: 'conex-simple-usage-editor-reset-all',
+          },
+        };
+      });
+
+      if (items.length > 0) {
+        const { error } = await adminResult.supabase.rpc('admin_adjust_usage_batch_checked', {
+          p_actor_user_id: actorUserId,
+          p_actor_email: actorEmail,
+          p_target_user_id: body.userId,
+          p_reason: body.reason,
+          p_items: items,
+        });
+        if (error) throw error;
       }
 
       const refreshed = await resolveCanonicalEffectiveLimits({ supabase: adminResult.supabase, userId: body.userId });
@@ -185,7 +259,7 @@ export async function POST(req: NextRequest) {
         ok: true,
         requestId,
         action: body.action,
-        results,
+        results: items.map((item) => ({ key: item.metricKey, changed: item.delta !== 0, delta: item.delta })),
         plan: refreshed.plan,
         usage: serializeUsage(refreshed),
       });
@@ -198,6 +272,37 @@ export async function POST(req: NextRequest) {
       return json({ ok: false, code: 'amount_required', message: 'Enter an amount.', requestId }, 400);
     }
 
+    const initialRule = initialEffective.limitRules[body.metricKey];
+    if (initialRule.mode !== 'usage' || !initialRule.isEnabled) {
+      return json({
+        ok: false,
+        code: 'metric_not_adjustable',
+        message: `${initialRule.label} is ${initialRule.mode === 'usage' ? 'disabled' : 'a capacity/current-state limit'} and cannot be manually adjusted.`,
+        requestId,
+      }, 400);
+    }
+
+    const initialReset = initialEffective.usage.by_limit[body.metricKey].reset;
+    const expectedAdjustmentTotal = await loadAdjustmentTotal({
+      supabase: adminResult.supabase,
+      userId: body.userId,
+      metricKey: body.metricKey,
+      windowStart: initialReset.window_start,
+      windowEnd: initialReset.window_end,
+    });
+    const mutationEffective = await resolveCanonicalEffectiveLimits({
+      supabase: adminResult.supabase,
+      userId: body.userId,
+    });
+    if (!sameResetWindow(initialReset, mutationEffective.usage.by_limit[body.metricKey].reset)) {
+      return json({
+        ok: false,
+        code: 'usage_changed',
+        message: 'Usage changed while this action was being prepared. Refresh and try again.',
+        requestId,
+      }, 409);
+    }
+
     const result = await applyAdjustment({
       supabase: adminResult.supabase,
       actorUserId,
@@ -208,7 +313,8 @@ export async function POST(req: NextRequest) {
       amount: body.amount,
       reason: body.reason,
       requestId: rootRequestId,
-      effective,
+      expectedAdjustmentTotal,
+      effective: mutationEffective,
     });
 
     if (!result.ok) return json({ ...result, requestId }, 400);
@@ -226,6 +332,14 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
       return json({ ok: false, code: 'invalid_request', message: 'Check the usage action and try again.', details: error.flatten(), requestId }, 400);
+    }
+    if (isUsageConflict(error)) {
+      return json({
+        ok: false,
+        code: 'usage_changed',
+        message: 'Usage changed while this action was being prepared. Refresh and try again.',
+        requestId,
+      }, 409);
     }
     return json({
       ok: false,
