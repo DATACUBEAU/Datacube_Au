@@ -123,11 +123,11 @@ export async function GET(req: NextRequest) {
       resetAt: effective.usage.reset_at,
       usage: serializeUsage(effective),
     });
-  } catch (error: any) {
+  } catch {
     return json({
       ok: false,
       code: 'user_usage_load_failed',
-      message: String(error?.message || 'Unable to load usage.'),
+      message: 'Unable to load usage right now. Try again, and use the request ID if you need support.',
       requestId,
     }, 500);
   }
@@ -210,14 +210,14 @@ export async function POST(req: NextRequest) {
       plan: refreshed.plan,
       usage: serializeUsage(refreshed),
     });
-  } catch (error: any) {
+  } catch (error: unknown) {
     if (error instanceof z.ZodError) {
       return json({ ok: false, code: 'invalid_request', message: 'Check the usage action and try again.', details: error.flatten(), requestId }, 400);
     }
     return json({
       ok: false,
       code: 'user_usage_update_failed',
-      message: String(error?.message || 'Unable to update usage.'),
+      message: 'Unable to update usage right now. Try again, and use the request ID if you need support.',
       requestId,
     }, 500);
   }
