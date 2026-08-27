@@ -59,15 +59,42 @@ export type UsageHealthMetricRow = {
   trackedUsed: number;
   legacyUsed: number;
   effectiveUsed: number;
-  source: 'tracked' | 'legacy' | 'hybrid' | 'limit_snapshot';
+  source: 'tracked' | 'legacy' | 'hybrid' | 'limit_snapshot' | 'admin_adjusted';
   resetPolicy: string;
   resetWindowStart: string | null;
   resetWindowEnd: string | null;
   withinLimit: boolean;
 };
 
+type ResolvedUsageSource = UsageHealthMetricRow['source'];
+
 function shouldUseTrackedCountersForRuleMode(mode: string | null | undefined): boolean {
   return String(mode || '').trim().toLowerCase() === 'usage';
+}
+
+async function loadUsageAdminAdjustmentTotal(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  metricKey: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+}): Promise<number> {
+  if (!input.userId || !input.metricKey || !input.windowStart) return 0;
+
+  const { data, error } = await input.supabase.rpc('get_usage_admin_adjustment_total', {
+    p_user_id: input.userId,
+    p_metric_key: input.metricKey,
+    p_window_start: input.windowStart,
+    p_window_end: input.windowEnd,
+  });
+
+  if (error) {
+    if (isSchemaDriftError(error)) return 0;
+    throw error;
+  }
+
+  const parsed = Number(data ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 export function buildUsageEventKey(input: {
@@ -238,7 +265,7 @@ export async function resolveUsageMetricForRule(input: {
   fallbackUsed: number;
   todayCounters?: Record<string, unknown>;
   totalCounters?: Record<string, unknown>;
-}): Promise<{ trackedUsed: number; effectiveUsed: number; source: 'tracked' | 'legacy' | 'hybrid' | 'limit_snapshot' }> {
+}): Promise<{ trackedUsed: number; effectiveUsed: number; source: ResolvedUsageSource }> {
   if (!shouldUseTrackedCountersForRuleMode(input.rule.mode)) {
     return {
       trackedUsed: 0,
@@ -271,26 +298,35 @@ export async function resolveUsageMetricForRule(input: {
     trackedUsed = readUsageMetricValue(totals, aliases, 0);
   }
 
+  let baseUsed = 0;
+  let source: ResolvedUsageSource = 'tracked';
+
   if (trackedUsed <= 0 && input.fallbackUsed <= 0) {
-    return { trackedUsed: 0, effectiveUsed: 0, source: 'tracked' };
+    baseUsed = 0;
+    source = 'tracked';
+  } else if (trackedUsed > 0 && input.fallbackUsed > 0 && trackedUsed !== input.fallbackUsed) {
+    baseUsed = Math.max(trackedUsed, input.fallbackUsed);
+    source = 'hybrid';
+  } else if (trackedUsed > 0) {
+    baseUsed = trackedUsed;
+    source = 'tracked';
+  } else {
+    baseUsed = Math.max(0, input.fallbackUsed);
+    source = 'legacy';
   }
 
-  if (trackedUsed > 0 && input.fallbackUsed > 0 && trackedUsed !== input.fallbackUsed) {
-    return {
-      trackedUsed,
-      effectiveUsed: Math.max(trackedUsed, input.fallbackUsed),
-      source: 'hybrid',
-    };
-  }
-
-  if (trackedUsed > 0) {
-    return { trackedUsed, effectiveUsed: trackedUsed, source: 'tracked' };
-  }
+  const adjustment = await loadUsageAdminAdjustmentTotal({
+    supabase: input.supabase,
+    userId: input.userId,
+    metricKey: input.metricKey,
+    windowStart: window.windowStart,
+    windowEnd: window.windowEnd,
+  });
 
   return {
-    trackedUsed: 0,
-    effectiveUsed: Math.max(0, input.fallbackUsed),
-    source: 'legacy',
+    trackedUsed,
+    effectiveUsed: Math.max(0, baseUsed + adjustment),
+    source: adjustment !== 0 ? 'admin_adjusted' : source,
   };
 }
 
@@ -370,6 +406,22 @@ export async function buildUsageHealthReport(input: {
       } else if (trackedUsed <= 0 && legacyUsed > 0) {
         source = 'legacy';
         effectiveUsed = legacyUsed;
+      }
+
+      if (limitKey && useTrackedForLimit && resetWindowStart) {
+        const adjustment = await loadUsageAdminAdjustmentTotal({
+          supabase: input.supabase,
+          userId: input.userId,
+          metricKey: limitKey,
+          windowStart: resetWindowStart,
+          windowEnd: resetWindowEnd,
+        });
+        if (adjustment !== 0) {
+          source = 'admin_adjusted';
+          // usageByLimit already comes from the canonical resolver and therefore
+          // already includes the adjustment. Do not add it a second time here.
+          effectiveUsed = Math.max(0, legacyUsed);
+        }
       }
 
       return {
