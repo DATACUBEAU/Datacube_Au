@@ -146,12 +146,30 @@ async function main() {
     assert.doesNotMatch(sql, /TRUNCATE\s+.*au_usage_events/i);
   });
 
-  await run('admin API exposes reset-all but blocks non-usage metrics through the canonical rule mode', () => {
+  await run('admin usage API exposes reset-all but blocks non-usage metrics through the canonical rule mode', () => {
     const route = readFileSync('src/app/api/admin/limits/user-usage/route.ts', 'utf8');
     assert.match(route, /'reset_all'/);
     assert.match(route, /rule\.mode !== 'usage'/);
     assert.match(route, /reason: z\.string\(\)\.trim\(\)\.min\(3\)/);
     assert.match(route, /admin_adjust_usage/);
+  });
+
+  await run('simple plan editor stays plan-scoped and refuses to turn capacity rules into usage rules', () => {
+    const route = readFileSync('src/app/api/admin/limits/simple-plan-rule/route.ts', 'utf8');
+    assert.match(route, /plan: z\.enum\(DEFAULT_PLAN_ORDER\)/);
+    assert.match(route, /effective\.mode !== 'usage'/);
+    assert.match(route, /state\.storedRulesByScope\[input\.plan\]/);
+    assert.match(route, /savePlanLimitScopeRules/);
+    assert.match(route, /scope: input\.plan/);
+    assert.doesNotMatch(route, /scope:\s*'default'/);
+  });
+
+  await run('simple admin UI clearly separates user-only usage resets from plan-wide cap edits', () => {
+    const page = readFileSync('src/app/conex/usage/page.tsx', 'utf8');
+    assert.match(page, /A cap change is plan-wide\. A usage reset above affects only the selected user\./);
+    assert.match(page, /Hard reset usage/);
+    assert.match(page, /Increase or decrease this number to change the allowance for the whole plan\./);
+    assert.match(page, /Advanced plan limits/);
   });
 
   if (failed > 0) process.exit(1);
