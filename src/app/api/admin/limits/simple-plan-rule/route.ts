@@ -86,8 +86,13 @@ export async function GET(req: NextRequest) {
     const plan = planRaw as EffectivePlanCode;
     const state = await loadAdminPlanLimitState(adminResult.supabase);
     return json({ ok: true, requestId, plan, rules: serializeSimpleRules(state, plan) });
-  } catch (error: any) {
-    return json({ ok: false, code: 'simple_plan_rules_load_failed', message: String(error?.message || 'Unable to load plan rules.'), requestId }, 500);
+  } catch {
+    return json({
+      ok: false,
+      code: 'simple_plan_rules_load_failed',
+      message: 'Unable to load plan rules right now. Try again and use the request ID if you need support.',
+      requestId,
+    }, 500);
   }
 }
 
@@ -171,6 +176,11 @@ export async function POST(req: NextRequest) {
     if (error instanceof z.ZodError) {
       return json({ ok: false, code: 'invalid_request', message: 'Check the cap and reset schedule.', details: error.flatten(), requestId }, 400);
     }
-    return json({ ok: false, code: 'simple_plan_rule_save_failed', message: String(error?.message || 'Unable to save plan rule.'), requestId }, 500);
+    return json({
+      ok: false,
+      code: 'simple_plan_rule_save_failed',
+      message: 'Unable to save the plan rule right now. Try again and use the request ID if you need support.',
+      requestId,
+    }, 500);
   }
 }
