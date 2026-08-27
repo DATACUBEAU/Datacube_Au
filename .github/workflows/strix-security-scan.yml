@@ -34,14 +34,35 @@ jobs:
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           if [ -z "${LLM_API_KEY:-}" ]; then
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "Strix scan skipped: repository secret LLM_API_KEY is not configured."
+            {
+              echo "## Strix security scan"
+              echo
+              echo "⚠️ **Scan not executed:** repository secret \`LLM_API_KEY\` is not configured."
+              echo
+              echo "No Strix vulnerability result exists for this run. Configure \`LLM_API_KEY\` (and optionally \`STRIX_LLM\`) to enable the scan."
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+              echo "A manually requested Strix scan must not report success without running."
+              exit 1
+            fi
+
+            echo "Pull-request scan is non-blocking while Strix is unconfigured; the job summary records that no assessment occurred."
             exit 0
           fi
+
           echo "configured=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Strix security scan"
+            echo
+            echo "✅ Strix is configured and will execute a non-destructive, diff-scoped source assessment."
+          } >> "$GITHUB_STEP_SUMMARY"
+
           if [ -z "${STRIX_LLM:-}" ]; then
             echo "STRIX_LLM is not configured; using the workflow's documented default."
           fi
@@ -93,3 +114,7 @@ jobs:
             exit "$STRIX_EXIT_CODE"
           fi
           echo "Strix completed without a blocking finding."
+          {
+            echo
+            echo "✅ Strix completed without a blocking finding."
+          } >> "$GITHUB_STEP_SUMMARY"
