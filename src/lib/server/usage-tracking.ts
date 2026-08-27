@@ -98,10 +98,7 @@ async function loadUsageAdminAdjustmentTotal(input: {
     return Number.isFinite(parsed) ? parsed : 0;
   } catch (error) {
     if (isSchemaDriftError(error)) return 0;
-    // During a rolling deployment the application can reach a database that
-    // has not received the adjustment RPC yet. Usage must continue to resolve
-    // from the existing authoritative counters until the migration lands.
-    return 0;
+    throw error;
   }
 }
 
