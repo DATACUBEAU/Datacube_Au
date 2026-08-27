@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { requireConexAdmin } from '@/app/api/feedback/_auth';
@@ -7,6 +8,7 @@ import { APPROVED_LIMIT_KEYS, type ApprovedLimitKey } from '@/lib/limits/plan-li
 export const runtime = 'nodejs';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const MAX_USAGE_ADJUSTMENT_REQUEST_ID_LENGTH = 200;
 
 const adjustmentSchema = z.object({
   userId: z.string().regex(UUID_REGEX, 'userId must be a valid UUID.'),
@@ -14,11 +16,22 @@ const adjustmentSchema = z.object({
   metricKey: z.enum(APPROVED_LIMIT_KEYS).optional(),
   amount: z.coerce.number().finite().min(0).max(1_000_000_000).optional(),
   reason: z.string().trim().min(3).max(500),
-  requestId: z.string().trim().min(8).max(200).optional(),
+  requestId: z.string().trim().min(8).max(MAX_USAGE_ADJUSTMENT_REQUEST_ID_LENGTH).optional(),
 });
 
 function json(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { 'Cache-Control': 'no-store' } });
+}
+
+function scopedUsageAdjustmentRequestId(rootRequestId: string, metricKey: ApprovedLimitKey) {
+  const suffix = `:${metricKey}`;
+  const availableRootLength = MAX_USAGE_ADJUSTMENT_REQUEST_ID_LENGTH - suffix.length;
+  if (rootRequestId.length <= availableRootLength) return `${rootRequestId}${suffix}`;
+
+  const digest = createHash('sha256').update(rootRequestId).digest('hex').slice(0, 16);
+  const digestMarker = `:${digest}`;
+  const prefixLength = Math.max(0, availableRootLength - digestMarker.length);
+  return `${rootRequestId.slice(0, prefixLength)}${digestMarker}${suffix}`;
 }
 
 function serializeUsage(effective: Awaited<ReturnType<typeof resolveCanonicalEffectiveLimits>>) {
@@ -161,7 +174,7 @@ export async function POST(req: NextRequest) {
           metricKey: key,
           action: 'reset',
           reason: body.reason,
-          requestId: `${rootRequestId}:${key}`,
+          requestId: scopedUsageAdjustmentRequestId(rootRequestId, key),
           effective,
         });
         results.push({ key, ...result });
