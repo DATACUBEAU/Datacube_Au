@@ -154,6 +154,14 @@ async function main() {
     assert.match(route, /admin_adjust_usage/);
   });
 
+  await run('reset-all request ids stay within the database idempotency-key limit', () => {
+    const route = readFileSync('src/app/api/admin/limits/user-usage/route.ts', 'utf8');
+    assert.match(route, /MAX_USAGE_ADJUSTMENT_REQUEST_ID_LENGTH = 200/);
+    assert.match(route, /scopedUsageAdjustmentRequestId\(rootRequestId, key\)/);
+    assert.match(route, /createHash\('sha256'\)\.update\(rootRequestId\)/);
+    assert.doesNotMatch(route, /requestId: `\$\{rootRequestId\}:\$\{key\}`/);
+  });
+
   await run('simple plan editor stays plan-scoped and refuses to turn capacity rules into usage rules', () => {
     const route = readFileSync('src/app/api/admin/limits/simple-plan-rule/route.ts', 'utf8');
     assert.match(route, /plan: z\.enum\(DEFAULT_PLAN_ORDER\)/);
