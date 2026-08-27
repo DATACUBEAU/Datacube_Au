@@ -218,6 +218,9 @@ jobs:
       - name: Account snapshot and plan state tests
         run: pnpm test:account-snapshot-state
 
+      - name: Account snapshot cache integrity tests
+        run: pnpm test:account-snapshot-cache
+
       - name: User-facing error recovery tests
         run: pnpm test:user-facing-error
 
