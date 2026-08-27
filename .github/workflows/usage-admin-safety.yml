@@ -36,7 +36,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Compile admin usage safety regression
+      - name: Compile admin usage safety regressions
         run: >-
           pnpm exec tsc
           --skipLibCheck
@@ -46,11 +46,13 @@ jobs:
           --esModuleInterop
           --outDir .tmp-tests
           tests/admin-usage-adjustments.unit.test.ts
+          tests/admin-usage-idempotency-sql.unit.test.ts
           src/lib/server/usage-tracking.ts
           src/lib/limits/plan-limit-model.ts
           shared/usage-metrics.ts
 
-      - name: Run admin usage safety regression
+      - name: Run admin usage safety regressions
         run: |
           node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
           node .tmp-tests/tests/admin-usage-adjustments.unit.test.js
+          node .tmp-tests/tests/admin-usage-idempotency-sql.unit.test.js
