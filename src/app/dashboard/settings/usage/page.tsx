@@ -17,12 +17,10 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { useLimits } from '@/components/providers/limits-provider';
 import { buildSubscriptionUsageRows } from '@/lib/billing/subscription-page-state';
 import { cn } from '@/lib/utils';
-
-const CAPACITY_KEYS = new Set(['max_file_size_mb', 'max_concurrent_jobs']);
 
 const ICONS: Record<string, typeof MessageSquare> = {
   max_chats_total: MessageSquare,
@@ -33,6 +31,15 @@ const ICONS: Record<string, typeof MessageSquare> = {
   max_exam_predictions: Sparkles,
   max_practice_exams: Sparkles,
   max_knowledge_hub: Sparkles,
+};
+
+type UsageDisplayRow = {
+  key: string;
+  label: string;
+  used: number;
+  limit: number | null;
+  resetText: string;
+  mode: string;
 };
 
 function number(value: number) {
@@ -48,7 +55,7 @@ function statusFor(used: number, limit: number | null) {
   return { percent, label: 'Available', level: 'normal' as const };
 }
 
-function UsageCard({ row }: { row: { key: string; label: string; used: number; limit: number | null; resetText: string } }) {
+function UsageCard({ row }: { row: UsageDisplayRow }) {
   const Icon = ICONS[row.key] || Gauge;
   const status = statusFor(row.used, row.limit);
   const remaining = row.limit === null ? null : Math.max(0, row.limit - row.used);
@@ -73,10 +80,7 @@ function UsageCard({ row }: { row: { key: string; label: string; used: number; l
               </p>
             </div>
           </div>
-          <Badge
-            variant={status.level === 'blocked' ? 'destructive' : 'secondary'}
-            className="shrink-0"
-          >
+          <Badge variant={status.level === 'blocked' ? 'destructive' : 'secondary'} className="shrink-0">
             {status.label}
           </Badge>
         </div>
@@ -119,16 +123,22 @@ function UsageCard({ row }: { row: { key: string; label: string; used: number; l
   );
 }
 
-function CapacityRow({ row }: { row: { key: string; label: string; used: number; limit: number | null; resetText: string } }) {
+function CapacityRow({ row }: { row: UsageDisplayRow }) {
   const Icon = ICONS[row.key] || Gauge;
-  const isConcurrency = row.key === 'max_concurrent_jobs';
-  const description = isConcurrency
-    ? row.limit === null
-      ? 'Unlimited processing slots'
-      : `${number(Math.min(row.used, row.limit))} active · ${number(Math.max(0, row.limit - row.used))} available`
-    : row.limit === null
-      ? 'No file-size limit'
-      : `Up to ${number(row.limit)} MB per file`;
+  const remaining = row.limit === null ? null : Math.max(0, row.limit - row.used);
+  let description = row.resetText || 'This is a plan capacity limit.';
+
+  if (row.mode === 'concurrency') {
+    description = row.limit === null
+      ? 'Unlimited simultaneous processing'
+      : `${number(Math.min(row.used, row.limit))} active · ${number(remaining || 0)} processing slots available`;
+  } else if (row.mode === 'per_request') {
+    description = row.limit === null ? 'No per-request cap' : `Up to ${number(row.limit)} per request`;
+  } else if (row.mode === 'current') {
+    description = row.limit === null
+      ? `${number(row.used)} currently stored · no cap`
+      : `${number(row.used)} currently stored · ${number(remaining || 0)} available`;
+  }
 
   return (
     <div className="flex flex-col gap-3 rounded-2xl border bg-background/70 p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -161,8 +171,13 @@ export default function UsagePage() {
     },
   }), [usage.limitRules, usage.limits, usage.plan, usage.usageByLimit]);
 
-  const usageRows = view.rows.filter((row) => !CAPACITY_KEYS.has(row.key));
-  const capacityRows = view.rows.filter((row) => CAPACITY_KEYS.has(row.key));
+  const rows = useMemo<UsageDisplayRow[]>(() => view.rows.map((row) => ({
+    ...row,
+    mode: String((usage.limitRules?.[row.key] as Record<string, unknown> | undefined)?.mode || 'usage').trim().toLowerCase(),
+  })), [usage.limitRules, view.rows]);
+
+  const usageRows = rows.filter((row) => row.mode === 'usage');
+  const capacityRows = rows.filter((row) => row.mode !== 'usage');
   const limitedRows = usageRows.filter((row) => row.limit !== null && row.limit > 0);
   const totalPercent = limitedRows.length > 0
     ? Math.round(limitedRows.reduce((sum, row) => sum + Math.min(100, (row.used / (row.limit || 1)) * 100), 0) / limitedRows.length)
@@ -217,7 +232,7 @@ export default function UsagePage() {
         </CardContent>
       </Card>
 
-      {usage.loading && view.rows.length === 0 ? (
+      {usage.loading && rows.length === 0 ? (
         <div className="flex min-h-48 items-center justify-center text-muted-foreground">
           <Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading usage…
         </div>
@@ -231,21 +246,23 @@ export default function UsagePage() {
         </Card>
       ) : (
         <>
-          <section className="space-y-3">
-            <div>
-              <h2 className="text-lg font-semibold">Usage allowances</h2>
-              <p className="text-sm text-muted-foreground">These are consumed as you use AI and generation features.</p>
-            </div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {usageRows.map((row) => <UsageCard key={row.key} row={row} />)}
-            </div>
-          </section>
+          {usageRows.length > 0 ? (
+            <section className="space-y-3">
+              <div>
+                <h2 className="text-lg font-semibold">Usage allowances</h2>
+                <p className="text-sm text-muted-foreground">These are consumed as you use AI and generation features.</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                {usageRows.map((row) => <UsageCard key={row.key} row={row} />)}
+              </div>
+            </section>
+          ) : null}
 
           {capacityRows.length > 0 ? (
             <section className="space-y-3">
               <div>
                 <h2 className="text-lg font-semibold">Plan capacity</h2>
-                <p className="text-sm text-muted-foreground">These are operating limits, not allowances that get used up.</p>
+                <p className="text-sm text-muted-foreground">These are live operating limits, not allowances that get used up.</p>
               </div>
               <Card>
                 <CardContent className="space-y-3 p-4 sm:p-5">
