@@ -81,6 +81,18 @@ async function loadAdjustmentTotal(input: {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+async function loadUsageMutationVersion(input: { supabase: any; userId: string }) {
+  const { data, error } = await input.supabase.rpc('get_usage_mutation_version', {
+    p_user_id: input.userId,
+  });
+  if (error) throw error;
+  const parsed = Number(data ?? 0);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error('invalid_usage_mutation_version');
+  }
+  return parsed;
+}
+
 async function applyAdjustment(input: {
   supabase: any;
   actorUserId: string;
@@ -92,6 +104,7 @@ async function applyAdjustment(input: {
   reason: string;
   requestId: string;
   expectedAdjustmentTotal: number;
+  expectedUsageVersion: number;
   effective: Awaited<ReturnType<typeof resolveCanonicalEffectiveLimits>>;
 }) {
   const rule = input.effective.limitRules[input.metricKey];
@@ -119,7 +132,7 @@ async function applyAdjustment(input: {
     return { ok: true, changed: false, current, target, delta: 0 } as const;
   }
 
-  const { data, error } = await input.supabase.rpc('admin_adjust_usage_checked', {
+  const { data, error } = await input.supabase.rpc('admin_adjust_usage_versioned', {
     p_actor_user_id: input.actorUserId,
     p_actor_email: input.actorEmail,
     p_target_user_id: input.userId,
@@ -131,6 +144,7 @@ async function applyAdjustment(input: {
     p_reason: input.reason,
     p_request_id: input.requestId,
     p_expected_adjustment_total: input.expectedAdjustmentTotal,
+    p_expected_usage_version: input.expectedUsageVersion,
     p_context: {
       previous_usage: current,
       requested_target: target,
@@ -147,7 +161,7 @@ function isUsageConflict(error: unknown) {
   const candidate = error as { code?: unknown; message?: unknown; details?: unknown } | null;
   const code = String(candidate?.code || '');
   const message = `${String(candidate?.message || '')} ${String(candidate?.details || '')}`.toLowerCase();
-  return code === '40001' || message.includes('usage_adjustment_conflict');
+  return code === '40001' || message.includes('usage_adjustment_conflict') || message.includes('usage_mutation_conflict');
 }
 
 export async function GET(req: NextRequest) {
@@ -213,6 +227,10 @@ export async function POST(req: NextRequest) {
         });
         return [key, total] as const;
       }))) as Partial<Record<ApprovedLimitKey, number>>;
+      const expectedUsageVersion = await loadUsageMutationVersion({
+        supabase: adminResult.supabase,
+        userId: body.userId,
+      });
 
       const mutationEffective = await resolveCanonicalEffectiveLimits({
         supabase: adminResult.supabase,
@@ -244,11 +262,12 @@ export async function POST(req: NextRequest) {
       });
 
       if (items.length > 0) {
-        const { error } = await adminResult.supabase.rpc('admin_adjust_usage_batch_checked', {
+        const { error } = await adminResult.supabase.rpc('admin_adjust_usage_batch_versioned', {
           p_actor_user_id: actorUserId,
           p_actor_email: actorEmail,
           p_target_user_id: body.userId,
           p_reason: body.reason,
+          p_expected_usage_version: expectedUsageVersion,
           p_items: items,
         });
         if (error) throw error;
@@ -290,6 +309,10 @@ export async function POST(req: NextRequest) {
       windowStart: initialReset.window_start,
       windowEnd: initialReset.window_end,
     });
+    const expectedUsageVersion = await loadUsageMutationVersion({
+      supabase: adminResult.supabase,
+      userId: body.userId,
+    });
     const mutationEffective = await resolveCanonicalEffectiveLimits({
       supabase: adminResult.supabase,
       userId: body.userId,
@@ -314,6 +337,7 @@ export async function POST(req: NextRequest) {
       reason: body.reason,
       requestId: rootRequestId,
       expectedAdjustmentTotal,
+      expectedUsageVersion,
       effective: mutationEffective,
     });
 
