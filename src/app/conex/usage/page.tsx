@@ -12,6 +12,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Settings2,
   ShieldCheck,
   UserRound,
 } from 'lucide-react';
@@ -81,7 +82,32 @@ type UsagePayload = {
   usage: UsageRow[];
 };
 
+type PlanRule = {
+  key: string;
+  label: string;
+  unit: string;
+  mode: string;
+  limit: number | null;
+  resetPolicy: string;
+  resetIntervalValue: number | null;
+  resetIntervalUnit: string | null;
+  editableHere: boolean;
+};
+
 type AdjustmentAction = 'increase' | 'decrease' | 'set' | 'reset';
+type SimplePlan = 'free' | 'pro' | 'premium';
+
+const SIMPLE_RESETS = [
+  { value: 'hourly', label: 'Hourly' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekly', label: 'Weekly' },
+  { value: 'monthly', label: 'Monthly' },
+  { value: 'never', label: 'No automatic reset' },
+] as const;
+
+function isSimplePlan(value: string): value is SimplePlan {
+  return value === 'free' || value === 'pro' || value === 'premium';
+}
 
 async function authedFetch(input: string, init?: RequestInit) {
   const token = await getSupabaseAccessToken();
@@ -100,6 +126,15 @@ async function responseError(res: Response, fallback: string) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(Math.max(0, value));
+}
+
+function humanReset(value: string) {
+  if (value === 'hourly') return 'Hourly';
+  if (value === 'daily') return 'Daily';
+  if (value === 'weekly') return 'Weekly';
+  if (value === 'monthly') return 'Monthly';
+  if (value === 'custom') return 'Custom';
+  return 'No automatic reset';
 }
 
 function UsageProgress({ row }: { row: UsageRow }) {
@@ -149,6 +184,13 @@ export default function ConexUsagePage() {
   const [resetAllOpen, setResetAllOpen] = useState(false);
   const [resetAllReason, setResetAllReason] = useState('Admin hard reset requested');
 
+  const [planRules, setPlanRules] = useState<PlanRule[]>([]);
+  const [loadingPlanRules, setLoadingPlanRules] = useState(false);
+  const [editingPlanRule, setEditingPlanRule] = useState<PlanRule | null>(null);
+  const [planLimit, setPlanLimit] = useState('');
+  const [planReset, setPlanReset] = useState('daily');
+  const [savingPlanRule, setSavingPlanRule] = useState(false);
+
   const selectedUser = useMemo(
     () => users.find((user) => user.user_id === selectedUserId) || null,
     [selectedUserId, users],
@@ -189,17 +231,47 @@ export default function ConexUsagePage() {
     }
   }, [toast]);
 
+  const loadPlanRules = useCallback(async (plan: string) => {
+    if (!isSimplePlan(plan)) {
+      setPlanRules([]);
+      return;
+    }
+    setLoadingPlanRules(true);
+    try {
+      const res = await authedFetch(`/api/admin/limits/simple-plan-rule?plan=${encodeURIComponent(plan)}`);
+      if (!res.ok) throw await responseError(res, 'Unable to load plan caps.');
+      const payload = await res.json();
+      setPlanRules(Array.isArray(payload.rules) ? payload.rules : []);
+    } catch (error: any) {
+      setPlanRules([]);
+      toast({ title: 'Plan caps could not load', description: error?.message || 'Try again.', variant: 'destructive' });
+    } finally {
+      setLoadingPlanRules(false);
+    }
+  }, [toast]);
+
   useEffect(() => { void loadUsers(); }, [loadUsers]);
   useEffect(() => { void loadUsage(selectedUserId); }, [loadUsage, selectedUserId]);
+  useEffect(() => {
+    if (usage?.plan) void loadPlanRules(usage.plan);
+    else setPlanRules([]);
+  }, [loadPlanRules, usage?.plan]);
 
   const adjustableRows = (usage?.usage || []).filter((row) => row.adjustable);
   const capacityRows = (usage?.usage || []).filter((row) => !row.adjustable);
+  const simplePlanRules = planRules.filter((rule) => rule.editableHere);
 
   function openAdjustment(row: UsageRow, nextAction: AdjustmentAction) {
     setEditingMetric(row);
     setAction(nextAction);
     setAmount(nextAction === 'set' ? String(row.used) : '1');
     setReason(nextAction === 'reset' ? 'Reset this usage allowance' : 'Admin usage correction');
+  }
+
+  function openPlanRule(row: PlanRule) {
+    setEditingPlanRule(row);
+    setPlanLimit(row.limit === null ? '0' : String(row.limit));
+    setPlanReset(row.resetPolicy || 'never');
   }
 
   async function saveAdjustment() {
@@ -236,6 +308,41 @@ export default function ConexUsagePage() {
       toast({ title: 'Usage update failed', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function savePlanRule() {
+    if (!editingPlanRule || !usage || !isSimplePlan(usage.plan)) return;
+    const numericLimit = Number(planLimit);
+    if (!Number.isInteger(numericLimit) || numericLimit < 0) {
+      toast({ title: 'Enter a whole-number cap', variant: 'destructive' });
+      return;
+    }
+
+    setSavingPlanRule(true);
+    try {
+      const res = await authedFetch('/api/admin/limits/simple-plan-rule', {
+        method: 'POST',
+        body: JSON.stringify({
+          plan: usage.plan,
+          metricKey: editingPlanRule.key,
+          limit: numericLimit,
+          resetPolicy: planReset,
+        }),
+      });
+      if (!res.ok) throw await responseError(res, 'Unable to update plan cap.');
+      const payload = await res.json();
+      setPlanRules(Array.isArray(payload.rules) ? payload.rules : []);
+      setEditingPlanRule(null);
+      await loadUsage(selectedUserId);
+      toast({
+        title: 'Plan rule updated',
+        description: `${editingPlanRule.label} now uses the new ${usage.plan.toUpperCase()} cap and reset schedule.`,
+      });
+    } catch (error: any) {
+      toast({ title: 'Plan rule update failed', description: error?.message || 'Try again.', variant: 'destructive' });
+    } finally {
+      setSavingPlanRule(false);
     }
   }
 
@@ -276,11 +383,11 @@ export default function ConexUsagePage() {
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">User usage</h1>
           </div>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Choose a user, correct their current usage, or reset an allowance. Plan caps stay consistent for everyone on the same plan.
+            Pick a user, correct their current usage, or change the cap and reset schedule for their plan. Advanced settings stay out of the way.
           </p>
         </div>
         <Button asChild variant="outline">
-          <Link href="/conex/plan-limits"><Gauge className="mr-2 h-4 w-4" />Edit plan caps & reset rules</Link>
+          <Link href="/conex/plan-limits"><Settings2 className="mr-2 h-4 w-4" />Advanced plan limits</Link>
         </Button>
       </div>
 
@@ -318,7 +425,7 @@ export default function ConexUsagePage() {
 
           <Button type="button" variant="outline" onClick={() => void loadUsage(selectedUserId)} disabled={!selectedUserId || loadingUsage}>
             {loadingUsage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
-            Refresh usage
+            Refresh
           </Button>
         </CardContent>
       </Card>
@@ -347,11 +454,11 @@ export default function ConexUsagePage() {
       {loadingUsage ? (
         <div className="flex min-h-56 items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading usage…</div>
       ) : usage ? (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_390px]">
           <section className="space-y-4">
             <div>
-              <h2 className="text-lg font-semibold">Adjustable usage</h2>
-              <p className="text-sm text-muted-foreground">Increase, decrease, set, or reset only counters that are true usage allowances.</p>
+              <h2 className="text-lg font-semibold">This user&apos;s usage</h2>
+              <p className="text-sm text-muted-foreground">Add, remove, set an exact value, or reset a real usage allowance.</p>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               {adjustableRows.map((row) => (
@@ -360,7 +467,7 @@ export default function ConexUsagePage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <CardTitle className="text-base">{row.label}</CardTitle>
-                        <CardDescription className="mt-1 line-clamp-2">{row.description}</CardDescription>
+                        <CardDescription className="mt-1">{row.description}</CardDescription>
                       </div>
                       <Badge variant="secondary">Usage</Badge>
                     </div>
@@ -381,24 +488,46 @@ export default function ConexUsagePage() {
           </section>
 
           <aside className="space-y-4">
-            <Card>
+            <Card className="border-primary/20">
               <CardHeader>
-                <CardTitle className="text-base">Plan caps & reset rules</CardTitle>
-                <CardDescription>Caps belong to the plan so users on the same plan stay predictable.</CardDescription>
+                <CardTitle className="text-base">{usage.plan.toUpperCase()} plan caps</CardTitle>
+                <CardDescription>Simple plan-wide caps and reset schedules. Changes affect everyone on this plan.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="rounded-xl border bg-muted/20 p-3 text-sm">
-                  <p className="font-medium">Current plan: {(usage.plan || 'free').toUpperCase()}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Change cap amounts or daily/weekly/monthly reset rules in Plan Limits.</p>
-                </div>
-                <Button asChild className="w-full"><Link href="/conex/plan-limits">Edit plan rules</Link></Button>
+                {loadingPlanRules ? (
+                  <div className="flex items-center py-4 text-sm text-muted-foreground"><Loader2 className="mr-2 h-4 w-4 animate-spin" />Loading plan rules…</div>
+                ) : simplePlanRules.length > 0 ? (
+                  simplePlanRules.map((rule) => (
+                    <button
+                      type="button"
+                      key={rule.key}
+                      onClick={() => openPlanRule(rule)}
+                      className="flex w-full items-center justify-between gap-3 rounded-xl border bg-background p-3 text-left transition-colors hover:bg-muted/40"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{rule.label}</p>
+                        <p className="text-xs text-muted-foreground">{humanReset(rule.resetPolicy)}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline">{rule.limit === null ? 'Unlimited' : formatNumber(rule.limit)}</Badge>
+                        <PencilLine className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <p className="text-sm text-muted-foreground">No simple usage rules are available for this plan.</p>
+                )}
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  A cap change is plan-wide. A usage reset above affects only the selected user.
+                </p>
+                <Button asChild variant="ghost" size="sm" className="w-full"><Link href="/conex/plan-limits">Open advanced settings</Link></Button>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader>
-                <CardTitle className="text-base">Capacity limits</CardTitle>
-                <CardDescription>These describe what the account can hold or run. They are not usage counters.</CardDescription>
+                <CardTitle className="text-base">Live capacity</CardTitle>
+                <CardDescription>These are current storage/runtime limits, not usage counters.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 {capacityRows.map((row) => (
@@ -407,7 +536,7 @@ export default function ConexUsagePage() {
                       <p className="text-sm font-medium">{row.label}</p>
                       <Badge variant="outline">{row.limit === null ? 'Unlimited' : formatNumber(row.limit)}</Badge>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{row.reset?.label || 'No reset'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{row.reset?.label || 'Live limit'}</p>
                   </div>
                 ))}
               </CardContent>
@@ -422,9 +551,7 @@ export default function ConexUsagePage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingMetric ? `${editingMetric.label} usage` : 'Adjust usage'}</DialogTitle>
-            <DialogDescription>
-              This changes the effective usage for the current reset window. Original usage history is preserved.
-            </DialogDescription>
+            <DialogDescription>This changes only this user&apos;s effective usage for the current reset window. Original history is preserved.</DialogDescription>
           </DialogHeader>
           {editingMetric ? (
             <div className="space-y-4">
@@ -461,6 +588,43 @@ export default function ConexUsagePage() {
             <Button type="button" variant="outline" onClick={() => setEditingMetric(null)} disabled={saving}>Cancel</Button>
             <Button type="button" onClick={() => void saveAdjustment()} disabled={saving}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Apply change
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(editingPlanRule)} onOpenChange={(open) => { if (!open && !savingPlanRule) setEditingPlanRule(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingPlanRule ? `${usage?.plan.toUpperCase()} · ${editingPlanRule.label}` : 'Edit plan rule'}</DialogTitle>
+            <DialogDescription>
+              This is a plan-wide change. Every user on {usage?.plan.toUpperCase()} will use the new cap and reset schedule.
+            </DialogDescription>
+          </DialogHeader>
+          {editingPlanRule ? (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="plan-cap">Usage cap</Label>
+                <Input id="plan-cap" type="number" min="0" step="1" value={planLimit} onChange={(event) => setPlanLimit(event.target.value)} />
+                <p className="text-xs text-muted-foreground">Increase or decrease this number to change the allowance for the whole plan.</p>
+              </div>
+              <div className="space-y-2">
+                <Label>Reset schedule</Label>
+                <Select value={planReset} onValueChange={setPlanReset}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {SIMPLE_RESETS.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+                    {editingPlanRule.resetPolicy === 'custom' ? <SelectItem value="custom">Custom (advanced)</SelectItem> : null}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">The user&apos;s current window recalculates from the canonical reset rule after save.</p>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setEditingPlanRule(null)} disabled={savingPlanRule}>Cancel</Button>
+            <Button type="button" onClick={() => void savePlanRule()} disabled={savingPlanRule}>
+              {savingPlanRule ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Save plan rule
             </Button>
           </DialogFooter>
         </DialogContent>
