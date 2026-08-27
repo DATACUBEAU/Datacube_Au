@@ -2,12 +2,19 @@ name: Strix Security Scan
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions:
   contents: read
 
 concurrency:
-  group: strix-security-${{ github.ref }}
+  group: strix-security-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -22,24 +29,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify Strix LLM configuration
+      - name: Check Strix LLM configuration
+        id: config
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${LLM_API_KEY:-}" ]; then
-            echo "LLM_API_KEY is not configured for Strix. Add a dedicated GitHub Actions secret named LLM_API_KEY before this scan can execute."
-            exit 2
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Strix scan skipped: repository secret LLM_API_KEY is not configured."
+            exit 0
           fi
+          echo "configured=true" >> "$GITHUB_OUTPUT"
           if [ -z "${STRIX_LLM:-}" ]; then
-            echo "STRIX_LLM is not configured; using Strix's documented OpenAI model default for this workflow."
+            echo "STRIX_LLM is not configured; using the workflow's documented default."
           fi
 
       - name: Install Strix
+        if: steps.config.outputs.configured == 'true'
         run: curl -fsSL https://strix.ai/install | bash
 
       - name: Run Strix non-destructive source scan
+        if: steps.config.outputs.configured == 'true'
         id: strix
         continue-on-error: true
         env:
@@ -58,7 +70,7 @@ jobs:
           exit "$code"
 
       - name: Upload Strix results
-        if: always()
+        if: always() && steps.config.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: strix-security-results
@@ -67,7 +79,7 @@ jobs:
           retention-days: 14
 
       - name: Enforce Strix result
-        if: always()
+        if: always() && steps.config.outputs.configured == 'true'
         env:
           STRIX_EXIT_CODE: ${{ steps.strix.outputs.exit_code }}
         run: |
