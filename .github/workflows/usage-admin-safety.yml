@@ -51,6 +51,7 @@ jobs:
           tests/admin-usage-api-error-safety.unit.test.ts
           tests/simple-plan-rule-atomicity.unit.test.ts
           tests/conex-usage-selection-race.unit.test.ts
+          tests/document-owner-usage-version.unit.test.ts
           src/lib/server/usage-tracking.ts
           src/lib/limits/plan-limit-model.ts
           shared/usage-metrics.ts
@@ -64,3 +65,4 @@ jobs:
           node .tmp-tests/tests/admin-usage-api-error-safety.unit.test.js
           node .tmp-tests/tests/simple-plan-rule-atomicity.unit.test.js
           node .tmp-tests/tests/conex-usage-selection-race.unit.test.js
+          node .tmp-tests/tests/document-owner-usage-version.unit.test.js
