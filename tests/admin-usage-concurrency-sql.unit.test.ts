@@ -17,7 +17,9 @@ async function run(name: string, fn: () => void | Promise<void>) {
 async function main() {
   const migration = readFileSync('supabase/migrations/20260827215500_admin_usage_adjustments_concurrency.sql', 'utf8');
   const versionMigration = readFileSync('supabase/migrations/20260828004500_usage_mutation_version_guard.sql', 'utf8');
+  const legacyVersionMigration = readFileSync('supabase/migrations/20260828020000_legacy_usage_mutation_version_guard.sql', 'utf8');
   const route = readFileSync('src/app/api/admin/limits/user-usage/route.ts', 'utf8');
+  const limits = readFileSync('src/lib/server/au-limits.ts', 'utf8');
 
   await run('checked usage adjustment serializes each tenant metric quota window', () => {
     assert.match(migration, /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_checked/);
@@ -76,6 +78,24 @@ async function main() {
     assert.match(versionMigration, /CREATE OR REPLACE FUNCTION public\.bump_usage_mutation_version/);
   });
 
+  await run('legacy and hybrid canonical usage sources share the same mutation-version boundary', () => {
+    const fallbackTables = ['au_messages', 'au_model_usage', 'au_documents', 'au_feature_outputs'];
+    for (const table of fallbackTables) {
+      assert.match(limits, new RegExp(`(?:from|safeExactCount|safeSelectDocuments)[\\s\\S]{0,120}['\"]${table}['\"]`));
+      assert.match(legacyVersionMigration, new RegExp(`['\"]${table}['\"]`));
+    }
+    assert.match(legacyVersionMigration, /CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE/);
+    assert.match(legacyVersionMigration, /EXECUTE FUNCTION public\.bump_usage_mutation_version\(\)/);
+  });
+
+  await run('usage-version trigger protects both tenants if fallback ownership changes', () => {
+    assert.match(legacyVersionMigration, /v_old_user_id := OLD\.user_id/);
+    assert.match(legacyVersionMigration, /v_new_user_id := NEW\.user_id/);
+    assert.match(legacyVersionMigration, /v_new_user_id IS DISTINCT FROM v_old_user_id/);
+    const bumps = legacyVersionMigration.match(/version = public\.au_usage_mutation_versions\.version \+ 1/g) || [];
+    assert.equal(bumps.length, 2);
+  });
+
   await run('admin correction locks and compares live usage version before delegating to adjustment ledger', () => {
     const lockIndex = versionMigration.indexOf('FOR UPDATE;');
     const versionConflictIndex = versionMigration.indexOf("RAISE EXCEPTION 'usage_mutation_conflict'");
@@ -109,6 +129,9 @@ async function main() {
     assert.doesNotMatch(versionMigration, /DELETE\s+FROM\s+public\.au_usage_admin_adjustments/i);
     assert.doesNotMatch(versionMigration, /UPDATE\s+public\.au_usage_admin_adjustments/i);
     assert.doesNotMatch(versionMigration, /TRUNCATE/i);
+    assert.doesNotMatch(legacyVersionMigration, /DELETE\s+FROM\s+public\.au_usage_admin_adjustments/i);
+    assert.doesNotMatch(legacyVersionMigration, /UPDATE\s+public\.au_usage_admin_adjustments/i);
+    assert.doesNotMatch(legacyVersionMigration, /TRUNCATE/i);
   });
 
   if (failed > 0) process.exit(1);
