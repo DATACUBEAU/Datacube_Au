@@ -4,15 +4,9 @@ import { requireConexAdmin } from '@/app/api/feedback/_auth';
 import {
   APPROVED_LIMIT_KEYS,
   DEFAULT_PLAN_ORDER,
-  PLAN_LIMIT_RESET_POLICY_VALUES,
-  type ApprovedLimitKey,
   type EffectivePlanCode,
-  type StoredPlanLimitRule,
 } from '@/lib/limits/plan-limit-model';
-import {
-  loadAdminPlanLimitState,
-  savePlanLimitScopeRules,
-} from '@/lib/server/au-limits';
+import { loadAdminPlanLimitState } from '@/lib/server/au-limits';
 
 export const runtime = 'nodejs';
 
@@ -27,30 +21,6 @@ const requestSchema = z.object({
 
 function json(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { 'Cache-Control': 'no-store' } });
-}
-
-function toStoredRule(rule: {
-  key: ApprovedLimitKey;
-  value: number | null;
-  mode: StoredPlanLimitRule['mode'];
-  resetPolicy: StoredPlanLimitRule['resetPolicy'];
-  resetIntervalValue: number | null;
-  resetIntervalUnit: StoredPlanLimitRule['resetIntervalUnit'];
-  isEnabled: boolean;
-  isUnlimited: boolean;
-  updatedAt: string | null;
-}): StoredPlanLimitRule {
-  return {
-    key: rule.key,
-    value: rule.value,
-    mode: rule.mode,
-    resetPolicy: rule.resetPolicy,
-    resetIntervalValue: rule.resetIntervalValue,
-    resetIntervalUnit: rule.resetIntervalUnit,
-    isEnabled: rule.isEnabled,
-    isUnlimited: rule.isUnlimited,
-    updatedAt: rule.updatedAt,
-  };
 }
 
 function serializeSimpleRules(state: Awaited<ReturnType<typeof loadAdminPlanLimitState>>, plan: EffectivePlanCode) {
@@ -140,29 +110,24 @@ export async function POST(req: NextRequest) {
       }, 400);
     }
 
-    const rules = APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-      const stored = state.storedRulesByScope[input.plan][key];
-      acc[key] = stored ? toStoredRule(stored) : null;
-      return acc;
-    }, {} as Record<ApprovedLimitKey, StoredPlanLimitRule | null>);
-
-    rules[input.metricKey] = {
-      key: input.metricKey,
+    const row = {
+      scope: input.plan,
+      limit_key: input.metricKey,
       value: input.limit,
       mode: effective.mode,
-      resetPolicy: input.resetPolicy,
-      resetIntervalValue: existingCustomInterval.value,
-      resetIntervalUnit: existingCustomInterval.unit,
-      isEnabled: true,
-      isUnlimited: false,
-      updatedAt: new Date().toISOString(),
+      reset_policy: input.resetPolicy,
+      reset_interval_value: existingCustomInterval.value,
+      reset_interval_unit: existingCustomInterval.unit,
+      is_enabled: true,
+      is_unlimited: false,
+      updated_at: new Date().toISOString(),
     };
 
-    await savePlanLimitScopeRules({
-      supabase: adminResult.supabase,
-      scope: input.plan,
-      rules,
-    });
+    const saveResult = await adminResult.supabase
+      .from('au_plan_limit_rules')
+      .upsert(row, { onConflict: 'scope,limit_key' });
+
+    if (saveResult.error) throw saveResult.error;
 
     const refreshed = await loadAdminPlanLimitState(adminResult.supabase);
     return json({
