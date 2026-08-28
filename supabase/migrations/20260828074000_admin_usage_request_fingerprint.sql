@@ -1,14 +1,16 @@
 -- Reject reuse of an admin-usage idempotency key for a different logical mutation.
 --
--- request_id is a retry key, not permission to reinterpret an earlier write. The API
--- stores a deterministic logical-request fingerprint in adjustment context; versioned
--- single and batch RPCs validate any existing row before checkpointing or deduping.
+-- request_id is a retry key, not permission to reinterpret an earlier write. The
+-- versioned single and batch RPCs validate any existing row before checkpointing or
+-- deduping. Relative actions are bound to their signed delta; target actions are bound
+-- to the requested target captured in context. All actions are bound to quota window.
 
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.admin_assert_usage_adjustment_replay(
   p_target_user_id UUID,
   p_metric_key TEXT,
+  p_delta NUMERIC,
   p_action TEXT,
   p_window_start TIMESTAMPTZ,
   p_window_end TIMESTAMPTZ,
@@ -25,12 +27,12 @@ DECLARE
   v_metric_key TEXT := NULLIF(TRIM(COALESCE(p_metric_key, '')), '');
   v_action TEXT := LOWER(NULLIF(TRIM(COALESCE(p_action, '')), ''));
   v_request_id TEXT := NULLIF(TRIM(COALESCE(p_request_id, '')), '');
-  v_fingerprint TEXT := NULLIF(TRIM(COALESCE(p_context ->> 'request_fingerprint', '')), '');
-  v_existing_fingerprint TEXT;
+  v_requested_target TEXT := NULLIF(TRIM(COALESCE(p_context ->> 'requested_target', '')), '');
+  v_existing_target TEXT;
 BEGIN
-  IF p_target_user_id IS NULL OR v_metric_key IS NULL OR v_action IS NULL
-     OR p_window_start IS NULL OR v_request_id IS NULL OR v_fingerprint IS NULL THEN
-    RAISE EXCEPTION 'usage_adjustment_request_fingerprint_required' USING ERRCODE = '22023';
+  IF p_target_user_id IS NULL OR v_metric_key IS NULL OR p_delta IS NULL OR v_action IS NULL
+     OR p_window_start IS NULL OR v_request_id IS NULL THEN
+    RAISE EXCEPTION 'invalid_usage_adjustment_replay' USING ERRCODE = '22023';
   END IF;
 
   SELECT * INTO v_existing
@@ -44,12 +46,19 @@ BEGIN
     RETURN;
   END IF;
 
-  v_existing_fingerprint := NULLIF(TRIM(COALESCE(v_existing.context ->> 'request_fingerprint', '')), '');
+  v_existing_target := NULLIF(TRIM(COALESCE(v_existing.context ->> 'requested_target', '')), '');
 
   IF v_existing.action <> v_action
      OR v_existing.window_start <> p_window_start
      OR NOT (v_existing.window_end IS NOT DISTINCT FROM p_window_end)
-     OR v_existing_fingerprint IS DISTINCT FROM v_fingerprint THEN
+     OR (
+       v_action IN ('increase', 'decrease')
+       AND v_existing.delta <> p_delta
+     )
+     OR (
+       v_action IN ('set', 'reset')
+       AND v_existing_target IS DISTINCT FROM v_requested_target
+     ) THEN
     RAISE EXCEPTION 'usage_adjustment_idempotency_conflict'
       USING ERRCODE = '22023',
             DETAIL = 'The request ID was already used for a different usage adjustment payload.';
@@ -104,6 +113,7 @@ BEGIN
   PERFORM public.admin_assert_usage_adjustment_replay(
     p_target_user_id,
     p_metric_key,
+    p_delta,
     p_action,
     p_window_start,
     p_window_end,
@@ -192,6 +202,7 @@ BEGIN
     PERFORM public.admin_assert_usage_adjustment_replay(
       p_target_user_id,
       v_item ->> 'metricKey',
+      (v_item ->> 'delta')::numeric,
       v_item ->> 'action',
       (v_item ->> 'windowStart')::timestamptz,
       NULLIF(v_item ->> 'windowEnd', '')::timestamptz,
@@ -228,8 +239,8 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.admin_assert_usage_adjustment_replay(UUID, TEXT, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, JSONB) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.admin_assert_usage_adjustment_replay(UUID, TEXT, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, JSONB) TO service_role;
+REVOKE ALL ON FUNCTION public.admin_assert_usage_adjustment_replay(UUID, TEXT, NUMERIC, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, JSONB) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.admin_assert_usage_adjustment_replay(UUID, TEXT, NUMERIC, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, JSONB) TO service_role;
 
 REVOKE ALL ON FUNCTION public.admin_adjust_usage_versioned(UUID, TEXT, UUID, TEXT, NUMERIC, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, TEXT, NUMERIC, BIGINT, JSONB) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.admin_adjust_usage_versioned(UUID, TEXT, UUID, TEXT, NUMERIC, TEXT, TIMESTAMPTZ, TIMESTAMPTZ, TEXT, TEXT, NUMERIC, BIGINT, JSONB) TO authenticated;
