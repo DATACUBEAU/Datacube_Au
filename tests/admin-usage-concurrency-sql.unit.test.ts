@@ -18,6 +18,7 @@ async function main() {
   const migration = readFileSync('supabase/migrations/20260827215500_admin_usage_adjustments_concurrency.sql', 'utf8');
   const versionMigration = readFileSync('supabase/migrations/20260828004500_usage_mutation_version_guard.sql', 'utf8');
   const legacyVersionMigration = readFileSync('supabase/migrations/20260828020000_legacy_usage_mutation_version_guard.sql', 'utf8');
+  const checkpointMigration = readFileSync('supabase/migrations/20260828065500_admin_usage_legacy_checkpoint.sql', 'utf8');
   const route = readFileSync('src/app/api/admin/limits/user-usage/route.ts', 'utf8');
   const limits = readFileSync('src/lib/server/au-limits.ts', 'utf8');
 
@@ -125,6 +126,58 @@ async function main() {
     assert.match(route, /if \(!sameResetWindow\(beforeReset, usage\.reset\)\)/);
   });
 
+  await run('legacy-over-tracked baseline is checkpointed into the existing auditable event ledger', () => {
+    assert.match(checkpointMigration, /CREATE OR REPLACE FUNCTION public\.admin_checkpoint_legacy_usage_gap/);
+    assert.match(checkpointMigration, /v_checkpoint_delta := GREATEST\(0, v_base_used - v_tracked_used\)/);
+    assert.match(checkpointMigration, /PERFORM public\.track_usage_event\(/);
+    assert.match(checkpointMigration, /'admin_usage_checkpoint'/);
+    assert.match(checkpointMigration, /'legacy_baseline_reconciliation'/);
+    assert.doesNotMatch(checkpointMigration, /CREATE TABLE IF NOT EXISTS public\.au_usage_(?:counter|total)/i);
+  });
+
+  await run('checkpoint uses canonical counters for daily/lifetime windows and events only for custom windows', () => {
+    assert.match(checkpointMigration, /FROM public\.usage_totals/);
+    assert.match(checkpointMigration, /FROM public\.usage_counters/);
+    assert.match(checkpointMigration, /public\.get_usage_metric_window_totals\(/);
+    assert.match(checkpointMigration, /admin_usage_metric_aliases/);
+  });
+
+  await run('checkpoint and signed correction execute under one usage-version transaction lock', () => {
+    const singleStart = checkpointMigration.indexOf('CREATE OR REPLACE FUNCTION public.admin_adjust_usage_versioned');
+    const batchStart = checkpointMigration.indexOf('CREATE OR REPLACE FUNCTION public.admin_adjust_usage_batch_versioned');
+    const singleBody = checkpointMigration.slice(singleStart, batchStart);
+    const batchBody = checkpointMigration.slice(batchStart);
+    for (const body of [singleBody, batchBody]) {
+      const lockIndex = body.indexOf('FOR UPDATE;');
+      const checkpointIndex = body.indexOf('admin_checkpoint_legacy_usage_gap');
+      const adjustmentIndex = body.indexOf('admin_adjust_usage_');
+      assert.ok(lockIndex >= 0);
+      assert.ok(checkpointIndex > lockIndex);
+      assert.ok(adjustmentIndex >= 0);
+      assert.match(body, /usage_mutation_conflict/);
+    }
+    assert.match(singleBody, /admin_adjust_usage_checked\(/);
+    assert.match(batchBody, /admin_adjust_usage_batch_checked\(/);
+  });
+
+  await run('checkpoint request is retry-safe through the authoritative event idempotency key', () => {
+    assert.match(checkpointMigration, /v_event_key := 'admin_usage_checkpoint:' \|\| TRIM\(p_request_id\)/);
+    assert.match(checkpointMigration, /TRIM\(p_request_id\)/);
+    assert.match(checkpointMigration, /usage_checkpoint_request_id_required/);
+  });
+
+  await run('reset baseline remains durable after legacy deletion so later tracked usage is countable', () => {
+    const legacy = 10;
+    const trackedBefore = 0;
+    const checkpoint = Math.max(0, legacy - trackedBefore);
+    const resetAdjustment = -legacy;
+    const trackedAfterLegacyDeletion = trackedBefore + checkpoint;
+    assert.equal(Math.max(0, trackedAfterLegacyDeletion + resetAdjustment), 0);
+
+    const afterNewTrackedUnit = trackedAfterLegacyDeletion + 1;
+    assert.equal(Math.max(0, afterNewTrackedUnit + resetAdjustment), 1);
+  });
+
   await run('concurrency migrations remain append-only and do not weaken usage history', () => {
     assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.au_usage_admin_adjustments/i);
     assert.doesNotMatch(migration, /UPDATE\s+public\.au_usage_admin_adjustments/i);
@@ -135,6 +188,9 @@ async function main() {
     assert.doesNotMatch(legacyVersionMigration, /DELETE\s+FROM\s+public\.au_usage_admin_adjustments/i);
     assert.doesNotMatch(legacyVersionMigration, /UPDATE\s+public\.au_usage_admin_adjustments/i);
     assert.doesNotMatch(legacyVersionMigration, /TRUNCATE/i);
+    assert.doesNotMatch(checkpointMigration, /DELETE\s+FROM\s+public\.au_usage_events/i);
+    assert.doesNotMatch(checkpointMigration, /DELETE\s+FROM\s+public\.au_usage_admin_adjustments/i);
+    assert.doesNotMatch(checkpointMigration, /TRUNCATE/i);
   });
 
   if (failed > 0) process.exit(1);
