@@ -154,6 +154,16 @@ async function main() {
     assert.match(route, /admin_adjust_usage/);
   });
 
+  await run('admin usage adjustments require whole units at both API and persistence boundaries', () => {
+    const route = readFileSync('src/app/api/admin/limits/user-usage/route.ts', 'utf8');
+    const sql = readFileSync('supabase/migrations/20260828082500_admin_usage_integer_guard.sql', 'utf8');
+    assert.match(route, /amount: z\.coerce\.number\(\)\.finite\(\)\.int\(\)\.min\(0\)/);
+    assert.match(sql, /au_usage_admin_adjustments_delta_integer_chk/);
+    assert.match(sql, /delta::text NOT IN \('NaN', 'Infinity', '-Infinity'\)/);
+    assert.match(sql, /delta = trunc\(delta\)/);
+    assert.match(sql, /NOT VALID/);
+  });
+
   await run('reset-all request ids stay within the database idempotency-key limit', () => {
     const route = readFileSync('src/app/api/admin/limits/user-usage/route.ts', 'utf8');
     assert.match(route, /MAX_USAGE_ADJUSTMENT_REQUEST_ID_LENGTH = 200/);
