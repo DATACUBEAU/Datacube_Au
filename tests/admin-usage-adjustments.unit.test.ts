@@ -166,9 +166,9 @@ async function main() {
     const route = readFileSync('src/app/api/admin/limits/simple-plan-rule/route.ts', 'utf8');
     assert.match(route, /plan: z\.enum\(DEFAULT_PLAN_ORDER\)/);
     assert.match(route, /effective\.mode !== 'usage'/);
-    assert.match(route, /state\.storedRulesByScope\[input\.plan\]/);
-    assert.match(route, /savePlanLimitScopeRules/);
     assert.match(route, /scope: input\.plan/);
+    assert.match(route, /\.from\('au_plan_limit_rules'\)[\s\S]*?\.upsert\(row, \{ onConflict: 'scope,limit_key' \}\)/);
+    assert.doesNotMatch(route, /savePlanLimitScopeRules/);
     assert.doesNotMatch(route, /scope:\s*'default'/);
   });
 
