@@ -91,6 +91,15 @@ async function main() {
     assert.equal(source.includes('refreshUsageSection'), true);
   });
 
+  await run('usage page treats consumed zero-cap allowances as blocked', () => {
+    const source = readProjectFile('src/app/dashboard/settings/usage/page.tsx');
+
+    assert.equal(source.includes("if (limit === null) return { percent: 0, label: 'Unlimited'"), true);
+    assert.equal(source.includes("if (limit <= 0) {"), true);
+    assert.equal(source.includes("used > 0\n      ? { percent: 100, label: 'Limit reached', level: 'blocked' as const }"), true);
+    assert.equal(source.includes("{ percent: 0, label: 'Unavailable', level: 'normal' as const }"), true);
+  });
+
   await run('usage rows normalize numeric strings, fall back to saved limits, and preserve unlimited rules', () => {
     const result = buildSubscriptionUsageRows({
       snapshot: { managedPlan: 'pro' },
