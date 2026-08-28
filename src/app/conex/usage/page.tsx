@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
   Gauge,
@@ -190,11 +190,24 @@ export default function ConexUsagePage() {
   const [planLimit, setPlanLimit] = useState('');
   const [planReset, setPlanReset] = useState('daily');
   const [savingPlanRule, setSavingPlanRule] = useState(false);
+  const selectedUserIdRef = useRef('');
+  const usageRequestVersionRef = useRef(0);
 
   const selectedUser = useMemo(
     () => users.find((user) => user.user_id === selectedUserId) || null,
     [selectedUserId, users],
   );
+
+  const selectUser = useCallback((userId: string) => {
+    if (selectedUserIdRef.current === userId) return;
+    selectedUserIdRef.current = userId;
+    usageRequestVersionRef.current += 1;
+    setUsage(null);
+    setPlanRules([]);
+    setEditingMetric(null);
+    setResetAllOpen(false);
+    setSelectedUserId(userId);
+  }, []);
 
   const loadUsers = useCallback(async (q = '') => {
     setLoadingUsers(true);
@@ -205,29 +218,44 @@ export default function ConexUsagePage() {
       const payload = await res.json();
       const next = Array.isArray(payload.users) ? payload.users as ManagedUser[] : [];
       setUsers(next);
-      setSelectedUserId((current) => current && next.some((user) => user.user_id === current) ? current : (next[0]?.user_id || ''));
+      const current = selectedUserIdRef.current;
+      const nextUserId = current && next.some((user) => user.user_id === current) ? current : (next[0]?.user_id || '');
+      selectUser(nextUserId);
     } catch (error: any) {
       toast({ title: 'Users could not load', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
       setLoadingUsers(false);
     }
-  }, [toast]);
+  }, [selectUser, toast]);
 
   const loadUsage = useCallback(async (userId: string) => {
+    const requestVersion = ++usageRequestVersionRef.current;
     if (!userId) {
-      setUsage(null);
+      if (requestVersion === usageRequestVersionRef.current) {
+        setUsage(null);
+        setLoadingUsage(false);
+      }
       return;
     }
     setLoadingUsage(true);
     try {
       const res = await authedFetch(`/api/admin/limits/user-usage?userId=${encodeURIComponent(userId)}`);
       if (!res.ok) throw await responseError(res, 'Unable to load usage.');
-      setUsage(await res.json());
+      const payload = await res.json() as UsagePayload;
+      if (
+        requestVersion !== usageRequestVersionRef.current ||
+        selectedUserIdRef.current !== userId ||
+        payload.userId !== userId
+      ) return;
+      setUsage(payload);
     } catch (error: any) {
+      if (requestVersion !== usageRequestVersionRef.current || selectedUserIdRef.current !== userId) return;
       setUsage(null);
       toast({ title: 'Usage could not load', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
-      setLoadingUsage(false);
+      if (requestVersion === usageRequestVersionRef.current && selectedUserIdRef.current === userId) {
+        setLoadingUsage(false);
+      }
     }
   }, [toast]);
 
@@ -276,6 +304,7 @@ export default function ConexUsagePage() {
 
   async function saveAdjustment() {
     if (!editingMetric || !selectedUserId) return;
+    const targetUserId = selectedUserId;
     const numericAmount = Number(amount);
     if (action !== 'reset' && (!Number.isFinite(numericAmount) || numericAmount < 0)) {
       toast({ title: 'Enter a valid amount', variant: 'destructive' });
@@ -291,7 +320,7 @@ export default function ConexUsagePage() {
       const res = await authedFetch('/api/admin/limits/user-usage', {
         method: 'POST',
         body: JSON.stringify({
-          userId: selectedUserId,
+          userId: targetUserId,
           metricKey: editingMetric.key,
           action,
           amount: action === 'reset' ? undefined : numericAmount,
@@ -301,10 +330,12 @@ export default function ConexUsagePage() {
       });
       if (!res.ok) throw await responseError(res, 'Unable to update usage.');
       const payload = await res.json();
-      setUsage((current) => current ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
+      if (selectedUserIdRef.current !== targetUserId) return;
+      setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
       setEditingMetric(null);
       toast({ title: 'Usage updated', description: `${editingMetric.label} now reflects the admin adjustment.` });
     } catch (error: any) {
+      if (selectedUserIdRef.current !== targetUserId) return;
       toast({ title: 'Usage update failed', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -313,6 +344,7 @@ export default function ConexUsagePage() {
 
   async function savePlanRule() {
     if (!editingPlanRule || !usage || !isSimplePlan(usage.plan)) return;
+    const targetUserId = selectedUserId;
     const numericLimit = Number(planLimit);
     if (!Number.isInteger(numericLimit) || numericLimit < 0) {
       toast({ title: 'Enter a whole-number cap', variant: 'destructive' });
@@ -334,7 +366,7 @@ export default function ConexUsagePage() {
       const payload = await res.json();
       setPlanRules(Array.isArray(payload.rules) ? payload.rules : []);
       setEditingPlanRule(null);
-      await loadUsage(selectedUserId);
+      if (selectedUserIdRef.current === targetUserId) await loadUsage(targetUserId);
       toast({
         title: 'Plan rule updated',
         description: `${editingPlanRule.label} now uses the new ${usage.plan.toUpperCase()} cap and reset schedule.`,
@@ -348,12 +380,13 @@ export default function ConexUsagePage() {
 
   async function hardResetAll() {
     if (!selectedUserId || resetAllReason.trim().length < 3) return;
+    const targetUserId = selectedUserId;
     setSaving(true);
     try {
       const res = await authedFetch('/api/admin/limits/user-usage', {
         method: 'POST',
         body: JSON.stringify({
-          userId: selectedUserId,
+          userId: targetUserId,
           action: 'reset_all',
           reason: resetAllReason.trim(),
           requestId: `conex-hard-reset:${crypto.randomUUID()}`,
@@ -361,10 +394,12 @@ export default function ConexUsagePage() {
       });
       if (!res.ok) throw await responseError(res, 'Unable to reset usage.');
       const payload = await res.json();
-      setUsage((current) => current ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
+      if (selectedUserIdRef.current !== targetUserId) return;
+      setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
       setResetAllOpen(false);
       toast({ title: 'Usage reset', description: 'All adjustable usage for the active windows was reset without deleting history.' });
     } catch (error: any) {
+      if (selectedUserIdRef.current !== targetUserId) return;
       toast({ title: 'Hard reset failed', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
       setSaving(false);
@@ -411,7 +446,7 @@ export default function ConexUsagePage() {
                 {loadingUsers ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Search'}
               </Button>
             </div>
-            <Select value={selectedUserId} onValueChange={setSelectedUserId} disabled={loadingUsers || users.length === 0}>
+            <Select value={selectedUserId} onValueChange={selectUser} disabled={loadingUsers || users.length === 0}>
               <SelectTrigger aria-label="Selected user"><SelectValue placeholder="Choose a user" /></SelectTrigger>
               <SelectContent>
                 {users.map((user) => (
