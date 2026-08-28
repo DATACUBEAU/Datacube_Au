@@ -79,10 +79,13 @@ async function main() {
   });
 
   await run('legacy and hybrid canonical usage sources share the same mutation-version boundary', () => {
-    const fallbackTables = ['au_messages', 'au_model_usage', 'au_documents', 'au_feature_outputs'];
-    for (const table of fallbackTables) {
-      assert.match(limits, new RegExp(`(?:from|safeExactCount|safeSelectDocuments)[\\s\\S]{0,120}['\"]${table}['\"]`));
-      assert.match(legacyVersionMigration, new RegExp(`['\"]${table}['\"]`));
+    assert.match(limits, /safeExactCount\(supabase, 'au_messages'/);
+    assert.match(limits, /\.from\('au_model_usage'\)/);
+    assert.match(limits, /safeSelectDocuments\(supabase, userId\)/);
+    assert.match(limits, /safeExactCount\(supabase, 'au_feature_outputs'/);
+
+    for (const table of ['au_messages', 'au_model_usage', 'au_documents', 'au_feature_outputs']) {
+      assert.match(legacyVersionMigration, new RegExp(`'${table}'`));
     }
     assert.match(legacyVersionMigration, /CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE/);
     assert.match(legacyVersionMigration, /EXECUTE FUNCTION public\.bump_usage_mutation_version\(\)/);
