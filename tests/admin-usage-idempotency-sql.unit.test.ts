@@ -13,6 +13,10 @@ const legacyRpcRevokeSql = readFileSync(
   'supabase/migrations/20260829204500_revoke_legacy_admin_usage_rpc.sql',
   'utf8',
 );
+const internalRpcRevokeSql = readFileSync(
+  'supabase/migrations/20260829211500_revoke_internal_admin_usage_rpcs.sql',
+  'utf8',
+);
 
 assert.match(baseSql, /ON CONFLICT \(user_id, metric_key, request_id\) DO NOTHING/i);
 assert.match(baseSql, /IF NOT FOUND THEN[\s\S]*SELECT \* INTO v_existing[\s\S]*request_id = v_request_id/i);
@@ -46,6 +50,31 @@ assert.doesNotMatch(
 assert.match(
   legacyRpcRevokeSql,
   /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage\([\s\S]*?\) TO service_role;/i,
+);
+
+assert.match(
+  internalRpcRevokeSql,
+  /REVOKE EXECUTE ON FUNCTION public\.admin_adjust_usage_checked\([\s\S]*?\) FROM authenticated;/i,
+);
+assert.match(
+  internalRpcRevokeSql,
+  /REVOKE EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_checked\([\s\S]*?\) FROM authenticated;/i,
+);
+assert.doesNotMatch(
+  internalRpcRevokeSql,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_checked\([\s\S]*?\) TO authenticated;/i,
+);
+assert.doesNotMatch(
+  internalRpcRevokeSql,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_checked\([\s\S]*?\) TO authenticated;/i,
+);
+assert.match(
+  internalRpcRevokeSql,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_checked\([\s\S]*?\) TO service_role;/i,
+);
+assert.match(
+  internalRpcRevokeSql,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_checked\([\s\S]*?\) TO service_role;/i,
 );
 
 console.log('PASS admin usage idempotency keys are retry-safe, payload-bound, and guarded');
