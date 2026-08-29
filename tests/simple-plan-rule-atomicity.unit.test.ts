@@ -51,6 +51,18 @@ assert.match(
 
 assert.match(
   source,
+  /value:\s*isUnlimited \? null : input\.limit/,
+  'unlimited rules must persist NULL values to satisfy the canonical database constraint',
+);
+
+assert.doesNotMatch(
+  source,
+  /value:\s*isUnlimited \? 0 : input\.limit/,
+  'unlimited rules must never be persisted as numeric zero',
+);
+
+assert.match(
+  source,
   /is_unlimited:\s*isUnlimited/,
   'simple plan persistence must use the resolved unlimited state instead of forcing finite limits',
 );
