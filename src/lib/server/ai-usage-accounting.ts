@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import { getQuotaPolicy } from '../tier/policy';
-import { getLimitCap, type ApprovedLimitKey } from '../limits/plan-limit-model';
+import { computeResetWindow, getLimitCap, type ApprovedLimitKey } from '../limits/plan-limit-model';
 import type { VpsTicketOperation } from './vps-ticket-config';
 import { buildChatTrackingPayload, buildFeatureUsageIncrements } from './usage-tracking';
 import { normalizeMetricIncrements } from '../../../shared/usage-metrics';
@@ -14,6 +14,8 @@ export type AiUsageLimitCheck = {
   cap: number | null;
   scope: 'canonical_plan' | 'tier_quota';
   counter_scope: 'today' | 'total';
+  window_start?: string | null;
+  window_end?: string | null;
 };
 
 export type AiUsageReservationPayload = {
@@ -27,7 +29,11 @@ export type AiUsageLimitSource = {
   effectivePlan: {
     hasPro: boolean;
   };
-  limitRules: Record<ApprovedLimitKey, Parameters<typeof getLimitCap>[0] & { resetPolicy?: string | null }>;
+  limitRules: Record<ApprovedLimitKey, Parameters<typeof getLimitCap>[0] & {
+    resetPolicy?: string | null;
+    resetIntervalValue?: number | null;
+    resetIntervalUnit?: 'hour' | 'day' | 'week' | 'month' | null;
+  }>;
 };
 
 export type AiUsageReservationResult = {
@@ -101,11 +107,18 @@ function addCanonicalCheck(
   const rule = limits.limitRules[key];
   const cap = getLimitCap(rule);
   if (cap === null) return;
+  const reset = computeResetWindow({
+    resetPolicy: (rule.resetPolicy || 'never') as any,
+    resetIntervalValue: rule.resetIntervalValue ?? null,
+    resetIntervalUnit: rule.resetIntervalUnit ?? null,
+  });
   checks.push({
     metric_key: key,
     cap,
     scope: 'canonical_plan',
     counter_scope: rule.resetPolicy === 'daily' ? 'today' : 'total',
+    window_start: reset.windowStart,
+    window_end: reset.windowEnd,
   });
 }
 
