@@ -111,12 +111,20 @@ export async function POST(req: NextRequest) {
       }, 400);
     }
 
-    // Backward-compatible safety guard: the first simple-editor client encoded an
-    // existing unlimited rule as numeric zero. Until every client sends the
-    // explicit unlimited flag, preserve the authoritative unlimited state for
-    // that ambiguous legacy payload rather than silently turning a plan-wide
-    // unlimited entitlement into a zero allowance.
-    const isUnlimited = input.isUnlimited ?? (effective.isUnlimited && input.limit === 0);
+    // The first simple-editor client encoded an existing unlimited rule as numeric
+    // zero and did not send an unlimited flag. Reject that one ambiguous payload
+    // rather than silently collapsing a plan-wide unlimited entitlement to zero
+    // or pretending a zero cap was saved while preserving unlimited state.
+    if (input.isUnlimited === undefined && effective.isUnlimited && input.limit === 0) {
+      return json({
+        ok: false,
+        code: 'explicit_unlimited_state_required',
+        message: 'This plan rule is currently Unlimited. Choose an explicit finite cap or use Advanced Plan Limits before saving zero.',
+        requestId,
+      }, 409);
+    }
+
+    const isUnlimited = input.isUnlimited ?? false;
 
     const row = {
       scope: input.plan,
