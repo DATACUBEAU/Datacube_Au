@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const routePath = path.join(process.cwd(), 'src/app/api/admin/limits/simple-plan-rule/route.ts');
+const pagePath = path.join(process.cwd(), 'src/app/conex/usage/page.tsx');
 const source = fs.readFileSync(routePath, 'utf8');
+const page = fs.readFileSync(pagePath, 'utf8');
 
 assert.match(
   source,
@@ -57,6 +59,36 @@ assert.doesNotMatch(
   source,
   /is_unlimited:\s*false/,
   'simple plan edits must never unconditionally collapse unlimited entitlements to finite limits',
+);
+
+assert.match(
+  page,
+  /const \[planUnlimited, setPlanUnlimited\] = useState\(false\);/,
+  'the simple plan editor must keep unlimited as an explicit client state',
+);
+
+assert.match(
+  page,
+  /setPlanUnlimited\(row\.limit === null\);[\s\S]*?setPlanLimit\(row\.limit === null \? '' : String\(row\.limit\)\);/,
+  'opening an unlimited rule must preserve Unlimited instead of pre-filling a zero cap',
+);
+
+assert.match(
+  page,
+  /if \(!planUnlimited && trimmedPlanLimit === ''\) \{[\s\S]*?Enter a plan cap/,
+  'an empty finite cap must be rejected before numeric coercion can turn it into zero',
+);
+
+assert.match(
+  page,
+  /isUnlimited:\s*planUnlimited/,
+  'the client must send explicit unlimited intent to the authoritative plan-rule endpoint',
+);
+
+assert.match(
+  page,
+  /<Select value=\{planUnlimited \? 'unlimited' : 'limited'\}/,
+  'admins must be given an explicit Set a cap versus Unlimited choice',
 );
 
 console.log('simple plan rule atomicity regression passed');
