@@ -15,7 +15,10 @@ const simpleResetPolicies = ['hourly', 'daily', 'weekly', 'monthly', 'never', 'c
 const requestSchema = z.object({
   plan: z.enum(DEFAULT_PLAN_ORDER),
   metricKey: z.enum(APPROVED_LIMIT_KEYS),
-  limit: z.coerce.number().int().min(0).max(1_000_000_000),
+  // This is a plan-wide entitlement boundary. Do not coerce strings/null/empty
+  // values into numbers: Number('') and Number(null) both become 0, which could
+  // accidentally disable a feature for every subscriber on the plan.
+  limit: z.number().int().min(0).max(1_000_000_000),
   resetPolicy: z.enum(simpleResetPolicies),
   isUnlimited: z.boolean().optional(),
 });
