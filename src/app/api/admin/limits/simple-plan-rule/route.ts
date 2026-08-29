@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
     const row = {
       scope: input.plan,
       limit_key: input.metricKey,
-      value: isUnlimited ? 0 : input.limit,
+      value: isUnlimited ? null : input.limit,
       mode: effective.mode,
       reset_policy: input.resetPolicy,
       reset_interval_value: existingCustomInterval.value,
