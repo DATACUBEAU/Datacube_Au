@@ -31,8 +31,20 @@ assert.match(
 
 assert.match(
   source,
-  /const isUnlimited = input\.isUnlimited \?\? \(effective\.isUnlimited && input\.limit === 0\)/,
-  'legacy zero payloads from an already-unlimited rule must preserve the authoritative unlimited state',
+  /input\.isUnlimited === undefined && effective\.isUnlimited && input\.limit === 0/,
+  'legacy zero payloads from an already-unlimited rule must be rejected as ambiguous',
+);
+
+assert.match(
+  source,
+  /code:\s*'explicit_unlimited_state_required'[\s\S]*?409/,
+  'ambiguous unlimited-to-zero saves must return a recoverable conflict instead of mutating entitlements',
+);
+
+assert.match(
+  source,
+  /const isUnlimited = input\.isUnlimited \?\? false/,
+  'explicit unlimited intent must drive plan-rule persistence',
 );
 
 assert.match(
