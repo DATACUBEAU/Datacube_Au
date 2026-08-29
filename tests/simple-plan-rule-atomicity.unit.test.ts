@@ -23,4 +23,28 @@ assert.doesNotMatch(
   'simple per-metric edits must not reconstruct a stale full rule map before persistence',
 );
 
+assert.match(
+  source,
+  /isUnlimited:\s*z\.boolean\(\)\.optional\(\)/,
+  'simple plan edits must accept an explicit unlimited state',
+);
+
+assert.match(
+  source,
+  /const isUnlimited = input\.isUnlimited \?\? \(effective\.isUnlimited && input\.limit === 0\)/,
+  'legacy zero payloads from an already-unlimited rule must preserve the authoritative unlimited state',
+);
+
+assert.match(
+  source,
+  /is_unlimited:\s*isUnlimited/,
+  'simple plan persistence must use the resolved unlimited state instead of forcing finite limits',
+);
+
+assert.doesNotMatch(
+  source,
+  /is_unlimited:\s*false/,
+  'simple plan edits must never unconditionally collapse unlimited entitlements to finite limits',
+);
+
 console.log('simple plan rule atomicity regression passed');
