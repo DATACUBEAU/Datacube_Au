@@ -6,6 +6,9 @@
 -- rejected by reserve_ai_usage. Canonical checks now carry their exact quota
 -- window; this function serializes against admin corrections for that same
 -- user/metric/window and applies the signed delta before enforcing the cap.
+-- Older app instances that do not yet send quota-window metadata retain the
+-- pre-migration raw-counter enforcement during a rolling deployment rather
+-- than failing otherwise valid finite reservations.
 
 BEGIN;
 
@@ -193,29 +196,32 @@ BEGIN
         ELSE (v_check ->> 'window_end')::TIMESTAMPTZ
       END;
 
-      IF v_window_start IS NULL THEN
-        RAISE EXCEPTION 'canonical usage reservation requires window_start' USING ERRCODE = '22023';
+      -- Rolling-deploy compatibility: app instances from before this migration
+      -- do not send window_start/window_end. Preserve their historical raw
+      -- counter enforcement instead of raising and turning every finite
+      -- canonical reservation into an outage. Once window metadata is present,
+      -- the authoritative admin-adjusted path below applies normally.
+      IF v_window_start IS NOT NULL THEN
+        -- Use the same lock identity as admin_adjust_usage_checked so a correction
+        -- and a reservation for the same tenant metric/window cannot race past one
+        -- another. Under READ COMMITTED, the following SELECT sees the adjustment
+        -- committed by whichever transaction acquired this lock first.
+        PERFORM pg_advisory_xact_lock(
+          hashtextextended(
+            concat_ws('|', p_user_id::TEXT, v_metric_key, v_window_start::TEXT, COALESCE(v_window_end::TEXT, '')),
+            0
+          )
+        );
+
+        SELECT public.get_usage_admin_adjustment_total(
+          p_user_id,
+          v_metric_key,
+          v_window_start,
+          v_window_end
+        ) INTO v_adjustment;
+
+        v_current := GREATEST(0, v_current + COALESCE(v_adjustment, 0));
       END IF;
-
-      -- Use the same lock identity as admin_adjust_usage_checked so a correction
-      -- and a reservation for the same tenant metric/window cannot race past one
-      -- another. Under READ COMMITTED, the following SELECT sees the adjustment
-      -- committed by whichever transaction acquired this lock first.
-      PERFORM pg_advisory_xact_lock(
-        hashtextextended(
-          concat_ws('|', p_user_id::TEXT, v_metric_key, v_window_start::TEXT, COALESCE(v_window_end::TEXT, '')),
-          0
-        )
-      );
-
-      SELECT public.get_usage_admin_adjustment_total(
-        p_user_id,
-        v_metric_key,
-        v_window_start,
-        v_window_end
-      ) INTO v_adjustment;
-
-      v_current := GREATEST(0, v_current + COALESCE(v_adjustment, 0));
     END IF;
 
     IF v_current + v_increment > v_cap THEN
