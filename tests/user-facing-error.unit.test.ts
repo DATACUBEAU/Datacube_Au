@@ -48,6 +48,16 @@ async function main() {
     assert.match(source, /correlationId:\s*error\.correlationId \?\? null/);
   });
 
+  await run('document deletion failures never expose retention cleanup details', () => {
+    const source = readRepoFile('src', 'app', 'api', 'au', 'documents', '[documentId]', 'route.ts');
+    assert.match(source, /function safeDeleteFailureMessage/);
+    assert.match(source, /requestId = req\.headers\.get\('x-request-id'\)\?\.trim\(\) \|\| crypto\.randomUUID\(\)/);
+    assert.match(source, /message:\s*safeDeleteFailureMessage\(result\.status\)/);
+    assert.doesNotMatch(source, /details:\s*result\.details/);
+    assert.doesNotMatch(source, /filePath/);
+    assert.doesNotMatch(source, /result\.details/);
+  });
+
   await run('protected API test suite asserts generic AI 401 stays endpoint scoped', () => {
     const source = readRepoFile('tests', 'protected-api-pipeline.unit.test.ts');
     assert.match(source, /safeFetch no longer hard-redirects on every 401 response/);
