@@ -27,6 +27,18 @@ assert.doesNotMatch(
 
 assert.match(
   source,
+  /limit:\s*z\.number\(\)\.int\(\)\.min\(0\)\.max\(1_000_000_000\)/,
+  'plan-wide caps must require a real numeric JSON value rather than coercing empty, null, or string inputs to zero',
+);
+
+assert.doesNotMatch(
+  source,
+  /limit:\s*z\.coerce\.number\(\)/,
+  'plan-wide caps must never use coercive number parsing at the authoritative API boundary',
+);
+
+assert.match(
+  source,
   /isUnlimited:\s*z\.boolean\(\)\.optional\(\)/,
   'simple plan edits must accept an explicit unlimited state',
 );
