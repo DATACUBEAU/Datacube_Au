@@ -188,10 +188,12 @@ export default function ConexUsagePage() {
   const [loadingPlanRules, setLoadingPlanRules] = useState(false);
   const [editingPlanRule, setEditingPlanRule] = useState<PlanRule | null>(null);
   const [planLimit, setPlanLimit] = useState('');
+  const [planUnlimited, setPlanUnlimited] = useState(false);
   const [planReset, setPlanReset] = useState('daily');
   const [savingPlanRule, setSavingPlanRule] = useState(false);
   const selectedUserIdRef = useRef('');
   const usageRequestVersionRef = useRef(0);
+  const planRuleRequestVersionRef = useRef(0);
 
   const selectedUser = useMemo(
     () => users.find((user) => user.user_id === selectedUserId) || null,
@@ -202,9 +204,12 @@ export default function ConexUsagePage() {
     if (selectedUserIdRef.current === userId) return;
     selectedUserIdRef.current = userId;
     usageRequestVersionRef.current += 1;
+    planRuleRequestVersionRef.current += 1;
     setUsage(null);
     setPlanRules([]);
+    setLoadingPlanRules(false);
     setEditingMetric(null);
+    setEditingPlanRule(null);
     setResetAllOpen(false);
     setSelectedUserId(userId);
   }, []);
@@ -259,9 +264,13 @@ export default function ConexUsagePage() {
     }
   }, [toast]);
 
-  const loadPlanRules = useCallback(async (plan: string) => {
-    if (!isSimplePlan(plan)) {
-      setPlanRules([]);
+  const loadPlanRules = useCallback(async (plan: string, userId: string) => {
+    const requestVersion = ++planRuleRequestVersionRef.current;
+    if (!isSimplePlan(plan) || !userId) {
+      if (requestVersion === planRuleRequestVersionRef.current) {
+        setPlanRules([]);
+        setLoadingPlanRules(false);
+      }
       return;
     }
     setLoadingPlanRules(true);
@@ -269,21 +278,33 @@ export default function ConexUsagePage() {
       const res = await authedFetch(`/api/admin/limits/simple-plan-rule?plan=${encodeURIComponent(plan)}`);
       if (!res.ok) throw await responseError(res, 'Unable to load plan caps.');
       const payload = await res.json();
+      if (
+        requestVersion !== planRuleRequestVersionRef.current ||
+        selectedUserIdRef.current !== userId ||
+        payload.plan !== plan
+      ) return;
       setPlanRules(Array.isArray(payload.rules) ? payload.rules : []);
     } catch (error: any) {
+      if (requestVersion !== planRuleRequestVersionRef.current || selectedUserIdRef.current !== userId) return;
       setPlanRules([]);
       toast({ title: 'Plan caps could not load', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
-      setLoadingPlanRules(false);
+      if (requestVersion === planRuleRequestVersionRef.current && selectedUserIdRef.current === userId) {
+        setLoadingPlanRules(false);
+      }
     }
   }, [toast]);
 
   useEffect(() => { void loadUsers(); }, [loadUsers]);
   useEffect(() => { void loadUsage(selectedUserId); }, [loadUsage, selectedUserId]);
   useEffect(() => {
-    if (usage?.plan) void loadPlanRules(usage.plan);
-    else setPlanRules([]);
-  }, [loadPlanRules, usage?.plan]);
+    if (usage?.plan && usage.userId) void loadPlanRules(usage.plan, usage.userId);
+    else {
+      planRuleRequestVersionRef.current += 1;
+      setPlanRules([]);
+      setLoadingPlanRules(false);
+    }
+  }, [loadPlanRules, usage?.plan, usage?.userId]);
 
   const adjustableRows = (usage?.usage || []).filter((row) => row.adjustable);
   const capacityRows = (usage?.usage || []).filter((row) => !row.adjustable);
@@ -298,7 +319,8 @@ export default function ConexUsagePage() {
 
   function openPlanRule(row: PlanRule) {
     setEditingPlanRule(row);
-    setPlanLimit(row.limit === null ? '0' : String(row.limit));
+    setPlanUnlimited(row.limit === null);
+    setPlanLimit(row.limit === null ? '' : String(row.limit));
     setPlanReset(row.resetPolicy || 'never');
   }
 
@@ -345,7 +367,13 @@ export default function ConexUsagePage() {
   async function savePlanRule() {
     if (!editingPlanRule || !usage || !isSimplePlan(usage.plan)) return;
     const targetUserId = selectedUserId;
-    const numericLimit = Number(planLimit);
+    const targetPlan = usage.plan;
+    const trimmedPlanLimit = planLimit.trim();
+    if (!planUnlimited && trimmedPlanLimit === '') {
+      toast({ title: 'Enter a plan cap', description: 'Choose Unlimited or enter a whole-number allowance.', variant: 'destructive' });
+      return;
+    }
+    const numericLimit = planUnlimited ? 0 : Number(trimmedPlanLimit);
     if (!Number.isInteger(numericLimit) || numericLimit < 0) {
       toast({ title: 'Enter a whole-number cap', variant: 'destructive' });
       return;
@@ -356,22 +384,27 @@ export default function ConexUsagePage() {
       const res = await authedFetch('/api/admin/limits/simple-plan-rule', {
         method: 'POST',
         body: JSON.stringify({
-          plan: usage.plan,
+          plan: targetPlan,
           metricKey: editingPlanRule.key,
           limit: numericLimit,
+          isUnlimited: planUnlimited,
           resetPolicy: planReset,
         }),
       });
       if (!res.ok) throw await responseError(res, 'Unable to update plan cap.');
       const payload = await res.json();
+      if (selectedUserIdRef.current !== targetUserId || payload.plan !== targetPlan) return;
       setPlanRules(Array.isArray(payload.rules) ? payload.rules : []);
       setEditingPlanRule(null);
-      if (selectedUserIdRef.current === targetUserId) await loadUsage(targetUserId);
+      await loadUsage(targetUserId);
       toast({
         title: 'Plan rule updated',
-        description: `${editingPlanRule.label} now uses the new ${usage.plan.toUpperCase()} cap and reset schedule.`,
+        description: planUnlimited
+          ? `${editingPlanRule.label} is now Unlimited for ${targetPlan.toUpperCase()}.`
+          : `${editingPlanRule.label} now uses the new ${targetPlan.toUpperCase()} cap and reset schedule.`,
       });
     } catch (error: any) {
+      if (selectedUserIdRef.current !== targetUserId) return;
       toast({ title: 'Plan rule update failed', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
       setSavingPlanRule(false);
@@ -639,10 +672,27 @@ export default function ConexUsagePage() {
           {editingPlanRule ? (
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="plan-cap">Usage cap</Label>
-                <Input id="plan-cap" type="number" min="0" step="1" value={planLimit} onChange={(event) => setPlanLimit(event.target.value)} />
-                <p className="text-xs text-muted-foreground">Increase or decrease this number to change the allowance for the whole plan.</p>
+                <Label>Allowance</Label>
+                <Select value={planUnlimited ? 'unlimited' : 'limited'} onValueChange={(value) => setPlanUnlimited(value === 'unlimited')}>
+                  <SelectTrigger aria-label="Plan allowance type"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="limited">Set a cap</SelectItem>
+                    <SelectItem value="unlimited">Unlimited</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">Choose Unlimited explicitly, or set a numeric allowance for everyone on this plan.</p>
               </div>
+              {!planUnlimited ? (
+                <div className="space-y-2">
+                  <Label htmlFor="plan-cap">Usage cap</Label>
+                  <Input id="plan-cap" type="number" min="0" step="1" value={planLimit} onChange={(event) => setPlanLimit(event.target.value)} />
+                  <p className="text-xs text-muted-foreground">Increase or decrease this number to change the allowance for the whole plan. An empty cap cannot be saved.</p>
+                </div>
+              ) : (
+                <div className="rounded-xl border bg-muted/20 p-3 text-sm text-muted-foreground">
+                  Unlimited removes the numeric usage cap for this rule. This affects every user on the plan.
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>Reset schedule</Label>
                 <Select value={planReset} onValueChange={setPlanReset}>
