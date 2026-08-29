@@ -10,6 +10,13 @@ function jsonNoStore(body: unknown, init: ResponseInit = {}): NextResponse {
   return NextResponse.json(body, { ...init, headers });
 }
 
+function safeDeleteFailureMessage(status: number): string {
+  if (status === 409) {
+    return 'This document cannot be deleted yet because related processing is still active. Please try again shortly.';
+  }
+  return 'We could not delete this document right now. Please try again shortly.';
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ documentId: string }> },
@@ -40,11 +47,19 @@ export async function DELETE(
   }
 
   if (!result.ok) {
+    const requestId = req.headers.get('x-request-id')?.trim() || crypto.randomUUID();
+    console.error('[document-delete] failed', {
+      requestId,
+      status: result.status,
+      code: result.message,
+    });
+
     return jsonNoStore(
       {
+        ok: false,
         error: result.message,
-        message: result.message,
-        details: result.details || null,
+        message: safeDeleteFailureMessage(result.status),
+        requestId,
       },
       { status: result.status },
     );
