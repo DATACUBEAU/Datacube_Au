@@ -238,9 +238,6 @@ export function describeApiErrorForUser(
     ...base,
     kind: 'internal',
     title: context === 'chat' ? 'Chat unavailable' : 'Something went wrong',
-    description:
-      loweredMessage && loweredMessage !== 'unexpected error'
-        ? message
-        : 'We hit an unexpected problem while processing that request. Please try again shortly.',
+    description: 'We hit an unexpected problem while processing that request. Please try again shortly.',
   };
 }
