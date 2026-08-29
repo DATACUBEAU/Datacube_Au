@@ -9,6 +9,10 @@ const replaySql = readFileSync(
   'supabase/migrations/20260828074000_admin_usage_request_fingerprint.sql',
   'utf8',
 );
+const legacyRpcRevokeSql = readFileSync(
+  'supabase/migrations/20260829204500_revoke_legacy_admin_usage_rpc.sql',
+  'utf8',
+);
 
 assert.match(baseSql, /ON CONFLICT \(user_id, metric_key, request_id\) DO NOTHING/i);
 assert.match(baseSql, /IF NOT FOUND THEN[\s\S]*SELECT \* INTO v_existing[\s\S]*request_id = v_request_id/i);
@@ -31,4 +35,17 @@ assert.match(
   /Validate every scoped retry key before creating any checkpoint event[\s\S]*admin_assert_usage_adjustment_replay[\s\S]*admin_checkpoint_legacy_usage_gap/i,
 );
 
-console.log('PASS admin usage idempotency keys are retry-safe and payload-bound');
+assert.match(
+  legacyRpcRevokeSql,
+  /REVOKE EXECUTE ON FUNCTION public\.admin_adjust_usage\([\s\S]*?\) FROM authenticated;/i,
+);
+assert.doesNotMatch(
+  legacyRpcRevokeSql,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage\([\s\S]*?\) TO authenticated;/i,
+);
+assert.match(
+  legacyRpcRevokeSql,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage\([\s\S]*?\) TO service_role;/i,
+);
+
+console.log('PASS admin usage idempotency keys are retry-safe, payload-bound, and guarded');
