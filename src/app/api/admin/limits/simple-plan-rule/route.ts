@@ -17,6 +17,7 @@ const requestSchema = z.object({
   metricKey: z.enum(APPROVED_LIMIT_KEYS),
   limit: z.coerce.number().int().min(0).max(1_000_000_000),
   resetPolicy: z.enum(simpleResetPolicies),
+  isUnlimited: z.boolean().optional(),
 });
 
 function json(payload: unknown, status = 200) {
@@ -110,16 +111,23 @@ export async function POST(req: NextRequest) {
       }, 400);
     }
 
+    // Backward-compatible safety guard: the first simple-editor client encoded an
+    // existing unlimited rule as numeric zero. Until every client sends the
+    // explicit unlimited flag, preserve the authoritative unlimited state for
+    // that ambiguous legacy payload rather than silently turning a plan-wide
+    // unlimited entitlement into a zero allowance.
+    const isUnlimited = input.isUnlimited ?? (effective.isUnlimited && input.limit === 0);
+
     const row = {
       scope: input.plan,
       limit_key: input.metricKey,
-      value: input.limit,
+      value: isUnlimited ? 0 : input.limit,
       mode: effective.mode,
       reset_policy: input.resetPolicy,
       reset_interval_value: existingCustomInterval.value,
       reset_interval_unit: existingCustomInterval.unit,
       is_enabled: true,
-      is_unlimited: false,
+      is_unlimited: isUnlimited,
       updated_at: new Date().toISOString(),
     };
 
