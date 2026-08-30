@@ -13,7 +13,7 @@ export type AiUsageLimitCheck = {
   metric_key: string;
   cap: number | null;
   scope: 'canonical_plan' | 'tier_quota';
-  counter_scope: 'today' | 'total';
+  counter_scope: 'today' | 'total' | 'window';
   window_start?: string | null;
   window_end?: string | null;
 };
@@ -107,8 +107,9 @@ function addCanonicalCheck(
   const rule = limits.limitRules[key];
   const cap = getLimitCap(rule);
   if (cap === null) return;
+  const resetPolicy = String(rule.resetPolicy || 'never').trim().toLowerCase();
   const reset = computeResetWindow({
-    resetPolicy: (rule.resetPolicy || 'never') as any,
+    resetPolicy: resetPolicy as any,
     resetIntervalValue: rule.resetIntervalValue ?? null,
     resetIntervalUnit: rule.resetIntervalUnit ?? null,
   });
@@ -116,7 +117,7 @@ function addCanonicalCheck(
     metric_key: key,
     cap,
     scope: 'canonical_plan',
-    counter_scope: rule.resetPolicy === 'daily' ? 'today' : 'total',
+    counter_scope: resetPolicy === 'daily' ? 'today' : resetPolicy === 'never' ? 'total' : 'window',
     window_start: reset.windowStart,
     window_end: reset.windowEnd,
   });
