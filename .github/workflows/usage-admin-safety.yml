@@ -52,7 +52,9 @@ jobs:
           tests/simple-plan-rule-atomicity.unit.test.ts
           tests/conex-usage-selection-race.unit.test.ts
           tests/document-owner-usage-version.unit.test.ts
+          tests/ai-usage-window-scope.unit.test.ts
           src/lib/server/usage-tracking.ts
+          src/lib/server/ai-usage-accounting.ts
           src/lib/limits/plan-limit-model.ts
           shared/usage-metrics.ts
 
@@ -66,3 +68,4 @@ jobs:
           node .tmp-tests/tests/simple-plan-rule-atomicity.unit.test.js
           node .tmp-tests/tests/conex-usage-selection-race.unit.test.js
           node .tmp-tests/tests/document-owner-usage-version.unit.test.js
+          node .tmp-tests/tests/ai-usage-window-scope.unit.test.js
