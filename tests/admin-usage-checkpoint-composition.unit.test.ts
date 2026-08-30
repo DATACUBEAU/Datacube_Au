@@ -2,8 +2,19 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const migration = readFileSync(
-  'supabase/migrations/20260830114000_restore_admin_usage_replay_guard.sql',
+  'supabase/migrations/20260830124500_admin_usage_wrapper_authorization.sql',
   'utf8',
+);
+
+// Both exposed SECURITY DEFINER wrappers must authenticate before touching the
+// mutation-version row, replay ledger, reservations, checkpoint sources, or batch items.
+assert.match(
+  migration,
+  /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_versioned[\s\S]+v_requester UUID := auth\.uid\(\)[\s\S]+v_role TEXT[\s\S]+IF v_role <> 'service_role'[\s\S]+v_requester <> p_actor_user_id[\s\S]+NOT public\.is_conex_admin\(v_requester\)[\s\S]+RAISE EXCEPTION 'forbidden'[\s\S]+INSERT INTO public\.au_usage_mutation_versions/i,
+);
+assert.match(
+  migration,
+  /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+v_requester UUID := auth\.uid\(\)[\s\S]+v_role TEXT[\s\S]+IF v_role <> 'service_role'[\s\S]+v_requester <> p_actor_user_id[\s\S]+NOT public\.is_conex_admin\(v_requester\)[\s\S]+RAISE EXCEPTION 'forbidden'[\s\S]+jsonb_typeof\(p_items\)/i,
 );
 
 // The final single-item wrapper must keep replay validation, reservation safety,
@@ -39,4 +50,4 @@ assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_ba
 assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i);
 
-console.log('admin usage checkpoint/replay composition regressions passed');
+console.log('admin usage authorization/checkpoint/replay composition regressions passed');
