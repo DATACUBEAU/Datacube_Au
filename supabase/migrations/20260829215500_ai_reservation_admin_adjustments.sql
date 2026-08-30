@@ -6,10 +6,11 @@
 -- rejected by reserve_ai_usage. Canonical checks now carry their exact quota
 -- window; this function serializes against admin corrections for that same
 -- user/metric/window and applies the signed delta before enforcing the cap.
--- Non-daily finite windows are read from append-only usage events rather than
--- lifetime usage_totals, so weekly/monthly/custom policies enforce the active
--- quota window. Older app instances that do not yet send quota-window metadata
--- retain the pre-migration raw-counter enforcement during a rolling deployment.
+-- Non-daily finite windows are read from append-only usage events plus active
+-- reservations, so weekly/monthly/custom policies enforce committed and
+-- in-flight usage inside the active quota window. Older app instances that do
+-- not yet send quota-window metadata retain the pre-migration raw-counter
+-- enforcement during a rolling deployment.
 
 BEGIN;
 
@@ -46,6 +47,7 @@ DECLARE
   v_current NUMERIC;
   v_increment NUMERIC;
   v_adjustment NUMERIC := 0;
+  v_active_reserved NUMERIC := 0;
   v_window_start TIMESTAMPTZ;
   v_window_end TIMESTAMPTZ;
   v_snapshot JSONB := '{}'::jsonb;
@@ -199,6 +201,27 @@ BEGIN
         v_window_end
       ) INTO v_window_totals;
       v_current := public.ai_usage_jsonb_numeric_value(COALESCE(v_window_totals, '{}'::jsonb), v_metric_key);
+
+      -- Window totals are event-backed and therefore exclude provider requests
+      -- that have reserved quota but have not committed an event yet. Count live
+      -- reservations created inside this exact quota window so concurrent AI
+      -- requests cannot each observe the same remaining allowance. The earlier
+      -- usage_counters row lock serializes reservation creation for this user;
+      -- once that lock is acquired, prior reservation rows are committed and
+      -- visible to this query.
+      SELECT COALESCE(SUM(public.ai_usage_jsonb_numeric_value(
+        COALESCE(r.reserved_units, '{}'::jsonb),
+        v_metric_key
+      )), 0)
+      INTO v_active_reserved
+      FROM public.ai_usage_reservations AS r
+      WHERE r.user_id = p_user_id
+        AND r.status = 'reserved'
+        AND r.expires_at > now()
+        AND r.created_at >= v_window_start
+        AND (v_window_end IS NULL OR r.created_at < v_window_end);
+
+      v_current := v_current + COALESCE(v_active_reserved, 0);
     ELSE
       v_current := public.ai_usage_jsonb_numeric_value(COALESCE(v_total, '{}'::jsonb), v_metric_key);
     END IF;
