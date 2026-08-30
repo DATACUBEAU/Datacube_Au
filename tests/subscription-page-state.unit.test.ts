@@ -100,6 +100,16 @@ async function main() {
     assert.equal(source.includes("{ percent: 0, label: 'Unavailable', level: 'normal' as const }"), true);
   });
 
+  await run('usage page distinguishes disabled rules from unlimited allowances and excludes them from averages', () => {
+    const source = readProjectFile('src/app/dashboard/settings/usage/page.tsx');
+
+    assert.equal(source.includes("if (!enabled) return { percent: 0, label: 'Disabled', level: 'disabled' as const }"), true);
+    assert.equal(source.includes("enabled: rule?.is_enabled !== false"), true);
+    assert.equal(source.includes("'Not included in your current plan'"), true);
+    assert.equal(source.includes("'This feature is currently unavailable on your plan.'"), true);
+    assert.equal(source.includes("usageRows.filter((row) => row.enabled && row.limit !== null)"), true);
+  });
+
   await run('usage rows normalize numeric strings, fall back to saved limits, and preserve unlimited rules', () => {
     const result = buildSubscriptionUsageRows({
       snapshot: { managedPlan: 'pro' },
