@@ -6,9 +6,10 @@
 -- rejected by reserve_ai_usage. Canonical checks now carry their exact quota
 -- window; this function serializes against admin corrections for that same
 -- user/metric/window and applies the signed delta before enforcing the cap.
--- Older app instances that do not yet send quota-window metadata retain the
--- pre-migration raw-counter enforcement during a rolling deployment rather
--- than failing otherwise valid finite reservations.
+-- Non-daily finite windows are read from append-only usage events rather than
+-- lifetime usage_totals, so weekly/monthly/custom policies enforce the active
+-- quota window. Older app instances that do not yet send quota-window metadata
+-- retain the pre-migration raw-counter enforcement during a rolling deployment.
 
 BEGIN;
 
@@ -33,6 +34,7 @@ DECLARE
   v_existing public.ai_usage_reservations%ROWTYPE;
   v_today JSONB := '{}'::jsonb;
   v_total JSONB := '{}'::jsonb;
+  v_window_totals JSONB := '{}'::jsonb;
   v_usage_day DATE := (now() AT TIME ZONE 'UTC')::date;
   v_expires_at TIMESTAMPTZ := COALESCE(p_expires_at, now() + interval '15 minutes');
   v_request_fingerprint TEXT := TRIM(COALESCE(p_request_fingerprint, ''));
@@ -163,7 +165,7 @@ BEGIN
     END IF;
 
     v_counter_scope := LOWER(NULLIF(TRIM(COALESCE(v_check ->> 'counter_scope', '')), ''));
-    IF v_counter_scope NOT IN ('today', 'total') THEN
+    IF v_counter_scope NOT IN ('today', 'total', 'window') THEN
       v_counter_scope := 'total';
     END IF;
     v_limit_scope := LOWER(NULLIF(TRIM(COALESCE(v_check ->> 'scope', '')), ''));
@@ -178,8 +180,25 @@ BEGIN
       CONTINUE;
     END IF;
 
+    v_window_start := CASE
+      WHEN NULLIF(TRIM(COALESCE(v_check ->> 'window_start', '')), '') IS NULL THEN NULL
+      ELSE (v_check ->> 'window_start')::TIMESTAMPTZ
+    END;
+    v_window_end := CASE
+      WHEN NULLIF(TRIM(COALESCE(v_check ->> 'window_end', '')), '') IS NULL THEN NULL
+      ELSE (v_check ->> 'window_end')::TIMESTAMPTZ
+    END;
+
     IF v_counter_scope = 'today' THEN
       v_current := public.ai_usage_jsonb_numeric_value(COALESCE(v_today, '{}'::jsonb), v_metric_key);
+    ELSIF v_counter_scope = 'window' AND v_window_start IS NOT NULL THEN
+      SELECT public.get_usage_metric_window_totals(
+        p_user_id,
+        ARRAY[v_metric_key]::TEXT[],
+        v_window_start,
+        v_window_end
+      ) INTO v_window_totals;
+      v_current := public.ai_usage_jsonb_numeric_value(COALESCE(v_window_totals, '{}'::jsonb), v_metric_key);
     ELSE
       v_current := public.ai_usage_jsonb_numeric_value(COALESCE(v_total, '{}'::jsonb), v_metric_key);
     END IF;
@@ -187,15 +206,6 @@ BEGIN
     -- Only canonical plan checks participate in admin corrections. Tier quotas
     -- remain isolated from plan-level adjustment state.
     IF v_limit_scope = 'canonical_plan' THEN
-      v_window_start := CASE
-        WHEN NULLIF(TRIM(COALESCE(v_check ->> 'window_start', '')), '') IS NULL THEN NULL
-        ELSE (v_check ->> 'window_start')::TIMESTAMPTZ
-      END;
-      v_window_end := CASE
-        WHEN NULLIF(TRIM(COALESCE(v_check ->> 'window_end', '')), '') IS NULL THEN NULL
-        ELSE (v_check ->> 'window_end')::TIMESTAMPTZ
-      END;
-
       -- Rolling-deploy compatibility: app instances from before this migration
       -- do not send window_start/window_end. Preserve their historical raw
       -- counter enforcement instead of raising and turning every finite
