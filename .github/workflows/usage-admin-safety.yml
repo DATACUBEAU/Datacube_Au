@@ -54,6 +54,7 @@ jobs:
           tests/document-owner-usage-version.unit.test.ts
           tests/ai-usage-window-scope.unit.test.ts
           tests/usage-event-mutation-version.unit.test.ts
+          tests/usage-admin-adjustment-error-safety.unit.test.ts
           src/lib/server/usage-tracking.ts
           src/lib/server/ai-usage-accounting.ts
           src/lib/limits/plan-limit-model.ts
@@ -71,3 +72,4 @@ jobs:
           node .tmp-tests/tests/document-owner-usage-version.unit.test.js
           node .tmp-tests/tests/ai-usage-window-scope.unit.test.js
           node .tmp-tests/tests/usage-event-mutation-version.unit.test.js
+          node .tmp-tests/tests/usage-admin-adjustment-error-safety.unit.test.js
