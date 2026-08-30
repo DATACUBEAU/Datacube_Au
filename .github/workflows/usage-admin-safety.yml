@@ -50,6 +50,7 @@ jobs:
           tests/admin-usage-concurrency-sql.unit.test.ts
           tests/admin-usage-api-error-safety.unit.test.ts
           tests/admin-usage-inflight-reservation.unit.test.ts
+          tests/admin-usage-checkpoint-composition.unit.test.ts
           tests/simple-plan-rule-atomicity.unit.test.ts
           tests/conex-usage-selection-race.unit.test.ts
           tests/document-owner-usage-version.unit.test.ts
@@ -73,6 +74,7 @@ jobs:
           node .tmp-tests/tests/admin-usage-concurrency-sql.unit.test.js
           node .tmp-tests/tests/admin-usage-api-error-safety.unit.test.js
           node .tmp-tests/tests/admin-usage-inflight-reservation.unit.test.js
+          node .tmp-tests/tests/admin-usage-checkpoint-composition.unit.test.js
           node .tmp-tests/tests/simple-plan-rule-atomicity.unit.test.js
           node .tmp-tests/tests/conex-usage-selection-race.unit.test.js
           node .tmp-tests/tests/document-owner-usage-version.unit.test.js
