@@ -62,6 +62,7 @@ jobs:
           tests/ai-usage-release-attempt-binding.unit.test.ts
           tests/ai-usage-commit-attempt-binding.unit.test.ts
           tests/ai-usage-ticket-reissue-acceptance.unit.test.ts
+          tests/ai-usage-replay-usage-day-lock.unit.test.ts
           tests/ai-usage-event-namespace.unit.test.ts
           tests/ai-usage-window-freshness.unit.test.ts
           tests/usage-event-mutation-version.unit.test.ts
@@ -91,6 +92,7 @@ jobs:
           node .tmp-tests/tests/ai-usage-release-attempt-binding.unit.test.js
           node .tmp-tests/tests/ai-usage-commit-attempt-binding.unit.test.js
           node .tmp-tests/tests/ai-usage-ticket-reissue-acceptance.unit.test.js
+          node .tmp-tests/tests/ai-usage-replay-usage-day-lock.unit.test.js
           node .tmp-tests/tests/ai-usage-event-namespace.unit.test.js
           node .tmp-tests/tests/ai-usage-window-freshness.unit.test.js
           node .tmp-tests/tests/usage-event-mutation-version.unit.test.js
