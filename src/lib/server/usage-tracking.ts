@@ -25,6 +25,20 @@ function isSchemaDriftError(error: any): boolean {
   );
 }
 
+function isMissingUsageAdminAdjustmentRpcError(error: any): boolean {
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  const hint = String(error?.hint || '').toLowerCase();
+  const context = `${message} ${details} ${hint}`;
+  const namesAdjustmentRpc = context.includes('get_usage_admin_adjustment_total');
+
+  return (
+    (code === '42883' && namesAdjustmentRpc) ||
+    (code === 'PGRST202' && namesAdjustmentRpc)
+  );
+}
+
 export type UsageTrackingResult = {
   tracked: boolean;
   deduped: boolean;
@@ -90,14 +104,14 @@ async function loadUsageAdminAdjustmentTotal(input: {
     });
 
     if (error) {
-      if (isSchemaDriftError(error)) return 0;
+      if (isMissingUsageAdminAdjustmentRpcError(error)) return 0;
       throw error;
     }
 
     const parsed = Number(data ?? 0);
     return Number.isFinite(parsed) ? parsed : 0;
   } catch (error) {
-    if (isSchemaDriftError(error)) return 0;
+    if (isMissingUsageAdminAdjustmentRpcError(error)) return 0;
     throw error;
   }
 }
