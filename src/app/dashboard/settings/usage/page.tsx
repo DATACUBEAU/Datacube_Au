@@ -40,13 +40,15 @@ type UsageDisplayRow = {
   limit: number | null;
   resetText: string;
   mode: string;
+  enabled: boolean;
 };
 
 function number(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(Math.max(0, value));
 }
 
-function statusFor(used: number, limit: number | null) {
+function statusFor(used: number, limit: number | null, enabled: boolean) {
+  if (!enabled) return { percent: 0, label: 'Disabled', level: 'disabled' as const };
   if (limit === null) return { percent: 0, label: 'Unlimited', level: 'normal' as const };
   if (limit <= 0) {
     return used > 0
@@ -62,7 +64,7 @@ function statusFor(used: number, limit: number | null) {
 
 function UsageCard({ row }: { row: UsageDisplayRow }) {
   const Icon = ICONS[row.key] || Gauge;
-  const status = statusFor(row.used, row.limit);
+  const status = statusFor(row.used, row.limit, row.enabled);
   const remaining = row.limit === null ? null : Math.max(0, row.limit - row.used);
 
   return (
@@ -71,6 +73,7 @@ function UsageCard({ row }: { row: UsageDisplayRow }) {
       status.level === 'blocked' && 'border-destructive/50',
       status.level === 'danger' && 'border-orange-500/50',
       status.level === 'warning' && 'border-amber-500/40',
+      status.level === 'disabled' && 'border-muted bg-muted/20',
     )}>
       <CardContent className="p-5">
         <div className="mb-5 flex items-start justify-between gap-3">
@@ -81,7 +84,7 @@ function UsageCard({ row }: { row: UsageDisplayRow }) {
             <div className="min-w-0">
               <p className="font-semibold text-foreground">{row.label}</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {row.limit === null ? 'No usage cap' : `${number(remaining || 0)} remaining`}
+                {!row.enabled ? 'Not included in your current plan' : row.limit === null ? 'No usage cap' : `${number(remaining || 0)} remaining`}
               </p>
             </div>
           </div>
@@ -90,35 +93,41 @@ function UsageCard({ row }: { row: UsageDisplayRow }) {
           </Badge>
         </div>
 
-        <div className="mb-2 flex items-end justify-between gap-3">
-          <div>
-            <span className="text-2xl font-bold tabular-nums">{number(row.used)}</span>
-            <span className="text-sm text-muted-foreground">{row.limit === null ? ' used' : ` / ${number(row.limit)}`}</span>
-          </div>
-          {row.limit !== null ? <span className="text-sm font-medium tabular-nums">{status.percent}%</span> : null}
-        </div>
-
-        {row.limit !== null ? (
-          <div className="h-2.5 overflow-hidden rounded-full bg-muted" aria-label={`${row.label}: ${status.percent}% used`}>
-            <div
-              className={cn(
-                'h-full rounded-full transition-[width] duration-300',
-                status.level === 'blocked' ? 'bg-destructive' :
-                  status.level === 'danger' ? 'bg-orange-500' :
-                    status.level === 'warning' ? 'bg-amber-500' : 'bg-primary',
-              )}
-              style={{ width: `${status.percent}%` }}
-            />
-          </div>
+        {!row.enabled ? (
+          <p className="text-sm text-muted-foreground">This feature is currently unavailable on your plan.</p>
         ) : (
-          <div className="flex h-2.5 items-center overflow-hidden rounded-full bg-primary/15">
-            <div className="h-full w-full bg-primary/40" />
-          </div>
+          <>
+            <div className="mb-2 flex items-end justify-between gap-3">
+              <div>
+                <span className="text-2xl font-bold tabular-nums">{number(row.used)}</span>
+                <span className="text-sm text-muted-foreground">{row.limit === null ? ' used' : ` / ${number(row.limit)}`}</span>
+              </div>
+              {row.limit !== null ? <span className="text-sm font-medium tabular-nums">{status.percent}%</span> : null}
+            </div>
+
+            {row.limit !== null ? (
+              <div className="h-2.5 overflow-hidden rounded-full bg-muted" aria-label={`${row.label}: ${status.percent}% used`}>
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-[width] duration-300',
+                    status.level === 'blocked' ? 'bg-destructive' :
+                      status.level === 'danger' ? 'bg-orange-500' :
+                        status.level === 'warning' ? 'bg-amber-500' : 'bg-primary',
+                  )}
+                  style={{ width: `${status.percent}%` }}
+                />
+              </div>
+            ) : (
+              <div className="flex h-2.5 items-center overflow-hidden rounded-full bg-primary/15">
+                <div className="h-full w-full bg-primary/40" />
+              </div>
+            )}
+
+            {row.resetText ? <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{row.resetText}</p> : null}
+          </>
         )}
 
-        {row.resetText ? <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{row.resetText}</p> : null}
-
-        {status.level === 'blocked' ? (
+        {status.level === 'blocked' || status.level === 'disabled' ? (
           <Button asChild size="sm" className="mt-4 w-full">
             <Link href="/dashboard/settings/subscription">View plan options</Link>
           </Button>
@@ -133,7 +142,9 @@ function CapacityRow({ row }: { row: UsageDisplayRow }) {
   const remaining = row.limit === null ? null : Math.max(0, row.limit - row.used);
   let description = row.resetText || 'This is a plan capacity limit.';
 
-  if (row.mode === 'concurrency') {
+  if (!row.enabled) {
+    description = 'This feature is currently unavailable on your plan.';
+  } else if (row.mode === 'concurrency') {
     description = row.limit === null
       ? 'Unlimited simultaneous processing'
       : `${number(Math.min(row.used, row.limit))} active · ${number(remaining || 0)} processing slots available`;
@@ -156,7 +167,7 @@ function CapacityRow({ row }: { row: UsageDisplayRow }) {
           <p className="text-sm text-muted-foreground">{description}</p>
         </div>
       </div>
-      <Badge variant="outline" className="w-fit">Plan capacity</Badge>
+      <Badge variant="outline" className="w-fit">{row.enabled ? 'Plan capacity' : 'Disabled'}</Badge>
     </div>
   );
 }
@@ -176,16 +187,23 @@ export default function UsagePage() {
     },
   }), [usage.limitRules, usage.limits, usage.plan, usage.usageByLimit]);
 
-  const rows = useMemo<UsageDisplayRow[]>(() => view.rows.map((row) => ({
-    ...row,
-    mode: String((usage.limitRules?.[row.key] as Record<string, unknown> | undefined)?.mode || 'usage').trim().toLowerCase(),
-  })), [usage.limitRules, view.rows]);
+  const rows = useMemo<UsageDisplayRow[]>(() => view.rows.map((row) => {
+    const rule = usage.limitRules?.[row.key] as Record<string, unknown> | undefined;
+    return {
+      ...row,
+      mode: String(rule?.mode || 'usage').trim().toLowerCase(),
+      enabled: rule?.is_enabled !== false,
+    };
+  }), [usage.limitRules, view.rows]);
 
   const usageRows = rows.filter((row) => row.mode === 'usage');
   const capacityRows = rows.filter((row) => row.mode !== 'usage');
-  const limitedRows = usageRows.filter((row) => row.limit !== null && row.limit > 0);
+  const limitedRows = usageRows.filter((row) => row.enabled && row.limit !== null);
   const totalPercent = limitedRows.length > 0
-    ? Math.round(limitedRows.reduce((sum, row) => sum + Math.min(100, (row.used / (row.limit || 1)) * 100), 0) / limitedRows.length)
+    ? Math.round(limitedRows.reduce((sum, row) => {
+      if ((row.limit || 0) <= 0) return sum + (row.used > 0 ? 100 : 0);
+      return sum + Math.min(100, (row.used / (row.limit || 1)) * 100);
+    }, 0) / limitedRows.length)
     : 0;
 
   async function onRefresh() {
