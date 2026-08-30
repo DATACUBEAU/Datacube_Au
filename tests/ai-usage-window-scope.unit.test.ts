@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { buildAiUsageReservationPayload } from '../src/lib/server/ai-usage-accounting.js';
-import { resolveVpsTicketOperation } from '../src/lib/server/vps-ticket-config.js';
 
 let failed = 0;
 
@@ -39,13 +38,17 @@ function limitsFixture(resetPolicy: string) {
   } as any;
 }
 
+const chatOperation = {
+  featureKey: 'au_chat',
+  requestFeature: 'au-chat',
+  gatewayRoute: '/chat/au-chat',
+} as any;
+
 async function main() {
   await run('weekly canonical AI quotas use the active quota window', () => {
-    const operation = resolveVpsTicketOperation('au-chat');
-    assert.ok(operation);
     const payload = buildAiUsageReservationPayload({
       limits: limitsFixture('weekly'),
-      operation,
+      operation: chatOperation,
       idempotencyKey: 'chat_weekly_123456',
       body: { feature: 'au-chat', messages: [{ role: 'user', content: 'hello' }] },
     });
@@ -57,11 +60,9 @@ async function main() {
   });
 
   await run('never canonical AI quotas remain lifetime scoped', () => {
-    const operation = resolveVpsTicketOperation('au-chat');
-    assert.ok(operation);
     const payload = buildAiUsageReservationPayload({
       limits: limitsFixture('never'),
-      operation,
+      operation: chatOperation,
       idempotencyKey: 'chat_never_12345678',
       body: { feature: 'au-chat', messages: [{ role: 'user', content: 'hello' }] },
     });
