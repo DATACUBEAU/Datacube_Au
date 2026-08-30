@@ -71,12 +71,19 @@ async function main() {
     assert.equal(check?.counter_scope, 'total');
   });
 
-  await run('reservation SQL reads window-scoped usage before enforcing non-daily caps', () => {
+  await run('reservation SQL reads committed and active window usage before enforcing non-daily caps', () => {
     const sql = readFileSync('supabase/migrations/20260829215500_ai_reservation_admin_adjustments.sql', 'utf8');
     assert.match(sql, /v_counter_scope NOT IN \('today', 'total', 'window'\)/i);
     assert.match(sql, /v_counter_scope = 'window'[\s\S]+get_usage_metric_window_totals/i);
     assert.match(sql, /ARRAY\[v_metric_key\]::TEXT\[\]/i);
     assert.match(sql, /v_current := public\.ai_usage_jsonb_numeric_value\(COALESCE\(v_window_totals/i);
+    assert.match(sql, /FROM public\.ai_usage_reservations AS r/i);
+    assert.match(sql, /r\.status = 'reserved'/i);
+    assert.match(sql, /r\.expires_at > now\(\)/i);
+    assert.match(sql, /r\.created_at >= v_window_start/i);
+    assert.match(sql, /v_window_end IS NULL OR r\.created_at < v_window_end/i);
+    assert.match(sql, /ai_usage_jsonb_numeric_value\([\s\S]+r\.reserved_units[\s\S]+v_metric_key/i);
+    assert.match(sql, /v_current := v_current \+ COALESCE\(v_active_reserved, 0\)/i);
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
   });
 
