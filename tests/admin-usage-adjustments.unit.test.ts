@@ -24,7 +24,13 @@ class FakeSupabase {
     this.rpcCalls.push({ name, payload });
     if (name === 'get_usage_admin_adjustment_total') {
       if (this.adjustmentRpcMissing) {
-        return { data: null, error: { code: '42883', message: 'function does not exist' } };
+        return {
+          data: null,
+          error: {
+            code: '42883',
+            message: 'function public.get_usage_admin_adjustment_total(uuid,text,timestamptz,timestamptz) does not exist',
+          },
+        };
       }
       return { data: this.adjustment, error: null };
     }
