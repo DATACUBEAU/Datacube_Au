@@ -5,6 +5,10 @@ const migration = readFileSync(
   'supabase/migrations/20260830144500_ai_usage_provider_started_expiry.sql',
   'utf8',
 );
+const leaseRefreshMigration = readFileSync(
+  'supabase/migrations/20260830154500_ai_usage_attempt_lease_refresh.sql',
+  'utf8',
+);
 
 assert.match(
   migration,
@@ -32,9 +36,46 @@ const guard = migration.slice(guardStart);
 assert.match(guard, /WHERE r\.user_id = p_user_id[\s\S]+r\.status = 'reserved'[\s\S]+reserved_units/);
 assert.doesNotMatch(guard, /r\.expires_at > now\(\)/, 'all still-reserved rows must block target corrections');
 
+// Accepted provider retries/takeovers must refresh the durable expiry itself.
+// Existing reservation replay and window-admission predicates already use this
+// field, so refreshing it keeps them aligned with cleanup's settlement lease.
+assert.match(
+  leaseRefreshMigration,
+  /CREATE OR REPLACE FUNCTION public\.begin_ai_usage_reservation/,
+);
+assert.match(
+  leaseRefreshMigration,
+  /v_row\.last_attempt_at IS NOT NULL[\s\S]+v_row\.last_attempt_at > now\(\) - interval '2 minutes'/,
+  'retry suppression must be based on the latest accepted attempt',
+);
+assert.match(
+  leaseRefreshMigration,
+  /expires_at = GREATEST\(expires_at, v_attempt_started_at \+ interval '15 minutes'\)/,
+  'every accepted provider attempt must receive a full durable settlement lease',
+);
+assert.match(
+  leaseRefreshMigration,
+  /provider_started_at = COALESCE\(provider_started_at, v_attempt_started_at\)/,
+  'the first provider-start timestamp should remain available for auditability',
+);
+assert.match(
+  leaseRefreshMigration,
+  /last_attempt_at = v_attempt_started_at/,
+  'the latest attempt timestamp must be persisted separately',
+);
+assert.match(
+  leaseRefreshMigration,
+  /'expires_at', v_row\.expires_at/,
+  'begin response should expose the refreshed lease boundary for observability',
+);
+
 assert.match(migration, /PERFORM public\.ai_usage_require_service_role\(\)/);
+assert.match(leaseRefreshMigration, /PERFORM public\.ai_usage_require_service_role\(\)/);
 assert.match(migration, /REVOKE ALL ON FUNCTION public\.assert_no_active_ai_usage_reservation\(UUID, TEXT\) FROM PUBLIC, anon, authenticated, service_role/);
+assert.match(leaseRefreshMigration, /REVOKE ALL ON FUNCTION public\.begin_ai_usage_reservation\(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/);
 assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
+assert.doesNotMatch(leaseRefreshMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
+assert.doesNotMatch(leaseRefreshMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 
 console.log('AI usage provider-started expiry regressions passed');
