@@ -64,6 +64,7 @@ jobs:
           tests/ai-usage-commit-snapshot-lock.unit.test.ts
           tests/ai-usage-terminal-lock-order.unit.test.ts
           tests/ai-usage-provider-started-expiry.unit.test.ts
+          tests/ai-usage-takeover-window.unit.test.ts
           tests/ai-usage-release-attempt-binding.unit.test.ts
           tests/ai-usage-commit-attempt-binding.unit.test.ts
           tests/ai-usage-commit-lease-expiry.unit.test.ts
@@ -100,6 +101,7 @@ jobs:
           node .tmp-tests/tests/ai-usage-commit-snapshot-lock.unit.test.js
           node .tmp-tests/tests/ai-usage-terminal-lock-order.unit.test.js
           node .tmp-tests/tests/ai-usage-provider-started-expiry.unit.test.js
+          node .tmp-tests/tests/ai-usage-takeover-window.unit.test.js
           node .tmp-tests/tests/ai-usage-release-attempt-binding.unit.test.js
           node .tmp-tests/tests/ai-usage-commit-attempt-binding.unit.test.js
           node .tmp-tests/tests/ai-usage-commit-lease-expiry.unit.test.js
