@@ -25,6 +25,10 @@ const noOpReceiptSql = readFileSync(
   'supabase/migrations/20260831214500_admin_usage_noop_idempotency_receipt.sql',
   'utf8',
 );
+const noOpReceiptConstraintSql = readFileSync(
+  'supabase/migrations/20260831224000_admin_usage_noop_receipt_constraint.sql',
+  'utf8',
+);
 
 assert.match(baseSql, /ON CONFLICT \(user_id, metric_key, request_id\) DO NOTHING/i);
 assert.match(baseSql, /IF NOT FOUND THEN[\s\S]*SELECT \* INTO v_existing[\s\S]*request_id = v_request_id/i);
@@ -136,6 +140,23 @@ assert.match(
 assert.doesNotMatch(noOpReceiptSql, /\bTRUNCATE\b/i);
 assert.doesNotMatch(
   noOpReceiptSql,
+  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+);
+
+// The ledger schema must admit those receipts. Keep the exception narrow so a
+// zero adjustment cannot be inserted unless it is an explicitly marked set/reset
+// completion; ordinary adjustment rows still require a non-zero delta.
+assert.match(
+  noOpReceiptConstraintSql,
+  /DROP CONSTRAINT IF EXISTS au_usage_admin_adjustments_delta_check/i,
+);
+assert.match(
+  noOpReceiptConstraintSql,
+  /ADD CONSTRAINT au_usage_admin_adjustments_delta_check[\s\S]+delta <> 0[\s\S]+delta = 0[\s\S]+action IN \('set', 'reset'\)[\s\S]+context @> '\{"no_op": true\}'::jsonb/i,
+);
+assert.doesNotMatch(noOpReceiptConstraintSql, /\bTRUNCATE\b/i);
+assert.doesNotMatch(
+  noOpReceiptConstraintSql,
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
 );
 
