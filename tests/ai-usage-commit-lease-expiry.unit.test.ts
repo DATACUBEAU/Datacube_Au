@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const migration = readFileSync(
-  'supabase/migrations/20260830204500_ai_usage_commit_lease_expiry.sql',
+  'supabase/migrations/20260831054500_ai_usage_commit_wall_clock_expiry.sql',
   'utf8',
 );
 
@@ -15,9 +15,14 @@ const reservationLock = migration.indexOf(
   'FROM public.ai_usage_reservations\n  WHERE id = p_reservation_id\n  FOR UPDATE;',
   totalLock,
 );
+const wallClock = migration.indexOf('v_settlement_now := clock_timestamp();');
 assert.ok(
   dailyLock >= 0 && totalLock > dailyLock && reservationLock > totalLock,
   'late-commit hardening must preserve daily -> lifetime -> reservation lock ordering',
+);
+assert.ok(
+  wallClock > reservationLock,
+  'settlement wall-clock time must be captured only after accounting and reservation serialization',
 );
 
 const attemptMismatch = migration.indexOf("'code', 'USAGE_RESERVATION_ATTEMPT_MISMATCH'");
@@ -31,13 +36,23 @@ assert.ok(
   'attempt ownership must still be validated before committed replay handling',
 );
 assert.ok(
-  effectiveExpiry > committedReplay && expiredCode > effectiveExpiry && activeTransition > expiredCode,
-  'lease expiry must be checked after safe committed replays but before reserved -> committed',
+  effectiveExpiry > committedReplay && wallClock > effectiveExpiry && expiredCode > wallClock && activeTransition > expiredCode,
+  'lease expiry must use serialized wall-clock time after safe committed replays but before reserved -> committed',
 );
 assert.match(
   migration,
-  /IF v_row\.status = 'reserved' THEN[\s\S]+v_effective_expiry := public\.ai_usage_reservation_effective_expiry\([\s\S]+v_row\.expires_at,[\s\S]+v_row\.provider_started_at[\s\S]+IF v_effective_expiry <= now\(\) THEN/,
-  'only still-provisional reservations should require an unexpired settlement lease',
+  /IF v_row\.status = 'reserved' THEN[\s\S]+v_effective_expiry := public\.ai_usage_reservation_effective_expiry\([\s\S]+v_row\.expires_at,[\s\S]+v_row\.provider_started_at[\s\S]+v_settlement_now := clock_timestamp\(\);[\s\S]+IF v_effective_expiry <= v_settlement_now THEN/,
+  'only still-provisional reservations should require an unexpired settlement lease at wall-clock execution time',
+);
+assert.doesNotMatch(
+  migration,
+  /IF v_effective_expiry <= now\(\) THEN/,
+  'transaction-stable now() must not decide settlement lease validity',
+);
+assert.match(
+  migration,
+  /committed_at = v_settlement_now,[\s\S]+updated_at = v_settlement_now/,
+  'commit audit timestamps should reflect the same serialized settlement instant',
 );
 assert.doesNotMatch(
   migration,
