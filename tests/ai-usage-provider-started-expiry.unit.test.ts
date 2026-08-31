@@ -9,6 +9,10 @@ const leaseRefreshMigration = readFileSync(
   'supabase/migrations/20260830154500_ai_usage_attempt_lease_refresh.sql',
   'utf8',
 );
+const sameTicketGuardMigration = readFileSync(
+  'supabase/migrations/20260831014500_ai_usage_same_ticket_takeover_guard.sql',
+  'utf8',
+);
 
 assert.match(
   migration,
@@ -69,13 +73,44 @@ assert.match(
   'begin response should expose the refreshed lease boundary for observability',
 );
 
+// A signed ticket must identify exactly one accepted provider attempt. Otherwise
+// the same still-valid JWT can be replayed after the in-progress guard and create
+// duplicate provider work that commit/release cannot distinguish or meter twice.
+assert.match(
+  sameTicketGuardMigration,
+  /v_incoming_ticket_id := NULLIF\(TRIM\(COALESCE\(p_ticket_id, ''\)\), ''\)/,
+  'provider ticket comparison must normalize the incoming ticket',
+);
+const sameTicketGuardIndex = sameTicketGuardMigration.indexOf('USAGE_PROVIDER_TICKET_ALREADY_ACCEPTED');
+const inProgressGuardIndex = sameTicketGuardMigration.indexOf('USAGE_REQUEST_IN_PROGRESS');
+const attemptUpdateIndex = sameTicketGuardMigration.indexOf('v_attempt_started_at := now()');
+assert.ok(sameTicketGuardIndex >= 0, 'same-ticket replays must have a stable rejection code');
+assert.ok(
+  sameTicketGuardIndex < inProgressGuardIndex && inProgressGuardIndex < attemptUpdateIndex,
+  'same-ticket rejection must happen before takeover timing and attempt mutation',
+);
+assert.match(
+  sameTicketGuardMigration,
+  /v_row\.last_attempt_at IS NOT NULL[\s\S]+v_incoming_ticket_id IS NOT NULL[\s\S]+v_row\.ticket_id IS NOT NULL[\s\S]+v_incoming_ticket_id = v_row\.ticket_id[\s\S]+USAGE_PROVIDER_TICKET_ALREADY_ACCEPTED/,
+  'only a ticket already bound to an accepted attempt must be rejected',
+);
+assert.match(
+  sameTicketGuardMigration,
+  /ticket_id = COALESCE\(v_incoming_ticket_id, ticket_id\)/,
+  'a genuinely new accepted takeover ticket must remain the active settlement identity',
+);
+
 assert.match(migration, /PERFORM public\.ai_usage_require_service_role\(\)/);
 assert.match(leaseRefreshMigration, /PERFORM public\.ai_usage_require_service_role\(\)/);
+assert.match(sameTicketGuardMigration, /PERFORM public\.ai_usage_require_service_role\(\)/);
 assert.match(migration, /REVOKE ALL ON FUNCTION public\.assert_no_active_ai_usage_reservation\(UUID, TEXT\) FROM PUBLIC, anon, authenticated, service_role/);
 assert.match(leaseRefreshMigration, /REVOKE ALL ON FUNCTION public\.begin_ai_usage_reservation\(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/);
+assert.match(sameTicketGuardMigration, /REVOKE ALL ON FUNCTION public\.begin_ai_usage_reservation\(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/);
 assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(leaseRefreshMigration, /\bTRUNCATE\b/i);
+assert.doesNotMatch(sameTicketGuardMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 assert.doesNotMatch(leaseRefreshMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
+assert.doesNotMatch(sameTicketGuardMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 
 console.log('AI usage provider-started expiry regressions passed');
