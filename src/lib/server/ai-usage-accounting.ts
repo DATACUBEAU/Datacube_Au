@@ -265,64 +265,58 @@ export async function reserveAiUsage(input: {
   idempotencyKey: string;
   ticketId: string;
   reservation: AiUsageReservationPayload;
-  expiresAt: string;
+  expiresAt?: string | null;
 }): Promise<AiUsageReservationResult> {
+  const increments = normalizeMetricIncrements(input.reservation.increments);
+  if (!input.userId || !input.featureKey || !input.route || !input.idempotencyKey || Object.keys(increments).length === 0) {
+    return {
+      ok: false,
+      reservationId: null,
+      idempotencyKey: input.idempotencyKey,
+      status: null,
+      code: 'INVALID_USAGE_RESERVATION',
+    };
+  }
+
   const { data, error } = await input.supabase.rpc('reserve_ai_usage', {
     p_user_id: input.userId,
     p_feature_key: input.featureKey,
     p_route: input.route,
     p_idempotency_key: input.idempotencyKey,
     p_request_fingerprint: input.reservation.requestFingerprint,
-    p_metric_increments: input.reservation.increments,
+    p_metric_increments: increments,
     p_limit_checks: input.reservation.limitChecks,
     p_estimated_units: input.reservation.estimatedUnits,
     p_ticket_id: input.ticketId,
-    p_expires_at: input.expiresAt,
+    p_expires_at: input.expiresAt || null,
   });
+
   if (error) throw error;
   return normalizeReservationResult(data, input.idempotencyKey);
 }
 
-export async function beginAiUsageReservation(input: {
+export async function releaseReservedAiUsage(input: {
   supabase: SupabaseClient;
   userId: string;
-  reservationId: string;
   featureKey: string;
+  route: string;
   idempotencyKey: string;
-  requestFingerprint: string;
   ticketId: string;
-}): Promise<AiUsageReservationResult> {
-  const { data, error } = await input.supabase.rpc('begin_ai_usage_reservation', {
-    p_user_id: input.userId,
-    p_reservation_id: input.reservationId,
-    p_feature_key: input.featureKey,
-    p_idempotency_key: input.idempotencyKey,
-    p_request_fingerprint: input.requestFingerprint,
-    p_ticket_id: input.ticketId,
-  });
-  if (error) throw error;
-  return normalizeReservationResult(data, input.idempotencyKey);
-}
-
-export async function releaseAiUsage(input: {
-  supabase: SupabaseClient;
-  userId: string;
   reservationId: string;
-  featureKey: string;
-  idempotencyKey: string;
-  requestFingerprint: string;
-  ticketId: string;
-  reason?: string;
+  failureCode: string;
+  status?: 'released' | 'disputed';
 }): Promise<AiUsageReleaseResult> {
   const { data, error } = await input.supabase.rpc('release_ai_usage', {
-    p_user_id: input.userId,
     p_reservation_id: input.reservationId,
+    p_user_id: input.userId,
     p_feature_key: input.featureKey,
+    p_route: input.route,
     p_idempotency_key: input.idempotencyKey,
-    p_request_fingerprint: input.requestFingerprint,
     p_ticket_id: input.ticketId,
-    p_reason: input.reason || 'provider_failed',
+    p_failure_code: input.failureCode,
+    p_status: input.status || 'released',
   });
+
   if (error) throw error;
   const payload = (data || {}) as Record<string, unknown>;
   return {
@@ -330,4 +324,16 @@ export async function releaseAiUsage(input: {
     code: typeof payload.code === 'string' ? payload.code : null,
     status: typeof payload.status === 'string' ? payload.status : null,
   };
+}
+
+export function reserveFailureStatus(code: string | null | undefined, status: string | null | undefined): number {
+  const normalizedCode = String(code || '').toUpperCase();
+  const normalizedStatus = String(status || '').toLowerCase();
+  if (normalizedCode === 'USAGE_LIMIT_EXCEEDED') return 429;
+  if (normalizedCode === 'USAGE_RESERVATION_FINGERPRINT_MISMATCH') return 409;
+  if (normalizedStatus === 'committed' || normalizedStatus === 'released' || normalizedStatus === 'expired' || normalizedStatus === 'disputed') {
+    return 409;
+  }
+  if (normalizedCode.includes('INVALID')) return 400;
+  return 503;
 }
