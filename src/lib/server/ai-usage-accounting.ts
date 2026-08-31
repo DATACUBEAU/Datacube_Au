@@ -200,7 +200,11 @@ export function buildAiUsageLimitChecks(input: {
     const quota = getQuotaPolicy('prompt_starters_per_day');
     const cap = limits.effectivePlan.hasPro ? quota?.proLimit : quota?.freeLimit;
     if (typeof cap === 'number' && Number.isFinite(cap)) {
-      const reset = computeResetWindow({ resetPolicy: 'daily' });
+      const reset = computeResetWindow({
+        resetPolicy: 'daily',
+        resetIntervalValue: null,
+        resetIntervalUnit: null,
+      });
       checks.push({
         metric_key: 'prompt_starters_per_day',
         cap: Math.max(0, Math.floor(cap)),
