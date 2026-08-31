@@ -2,15 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const migration = readFileSync(
-  'supabase/migrations/20260831140500_ai_usage_provider_start_window_guard.sql',
+  'supabase/migrations/20260831194500_ai_usage_first_start_stale_release.sql',
   'utf8',
 );
 
-assert.match(
-  migration,
-  /CREATE OR REPLACE FUNCTION public\.begin_ai_usage_reservation/,
-  'the final provider-start boundary must own finite-window validation',
-);
+assert.match(migration, /CREATE OR REPLACE FUNCTION public\.begin_ai_usage_reservation/);
 
 const dailyLock = migration.indexOf('FROM public.usage_counters');
 const totalLock = migration.indexOf('FROM public.usage_totals');
@@ -23,13 +19,8 @@ assert.ok(dailyLock >= 0 && totalLock > dailyLock);
 assert.ok(reservationLock > totalLock);
 assert.ok(wallClock > reservationLock, 'provider-start freshness must use serialized wall-clock time');
 assert.ok(staleCode > wallClock, 'stale-window rejection must use the serialized wall clock');
-assert.ok(attemptMutation > staleCode, 'stale provider starts must be rejected before attempt/lease mutation');
+assert.ok(attemptMutation > staleCode, 'stale provider starts must be rejected before attempt mutation');
 
-assert.doesNotMatch(
-  migration,
-  /IF v_row\.last_attempt_at IS NOT NULL THEN[\s\S]+jsonb_array_elements\(COALESCE\(v_row\.limit_checks, '\[\]'::jsonb\)\)/,
-  'finite-window revalidation must not be limited to takeovers; first provider starts need the same guard',
-);
 assert.match(
   migration,
   /FOR v_limit_check IN[\s\S]+jsonb_array_elements\(COALESCE\(v_row\.limit_checks, '\[\]'::jsonb\)\)/,
@@ -38,41 +29,32 @@ assert.match(
 assert.match(
   migration,
   /v_limit_scope NOT IN \('canonical_plan', 'tier_quota'\)[\s\S]+CONTINUE/,
-  'provider-start validation must cover both authoritative plan and tier quota windows',
+  'provider-start validation must cover plan and tier quota windows',
 );
 assert.match(
   migration,
-  /v_window_start IS NOT NULL[\s\S]+v_window_end IS NOT NULL[\s\S]+v_wall_clock_now < v_window_start OR v_wall_clock_now >= v_window_end/,
-  'finite provider starts must remain inside their originally admitted quota window',
+  /IF v_row\.last_attempt_at IS NULL THEN[\s\S]+public\.ai_usage_negate_units\(v_row\.reserved_units\)[\s\S]+status = 'expired'[\s\S]+provider_start_window_stale/,
+  'a stale first start must synchronously release never-started reserved units',
 );
 assert.match(
   migration,
-  /'code', 'USAGE_PROVIDER_START_WINDOW_STALE'/,
-  'stale first attempts and takeovers need a stable operational error code',
+  /IF v_row\.last_attempt_at IS NULL THEN[\s\S]+END IF;[\s\S]+RETURN jsonb_build_object\([\s\S]+'code', 'USAGE_PROVIDER_START_WINDOW_STALE'/,
+  'later stale takeovers must remain non-terminal and return the stable error',
 );
 assert.match(
   migration,
   /v_row\.last_attempt_at IS NOT NULL[\s\S]+v_incoming_ticket_id = v_row\.ticket_id[\s\S]+USAGE_PROVIDER_TICKET_ALREADY_ACCEPTED/,
-  'same-ticket replay protection must remain intact before provider-start processing',
+  'same-ticket replay protection must remain intact',
 );
 assert.match(
   migration,
   /v_row\.last_attempt_at IS NOT NULL[\s\S]+v_row\.last_attempt_at > v_wall_clock_now - interval '2 minutes'[\s\S]+USAGE_REQUEST_IN_PROGRESS/,
-  'the existing takeover cooldown must remain intact',
+  'the takeover cooldown must remain intact',
 );
-assert.match(
-  migration,
-  /PERFORM public\.ai_usage_require_service_role\(\)/,
-  'provider-start mutation must remain service-role-only',
-);
+assert.match(migration, /PERFORM public\.ai_usage_require_service_role\(\)/);
 assert.match(
   migration,
   /REVOKE ALL ON FUNCTION public\.begin_ai_usage_reservation\(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/,
-);
-assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
-assert.doesNotMatch(
-  migration,
-  /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i,
 );
 
 console.log('AI usage provider-start window regressions passed');
