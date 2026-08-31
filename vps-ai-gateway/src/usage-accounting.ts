@@ -90,9 +90,12 @@ export async function beginUsageReservation(input: {
 
   const result = normalizeRpcResult(data);
   if (!result.ok) {
+    const rejectionCode = result.code
+      ? `USAGE_BEGIN_${result.code}`
+      : 'USAGE_BEGIN_REJECTED';
     throw new UsageAccountingError(
       accountingStatus(result.code, result.status),
-      result.code || 'USAGE_BEGIN_REJECTED',
+      rejectionCode,
       'AI usage reservation is not active',
     );
   }
