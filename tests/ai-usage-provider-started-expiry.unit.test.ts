@@ -17,6 +17,10 @@ const rolloutBackfillMigration = readFileSync(
   'supabase/migrations/20260831064500_ai_usage_effective_expiry_backfill.sql',
   'utf8',
 );
+const beginWallClockMigration = readFileSync(
+  'supabase/migrations/20260831084500_ai_usage_begin_wall_clock_freshness.sql',
+  'utf8',
+);
 
 assert.match(
   migration,
@@ -45,8 +49,6 @@ assert.match(guard, /WHERE r\.user_id = p_user_id[\s\S]+r\.status = 'reserved'[\
 assert.doesNotMatch(guard, /r\.expires_at > now\(\)/, 'all still-reserved rows must block target corrections');
 
 // Accepted provider retries/takeovers must refresh the durable expiry itself.
-// Existing reservation replay and window-admission predicates already use this
-// field, so refreshing it keeps them aligned with cleanup's settlement lease.
 assert.match(
   leaseRefreshMigration,
   /CREATE OR REPLACE FUNCTION public\.begin_ai_usage_reservation/,
@@ -78,8 +80,6 @@ assert.match(
 );
 
 // Rows accepted during rolling deployment can predate the durable lease refresh.
-// Normalize only still-reserved provider-started rows so the raw expires_at used by
-// finite-window admission matches the effective expiry accepted by settlement.
 assert.match(
   rolloutBackfillMigration,
   /UPDATE public\.ai_usage_reservations AS r[\s\S]+SET expires_at = public\.ai_usage_reservation_effective_expiry\([\s\S]+r\.expires_at,[\s\S]+r\.provider_started_at[\s\S]+\)/,
@@ -96,9 +96,7 @@ assert.match(
   'lease normalization should leave an observable mutation timestamp',
 );
 
-// A signed ticket must identify exactly one accepted provider attempt. Otherwise
-// the same still-valid JWT can be replayed after the in-progress guard and create
-// duplicate provider work that commit/release cannot distinguish or meter twice.
+// A signed ticket must identify exactly one accepted provider attempt.
 assert.match(
   sameTicketGuardMigration,
   /v_incoming_ticket_id := NULLIF\(TRIM\(COALESCE\(p_ticket_id, ''\)\), ''\)/,
@@ -123,19 +121,59 @@ assert.match(
   'a genuinely new accepted takeover ticket must remain the active settlement identity',
 );
 
+// begin_ai_usage_reservation can block on accounting/reservation locks. Freshness
+// must therefore use a wall-clock instant captured only after those locks are held.
+const beginWallClockLockDaily = beginWallClockMigration.indexOf('FROM public.usage_counters');
+const beginWallClockLockTotal = beginWallClockMigration.indexOf('FROM public.usage_totals');
+const beginWallClockLockReservation = beginWallClockMigration.indexOf('FROM public.ai_usage_reservations\n  WHERE id = p_reservation_id\n  FOR UPDATE;');
+const beginWallClockCapture = beginWallClockMigration.indexOf('v_wall_clock_now := clock_timestamp();');
+assert.ok(beginWallClockLockDaily >= 0 && beginWallClockLockTotal > beginWallClockLockDaily);
+assert.ok(beginWallClockLockReservation > beginWallClockLockTotal);
+assert.ok(
+  beginWallClockCapture > beginWallClockLockReservation,
+  'wall-clock freshness must be captured after daily -> lifetime -> reservation serialization',
+);
+assert.match(
+  beginWallClockMigration,
+  /IF v_row\.status = 'reserved' AND v_effective_expiry <= v_wall_clock_now THEN/,
+  'provider-start lease expiry must use serialized wall-clock time',
+);
+assert.match(
+  beginWallClockMigration,
+  /v_row\.last_attempt_at > v_wall_clock_now - interval '2 minutes'/,
+  'provider takeover cooldown must use serialized wall-clock time',
+);
+assert.match(
+  beginWallClockMigration,
+  /v_attempt_started_at := v_wall_clock_now/,
+  'accepted-attempt timestamps must share the same serialized freshness instant',
+);
+const beginWallClockFunctionStart = beginWallClockMigration.indexOf('CREATE OR REPLACE FUNCTION public.begin_ai_usage_reservation');
+const beginWallClockFunctionEnd = beginWallClockMigration.indexOf('REVOKE ALL ON FUNCTION public.begin_ai_usage_reservation');
+const beginWallClockFunction = beginWallClockMigration.slice(beginWallClockFunctionStart, beginWallClockFunctionEnd);
+assert.doesNotMatch(
+  beginWallClockFunction,
+  /\bnow\(\)/,
+  'begin provider freshness must not depend on transaction-start time',
+);
+
 assert.match(migration, /PERFORM public\.ai_usage_require_service_role\(\)/);
 assert.match(leaseRefreshMigration, /PERFORM public\.ai_usage_require_service_role\(\)/);
 assert.match(sameTicketGuardMigration, /PERFORM public\.ai_usage_require_service_role\(\)/);
+assert.match(beginWallClockMigration, /PERFORM public\.ai_usage_require_service_role\(\)/);
 assert.match(migration, /REVOKE ALL ON FUNCTION public\.assert_no_active_ai_usage_reservation\(UUID, TEXT\) FROM PUBLIC, anon, authenticated, service_role/);
 assert.match(leaseRefreshMigration, /REVOKE ALL ON FUNCTION public\.begin_ai_usage_reservation\(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/);
 assert.match(sameTicketGuardMigration, /REVOKE ALL ON FUNCTION public\.begin_ai_usage_reservation\(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/);
+assert.match(beginWallClockMigration, /REVOKE ALL ON FUNCTION public\.begin_ai_usage_reservation\(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT\) FROM PUBLIC, anon, authenticated/);
 assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(leaseRefreshMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(sameTicketGuardMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(rolloutBackfillMigration, /\bTRUNCATE\b/i);
+assert.doesNotMatch(beginWallClockMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 assert.doesNotMatch(leaseRefreshMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 assert.doesNotMatch(sameTicketGuardMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 assert.doesNotMatch(rolloutBackfillMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
+assert.doesNotMatch(beginWallClockMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 
 console.log('AI usage provider-started expiry regressions passed');
