@@ -13,6 +13,10 @@ const sameTicketGuardMigration = readFileSync(
   'supabase/migrations/20260831014500_ai_usage_same_ticket_takeover_guard.sql',
   'utf8',
 );
+const rolloutBackfillMigration = readFileSync(
+  'supabase/migrations/20260831064500_ai_usage_effective_expiry_backfill.sql',
+  'utf8',
+);
 
 assert.match(
   migration,
@@ -73,6 +77,25 @@ assert.match(
   'begin response should expose the refreshed lease boundary for observability',
 );
 
+// Rows accepted during rolling deployment can predate the durable lease refresh.
+// Normalize only still-reserved provider-started rows so the raw expires_at used by
+// finite-window admission matches the effective expiry accepted by settlement.
+assert.match(
+  rolloutBackfillMigration,
+  /UPDATE public\.ai_usage_reservations AS r[\s\S]+SET expires_at = public\.ai_usage_reservation_effective_expiry\([\s\S]+r\.expires_at,[\s\S]+r\.provider_started_at[\s\S]+\)/,
+  'rollout reservations must persist the same effective settlement lease used by commit/cleanup',
+);
+assert.match(
+  rolloutBackfillMigration,
+  /WHERE r\.status = 'reserved'[\s\S]+r\.provider_started_at IS NOT NULL[\s\S]+r\.expires_at < public\.ai_usage_reservation_effective_expiry/,
+  'backfill must be narrowly scoped to provider-started reserved rows whose durable expiry is short',
+);
+assert.match(
+  rolloutBackfillMigration,
+  /updated_at = clock_timestamp\(\)/,
+  'lease normalization should leave an observable mutation timestamp',
+);
+
 // A signed ticket must identify exactly one accepted provider attempt. Otherwise
 // the same still-valid JWT can be replayed after the in-progress guard and create
 // duplicate provider work that commit/release cannot distinguish or meter twice.
@@ -109,8 +132,10 @@ assert.match(sameTicketGuardMigration, /REVOKE ALL ON FUNCTION public\.begin_ai_
 assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(leaseRefreshMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(sameTicketGuardMigration, /\bTRUNCATE\b/i);
+assert.doesNotMatch(rolloutBackfillMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 assert.doesNotMatch(leaseRefreshMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 assert.doesNotMatch(sameTicketGuardMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
+assert.doesNotMatch(rolloutBackfillMigration, /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i);
 
 console.log('AI usage provider-started expiry regressions passed');
