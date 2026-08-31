@@ -35,7 +35,7 @@ assert.match(
 // boundary rather than relying only on transaction-stable "today" accounting.
 assert.match(
   accountingSource,
-  /featureKey === 'prompt_starters'[\s\S]+computeResetWindow\(\{ resetPolicy: 'daily' \}\)[\s\S]+scope: 'tier_quota'[\s\S]+counter_scope: 'today'[\s\S]+window_start: reset\.windowStart[\s\S]+window_end: reset\.windowEnd/i,
+  /featureKey === 'prompt_starters'[\s\S]+computeResetWindow\(\{[\s\S]+resetPolicy: 'daily'[\s\S]+resetIntervalValue: null[\s\S]+resetIntervalUnit: null[\s\S]+\}\)[\s\S]+scope: 'tier_quota'[\s\S]+counter_scope: 'today'[\s\S]+window_start: reset\.windowStart[\s\S]+window_end: reset\.windowEnd/i,
 );
 assert.match(
   tierMigration,
