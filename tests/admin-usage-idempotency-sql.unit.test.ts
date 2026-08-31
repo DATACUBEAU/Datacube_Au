@@ -17,6 +17,10 @@ const internalRpcRevokeSql = readFileSync(
   'supabase/migrations/20260829211500_revoke_internal_admin_usage_rpcs.sql',
   'utf8',
 );
+const batchRequestGuardSql = readFileSync(
+  'supabase/migrations/20260831204500_admin_usage_batch_request_id_guard.sql',
+  'utf8',
+);
 
 assert.match(baseSql, /ON CONFLICT \(user_id, metric_key, request_id\) DO NOTHING/i);
 assert.match(baseSql, /IF NOT FOUND THEN[\s\S]*SELECT \* INTO v_existing[\s\S]*request_id = v_request_id/i);
@@ -75,6 +79,27 @@ assert.match(
 assert.match(
   internalRpcRevokeSql,
   /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_checked\([\s\S]*?\) TO service_role;/i,
+);
+
+// A batch must reject duplicate idempotency identities before applying the first
+// item. This closes the race where two different batch entries see an empty
+// replay ledger and the second is later misreported as a successful dedupe.
+assert.match(
+  batchRequestGuardSql,
+  /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_checked[\s\S]+IF EXISTS \([\s\S]+jsonb_array_elements\(p_items\)[\s\S]+GROUP BY[\s\S]+metricKey[\s\S]+requestId[\s\S]+HAVING COUNT\(\*\) > 1[\s\S]+usage_adjustment_batch_duplicate_request_id[\s\S]+FOR v_item IN/i,
+);
+assert.match(
+  batchRequestGuardSql,
+  /REVOKE EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_checked\([\s\S]*?\) FROM authenticated;/i,
+);
+assert.match(
+  batchRequestGuardSql,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_checked\([\s\S]*?\) TO service_role;/i,
+);
+assert.doesNotMatch(batchRequestGuardSql, /\bTRUNCATE\b/i);
+assert.doesNotMatch(
+  batchRequestGuardSql,
+  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
 );
 
 console.log('PASS admin usage idempotency keys are retry-safe, payload-bound, and guarded');
