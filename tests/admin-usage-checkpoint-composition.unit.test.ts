@@ -9,6 +9,10 @@ const replayFastPathMigration = readFileSync(
   'supabase/migrations/20260831234000_admin_usage_completed_replay_fast_path.sql',
   'utf8',
 );
+const batchReplayFastPathMigration = readFileSync(
+  'supabase/migrations/20260901004500_admin_usage_batch_completed_replay_fast_path.sql',
+  'utf8',
+);
 
 // Both exposed SECURITY DEFINER wrappers must authenticate before touching the
 // mutation-version row, replay ledger, reservations, checkpoint sources, or batch items.
@@ -61,18 +65,43 @@ assert.match(
   /IF v_completed THEN[\s\S]+jsonb_build_object\('checkpoint_delta', 0\)/i,
 );
 
+// Completed reset-all batches need the same recovery property. Every exact
+// quota-window lock and replay fingerprint must be validated before determining
+// that all submitted request IDs already exist, and the checked batch dedupe must
+// return before mutation-version/reservation/checkpoint guards for new work.
+assert.match(
+  batchReplayFastPathMigration,
+  /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+IF v_role <> 'service_role'[\s\S]+FOR v_lock_key IN[\s\S]+pg_advisory_xact_lock[\s\S]+FOR v_item IN[\s\S]+admin_assert_usage_adjustment_replay[\s\S]+bool_and[\s\S]+au_usage_admin_adjustments[\s\S]+IF v_completed THEN[\s\S]+RETURN public\.admin_adjust_usage_batch_checked[\s\S]+END IF[\s\S]+INSERT INTO public\.au_usage_mutation_versions[\s\S]+FOR UPDATE[\s\S]+assert_no_active_ai_usage_reservation[\s\S]+admin_checkpoint_legacy_usage_gap/i,
+);
+assert.doesNotMatch(
+  batchReplayFastPathMigration,
+  /FOR UPDATE[\s\S]+IF v_completed THEN/i,
+);
+assert.match(
+  batchReplayFastPathMigration,
+  /IF v_completed THEN[\s\S]+jsonb_build_object\('checkpoint_total', 0\)/i,
+);
+assert.match(
+  batchReplayFastPathMigration,
+  /NULLIF\(TRIM\(COALESCE\(value ->> 'requestId', ''\)\), ''\) IS NOT NULL[\s\S]+a\.user_id = p_target_user_id[\s\S]+a\.metric_key = TRIM\(value ->> 'metricKey'\)[\s\S]+a\.request_id = NULLIF/i,
+);
+
 // Target-derived changes remain guarded; relative increases are not unnecessarily blocked.
 assert.match(migration, /IN \('decrease', 'set', 'reset'\)/i);
 assert.doesNotMatch(migration, /IN \('increase',\s*'decrease',\s*'set',\s*'reset'\)/i);
 assert.match(replayFastPathMigration, /IN \('decrease', 'set', 'reset'\)/i);
+assert.match(batchReplayFastPathMigration, /IN \('decrease', 'set', 'reset'\)/i);
 
 // Keep the public RPC surface stable and avoid destructive remediation.
 assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+TO authenticated/i);
 assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+TO authenticated/i);
 assert.match(replayFastPathMigration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+TO authenticated/i);
+assert.match(batchReplayFastPathMigration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+TO authenticated/i);
 assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i);
 assert.doesNotMatch(replayFastPathMigration, /\bTRUNCATE\b/i);
 assert.doesNotMatch(replayFastPathMigration, /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i);
+assert.doesNotMatch(batchReplayFastPathMigration, /\bTRUNCATE\b/i);
+assert.doesNotMatch(batchReplayFastPathMigration, /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i);
 
 console.log('admin usage authorization/checkpoint/replay composition regressions passed');
