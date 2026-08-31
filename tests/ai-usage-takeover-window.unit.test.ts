@@ -2,53 +2,63 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const migration = readFileSync(
-  'supabase/migrations/20260831094500_ai_usage_takeover_window_guard.sql',
+  'supabase/migrations/20260831140500_ai_usage_provider_start_window_guard.sql',
   'utf8',
 );
 
 assert.match(
   migration,
   /CREATE OR REPLACE FUNCTION public\.begin_ai_usage_reservation/,
-  'the final provider-start boundary must own takeover window validation',
+  'the final provider-start boundary must own finite-window validation',
 );
 
 const dailyLock = migration.indexOf('FROM public.usage_counters');
 const totalLock = migration.indexOf('FROM public.usage_totals');
 const reservationLock = migration.indexOf("FROM public.ai_usage_reservations\n  WHERE id = p_reservation_id\n  FOR UPDATE;");
 const wallClock = migration.indexOf('v_wall_clock_now := clock_timestamp();');
-const staleCode = migration.indexOf('USAGE_PROVIDER_TAKEOVER_WINDOW_STALE');
+const staleCode = migration.indexOf('USAGE_PROVIDER_START_WINDOW_STALE');
 const attemptMutation = migration.indexOf('v_attempt_started_at := v_wall_clock_now;');
 
 assert.ok(dailyLock >= 0 && totalLock > dailyLock);
 assert.ok(reservationLock > totalLock);
-assert.ok(wallClock > reservationLock, 'takeover freshness must use serialized wall-clock time');
+assert.ok(wallClock > reservationLock, 'provider-start freshness must use serialized wall-clock time');
 assert.ok(staleCode > wallClock, 'stale-window rejection must use the serialized wall clock');
-assert.ok(attemptMutation > staleCode, 'stale takeovers must be rejected before attempt/lease mutation');
+assert.ok(attemptMutation > staleCode, 'stale provider starts must be rejected before attempt/lease mutation');
 
-assert.match(
+assert.doesNotMatch(
   migration,
   /IF v_row\.last_attempt_at IS NOT NULL THEN[\s\S]+jsonb_array_elements\(COALESCE\(v_row\.limit_checks, '\[\]'::jsonb\)\)/,
-  'only a later provider attempt should be subject to takeover-window revalidation',
+  'finite-window revalidation must not be limited to takeovers; first provider starts need the same guard',
+);
+assert.match(
+  migration,
+  /FOR v_limit_check IN[\s\S]+jsonb_array_elements\(COALESCE\(v_row\.limit_checks, '\[\]'::jsonb\)\)/,
+  'every provider start should inspect the reservation admission windows',
 );
 assert.match(
   migration,
   /v_limit_scope NOT IN \('canonical_plan', 'tier_quota'\)[\s\S]+CONTINUE/,
-  'takeover validation must cover both authoritative plan and tier quota windows',
+  'provider-start validation must cover both authoritative plan and tier quota windows',
 );
 assert.match(
   migration,
   /v_window_start IS NOT NULL[\s\S]+v_window_end IS NOT NULL[\s\S]+v_wall_clock_now < v_window_start OR v_wall_clock_now >= v_window_end/,
-  'finite takeovers must remain inside their originally admitted quota window',
+  'finite provider starts must remain inside their originally admitted quota window',
 );
 assert.match(
   migration,
-  /'code', 'USAGE_PROVIDER_TAKEOVER_WINDOW_STALE'/,
-  'stale takeovers need a stable operational error code',
+  /'code', 'USAGE_PROVIDER_START_WINDOW_STALE'/,
+  'stale first attempts and takeovers need a stable operational error code',
 );
 assert.match(
   migration,
   /v_row\.last_attempt_at IS NOT NULL[\s\S]+v_incoming_ticket_id = v_row\.ticket_id[\s\S]+USAGE_PROVIDER_TICKET_ALREADY_ACCEPTED/,
-  'same-ticket replay protection must remain intact before takeover processing',
+  'same-ticket replay protection must remain intact before provider-start processing',
+);
+assert.match(
+  migration,
+  /v_row\.last_attempt_at IS NOT NULL[\s\S]+v_row\.last_attempt_at > v_wall_clock_now - interval '2 minutes'[\s\S]+USAGE_REQUEST_IN_PROGRESS/,
+  'the existing takeover cooldown must remain intact',
 );
 assert.match(
   migration,
@@ -65,4 +75,4 @@ assert.doesNotMatch(
   /DELETE\s+FROM\s+public\.(?:ai_usage_reservations|usage_counters|usage_totals|au_usage_events)/i,
 );
 
-console.log('AI usage takeover-window regressions passed');
+console.log('AI usage provider-start window regressions passed');
