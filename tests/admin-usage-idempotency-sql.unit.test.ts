@@ -21,6 +21,10 @@ const batchRequestGuardSql = readFileSync(
   'supabase/migrations/20260831204500_admin_usage_batch_request_id_guard.sql',
   'utf8',
 );
+const noOpReceiptSql = readFileSync(
+  'supabase/migrations/20260831214500_admin_usage_noop_idempotency_receipt.sql',
+  'utf8',
+);
 
 assert.match(baseSql, /ON CONFLICT \(user_id, metric_key, request_id\) DO NOTHING/i);
 assert.match(baseSql, /IF NOT FOUND THEN[\s\S]*SELECT \* INTO v_existing[\s\S]*request_id = v_request_id/i);
@@ -99,6 +103,39 @@ assert.match(
 assert.doesNotMatch(batchRequestGuardSql, /\bTRUNCATE\b/i);
 assert.doesNotMatch(
   batchRequestGuardSql,
+  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+);
+
+// A zero-delta set/reset is still a completed logical request. Persist it in the
+// authoritative append-only ledger so a lost response cannot be replayed later
+// against newly accrued usage with the same request id.
+assert.match(
+  noOpReceiptSql,
+  /p_delta = 0 AND v_action NOT IN \('set', 'reset'\)[\s\S]+INSERT INTO public\.au_usage_admin_adjustments/i,
+);
+assert.doesNotMatch(
+  noOpReceiptSql,
+  /IF p_delta = 0 THEN\s+RETURN jsonb_build_object/i,
+);
+assert.match(
+  noOpReceiptSql,
+  /WHEN p_delta = 0 THEN jsonb_build_object\('no_op', TRUE\)/i,
+);
+assert.match(
+  noOpReceiptSql,
+  /'deduped', TRUE,[\s\S]+'no_op', v_existing\.delta = 0/i,
+);
+assert.match(
+  noOpReceiptSql,
+  /ON CONFLICT \(user_id, metric_key, request_id\) DO NOTHING/i,
+);
+assert.match(
+  noOpReceiptSql,
+  /REVOKE EXECUTE ON FUNCTION public\.admin_adjust_usage_checked\([\s\S]*?\) FROM authenticated;/i,
+);
+assert.doesNotMatch(noOpReceiptSql, /\bTRUNCATE\b/i);
+assert.doesNotMatch(
+  noOpReceiptSql,
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
 );
 
