@@ -58,6 +58,7 @@ jobs:
           tests/admin-usage-ai-lock-order.unit.test.ts
           tests/usage-accounting-user-serialization.unit.test.ts
           tests/ai-usage-terminal-user-serialization.unit.test.ts
+          tests/ai-usage-expiry-user-serialization.unit.test.ts
           tests/admin-usage-delta-direction.unit.test.ts
           tests/admin-usage-delta-magnitude.unit.test.ts
           tests/admin-usage-actor-email-attribution.unit.test.ts
@@ -104,6 +105,7 @@ jobs:
           node .tmp-tests/tests/admin-usage-ai-lock-order.unit.test.js
           node .tmp-tests/tests/usage-accounting-user-serialization.unit.test.js
           node .tmp-tests/tests/ai-usage-terminal-user-serialization.unit.test.js
+          node .tmp-tests/tests/ai-usage-expiry-user-serialization.unit.test.js
           node .tmp-tests/tests/admin-usage-delta-direction.unit.test.js
           node .tmp-tests/tests/admin-usage-delta-magnitude.unit.test.js
           node .tmp-tests/tests/admin-usage-actor-email-attribution.unit.test.js
