@@ -128,7 +128,11 @@ async function applyAdjustment(input: {
   if (input.action === 'reset') target = 0;
 
   const delta = target - current;
-  if (delta === 0 && (input.action === 'increase' || input.action === 'decrease')) {
+  // A zero decrease is state-dependent: replaying it after new usage accrues could
+  // otherwise acquire a new negative effect. Persist it through the authoritative
+  // RPC as a no-op receipt. A zero increase is state-independent and can return
+  // immediately because the same payload can never affect later usage.
+  if (delta === 0 && input.action === 'increase') {
     return { ok: true, changed: false, current, target, delta: 0 } as const;
   }
 
