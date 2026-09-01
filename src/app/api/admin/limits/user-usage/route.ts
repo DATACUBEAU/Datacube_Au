@@ -152,6 +152,7 @@ async function applyAdjustment(input: {
     p_context: {
       previous_usage: current,
       requested_target: target,
+      ...(input.action === 'decrease' ? { requested_amount: amount } : {}),
       effective_plan: input.effective.plan,
       source: 'conex-simple-usage-editor',
     },
