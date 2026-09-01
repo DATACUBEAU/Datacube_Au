@@ -37,7 +37,42 @@ jobs:
           version: 2.116.0
 
       - name: Start local PostgreSQL
-        run: supabase db start
+        shell: bash
+        run: |
+          set -o pipefail
+          supabase db start --debug 2>&1 | tee /tmp/supabase-db-start.log
+
+      - name: Capture startup diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          {
+            echo '## Docker containers'
+            docker ps -a || true
+            echo
+            echo '## Supabase status'
+            supabase status --debug || true
+            echo
+            echo '## Supabase DB start output'
+            cat /tmp/supabase-db-start.log || true
+            echo
+            echo '## Supabase container logs'
+            for id in $(docker ps -aq --filter 'name=supabase'); do
+              echo "### $id ($(docker inspect --format '{{.Name}}' "$id" 2>/dev/null || true))"
+              docker logs --tail 200 "$id" 2>&1 || true
+            done
+          } | tee /tmp/supabase-start-diagnostics.log
+
+      - name: Upload startup diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-startup-diagnostics
+          path: |
+            /tmp/supabase-db-start.log
+            /tmp/supabase-start-diagnostics.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Rebuild schema from migrations
         run: supabase db reset --local --no-seed
