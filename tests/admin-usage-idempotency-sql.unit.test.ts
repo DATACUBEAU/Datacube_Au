@@ -33,6 +33,10 @@ const decreaseNoOpReceiptSql = readFileSync(
   'supabase/migrations/20260901014500_admin_usage_decrease_noop_receipt.sql',
   'utf8',
 );
+const decreaseRequestedAmountSql = readFileSync(
+  'supabase/migrations/20260901024000_admin_usage_decrease_requested_amount_fingerprint.sql',
+  'utf8',
+);
 const usageRoute = readFileSync(
   'src/app/api/admin/limits/user-usage/route.ts',
   'utf8',
@@ -159,9 +163,6 @@ assert.doesNotMatch(
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
 );
 
-// A decrease at zero usage is state-dependent: the same request replayed after
-// new usage accrues must recover the original no-op instead of acquiring a new
-// negative effect. Persist the original completion with truthful action semantics.
 assert.match(
   decreaseNoOpReceiptSql,
   /ADD CONSTRAINT au_usage_admin_adjustments_delta_check[\s\S]+delta = 0[\s\S]+action IN \('decrease', 'set', 'reset'\)[\s\S]+context @> '\{"no_op": true\}'::jsonb/i,
@@ -194,6 +195,43 @@ assert.match(
 assert.doesNotMatch(
   usageRoute,
   /delta === 0 && \(input\.action === 'increase' \|\| input\.action === 'decrease'\)/i,
+);
+
+// Relative decreases are state-dependent because the applied delta is clamped to
+// current usage. Persist and compare the submitted amount so a completed zero/clamped
+// decrease can be replayed after usage changes without acquiring a new effect.
+assert.match(
+  usageRoute,
+  /input\.action === 'decrease'[\s\S]*requested_amount:\s*amount/i,
+);
+assert.match(
+  decreaseRequestedAmountSql,
+  /v_action = 'decrease'[\s\S]+p_context ->> 'requested_amount'/i,
+);
+assert.match(
+  decreaseRequestedAmountSql,
+  /v_existing_requested_amount = v_requested_amount/i,
+);
+assert.match(
+  decreaseRequestedAmountSql,
+  /v_existing_requested_amount IS NULL AND v_existing_is_no_op/i,
+);
+assert.match(
+  decreaseRequestedAmountSql,
+  /v_existing_requested_amount IS NULL[\s\S]+NOT v_existing_is_no_op[\s\S]+v_existing\.delta = p_delta/i,
+);
+assert.match(
+  decreaseRequestedAmountSql,
+  /9007199254740991::numeric/i,
+);
+assert.match(
+  decreaseRequestedAmountSql,
+  /REVOKE EXECUTE ON FUNCTION public\.admin_assert_usage_adjustment_replay\([\s\S]*?\) FROM authenticated;/i,
+);
+assert.doesNotMatch(decreaseRequestedAmountSql, /\bTRUNCATE\b/i);
+assert.doesNotMatch(
+  decreaseRequestedAmountSql,
+  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
 );
 
 console.log('PASS admin usage idempotency keys are retry-safe, payload-bound, and guarded');
