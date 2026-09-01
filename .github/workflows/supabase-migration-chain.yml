@@ -36,6 +36,21 @@ jobs:
         with:
           version: 2.116.0
 
+      - name: Disable non-database Realtime service for schema gate
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('supabase/config.toml')
+          config = path.read_text()
+          old = '[realtime]\nenabled = true'
+          new = '[realtime]\nenabled = false'
+          if old not in config:
+              raise SystemExit('Expected enabled Realtime config was not found; update the CI gate explicitly.')
+          path.write_text(config.replace(old, new, 1))
+          PY
+
       - name: Start local PostgreSQL
         shell: bash
         run: |
