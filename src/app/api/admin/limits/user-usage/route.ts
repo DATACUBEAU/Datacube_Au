@@ -62,6 +62,19 @@ function sameResetWindow(
   return left.window_start === right.window_start && left.window_end === right.window_end;
 }
 
+function sameAdjustmentEligibility(
+  left: Awaited<ReturnType<typeof resolveCanonicalEffectiveLimits>>,
+  right: Awaited<ReturnType<typeof resolveCanonicalEffectiveLimits>>,
+  metricKeys: readonly ApprovedLimitKey[],
+) {
+  if (left.plan !== right.plan) return false;
+  return metricKeys.every((key) => {
+    const leftRule = left.limitRules[key];
+    const rightRule = right.limitRules[key];
+    return leftRule.mode === rightRule.mode && leftRule.isEnabled === rightRule.isEnabled;
+  });
+}
+
 async function loadAdjustmentTotal(input: {
   supabase: any;
   userId: string;
@@ -248,6 +261,9 @@ export async function POST(req: NextRequest) {
         supabase: adminResult.supabase,
         userId: body.userId,
       });
+      if (!sameAdjustmentEligibility(initialEffective, mutationEffective, APPROVED_LIMIT_KEYS)) {
+        throw Object.assign(new Error('usage_adjustment_conflict'), { code: '40001' });
+      }
 
       const items = adjustableKeys.map((key) => {
         const beforeReset = initialEffective.usage.by_limit[key].reset;
@@ -329,11 +345,12 @@ export async function POST(req: NextRequest) {
       supabase: adminResult.supabase,
       userId: body.userId,
     });
-    if (!sameResetWindow(initialReset, mutationEffective.usage.by_limit[body.metricKey].reset)) {
+    if (!sameAdjustmentEligibility(initialEffective, mutationEffective, [body.metricKey])
+      || !sameResetWindow(initialReset, mutationEffective.usage.by_limit[body.metricKey].reset)) {
       return json({
         ok: false,
         code: 'usage_changed',
-        message: 'Usage changed while this action was being prepared. Refresh and try again.',
+        message: 'Usage or plan limits changed while this action was being prepared. Refresh and try again.',
         requestId,
       }, 409);
     }
