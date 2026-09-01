@@ -47,6 +47,7 @@ jobs:
           --outDir .tmp-tests
           tests/admin-usage-adjustments.unit.test.ts
           tests/admin-usage-idempotency-sql.unit.test.ts
+          tests/admin-usage-decrease-fingerprint-required.unit.test.ts
           tests/admin-usage-concurrency-sql.unit.test.ts
           tests/admin-usage-request-serialization.unit.test.ts
           tests/admin-usage-reason-fingerprint.unit.test.ts
@@ -91,6 +92,7 @@ jobs:
           node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
           node .tmp-tests/tests/admin-usage-adjustments.unit.test.js
           node .tmp-tests/tests/admin-usage-idempotency-sql.unit.test.js
+          node .tmp-tests/tests/admin-usage-decrease-fingerprint-required.unit.test.js
           node .tmp-tests/tests/admin-usage-concurrency-sql.unit.test.js
           node .tmp-tests/tests/admin-usage-request-serialization.unit.test.js
           node .tmp-tests/tests/admin-usage-reason-fingerprint.unit.test.js
