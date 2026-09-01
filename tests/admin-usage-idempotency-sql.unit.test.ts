@@ -29,6 +29,14 @@ const noOpReceiptConstraintSql = readFileSync(
   'supabase/migrations/20260831224000_admin_usage_noop_receipt_constraint.sql',
   'utf8',
 );
+const decreaseNoOpReceiptSql = readFileSync(
+  'supabase/migrations/20260901014500_admin_usage_decrease_noop_receipt.sql',
+  'utf8',
+);
+const usageRoute = readFileSync(
+  'src/app/api/admin/limits/user-usage/route.ts',
+  'utf8',
+);
 
 assert.match(baseSql, /ON CONFLICT \(user_id, metric_key, request_id\) DO NOTHING/i);
 assert.match(baseSql, /IF NOT FOUND THEN[\s\S]*SELECT \* INTO v_existing[\s\S]*request_id = v_request_id/i);
@@ -89,9 +97,6 @@ assert.match(
   /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_checked\([\s\S]*?\) TO service_role;/i,
 );
 
-// A batch must reject duplicate idempotency identities before applying the first
-// item. This closes the race where two different batch entries see an empty
-// replay ledger and the second is later misreported as a successful dedupe.
 assert.match(
   batchRequestGuardSql,
   /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_checked[\s\S]+IF EXISTS \([\s\S]+jsonb_array_elements\(p_items\)[\s\S]+GROUP BY[\s\S]+metricKey[\s\S]+requestId[\s\S]+HAVING COUNT\(\*\) > 1[\s\S]+usage_adjustment_batch_duplicate_request_id[\s\S]+FOR v_item IN/i,
@@ -110,9 +115,6 @@ assert.doesNotMatch(
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
 );
 
-// A zero-delta set/reset is still a completed logical request. Persist it in the
-// authoritative append-only ledger so a lost response cannot be replayed later
-// against newly accrued usage with the same request id.
 assert.match(
   noOpReceiptSql,
   /p_delta = 0 AND v_action NOT IN \('set', 'reset'\)[\s\S]+INSERT INTO public\.au_usage_admin_adjustments/i,
@@ -143,9 +145,6 @@ assert.doesNotMatch(
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
 );
 
-// The ledger schema must admit those receipts. Keep the exception narrow so a
-// zero adjustment cannot be inserted unless it is an explicitly marked set/reset
-// completion; ordinary adjustment rows still require a non-zero delta.
 assert.match(
   noOpReceiptConstraintSql,
   /DROP CONSTRAINT IF EXISTS au_usage_admin_adjustments_delta_check/i,
@@ -158,6 +157,43 @@ assert.doesNotMatch(noOpReceiptConstraintSql, /\bTRUNCATE\b/i);
 assert.doesNotMatch(
   noOpReceiptConstraintSql,
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+);
+
+// A decrease at zero usage is state-dependent: the same request replayed after
+// new usage accrues must recover the original no-op instead of acquiring a new
+// negative effect. Persist the original completion with truthful action semantics.
+assert.match(
+  decreaseNoOpReceiptSql,
+  /ADD CONSTRAINT au_usage_admin_adjustments_delta_check[\s\S]+delta = 0[\s\S]+action IN \('decrease', 'set', 'reset'\)[\s\S]+context @> '\{"no_op": true\}'::jsonb/i,
+);
+assert.match(
+  decreaseNoOpReceiptSql,
+  /v_action = 'decrease' AND p_delta > 0/i,
+);
+assert.match(
+  decreaseNoOpReceiptSql,
+  /p_delta = 0 AND v_action NOT IN \('decrease', 'set', 'reset'\)/i,
+);
+assert.match(
+  decreaseNoOpReceiptSql,
+  /WHEN p_delta = 0 THEN jsonb_build_object\('no_op', TRUE\)/i,
+);
+assert.match(
+  decreaseNoOpReceiptSql,
+  /REVOKE EXECUTE ON FUNCTION public\.admin_adjust_usage_checked\([\s\S]*?\) FROM authenticated;/i,
+);
+assert.doesNotMatch(decreaseNoOpReceiptSql, /\bTRUNCATE\b/i);
+assert.doesNotMatch(
+  decreaseNoOpReceiptSql,
+  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+);
+assert.match(
+  usageRoute,
+  /delta === 0 && input\.action === 'increase'[\s\S]+admin_adjust_usage_versioned/i,
+);
+assert.doesNotMatch(
+  usageRoute,
+  /delta === 0 && \(input\.action === 'increase' \|\| input\.action === 'decrease'\)/i,
 );
 
 console.log('PASS admin usage idempotency keys are retry-safe, payload-bound, and guarded');
