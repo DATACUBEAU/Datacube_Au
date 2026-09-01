@@ -194,6 +194,8 @@ export default function ConexUsagePage() {
   const selectedUserIdRef = useRef('');
   const usageRequestVersionRef = useRef(0);
   const planRuleRequestVersionRef = useRef(0);
+  const adjustmentRequestRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
+  const resetAllRequestRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
 
   const selectedUser = useMemo(
     () => users.find((user) => user.user_id === selectedUserId) || null,
@@ -205,6 +207,8 @@ export default function ConexUsagePage() {
     selectedUserIdRef.current = userId;
     usageRequestVersionRef.current += 1;
     planRuleRequestVersionRef.current += 1;
+    adjustmentRequestRef.current = null;
+    resetAllRequestRef.current = null;
     setUsage(null);
     setPlanRules([]);
     setLoadingPlanRules(false);
@@ -311,10 +315,21 @@ export default function ConexUsagePage() {
   const simplePlanRules = planRules.filter((rule) => rule.editableHere);
 
   function openAdjustment(row: UsageRow, nextAction: AdjustmentAction) {
+    adjustmentRequestRef.current = null;
     setEditingMetric(row);
     setAction(nextAction);
     setAmount(nextAction === 'set' ? String(row.used) : '1');
     setReason(nextAction === 'reset' ? 'Reset this usage allowance' : 'Admin usage correction');
+  }
+
+  function closeAdjustment() {
+    adjustmentRequestRef.current = null;
+    setEditingMetric(null);
+  }
+
+  function closeResetAll() {
+    resetAllRequestRef.current = null;
+    setResetAllOpen(false);
   }
 
   function openPlanRule(row: PlanRule) {
@@ -337,6 +352,18 @@ export default function ConexUsagePage() {
       return;
     }
 
+    const adjustmentFingerprint = JSON.stringify({
+      userId: targetUserId,
+      metricKey: editingMetric.key,
+      action,
+      amount: action === 'reset' ? null : numericAmount,
+      reason: reason.trim(),
+    });
+    const requestId = adjustmentRequestRef.current?.fingerprint === adjustmentFingerprint
+      ? adjustmentRequestRef.current.requestId
+      : `conex-usage:${crypto.randomUUID()}`;
+    adjustmentRequestRef.current = { fingerprint: adjustmentFingerprint, requestId };
+
     setSaving(true);
     try {
       const res = await authedFetch('/api/admin/limits/user-usage', {
@@ -347,13 +374,14 @@ export default function ConexUsagePage() {
           action,
           amount: action === 'reset' ? undefined : numericAmount,
           reason: reason.trim(),
-          requestId: `conex-usage:${crypto.randomUUID()}`,
+          requestId,
         }),
       });
       if (!res.ok) throw await responseError(res, 'Unable to update usage.');
       const payload = await res.json();
       if (selectedUserIdRef.current !== targetUserId) return;
       setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
+      adjustmentRequestRef.current = null;
       setEditingMetric(null);
       toast({ title: 'Usage updated', description: `${editingMetric.label} now reflects the admin adjustment.` });
     } catch (error: any) {
@@ -414,6 +442,15 @@ export default function ConexUsagePage() {
   async function hardResetAll() {
     if (!selectedUserId || resetAllReason.trim().length < 3) return;
     const targetUserId = selectedUserId;
+    const resetAllFingerprint = JSON.stringify({
+      userId: targetUserId,
+      reason: resetAllReason.trim(),
+    });
+    const requestId = resetAllRequestRef.current?.fingerprint === resetAllFingerprint
+      ? resetAllRequestRef.current.requestId
+      : `conex-hard-reset:${crypto.randomUUID()}`;
+    resetAllRequestRef.current = { fingerprint: resetAllFingerprint, requestId };
+
     setSaving(true);
     try {
       const res = await authedFetch('/api/admin/limits/user-usage', {
@@ -422,13 +459,14 @@ export default function ConexUsagePage() {
           userId: targetUserId,
           action: 'reset_all',
           reason: resetAllReason.trim(),
-          requestId: `conex-hard-reset:${crypto.randomUUID()}`,
+          requestId,
         }),
       });
       if (!res.ok) throw await responseError(res, 'Unable to reset usage.');
       const payload = await res.json();
       if (selectedUserIdRef.current !== targetUserId) return;
       setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
+      resetAllRequestRef.current = null;
       setResetAllOpen(false);
       toast({ title: 'Usage reset', description: 'All adjustable usage for the active windows was reset without deleting history.' });
     } catch (error: any) {
@@ -511,7 +549,7 @@ export default function ConexUsagePage() {
             <div className="flex flex-wrap items-center gap-2">
               <Badge>{(usage?.plan || selectedUser.tier || 'free').toUpperCase()}</Badge>
               <Badge variant="outline">{selectedUser.account_status}</Badge>
-              <Button type="button" variant="destructive" size="sm" onClick={() => setResetAllOpen(true)} disabled={loadingUsage || adjustableRows.length === 0}>
+              <Button type="button" variant="destructive" size="sm" onClick={() => { resetAllRequestRef.current = null; setResetAllOpen(true); }} disabled={loadingUsage || adjustableRows.length === 0}>
                 <RotateCcw className="mr-2 h-4 w-4" />Hard reset usage
               </Button>
             </div>
@@ -615,7 +653,7 @@ export default function ConexUsagePage() {
         <Card className="border-dashed"><CardContent className="p-8 text-center text-sm text-muted-foreground">Usage data could not be loaded for this user.</CardContent></Card>
       ) : null}
 
-      <Dialog open={Boolean(editingMetric)} onOpenChange={(open) => { if (!open && !saving) setEditingMetric(null); }}>
+      <Dialog open={Boolean(editingMetric)} onOpenChange={(open) => { if (!open && !saving) closeAdjustment(); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingMetric ? `${editingMetric.label} usage` : 'Adjust usage'}</DialogTitle>
@@ -653,7 +691,7 @@ export default function ConexUsagePage() {
             </div>
           ) : null}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setEditingMetric(null)} disabled={saving}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={closeAdjustment} disabled={saving}>Cancel</Button>
             <Button type="button" onClick={() => void saveAdjustment()} disabled={saving}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}Apply change
             </Button>
@@ -715,7 +753,7 @@ export default function ConexUsagePage() {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog open={resetAllOpen} onOpenChange={setResetAllOpen}>
+      <AlertDialog open={resetAllOpen} onOpenChange={(open) => { if (!open && !saving) closeResetAll(); else setResetAllOpen(open); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Hard reset this user&apos;s usage?</AlertDialogTitle>
@@ -728,7 +766,7 @@ export default function ConexUsagePage() {
             <Textarea id="reset-all-reason" value={resetAllReason} onChange={(event) => setResetAllReason(event.target.value)} />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={saving}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel onClick={closeResetAll} disabled={saving}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={(event) => { event.preventDefault(); void hardResetAll(); }} disabled={saving || resetAllReason.trim().length < 3}>
               {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RotateCcw className="mr-2 h-4 w-4" />}
               Reset usage
