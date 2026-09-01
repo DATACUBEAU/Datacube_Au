@@ -162,6 +162,13 @@ async function applyAdjustment(input: {
   return { ok: true, changed: delta !== 0, current, target, delta, rpc: data } as const;
 }
 
+function isUsageIdempotencyConflict(error: unknown) {
+  const candidate = error as { code?: unknown; message?: unknown; details?: unknown } | null;
+  const code = String(candidate?.code || '');
+  const message = `${String(candidate?.message || '')} ${String(candidate?.details || '')}`.toLowerCase();
+  return code === '22023' && message.includes('usage_adjustment_idempotency_conflict');
+}
+
 function isUsageConflict(error: unknown) {
   const candidate = error as { code?: unknown; message?: unknown; details?: unknown } | null;
   const code = String(candidate?.code || '');
@@ -361,6 +368,14 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
       return json({ ok: false, code: 'invalid_request', message: 'Check the usage action and try again.', details: error.flatten(), requestId }, 400);
+    }
+    if (isUsageIdempotencyConflict(error)) {
+      return json({
+        ok: false,
+        code: 'idempotency_conflict',
+        message: 'This request ID was already used for a different usage action. Start a new action and try again.',
+        requestId,
+      }, 409);
     }
     if (isUsageConflict(error)) {
       return json({
