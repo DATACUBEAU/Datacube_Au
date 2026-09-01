@@ -49,6 +49,7 @@ jobs:
           tests/admin-usage-idempotency-sql.unit.test.ts
           tests/admin-usage-concurrency-sql.unit.test.ts
           tests/admin-usage-request-serialization.unit.test.ts
+          tests/admin-usage-reason-fingerprint.unit.test.ts
           tests/admin-usage-api-error-safety.unit.test.ts
           tests/admin-usage-inflight-reservation.unit.test.ts
           tests/admin-usage-checkpoint-composition.unit.test.ts
@@ -90,6 +91,7 @@ jobs:
           node .tmp-tests/tests/admin-usage-idempotency-sql.unit.test.js
           node .tmp-tests/tests/admin-usage-concurrency-sql.unit.test.js
           node .tmp-tests/tests/admin-usage-request-serialization.unit.test.js
+          node .tmp-tests/tests/admin-usage-reason-fingerprint.unit.test.js
           node .tmp-tests/tests/admin-usage-api-error-safety.unit.test.js
           node .tmp-tests/tests/admin-usage-inflight-reservation.unit.test.js
           node .tmp-tests/tests/admin-usage-checkpoint-composition.unit.test.js
