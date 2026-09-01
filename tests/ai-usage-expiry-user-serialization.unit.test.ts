@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const migration = readFileSync(
-  'supabase/migrations/20260901124500_ai_usage_expiry_user_serialization.sql',
+  'supabase/migrations/20260901154500_ai_usage_expiry_effective_lease_guard.sql',
   'utf8',
 );
 
@@ -38,11 +38,28 @@ assert.match(
   /pg_advisory_xact_lock[\s\S]+FROM public\.ai_usage_reservations[\s\S]+FOR UPDATE/i,
   'outer user locks must precede reservation row locks',
 );
+
 assert.match(
   expiry,
-  /IF NOT FOUND OR v_row\.status <> 'reserved' OR v_row\.expires_at > now\(\)[\s\S]+CONTINUE/i,
-  'candidate rows must be revalidated after waiting on accounting locks',
+  /v_scan_at TIMESTAMPTZ := clock_timestamp\(\)/i,
+  'candidate discovery must use a wall-clock timestamp rather than transaction-stable now()',
 );
+assert.match(
+  expiry,
+  /expires_at <= v_scan_at[\s\S]+ai_usage_reservation_effective_expiry\(expires_at, provider_started_at\) <= v_scan_at/i,
+  'candidate discovery must preserve the indexed raw-expiry prefilter and honor provider settlement leases',
+);
+assert.match(
+  expiry,
+  /FOR UPDATE[\s\S]+v_recheck_at := clock_timestamp\(\)[\s\S]+v_effective_expiry := public\.ai_usage_reservation_effective_expiry\([\s\S]+v_row\.expires_at[\s\S]+v_row\.provider_started_at[\s\S]+IF v_row\.expires_at > v_recheck_at OR v_effective_expiry > v_recheck_at/i,
+  'candidate rows must be revalidated against raw and effective expiry after waiting on accounting locks',
+);
+assert.doesNotMatch(
+  expiry,
+  /v_row\.expires_at > now\(\)/i,
+  'expiry revalidation must not regress to raw transaction-stable expiry checks',
+);
+
 assert.match(
   migration,
   /REVOKE ALL ON FUNCTION public\.expire_ai_usage_reservations\(INTEGER\) FROM PUBLIC, anon, authenticated/i,
@@ -58,4 +75,4 @@ assert.doesNotMatch(
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments|ai_usage_reservations)/i,
 );
 
-console.log('AI expiry per-user accounting serialization regressions passed');
+console.log('AI expiry per-user accounting serialization and effective-lease regressions passed');
