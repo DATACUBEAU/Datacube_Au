@@ -43,7 +43,7 @@ assert.ok(batchRequestLock >= 0);
 assert.ok(batchWindowLock > batchRequestLock, 'batch request keys must lock before quota windows');
 assert.ok(batchReplay > batchWindowLock, 'batch replay validation must occur after deterministic locks');
 assert.match(batch, /SELECT DISTINCT hashtextextended[\s\S]+ORDER BY lock_key/);
-assert.match(batch, /WHERE NULLIF\(TRIM\(COALESCE\(value ->> 'requestId'/);
+assert.match(batch, /AND NULLIF\(TRIM\(COALESCE\(value ->> 'requestId', ''\)\), ''\) IS NOT NULL/);
 
 assert.match(
   sql,
