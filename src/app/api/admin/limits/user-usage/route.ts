@@ -345,12 +345,19 @@ export async function POST(req: NextRequest) {
       supabase: adminResult.supabase,
       userId: body.userId,
     });
-    if (!sameAdjustmentEligibility(initialEffective, mutationEffective, [body.metricKey])
-      || !sameResetWindow(initialReset, mutationEffective.usage.by_limit[body.metricKey].reset)) {
+    if (!sameAdjustmentEligibility(initialEffective, mutationEffective, [body.metricKey])) {
       return json({
         ok: false,
         code: 'usage_changed',
-        message: 'Usage or plan limits changed while this action was being prepared. Refresh and try again.',
+        message: 'Plan limits changed while this action was being prepared. Refresh and try again.',
+        requestId,
+      }, 409);
+    }
+    if (!sameResetWindow(initialReset, mutationEffective.usage.by_limit[body.metricKey].reset)) {
+      return json({
+        ok: false,
+        code: 'usage_changed',
+        message: 'Usage changed while this action was being prepared. Refresh and try again.',
         requestId,
       }, 409);
     }
