@@ -36,26 +36,23 @@ jobs:
         with:
           version: 2.116.0
 
-      - name: Disable non-database Realtime service for schema gate
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('supabase/config.toml')
-          config = path.read_text()
-          old = '[realtime]\nenabled = true'
-          new = '[realtime]\nenabled = false'
-          if old not in config:
-              raise SystemExit('Expected enabled Realtime config was not found; update the CI gate explicitly.')
-          path.write_text(config.replace(old, new, 1))
-          PY
-
-      - name: Start local PostgreSQL
+      - name: Start minimal local Supabase stack
         shell: bash
         run: |
           set -o pipefail
-          supabase db start --debug 2>&1 | tee /tmp/supabase-db-start.log
+          supabase start \
+            --exclude logflare \
+            --exclude vector \
+            --exclude kong \
+            --exclude mailpit \
+            --exclude realtime \
+            --exclude postgrest \
+            --exclude imgproxy \
+            --exclude edge-runtime \
+            --exclude postgres-meta \
+            --exclude studio \
+            --exclude supavisor \
+            --debug 2>&1 | tee /tmp/supabase-start.log
 
       - name: Capture startup diagnostics
         if: failure()
@@ -68,8 +65,8 @@ jobs:
             echo '## Supabase status'
             supabase status --debug || true
             echo
-            echo '## Supabase DB start output'
-            cat /tmp/supabase-db-start.log || true
+            echo '## Supabase start output'
+            cat /tmp/supabase-start.log || true
             echo
             echo '## Supabase container logs'
             for id in $(docker ps -aq --filter 'name=supabase'); do
@@ -84,7 +81,7 @@ jobs:
         with:
           name: supabase-startup-diagnostics
           path: |
-            /tmp/supabase-db-start.log
+            /tmp/supabase-start.log
             /tmp/supabase-start-diagnostics.log
           if-no-files-found: warn
           retention-days: 7
