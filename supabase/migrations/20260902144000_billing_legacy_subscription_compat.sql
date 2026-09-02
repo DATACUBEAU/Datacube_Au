@@ -1,6 +1,6 @@
--- Keep the optional legacy subscriptions mirror compatible without making the
--- removed public.subscriptions table a compile-time dependency of the
--- authoritative billing path.
+-- Keep the verified billing payment path aligned with the authoritative
+-- billing_subscriptions / entitlement state. The removed public.subscriptions
+-- compatibility mirror is intentionally not recreated.
 
 CREATE OR REPLACE FUNCTION public.apply_verified_billing_payment(
   p_user_id UUID,
@@ -205,34 +205,6 @@ BEGIN
     )),
     v_subscription
   );
-
-  -- public.subscriptions is a removed compatibility table. Keep mirroring only
-  -- for installations that still have it, without making it a parse-time
-  -- dependency that breaks clean installs or schema lint.
-  IF to_regclass('public.subscriptions') IS NOT NULL THEN
-    EXECUTE $legacy$
-      INSERT INTO public.subscriptions (
-        user_id,
-        status,
-        plan,
-        gateway,
-        transaction_id,
-        created_at
-      )
-      VALUES ($1, 'active', $2, $3, $4, $5)
-      ON CONFLICT (transaction_id) DO UPDATE
-      SET
-        status = EXCLUDED.status,
-        plan = EXCLUDED.plan,
-        gateway = EXCLUDED.gateway
-    $legacy$
-    USING
-      p_user_id,
-      v_plan_key,
-      COALESCE(NULLIF(TRIM(COALESCE(p_gateway, '')), ''), 'paystack'),
-      COALESCE(NULLIF(TRIM(COALESCE(p_transaction_id, '')), ''), v_reference),
-      COALESCE(p_paid_at, v_now);
-  END IF;
 
   RETURN jsonb_build_object(
     'applied', true,
