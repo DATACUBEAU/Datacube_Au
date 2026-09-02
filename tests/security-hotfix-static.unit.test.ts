@@ -130,3 +130,27 @@ test('source cleanup is owner and path bound with bounded attempts', () => {
   assert.match(cleanup, /max_attempts_exceeded/);
   assert.match(worker, /expectedOwnerId:\s*String\(job\.owner_id \|\| job\.user_id/);
 });
+
+test('legacy permissive service-role RLS policies are narrowed to service_role in the final schema', () => {
+  const migration = readRepoFile(
+    'supabase',
+    'migrations',
+    '20260902165500_scope_service_role_rls_policies.sql',
+  );
+
+  for (const policyName of [
+    'Service role full access conex config',
+    'Service role only stripe events',
+    'Service role can manage events',
+  ]) {
+    assert.ok(migration.includes(`DROP POLICY IF EXISTS "${policyName}"`));
+    const marker = `CREATE POLICY "${policyName}"`;
+    const policyStart = migration.indexOf(marker);
+    assert.ok(policyStart >= 0, `missing replacement policy ${policyName}`);
+    const nextPolicy = migration.indexOf('CREATE POLICY', policyStart + marker.length);
+    const policySql = migration.slice(policyStart, nextPolicy >= 0 ? nextPolicy : migration.length);
+    assert.match(policySql, /\bTO\s+service_role\b/i);
+    assert.match(policySql, /USING\s*\(TRUE\)/i);
+    assert.match(policySql, /WITH CHECK\s*\(TRUE\)/i);
+  }
+});
