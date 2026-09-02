@@ -155,3 +155,41 @@ test('legacy permissive service-role RLS policies are narrowed to service_role i
     assert.match(policySql, /WITH CHECK\s*\(TRUE\)/i);
   }
 });
+
+test('authenticated profile updates cannot mutate authorization or billing-controlled columns', () => {
+  const identityMigration = readRepoFile(
+    'supabase',
+    'migrations',
+    '20260205000000_placeholder.sql',
+  );
+  const roleMigration = readRepoFile(
+    'supabase',
+    'migrations',
+    '20260206000007_placeholder.sql',
+  );
+  const hardeningMigration = readRepoFile(
+    'supabase',
+    'migrations',
+    '20260902194500_protect_profile_privileged_columns.sql',
+  );
+
+  assert.match(identityMigration, /Users can update own profile/);
+  assert.match(roleMigration, /ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'user'/);
+  assert.match(hardeningMigration, /REVOKE UPDATE ON TABLE public\.au_user_profiles FROM anon, authenticated/i);
+  assert.match(hardeningMigration, /GRANT UPDATE \(full_name, avatar_url\) ON TABLE public\.au_user_profiles TO authenticated/i);
+  for (const protectedColumn of [
+    'role',
+    'tier',
+    'stripe_customer_id',
+    'stripe_subscription_id',
+    'stripe_price_id',
+    'stripe_current_period_end',
+    'stripe_status',
+  ]) {
+    assert.doesNotMatch(
+      hardeningMigration,
+      new RegExp(`GRANT UPDATE \\([^)]*\\b${protectedColumn}\\b`, 'i'),
+      `privileged profile column ${protectedColumn} must not be browser-updatable`,
+    );
+  }
+});
