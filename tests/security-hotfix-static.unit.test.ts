@@ -138,13 +138,14 @@ test('legacy permissive service-role RLS policies are narrowed to service_role i
     '20260902165500_scope_service_role_rls_policies.sql',
   );
 
-  for (const policyName of [
-    'Service role full access conex config',
-    'Service role only stripe events',
-    'Service role can manage events',
-  ]) {
-    assert.ok(migration.includes(`DROP POLICY IF EXISTS "${policyName}"`));
-    const marker = `CREATE POLICY "${policyName}"`;
+  for (const [policyName, relation] of [
+    ['Service role full access conex config', 'public.au_conex_config'],
+    ['Service role only stripe events', 'public.au_stripe_events'],
+    ['Service role can manage events', 'public.au_events'],
+  ] as const) {
+    assert.ok(migration.includes(`to_regclass('${relation}') IS NOT NULL`));
+    assert.ok(migration.includes(`DROP POLICY IF EXISTS \"${policyName}\"`));
+    const marker = `CREATE POLICY \"${policyName}\"`;
     const policyStart = migration.indexOf(marker);
     assert.ok(policyStart >= 0, `missing replacement policy ${policyName}`);
     const nextPolicy = migration.indexOf('CREATE POLICY', policyStart + marker.length);
