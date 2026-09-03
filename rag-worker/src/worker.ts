@@ -574,7 +574,7 @@ export class RAGWorker {
     job: UploadJob,
     errorMessage: string,
     options?: { recoverable?: boolean; recoverableReason?: string },
-  ) {
+  ): Promise<Error | null> {
     const retryCount = Number((job as any)?.retry_count || 0);
     const shouldMarkRecoverable = Boolean(options?.recoverable) && retryCount <= 0;
     const metadataBase =
@@ -602,6 +602,7 @@ export class RAGWorker {
     if (error) {
       logger.error('Failed to mark job as failed', { jobId: job.id, error: error.message });
     }
+    return error;
   }
 
   private async markDocumentFailed(documentId: string, errorMessage: string) {
@@ -735,14 +736,21 @@ export class RAGWorker {
         recoverableReason,
       });
 
-      await this.markJobFailed(currentJob, errorMessage, {
+      const failurePersistError = await this.markJobFailed(currentJob, errorMessage, {
         recoverable: isRecoverable,
         recoverableReason,
       });
       await this.markDocumentFailed(currentJob.document_id, errorMessage);
-      await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
-        jobs_failed: 1,
-      });
+      if (!failurePersistError) {
+        await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
+          jobs_failed: 1,
+        });
+      } else {
+        logger.error('Skipping failed-job compatibility usage because terminal state did not persist', {
+          jobId: currentJob.id,
+          message: failurePersistError.message,
+        });
+      }
     } finally {
       stopHeartbeat();
     }
