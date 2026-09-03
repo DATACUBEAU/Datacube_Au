@@ -188,4 +188,43 @@ assert.match(
   'failed terminal persistence should remain observable without creating phantom usage',
 );
 
-console.log('worker terminal usage-event idempotency, persistence-gating, plan-attribution, and indexed-chunk metering regression passed');
+// Ingestion retention must consume the same authoritative entitlement boundary
+// as the rest of the SaaS. Do not recreate plan/billing resolution inside the
+// worker or silently assign a default lifetime when the authoritative RPC fails.
+assert.match(
+  worker,
+  /if\s*\(!inheritedParentExpiryMs\)\s*\{[\s\S]*this\.supabase\.rpc\(\s*'get_effective_entitlements'\s*,\s*\{\s*p_user_id:\s*ownerId\s*\}/i,
+  'non-inherited document retention must use the authoritative effective-entitlements RPC',
+);
+assert.match(
+  worker,
+  /rawRetentionDays\s*=\s*Number\([\s\S]*retention_days[\s\S]*Number\.isFinite\(rawRetentionDays\)[\s\S]*rawRetentionDays\s*<=\s*0[\s\S]*entitlement_resolution_invalid/i,
+  'worker must reject invalid authoritative retention values instead of inventing a fallback',
+);
+assert.match(
+  worker,
+  /entitlementError[\s\S]*createRecoverableJobError\([\s\S]*entitlement_resolution_failed[\s\S]*entitlement_resolution_failed/i,
+  'authoritative entitlement lookup failure must remain recoverable and observable',
+);
+assert.match(
+  worker,
+  /recoverableReason\s*=\s*isRecoverable[\s\S]*processErr\s+as\s+any\)\?\.recoverableReason[\s\S]*transient_worker_error/i,
+  'worker must preserve the specific recoverable reason for entitlement failures',
+);
+assert.match(
+  worker,
+  /inheritedParentExpiryMs[\s\S]*parent_textbook[\s\S]*effective_entitlements/i,
+  'past/exam document parent-expiry inheritance must remain distinct from policy-based retention',
+);
+assert.doesNotMatch(
+  worker,
+  /from\('au_user_profiles'\)[\s\S]{0,1200}retentionDays/i,
+  'worker retention must not fall back to the legacy profile-tier resolver',
+);
+assert.doesNotMatch(
+  worker,
+  /isPaidPro\s*\?\s*30\s*:\s*14/i,
+  'worker must not keep a parallel Pro-only retention policy',
+);
+
+console.log('worker terminal usage-event, authoritative-retention, persistence-gating, plan-attribution, and indexed-chunk metering regression passed');
