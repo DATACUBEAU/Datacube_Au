@@ -118,14 +118,10 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
     correlationId,
   });
 
-  // Determine storage path and bucket
   const bucket = DEFAULT_BUCKET;
   const ext = fileName.includes('.') ? fileName.split('.').pop() : 'pdf';
-  // Use a collision-safe path: uploads/userId/documentId/randomUUID.ext
-  // This ensures every initiation attempt gets a fresh, unique path in storage.
   const storagePath = `uploads/${userId}/${documentId}/${randomUUID()}.${ext}`;
 
-  // Create a signed upload URL
   const { data: signedData, error: signedError } = await supabase.storage
     .from(bucket)
     .createSignedUploadUrl(storagePath);
@@ -147,9 +143,6 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
     );
   }
 
-  // Insert document row — columns MUST match au_documents schema exactly
-  // Correct columns: file_path (not storage_path), file_size_bytes (not file_size)
-  // DO NOT insert: correlation_id (not on au_documents), metadata (not on au_documents)
   const createdAt = new Date().toISOString();
   const uploadExpiresAt = parentId || parentDocumentId
     ? null
@@ -175,8 +168,8 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
     user_id: userId,
     owner_id: userId,
     file_name: fileName,
-    file_path: storagePath,        // ← correct column (not storage_path)
-    file_size_bytes: fileSize,     // ← correct column (not file_size)
+    file_path: storagePath,
+    file_size_bytes: fileSize,
     document_type: documentType,
     bucket,
     status: 'uploading',
@@ -191,9 +184,6 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
     insertPayload.retention_policy_version = RETENTION_POLICY_VERSION;
   }
 
-  // Only set parent fields if provided — the inherit_attachment_expiry_from_parent
-  // trigger requires the parent to exist AND have expires_at set.
-  // For main documents, leave parent_id/parent_document_id as NULL.
   if (parentId) {
     insertPayload.parent_id = parentId;
   }
@@ -212,8 +202,6 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
       requestId,
     });
 
-    // If the trigger rejects due to parent_document_missing_expiry or parent_document_not_found,
-    // retry without parent_id to avoid blocking uploads
     const isParentTriggerError =
       insertError.message?.includes('parent_document') ||
       insertError.code === '22023';
@@ -268,11 +256,7 @@ async function handleComplete(authorization: AuthorizedRequest, body: any, reque
   const documentId = String(body.documentId || '').trim();
   const jobId = String(body.jobId || randomUUID()).trim();
   const uploadId = String(body.uploadId || body.jobId || jobId).trim();
-  const fileName = String(body.fileName || '').trim();
-  const fileSize = Number(body.fileSize || 0);
   const mimeType = String(body.mimeType || 'application/pdf').trim();
-  const objectPath = String(body.path || '').trim();
-  const bucket = String(body.bucket || DEFAULT_BUCKET).trim();
 
   if (!documentId) {
     return jsonNoStore(
@@ -284,18 +268,65 @@ async function handleComplete(authorization: AuthorizedRequest, body: any, reque
   const limitsResult = await resolveCanonicalEffectiveLimits({ supabase, userId });
   throwIngestLimitIfNeeded({ limits: limitsResult, correlationId });
 
-  // Update document status — use correct column names
-  const updatePayload: Record<string, any> = {
-    status: 'uploaded',
-    updated_at: new Date().toISOString(),
-  };
-  if (fileName) updatePayload.file_name = fileName;
-  if (fileSize) updatePayload.file_size_bytes = fileSize; // ← correct column
-  if (objectPath) updatePayload.file_path = objectPath;   // ← correct column
+  // Never trust the client to choose the storage object at completion time.
+  // The upload-initiation step already persisted the canonical owner-bound
+  // bucket/path. Re-read that row and use it as the only worker source.
+  const { data: ownedDocument, error: documentError } = await supabase
+    .from('au_documents')
+    .select('id,file_name,file_path,file_size_bytes,bucket')
+    .eq('id', documentId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (documentError) {
+    console.error('[document-upload] Document lookup error:', {
+      message: documentError.message,
+      code: documentError.code,
+      requestId,
+    });
+    return jsonNoStore(
+      { error: 'document_lookup_failed', message: 'Unable to verify the uploaded document.', requestId },
+      { status: 500 },
+    );
+  }
+
+  if (!ownedDocument) {
+    return jsonNoStore(
+      { error: 'document_not_found', message: 'Uploaded document was not found.', requestId },
+      { status: 404 },
+    );
+  }
+
+  const objectPath = String(ownedDocument.file_path || '').trim();
+  const bucket = String(ownedDocument.bucket || DEFAULT_BUCKET).trim();
+  const expectedPrefix = `uploads/${userId}/${documentId}/`;
+
+  if (!objectPath || !objectPath.startsWith(expectedPrefix) || bucket !== DEFAULT_BUCKET) {
+    console.warn('[document-upload] Rejected non-canonical document storage location', {
+      documentId,
+      userId,
+      bucket,
+      requestId,
+    });
+    return jsonNoStore(
+      {
+        error: 'invalid_document_storage',
+        message: 'The uploaded document storage reference is invalid. Start the upload again.',
+        requestId,
+      },
+      { status: 409 },
+    );
+  }
+
+  const fileName = String(ownedDocument.file_name || '').trim();
+  const fileSize = Number(ownedDocument.file_size_bytes || 0);
 
   const { error: updateError } = await supabase
     .from('au_documents')
-    .update(updatePayload)
+    .update({
+      status: 'uploaded',
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', documentId)
     .eq('user_id', userId);
 
@@ -305,10 +336,12 @@ async function handleComplete(authorization: AuthorizedRequest, body: any, reque
       code: updateError.code,
       requestId,
     });
-    // Non-fatal: continue to create the worker job
+    return jsonNoStore(
+      { error: 'document_update_failed', message: 'Unable to finalize the uploaded document.', requestId },
+      { status: 500 },
+    );
   }
 
-  // Create or update a worker job for RAG processing — use upsert for idempotency
   const { error: jobError } = await supabase.from('au_worker_jobs').upsert({
     id: jobId,
     upload_id: uploadId,
@@ -318,9 +351,9 @@ async function handleComplete(authorization: AuthorizedRequest, body: any, reque
     status: 'queued',
     progress: 0,
     file_name: fileName,
-    file_size_bytes: fileSize,    // ← correct column (not file_size)
+    file_size_bytes: fileSize,
     mime_type: mimeType,
-    object_path: objectPath,      // ← correct column (not storage_path)
+    object_path: objectPath,
     bucket,
     correlation_id: correlationId,
     worker_id: 'vps-worker',
