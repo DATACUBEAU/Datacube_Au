@@ -13,6 +13,8 @@ export const TRACKED_USAGE_METRIC_KEYS = [
   'uploads_count',
   'uploaded_mb',
   'uploaded_bytes',
+  'jobs_completed',
+  'jobs_failed',
   'max_exam_predictions',
   'prediction_generations',
   'used_exams',
@@ -41,6 +43,8 @@ export const USAGE_METRIC_ALIASES: Record<string, string[]> = {
   image_generations: ['image_generations'],
   uploaded_mb: ['uploaded_mb'],
   uploaded_bytes: ['uploaded_bytes'],
+  jobs_completed: ['jobs_completed'],
+  jobs_failed: ['jobs_failed'],
 };
 
 function safeString(value: unknown): string {
