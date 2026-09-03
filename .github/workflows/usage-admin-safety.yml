@@ -86,6 +86,7 @@ jobs:
           tests/usage-event-user-serialization.unit.test.ts
           tests/usage-admin-adjustment-error-safety.unit.test.ts
           tests/ai-usage-begin-settlement-safety.unit.test.ts
+          tests/worker-terminal-usage-event.unit.test.ts
           src/lib/server/usage-tracking.ts
           src/lib/server/ai-usage-accounting.ts
           src/lib/limits/plan-limit-model.ts
@@ -135,3 +136,4 @@ jobs:
           node .tmp-tests/tests/usage-event-user-serialization.unit.test.js
           node .tmp-tests/tests/usage-admin-adjustment-error-safety.unit.test.js
           node .tmp-tests/tests/ai-usage-begin-settlement-safety.unit.test.js
+          node .tmp-tests/tests/worker-terminal-usage-event.unit.test.js
