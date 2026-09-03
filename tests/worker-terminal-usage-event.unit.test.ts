@@ -120,4 +120,23 @@ assert.match(
   'worker failure still maintains the compatibility snapshot during rollout',
 );
 
-console.log('worker terminal usage-event idempotency and plan-attribution regression passed');
+// Failed-job compatibility accounting must never get ahead of durable terminal
+// persistence. A failed au_worker_jobs update means the terminal usage-event
+// trigger did not fire, so the legacy snapshot must also stay unchanged.
+assert.match(
+  worker,
+  /private\s+async\s+markJobFailed\([\s\S]*\):\s*Promise<Error\s*\|\s*null>[\s\S]*return\s+error;/i,
+  'markJobFailed must surface terminal persistence failure to its caller',
+);
+assert.match(
+  worker,
+  /const\s+failurePersistError\s*=\s*await\s+this\.markJobFailed\([\s\S]*await\s+this\.markDocumentFailed\([\s\S]*if\s*\(!failurePersistError\)\s*\{[\s\S]*jobs_failed\s*:\s*1/i,
+  'legacy jobs_failed usage must only advance after the durable failed state persists',
+);
+assert.match(
+  worker,
+  /Skipping failed-job compatibility usage because terminal state did not persist/i,
+  'failed terminal persistence should remain observable without creating phantom usage',
+);
+
+console.log('worker terminal usage-event idempotency, persistence-gating, and plan-attribution regression passed');
