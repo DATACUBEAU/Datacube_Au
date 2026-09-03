@@ -6,9 +6,14 @@ const migrationPath = path.join(
   process.cwd(),
   'supabase/migrations/20260903065000_track_worker_terminal_usage_events.sql',
 );
+const planAttributionMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260903094500_worker_usage_plan_attribution.sql',
+);
 const workerPath = path.join(process.cwd(), 'rag-worker/src/worker.ts');
 
 const sql = fs.readFileSync(migrationPath, 'utf8');
+const planSql = fs.readFileSync(planAttributionMigrationPath, 'utf8');
 const worker = fs.readFileSync(workerPath, 'utf8');
 
 assert.match(
@@ -67,6 +72,40 @@ assert.match(
   'service-role execution must remain available for the trigger-owned processing path',
 );
 
+// Cost attribution must be tied to the server-side entitlement state at the
+// moment the terminal event is written. Keep this descriptive: plan snapshots
+// must not become a second enforcement source.
+assert.match(
+  planSql,
+  /FROM\s+public\.au_user_entitlements\s+e[\s\S]*WHERE\s+e\.user_id\s*=\s*v_owner_id/i,
+  'worker plan attribution must come from the authoritative entitlement row for the job owner',
+);
+assert.match(
+  planSql,
+  /admin_override_plan/i,
+  'admin plan overrides must be reflected in the processing usage snapshot',
+);
+assert.match(
+  planSql,
+  /expires_at\s+IS\s+NOT\s+NULL\s+AND\s+e\.expires_at\s*<=\s*v_occurred_at[\s\S]*THEN\s+'free'/i,
+  'expired paid entitlements must not be attributed as active paid plans',
+);
+assert.match(
+  planSql,
+  /'plan_snapshot'\s*,\s*v_plan[\s\S]*'entitlement_source_snapshot'\s*,\s*v_entitlement_source[\s\S]*'plan_expires_at_snapshot'\s*,\s*v_plan_expires_at/i,
+  'terminal usage context must preserve plan, entitlement-source, and expiry snapshots',
+);
+assert.match(
+  planSql,
+  /ON\s+CONFLICT\s*\(\s*user_id\s*,\s*event_key\s*\)\s+DO\s+NOTHING/i,
+  'plan attribution must preserve the same retry-safe event identity',
+);
+assert.match(
+  planSql,
+  /REVOKE\s+ALL\s+ON\s+FUNCTION\s+public\.capture_worker_terminal_usage_event\(\)\s+FROM\s+PUBLIC,\s*anon,\s*authenticated/i,
+  'plan-attribution replacement must preserve browser-role restrictions',
+);
+
 // Compatibility remains explicit until worker-side direct counter writes can be
 // removed safely. This prevents accidental claims that the legacy projection is
 // already gone while the worker still writes it.
@@ -81,4 +120,4 @@ assert.match(
   'worker failure still maintains the compatibility snapshot during rollout',
 );
 
-console.log('worker terminal usage-event idempotency regression passed');
+console.log('worker terminal usage-event idempotency and plan-attribution regression passed');
