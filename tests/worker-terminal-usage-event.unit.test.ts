@@ -10,10 +10,15 @@ const planAttributionMigrationPath = path.join(
   process.cwd(),
   'supabase/migrations/20260903094500_worker_usage_plan_attribution.sql',
 );
+const indexedChunkMigrationPath = path.join(
+  process.cwd(),
+  'supabase/migrations/20260903164000_meter_indexed_ingestion_chunks.sql',
+);
 const workerPath = path.join(process.cwd(), 'rag-worker/src/worker.ts');
 
 const sql = fs.readFileSync(migrationPath, 'utf8');
 const planSql = fs.readFileSync(planAttributionMigrationPath, 'utf8');
+const indexedChunkSql = fs.readFileSync(indexedChunkMigrationPath, 'utf8');
 const worker = fs.readFileSync(workerPath, 'utf8');
 
 assert.match(
@@ -106,6 +111,50 @@ assert.match(
   'plan-attribution replacement must preserve browser-role restrictions',
 );
 
+// Successful ingestion already verifies that canonical chunk rows and Qdrant
+// points agree before the job can reach completed. Meter that durable indexed
+// output in the existing terminal event instead of introducing another counter.
+assert.match(
+  indexedChunkSql,
+  /'indexed_chunks'\s*,\s*'Indexed document chunks'[\s\S]*'processing'[\s\S]*NULL[\s\S]*'monthly'/i,
+  'indexed chunks must be registered as a processing metric with no plan limit',
+);
+assert.match(
+  indexedChunkSql,
+  /to_regclass\('public\.au_document_chunks'\)/i,
+  'completed-job chunk metering must read the durable canonical chunk table',
+);
+assert.match(
+  indexedChunkSql,
+  /document_id\s*=\s*\$1[\s\S]*(owner_id\s*=\s*\$2|user_id\s*=\s*\$2)/i,
+  'indexed chunk counting must remain scoped to the completed job document and owner when ownership columns exist',
+);
+assert.match(
+  indexedChunkSql,
+  /jsonb_build_object\('jobs_completed'\s*,\s*1\)[\s\S]*jsonb_build_object\('indexed_chunks'\s*,\s*v_indexed_chunk_count\)/i,
+  'completed terminal events must carry the indexed chunk amount in the same authoritative usage event',
+);
+assert.match(
+  indexedChunkSql,
+  /'indexed_chunk_count'\s*,\s*CASE\s+WHEN\s+NEW\.status\s*=\s*'completed'\s+THEN\s+v_indexed_chunk_count/i,
+  'indexed chunk provenance must remain visible in terminal usage context',
+);
+assert.match(
+  indexedChunkSql,
+  /v_event_key\s*:=\s*'worker_job:'\s*\|\|\s*NEW\.id::TEXT\s*\|\|\s*':'\s*\|\|\s*NEW\.status[\s\S]*ON\s+CONFLICT\s*\(\s*user_id\s*,\s*event_key\s*\)\s+DO\s+NOTHING/i,
+  'indexed chunk metering must inherit the retry-safe worker terminal event identity',
+);
+assert.match(
+  indexedChunkSql,
+  /'plan_snapshot'\s*,\s*v_plan[\s\S]*'entitlement_source_snapshot'\s*,\s*v_entitlement_source/i,
+  'indexed chunk usage must preserve server-side plan attribution',
+);
+assert.doesNotMatch(
+  indexedChunkSql,
+  /increment_usage_counters/i,
+  'indexed chunk metering must not create a parallel mutable compatibility counter',
+);
+
 // Compatibility remains explicit until worker-side direct counter writes can be
 // removed safely. This prevents accidental claims that the legacy projection is
 // already gone while the worker still writes it.
@@ -139,4 +188,4 @@ assert.match(
   'failed terminal persistence should remain observable without creating phantom usage',
 );
 
-console.log('worker terminal usage-event idempotency, persistence-gating, and plan-attribution regression passed');
+console.log('worker terminal usage-event idempotency, persistence-gating, plan-attribution, and indexed-chunk metering regression passed');
