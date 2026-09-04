@@ -69,6 +69,7 @@ jobs:
           tests/simple-plan-rule-atomicity.unit.test.ts
           tests/conex-usage-selection-race.unit.test.ts
           tests/conex-usage-idempotent-retry.unit.test.ts
+          tests/settings-plan-usage-navigation.unit.test.ts
           tests/document-owner-usage-version.unit.test.ts
           tests/ai-usage-window-scope.unit.test.ts
           tests/ai-usage-commit-window.unit.test.ts
@@ -120,6 +121,7 @@ jobs:
           node .tmp-tests/tests/simple-plan-rule-atomicity.unit.test.js
           node .tmp-tests/tests/conex-usage-selection-race.unit.test.js
           node .tmp-tests/tests/conex-usage-idempotent-retry.unit.test.js
+          node .tmp-tests/tests/settings-plan-usage-navigation.unit.test.js
           node .tmp-tests/tests/document-owner-usage-version.unit.test.js
           node .tmp-tests/tests/ai-usage-window-scope.unit.test.js
           node .tmp-tests/tests/ai-usage-commit-window.unit.test.js
