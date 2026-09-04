@@ -27,8 +27,8 @@ assert.match(
 
 // The stale-entitlement guard must execute before either mutation path is delegated.
 const resetAllGuardIndex = route.indexOf('sameAdjustmentEligibility(initialEffective, mutationEffective, APPROVED_LIMIT_KEYS)');
-const batchRpcIndex = route.indexOf("rpc('admin_adjust_usage_batch_versioned'");
-assert.ok(resetAllGuardIndex >= 0 && batchRpcIndex > resetAllGuardIndex);
+const resetAllRpcIndex = route.indexOf("rpc('admin_adjust_usage_reset_all_versioned'");
+assert.ok(resetAllGuardIndex >= 0 && resetAllRpcIndex > resetAllGuardIndex);
 
 const singleGuardIndex = route.indexOf('sameAdjustmentEligibility(initialEffective, mutationEffective, [body.metricKey])');
 const applyAdjustmentCallIndex = route.indexOf('const result = await applyAdjustment({');
