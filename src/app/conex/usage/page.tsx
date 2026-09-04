@@ -192,6 +192,7 @@ export default function ConexUsagePage() {
   const [planReset, setPlanReset] = useState('daily');
   const [savingPlanRule, setSavingPlanRule] = useState(false);
   const selectedUserIdRef = useRef('');
+  const userListRequestVersionRef = useRef(0);
   const usageRequestVersionRef = useRef(0);
   const planRuleRequestVersionRef = useRef(0);
   const adjustmentRequestRef = useRef<{ fingerprint: string; requestId: string } | null>(null);
@@ -219,21 +220,26 @@ export default function ConexUsagePage() {
   }, []);
 
   const loadUsers = useCallback(async (q = '') => {
+    const requestVersion = ++userListRequestVersionRef.current;
     setLoadingUsers(true);
     try {
       const params = new URLSearchParams({ q, page: '1', pageSize: '100', status: 'all', role: 'all', presence: 'all' });
       const res = await authedFetch(`/api/admin/users?${params.toString()}`);
       if (!res.ok) throw await responseError(res, 'Unable to load users.');
       const payload = await res.json();
+      if (requestVersion !== userListRequestVersionRef.current) return;
       const next = Array.isArray(payload.users) ? payload.users as ManagedUser[] : [];
       setUsers(next);
       const current = selectedUserIdRef.current;
       const nextUserId = current && next.some((user) => user.user_id === current) ? current : (next[0]?.user_id || '');
       selectUser(nextUserId);
     } catch (error: any) {
+      if (requestVersion !== userListRequestVersionRef.current) return;
       toast({ title: 'Users could not load', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
-      setLoadingUsers(false);
+      if (requestVersion === userListRequestVersionRef.current) {
+        setLoadingUsers(false);
+      }
     }
   }, [selectUser, toast]);
 
