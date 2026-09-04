@@ -55,8 +55,20 @@ assert.match(
 
 assert.match(
   source,
+  /const trimmedAmount = amount\.trim\(\);[\s\S]*?action !== 'reset' && trimmedAmount === ''[\s\S]*?Enter an amount[\s\S]*?return;[\s\S]*?const numericAmount = action === 'reset' \? 0 : Number\(trimmedAmount\);/,
+  'blank adjustment input must be rejected before numeric coercion can turn an empty value into zero',
+);
+
+assert.doesNotMatch(
+  source,
+  /const numericAmount = Number\(amount\);/,
+  'raw adjustment input must not be coerced directly because Number(\'\') is zero',
+);
+
+assert.match(
+  source,
   /<Select value=\{selectedUserId\} onValueChange=\{selectUser\}/,
   'user selection must pass through the invalidating selection handler',
 );
 
-console.log('Conex usage selection race regression passed');
+console.log('Conex usage selection and input safety regressions passed');
