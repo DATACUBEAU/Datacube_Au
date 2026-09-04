@@ -37,6 +37,10 @@ const decreaseRequestedAmountSql = readFileSync(
   'supabase/migrations/20260901024000_admin_usage_decrease_requested_amount_fingerprint.sql',
   'utf8',
 );
+const resetAllRootReceiptSql = readFileSync(
+  'supabase/migrations/20260904084500_admin_usage_reset_all_root_receipt.sql',
+  'utf8',
+);
 const usageRoute = readFileSync(
   'src/app/api/admin/limits/user-usage/route.ts',
   'utf8',
@@ -232,6 +236,63 @@ assert.doesNotMatch(decreaseRequestedAmountSql, /\bTRUNCATE\b/i);
 assert.doesNotMatch(
   decreaseRequestedAmountSql,
   /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+);
+
+// reset_all needs one durable root completion identity. Per-metric request IDs alone
+// cannot prevent a lost-response retry from acquiring effects for metrics that are
+// enabled later, and an empty batch otherwise has no row to dedupe against.
+assert.match(
+  resetAllRootReceiptSql,
+  /CREATE TABLE IF NOT EXISTS public\.au_usage_admin_batch_receipts[\s\S]+UNIQUE \(user_id, action, root_request_id\)/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /action TEXT NOT NULL CHECK \(action = 'reset_all'\)/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /actor_user_id UUID NULL REFERENCES auth\.users\(id\) ON DELETE SET NULL/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /REVOKE ALL ON TABLE public\.au_usage_admin_batch_receipts FROM PUBLIC, anon, authenticated, service_role/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_reset_all_versioned/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /is_conex_admin\(v_requester\)[\s\S]+usage_accounting_user[\s\S]+SELECT \*[\s\S]+au_usage_admin_batch_receipts[\s\S]+FOR UPDATE/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /IF FOUND THEN[\s\S]+usage_adjustment_idempotency_conflict[\s\S]+RETURN jsonb_build_object\([\s\S]+'deduped', TRUE[\s\S]+'items', v_existing\.items/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /INSERT INTO public\.au_usage_admin_batch_receipts[\s\S]+IF jsonb_array_length\(p_items\) > 0 THEN[\s\S]+admin_adjust_usage_batch_versioned/i,
+);
+assert.match(
+  resetAllRootReceiptSql,
+  /'no_op', jsonb_array_length\(v_inserted\.items\) = 0/i,
+);
+assert.match(
+  usageRoute,
+  /admin_adjust_usage_reset_all_versioned[\s\S]+p_root_request_id:\s*rootRequestId[\s\S]+p_items:\s*items/i,
+);
+assert.doesNotMatch(
+  usageRoute,
+  /if \(items\.length > 0\) \{[\s\S]{0,500}admin_adjust_usage_batch_versioned/i,
+);
+assert.match(
+  usageRoute,
+  /batchReceipt[\s\S]+receiptItems[\s\S]+results/i,
+);
+assert.doesNotMatch(resetAllRootReceiptSql, /\bTRUNCATE\b/i);
+assert.doesNotMatch(
+  resetAllRootReceiptSql,
+  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments|au_usage_admin_batch_receipts)/i,
 );
 
 console.log('PASS admin usage idempotency keys are retry-safe, payload-bound, and guarded');
