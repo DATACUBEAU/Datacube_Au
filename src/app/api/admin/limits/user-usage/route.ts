@@ -55,6 +55,29 @@ function serializeUsage(effective: Awaited<ReturnType<typeof resolveCanonicalEff
   });
 }
 
+async function loadCommittedUsageSnapshot(input: {
+  supabase: any;
+  userId: string;
+  fallbackPlan: string;
+}) {
+  try {
+    const refreshed = await resolveCanonicalEffectiveLimits({ supabase: input.supabase, userId: input.userId });
+    return {
+      refreshRequired: false,
+      plan: refreshed.plan,
+      usage: serializeUsage(refreshed),
+    } as const;
+  } catch {
+    // The authoritative mutation has already committed. A follow-up read failure
+    // must never be reported as a failed mutation or encourage a second write.
+    return {
+      refreshRequired: true,
+      plan: input.fallbackPlan,
+      usage: null,
+    } as const;
+  }
+}
+
 function sameResetWindow(
   left: { window_start: string | null; window_end: string | null },
   right: { window_start: string | null; window_end: string | null },
@@ -141,10 +164,6 @@ async function applyAdjustment(input: {
   if (input.action === 'reset') target = 0;
 
   const delta = target - current;
-  // A zero decrease is state-dependent: replaying it after new usage accrues could
-  // otherwise acquire a new negative effect. Persist it through the authoritative
-  // RPC as a no-op receipt. A zero increase is state-independent and can return
-  // immediately because the same payload can never affect later usage.
   if (delta === 0 && input.action === 'increase') {
     return { ok: true, changed: false, current, target, delta: 0 } as const;
   }
@@ -309,14 +328,19 @@ export async function POST(req: NextRequest) {
         return { key, changed: delta !== 0, delta };
       });
 
-      const refreshed = await resolveCanonicalEffectiveLimits({ supabase: adminResult.supabase, userId: body.userId });
+      const snapshot = await loadCommittedUsageSnapshot({
+        supabase: adminResult.supabase,
+        userId: body.userId,
+        fallbackPlan: mutationEffective.plan,
+      });
       return json({
         ok: true,
         requestId,
         action: body.action,
         results,
-        plan: refreshed.plan,
-        usage: serializeUsage(refreshed),
+        refreshRequired: snapshot.refreshRequired,
+        plan: snapshot.plan,
+        usage: snapshot.usage,
       });
     }
 
@@ -387,15 +411,20 @@ export async function POST(req: NextRequest) {
 
     if (!result.ok) return json({ ...result, requestId }, 400);
 
-    const refreshed = await resolveCanonicalEffectiveLimits({ supabase: adminResult.supabase, userId: body.userId });
+    const snapshot = await loadCommittedUsageSnapshot({
+      supabase: adminResult.supabase,
+      userId: body.userId,
+      fallbackPlan: mutationEffective.plan,
+    });
     return json({
       ok: true,
       requestId,
       action: body.action,
       metricKey: body.metricKey,
       result,
-      plan: refreshed.plan,
-      usage: serializeUsage(refreshed),
+      refreshRequired: snapshot.refreshRequired,
+      plan: snapshot.plan,
+      usage: snapshot.usage,
     });
   } catch (error: unknown) {
     if (error instanceof z.ZodError) {
