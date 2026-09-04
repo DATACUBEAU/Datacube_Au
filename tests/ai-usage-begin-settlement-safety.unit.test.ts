@@ -15,6 +15,11 @@ assert.match(
   'begin rejection must preserve the database result for HTTP status classification while exposing begin-phase settlement identity',
 );
 assert.match(
+  accounting,
+  /if \(code === 'USAGE_PROVIDER_TICKET_ALREADY_ACCEPTED'\) return 409;/,
+  'an already-accepted provider ticket is a deterministic conflict, not a retryable server failure',
+);
+assert.match(
   handler,
   /input\.error instanceof UsageAccountingError && input\.error\.code\.startsWith\('USAGE_BEGIN'\)\) return;/,
   'generation failure settlement must not release a reservation when begin was rejected',
