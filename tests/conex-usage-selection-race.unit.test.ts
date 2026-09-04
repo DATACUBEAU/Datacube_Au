@@ -7,8 +7,20 @@ const source = fs.readFileSync(pagePath, 'utf8');
 
 assert.match(
   source,
-  /const selectedUserIdRef = useRef\(''\);[\s\S]*?const usageRequestVersionRef = useRef\(0\);[\s\S]*?const planRuleRequestVersionRef = useRef\(0\);/,
-  'Conex usage must keep selected-user identity plus usage and plan-rule generation guards',
+  /const selectedUserIdRef = useRef\(''\);[\s\S]*?const userListRequestVersionRef = useRef\(0\);[\s\S]*?const usageRequestVersionRef = useRef\(0\);[\s\S]*?const planRuleRequestVersionRef = useRef\(0\);/,
+  'Conex usage must keep selected-user identity plus user-list, usage, and plan-rule generation guards',
+);
+
+assert.match(
+  source,
+  /const loadUsers = useCallback\(async \(q = ''\) => \{[\s\S]*?const requestVersion = \+\+userListRequestVersionRef\.current;[\s\S]*?requestVersion !== userListRequestVersionRef\.current[\s\S]*?setUsers\(next\);[\s\S]*?selectUser\(nextUserId\);/,
+  'user-list responses must be discarded unless they are still the newest search before updating results or selection',
+);
+
+assert.match(
+  source,
+  /catch \(error: any\) \{[\s\S]*?requestVersion !== userListRequestVersionRef\.current[\s\S]*?Users could not load[\s\S]*?finally \{[\s\S]*?requestVersion === userListRequestVersionRef\.current[\s\S]*?setLoadingUsers\(false\);/,
+  'stale user-list requests must not surface errors or clear the loading state owned by a newer search',
 );
 
 assert.match(
