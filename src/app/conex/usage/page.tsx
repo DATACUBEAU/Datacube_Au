@@ -348,7 +348,12 @@ export default function ConexUsagePage() {
   async function saveAdjustment() {
     if (!editingMetric || !selectedUserId) return;
     const targetUserId = selectedUserId;
-    const numericAmount = Number(amount);
+    const trimmedAmount = amount.trim();
+    if (action !== 'reset' && trimmedAmount === '') {
+      toast({ title: 'Enter an amount', description: 'Blank usage values are not applied as zero.', variant: 'destructive' });
+      return;
+    }
+    const numericAmount = action === 'reset' ? 0 : Number(trimmedAmount);
     if (action !== 'reset' && (!Number.isFinite(numericAmount) || numericAmount < 0)) {
       toast({ title: 'Enter a valid amount', variant: 'destructive' });
       return;
