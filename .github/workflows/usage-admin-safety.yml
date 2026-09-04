@@ -62,6 +62,7 @@ jobs:
           tests/admin-usage-delta-direction.unit.test.ts
           tests/admin-usage-delta-magnitude.unit.test.ts
           tests/admin-usage-actor-email-attribution.unit.test.ts
+          tests/admin-usage-actor-deletion-audit.unit.test.ts
           tests/admin-usage-active-window.unit.test.ts
           tests/admin-usage-entitlement-race.unit.test.ts
           tests/usage-window-wall-clock-freshness.unit.test.ts
@@ -112,6 +113,7 @@ jobs:
           node .tmp-tests/tests/admin-usage-delta-direction.unit.test.js
           node .tmp-tests/tests/admin-usage-delta-magnitude.unit.test.js
           node .tmp-tests/tests/admin-usage-actor-email-attribution.unit.test.js
+          node .tmp-tests/tests/admin-usage-actor-deletion-audit.unit.test.js
           node .tmp-tests/tests/admin-usage-active-window.unit.test.js
           node .tmp-tests/tests/admin-usage-entitlement-race.unit.test.js
           node .tmp-tests/tests/usage-window-wall-clock-freshness.unit.test.js
