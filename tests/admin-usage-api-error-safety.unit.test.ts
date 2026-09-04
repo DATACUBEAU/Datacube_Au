@@ -12,6 +12,13 @@ for (const route of [usageRoute, simplePlanRoute]) {
 
 assert.match(usageRoute, /code: 'user_usage_load_failed'/);
 assert.match(usageRoute, /code: 'user_usage_update_failed'/);
+assert.match(usageRoute, /amount:\s*z\.number\(\)\.finite\(\)\.int\(\)\.min\(0\)/);
+assert.doesNotMatch(usageRoute, /amount:\s*z\.coerce\.number\(\)/);
+assert.match(
+  usageRoute,
+  /\(body\.action === 'increase' \|\| body\.action === 'decrease' \|\| body\.action === 'set'\) && body\.amount === undefined/,
+  'relative/set actions must still require an explicit numeric amount after strict JSON number validation',
+);
 assert.match(usageRoute, /function isUsageIdempotencyConflict[\s\S]*code === '22023'[\s\S]*usage_adjustment_idempotency_conflict/);
 assert.match(usageRoute, /if \(isUsageIdempotencyConflict\(error\)\)[\s\S]*code: 'idempotency_conflict'[\s\S]*\}, 409\)/);
 assert.match(usageRoute, /This request ID was already used for a different usage action/);
@@ -40,4 +47,4 @@ assert.doesNotMatch(
 assert.match(simplePlanRoute, /code: 'simple_plan_rules_load_failed'/);
 assert.match(simplePlanRoute, /code: 'simple_plan_rule_save_failed'/);
 
-console.log('PASS admin usage APIs classify deterministic conflicts and preserve committed-write success without exposing raw internal failure messages');
+console.log('PASS admin usage APIs reject coerced amounts, classify deterministic conflicts, and preserve committed-write success without exposing raw internal failure messages');
