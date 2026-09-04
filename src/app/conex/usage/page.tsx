@@ -391,10 +391,17 @@ export default function ConexUsagePage() {
       if (!res.ok) throw await responseError(res, 'Unable to update usage.');
       const payload = await res.json();
       if (selectedUserIdRef.current !== targetUserId) return;
-      setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
+      if (Array.isArray(payload.usage)) {
+        setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage } : current);
+      }
       adjustmentRequestRef.current = null;
       setEditingMetric(null);
-      toast({ title: 'Usage updated', description: `${editingMetric.label} now reflects the admin adjustment.` });
+      if (payload.refreshRequired === true || !Array.isArray(payload.usage)) {
+        toast({ title: 'Usage updated', description: 'The change was saved. Reloading the latest usage now.' });
+        await loadUsage(targetUserId);
+      } else {
+        toast({ title: 'Usage updated', description: `${editingMetric.label} now reflects the admin adjustment.` });
+      }
     } catch (error: any) {
       if (selectedUserIdRef.current !== targetUserId) return;
       toast({ title: 'Usage update failed', description: error?.message || 'Try again.', variant: 'destructive' });
@@ -476,10 +483,17 @@ export default function ConexUsagePage() {
       if (!res.ok) throw await responseError(res, 'Unable to reset usage.');
       const payload = await res.json();
       if (selectedUserIdRef.current !== targetUserId) return;
-      setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage || current.usage } : current);
+      if (Array.isArray(payload.usage)) {
+        setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage } : current);
+      }
       resetAllRequestRef.current = null;
       setResetAllOpen(false);
-      toast({ title: 'Usage reset', description: 'All adjustable usage for the active windows was reset without deleting history.' });
+      if (payload.refreshRequired === true || !Array.isArray(payload.usage)) {
+        toast({ title: 'Usage reset', description: 'The reset was saved. Reloading the latest usage now.' });
+        await loadUsage(targetUserId);
+      } else {
+        toast({ title: 'Usage reset', description: 'All adjustable usage for the active windows was reset without deleting history.' });
+      }
     } catch (error: any) {
       if (selectedUserIdRef.current !== targetUserId) return;
       toast({ title: 'Hard reset failed', description: error?.message || 'Try again.', variant: 'destructive' });
