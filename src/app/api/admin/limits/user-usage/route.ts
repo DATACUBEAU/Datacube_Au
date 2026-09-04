@@ -14,7 +14,7 @@ const adjustmentSchema = z.object({
   userId: z.string().regex(UUID_REGEX, 'userId must be a valid UUID.'),
   action: z.enum(['increase', 'decrease', 'set', 'reset', 'reset_all']),
   metricKey: z.enum(APPROVED_LIMIT_KEYS).optional(),
-  amount: z.coerce.number().finite().int().min(0).max(1_000_000_000).optional(),
+  amount: z.number().finite().int().min(0).max(1_000_000_000).optional(),
   reason: z.string().trim().min(3).max(500),
   requestId: z.string().trim().min(8).max(MAX_USAGE_ADJUSTMENT_REQUEST_ID_LENGTH).optional(),
 });
