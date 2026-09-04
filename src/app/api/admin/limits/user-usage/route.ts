@@ -289,24 +289,32 @@ export async function POST(req: NextRequest) {
         };
       });
 
-      if (items.length > 0) {
-        const { error } = await adminResult.supabase.rpc('admin_adjust_usage_batch_versioned', {
-          p_actor_user_id: actorUserId,
-          p_actor_email: actorEmail,
-          p_target_user_id: body.userId,
-          p_reason: body.reason,
-          p_expected_usage_version: expectedUsageVersion,
-          p_items: items,
-        });
-        if (error) throw error;
-      }
+      const { data: batchReceipt, error } = await adminResult.supabase.rpc('admin_adjust_usage_reset_all_versioned', {
+        p_actor_user_id: actorUserId,
+        p_actor_email: actorEmail,
+        p_target_user_id: body.userId,
+        p_reason: body.reason,
+        p_root_request_id: rootRequestId,
+        p_expected_usage_version: expectedUsageVersion,
+        p_items: items,
+      });
+      if (error) throw error;
+
+      const receiptItems = Array.isArray((batchReceipt as { items?: unknown } | null)?.items)
+        ? ((batchReceipt as { items: Array<{ metricKey?: unknown; delta?: unknown }> }).items)
+        : items;
+      const results = receiptItems.map((item) => {
+        const key = String(item.metricKey || '');
+        const delta = Number(item.delta || 0);
+        return { key, changed: delta !== 0, delta };
+      });
 
       const refreshed = await resolveCanonicalEffectiveLimits({ supabase: adminResult.supabase, userId: body.userId });
       return json({
         ok: true,
         requestId,
         action: body.action,
-        results: items.map((item) => ({ key: item.metricKey, changed: item.delta !== 0, delta: item.delta })),
+        results,
         plan: refreshed.plan,
         usage: serializeUsage(refreshed),
       });
