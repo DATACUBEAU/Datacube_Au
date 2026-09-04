@@ -43,6 +43,12 @@ assert.match(
 
 assert.match(
   source,
+  /adjustmentRequestRef\.current = null;[\s\S]*?setEditingMetric\(null\);[\s\S]*?payload\.refreshRequired === true[\s\S]*?await loadUsage\(targetUserId\)/,
+  'a committed adjustment with a failed snapshot refresh must clear the mutation identity and retry only the read',
+);
+
+assert.match(
+  source,
   /const resetAllFingerprint = JSON\.stringify\([\s\S]*?userId: targetUserId[\s\S]*?reason: resetAllReason\.trim\(\)[\s\S]*?\);/,
   'hard-reset request identity must be bound to the selected user and reason',
 );
@@ -59,10 +65,16 @@ assert.match(
   'the hard-reset idempotency key must rotate only after confirmed success',
 );
 
+assert.match(
+  source,
+  /resetAllRequestRef\.current = null;[\s\S]*?setResetAllOpen\(false\);[\s\S]*?payload\.refreshRequired === true[\s\S]*?await loadUsage\(targetUserId\)/,
+  'a committed reset_all with a failed snapshot refresh must close the operation and retry only the read',
+);
+
 assert.doesNotMatch(
   source,
   /requestId: `conex-(?:usage|hard-reset):\$\{crypto\.randomUUID\(\)\}`/,
   'request IDs must not be generated inline for every Apply/Reset click',
 );
 
-console.log('Conex usage idempotent retry regression passed');
+console.log('Conex usage idempotent retry and committed-refresh recovery regression passed');
