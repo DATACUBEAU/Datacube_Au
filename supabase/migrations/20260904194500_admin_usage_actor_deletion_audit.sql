@@ -1,7 +1,7 @@
 -- Preserve immutable usage-adjustment attribution without blocking admin account deletion.
 --
--- The original audit ledger used ON DELETE RESTRICT for actor_user_id, so any
--- deletable admin who had authored an adjustment could no longer be removed from
+-- The original audit ledger used a restrictive foreign-key delete action for actor_user_id,
+-- so any deletable admin who had authored an adjustment could no longer be removed from
 -- auth.users. The ledger already stores a canonical actor_email snapshot. Make the
 -- actor UUID nullable for lifecycle deletion, retain that readable snapshot, and
 -- continue requiring a live actor for all new adjustment rows.
