@@ -5,6 +5,10 @@ const migration = readFileSync(
   'supabase/migrations/20260904194500_admin_usage_actor_deletion_audit.sql',
   'utf8',
 );
+const versionDeletionGuard = readFileSync(
+  'supabase/migrations/20260904214500_usage_mutation_delete_parent_guard.sql',
+  'utf8',
+);
 
 // Historical adjustment rows must not permanently block deletion of an admin account.
 assert.match(migration, /ALTER COLUMN actor_user_id DROP NOT NULL/);
@@ -35,6 +39,29 @@ assert.match(
   /SELECT NULLIF\(TRIM\(email\), ''\)[\s\S]+FROM auth\.users[\s\S]+WHERE id = NEW\.actor_user_id/,
 );
 assert.match(migration, /NEW\.actor_email := v_actor_email/);
+
+// Cascaded deletion of usage rows must not recreate a mutation-version row whose
+// parent auth.users record is being removed. Both the generic and document-specific
+// trigger functions verify that the affected parent still exists before inserting.
+assert.match(
+  versionDeletionGuard,
+  /v_old_user_id IS NOT NULL[\s\S]+EXISTS \(SELECT 1 FROM auth\.users WHERE id = v_old_user_id\)/,
+);
+assert.match(
+  versionDeletionGuard,
+  /v_new_user_id IS NOT NULL[\s\S]+EXISTS \(SELECT 1 FROM auth\.users WHERE id = v_new_user_id\)/,
+);
+assert.match(
+  versionDeletionGuard,
+  /WHERE candidate IS NOT NULL[\s\S]+EXISTS \(SELECT 1 FROM auth\.users WHERE id = candidate\)/,
+);
+
+// Normal versioning remains append/update-only; this lifecycle guard must not remove
+// usage data, audit rows, or version rows directly.
+assert.match(versionDeletionGuard, /ON CONFLICT \(user_id\) DO UPDATE/);
+assert.doesNotMatch(versionDeletionGuard, /\bDELETE\s+FROM\b/i);
+assert.doesNotMatch(versionDeletionGuard, /\bTRUNCATE\b/i);
+assert.doesNotMatch(versionDeletionGuard, /\bDROP\s+TABLE\b/i);
 
 // This lifecycle migration must preserve the append-only audit rows and production data.
 assert.doesNotMatch(migration, /\bDELETE\s+FROM\s+public\.au_usage_admin_adjustments\b/i);
