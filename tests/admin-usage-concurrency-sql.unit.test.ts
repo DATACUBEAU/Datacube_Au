@@ -19,6 +19,7 @@ async function main() {
   const versionMigration = readFileSync('supabase/migrations/20260828004500_usage_mutation_version_guard.sql', 'utf8');
   const legacyVersionMigration = readFileSync('supabase/migrations/20260828020000_legacy_usage_mutation_version_guard.sql', 'utf8');
   const checkpointMigration = readFileSync('supabase/migrations/20260828065500_admin_usage_legacy_checkpoint.sql', 'utf8');
+  const resetAllRootReceiptMigration = readFileSync('supabase/migrations/20260904084500_admin_usage_reset_all_root_receipt.sql', 'utf8');
   const route = readFileSync('src/app/api/admin/limits/user-usage/route.ts', 'utf8');
   const limits = readFileSync('src/lib/server/au-limits.ts', 'utf8');
 
@@ -47,11 +48,12 @@ async function main() {
     assert.match(migration, /does not invent a zero-value audit event/i);
   });
 
-  await run('reset-all executes through one transactional database batch', () => {
+  await run('reset-all executes through one transactional database batch behind its durable root receipt', () => {
     assert.match(migration, /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_checked/);
     assert.match(migration, /FOR v_item IN SELECT value FROM jsonb_array_elements\(p_items\)/);
     assert.match(migration, /public\.admin_adjust_usage_checked\(/);
-    assert.match(route, /admin_adjust_usage_batch_versioned/);
+    assert.match(route, /admin_adjust_usage_reset_all_versioned/);
+    assert.match(resetAllRootReceiptMigration, /admin_adjust_usage_batch_versioned\(/);
     assert.doesNotMatch(route, /for \(const key of APPROVED_LIMIT_KEYS\)[\s\S]*await applyAdjustment/);
   });
 
@@ -115,6 +117,7 @@ async function main() {
     assert.match(versionMigration, /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_versioned/);
     assert.match(versionMigration, /RETURN public\.admin_adjust_usage_batch_checked\(/);
     assert.match(route, /p_expected_usage_version: expectedUsageVersion/);
+    assert.match(resetAllRootReceiptMigration, /usage_accounting_user/);
     const batchFunction = versionMigration.slice(versionMigration.indexOf('CREATE OR REPLACE FUNCTION public.admin_adjust_usage_batch_versioned'));
     assert.match(batchFunction, /FOR UPDATE;/);
     assert.match(batchFunction, /usage_mutation_conflict/);
@@ -191,6 +194,9 @@ async function main() {
     assert.doesNotMatch(checkpointMigration, /DELETE\s+FROM\s+public\.au_usage_events/i);
     assert.doesNotMatch(checkpointMigration, /DELETE\s+FROM\s+public\.au_usage_admin_adjustments/i);
     assert.doesNotMatch(checkpointMigration, /TRUNCATE/i);
+    assert.doesNotMatch(resetAllRootReceiptMigration, /DELETE\s+FROM\s+public\.au_usage_admin_batch_receipts/i);
+    assert.doesNotMatch(resetAllRootReceiptMigration, /UPDATE\s+public\.au_usage_admin_batch_receipts/i);
+    assert.doesNotMatch(resetAllRootReceiptMigration, /TRUNCATE/i);
   });
 
   if (failed > 0) process.exit(1);
