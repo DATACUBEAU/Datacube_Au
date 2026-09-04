@@ -44,6 +44,7 @@ function normalizeRpcResult(data: unknown): UsageAccountingResult {
 
 function accountingStatus(code: string | null, status: string | null): number {
   if (code === 'USAGE_REQUEST_IN_PROGRESS') return 409;
+  if (code === 'USAGE_PROVIDER_TICKET_ALREADY_ACCEPTED') return 409;
   if (code === 'USAGE_RESERVATION_CLAIM_MISMATCH') return 401;
   if (code === 'USAGE_RESERVATION_NOT_FOUND') return 401;
   if (status === 'committed' || status === 'released' || status === 'expired' || status === 'disputed') return 409;
