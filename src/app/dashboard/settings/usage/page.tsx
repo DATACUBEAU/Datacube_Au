@@ -50,13 +50,12 @@ function number(value: number) {
 function statusFor(used: number, limit: number | null, enabled: boolean) {
   if (!enabled) return { percent: 0, label: 'Disabled', level: 'disabled' as const };
   if (limit === null) return { percent: 0, label: 'Unlimited', level: 'normal' as const };
-  if (limit <= 0) {
-    return used > 0
-      ? { percent: 100, label: 'Limit reached', level: 'blocked' as const }
-      : { percent: 0, label: 'Unavailable', level: 'normal' as const };
-  }
-  const percent = Math.min(100, Math.round((Math.max(0, used) / limit) * 100));
-  if (percent >= 100) return { percent, label: 'Limit reached', level: 'blocked' as const };
+  if (limit <= 0) return { percent: 100, label: 'Limit reached', level: 'blocked' as const };
+
+  const normalizedUsed = Math.max(0, used);
+  const blocked = normalizedUsed >= limit;
+  const percent = Math.min(100, Math.round((normalizedUsed / limit) * 100));
+  if (blocked) return { percent, label: 'Limit reached', level: 'blocked' as const };
   if (percent >= 90) return { percent, label: 'Almost full', level: 'danger' as const };
   if (percent >= 75) return { percent, label: 'Approaching limit', level: 'warning' as const };
   return { percent, label: 'Available', level: 'normal' as const };
@@ -201,7 +200,7 @@ export default function UsagePage() {
   const limitedRows = usageRows.filter((row) => row.enabled && row.limit !== null);
   const totalPercent = limitedRows.length > 0
     ? Math.round(limitedRows.reduce((sum, row) => {
-      if ((row.limit || 0) <= 0) return sum + (row.used > 0 ? 100 : 0);
+      if ((row.limit || 0) <= 0) return sum + 100;
       return sum + Math.min(100, (row.used / (row.limit || 1)) * 100);
     }, 0) / limitedRows.length)
     : 0;
