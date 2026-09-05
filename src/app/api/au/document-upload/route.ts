@@ -84,11 +84,13 @@ export async function POST(req: NextRequest) {
       hint: error?.hint,
       requestId,
     });
-    const status = error?.status || 500;
-    const code = error?.code || 'upload_failed';
     return jsonNoStore(
-      { error: code, message: String(error?.message || 'Upload failed.'), requestId },
-      { status },
+      {
+        error: 'upload_failed',
+        message: 'Unable to process the upload. Please try again.',
+        requestId,
+      },
+      { status: 500 },
     );
   }
 }
@@ -129,14 +131,13 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
   if (signedError) {
     console.error('[document-upload] Signed URL error:', {
       message: signedError.message,
-      bucket,
-      storagePath,
+      code: signedError.name,
       requestId,
     });
     return jsonNoStore(
       {
         error: 'signed_url_failed',
-        message: `Failed to create upload URL: ${signedError.message}`,
+        message: 'Unable to prepare the upload. Please try again.',
         requestId,
       },
       { status: 500 },
@@ -220,7 +221,7 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
         return jsonNoStore(
           {
             error: 'insert_failed',
-            message: `Failed to register document: ${retryError.message}`,
+            message: 'Unable to register the document. Please try again.',
             requestId,
           },
           { status: 500 },
@@ -230,7 +231,7 @@ async function handleInitiate(authorization: AuthorizedRequest, body: any, reque
       return jsonNoStore(
         {
           error: 'insert_failed',
-          message: `Failed to register document: ${insertError.message}`,
+          message: 'Unable to register the document. Please try again.',
           requestId,
         },
         { status: 500 },
@@ -373,7 +374,7 @@ async function handleComplete(authorization: AuthorizedRequest, body: any, reque
     return jsonNoStore(
       {
         error: 'job_creation_failed',
-        message: `Failed to create processing job: ${jobError.message}`,
+        message: 'Unable to start document processing. Please try again.',
         requestId,
       },
       { status: 500 },
