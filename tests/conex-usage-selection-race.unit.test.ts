@@ -67,8 +67,32 @@ assert.doesNotMatch(
 
 assert.match(
   source,
+  /const percent = row\.limit === null[\s\S]*?row\.limit === 0[\s\S]*?\? 100[\s\S]*?Math\.min\(100, Math\.round\(\(row\.used \/ row\.limit\) \* 100\)\);/,
+  'finite zero-cap usage must render as exhausted rather than as zero percent consumed',
+);
+
+assert.match(
+  source,
+  /const blocked = row\.limit !== null && row\.used >= row\.limit;/,
+  'blocked state must use the authoritative used-versus-limit comparison instead of rounded percentage',
+);
+
+assert.match(
+  source,
+  /const disabledUsageRows = usageRows\.filter\(\(row\) => row\.mode === 'usage' && !row\.adjustable\);[\s\S]*?const capacityRows = usageRows\.filter\(\(row\) => row\.mode !== 'usage'\);/,
+  'disabled usage rules must remain distinct from non-usage live-capacity rules',
+);
+
+assert.match(
+  source,
+  /Unavailable usage[\s\S]*?disabled for this plan and cannot be adjusted here[\s\S]*?Advanced Plan Limits/,
+  'disabled usage allowances must be explained as unavailable with a recovery path instead of being mislabeled as capacity',
+);
+
+assert.match(
+  source,
   /<Select value=\{selectedUserId\} onValueChange=\{selectUser\}/,
   'user selection must pass through the invalidating selection handler',
 );
 
-console.log('Conex usage selection and input safety regressions passed');
+console.log('Conex usage selection, input, and presentation regressions passed');
