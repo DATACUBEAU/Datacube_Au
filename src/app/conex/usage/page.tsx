@@ -138,10 +138,14 @@ function humanReset(value: string) {
 }
 
 function UsageProgress({ row }: { row: UsageRow }) {
-  const percent = row.limit && row.limit > 0 ? Math.min(100, Math.round((row.used / row.limit) * 100)) : 0;
+  const percent = row.limit === null
+    ? 0
+    : row.limit === 0
+      ? 100
+      : Math.min(100, Math.round((row.used / row.limit) * 100));
   const warning = percent >= 75;
   const danger = percent >= 90;
-  const blocked = percent >= 100;
+  const blocked = row.limit !== null && row.used >= row.limit;
 
   return (
     <div>
@@ -316,8 +320,10 @@ export default function ConexUsagePage() {
     }
   }, [loadPlanRules, usage?.plan, usage?.userId]);
 
-  const adjustableRows = (usage?.usage || []).filter((row) => row.adjustable);
-  const capacityRows = (usage?.usage || []).filter((row) => !row.adjustable);
+  const usageRows = usage?.usage || [];
+  const adjustableRows = usageRows.filter((row) => row.adjustable);
+  const disabledUsageRows = usageRows.filter((row) => row.mode === 'usage' && !row.adjustable);
+  const capacityRows = usageRows.filter((row) => row.mode !== 'usage');
   const simplePlanRules = planRules.filter((rule) => rule.editableHere);
 
   function openAdjustment(row: UsageRow, nextAction: AdjustmentAction) {
@@ -654,6 +660,26 @@ export default function ConexUsagePage() {
                 <Button asChild variant="ghost" size="sm" className="w-full"><Link href="/conex/plan-limits">Open advanced settings</Link></Button>
               </CardContent>
             </Card>
+
+            {disabledUsageRows.length > 0 ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-base">Unavailable usage</CardTitle>
+                  <CardDescription>These usage allowances are disabled for this plan and cannot be adjusted here.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {disabledUsageRows.map((row) => (
+                    <div key={row.key} className="rounded-xl border p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium">{row.label}</p>
+                        <Badge variant="outline">Unavailable</Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">Use Advanced Plan Limits to enable or configure this allowance.</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            ) : null}
 
             <Card>
               <CardHeader>
