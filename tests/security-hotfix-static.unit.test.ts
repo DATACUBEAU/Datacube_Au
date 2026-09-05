@@ -209,3 +209,16 @@ test('document completion binds worker ingestion to the persisted owner-scoped s
   assert.doesNotMatch(route, /const bucket = String\(body\.bucket/);
   assert.doesNotMatch(route, /updatePayload\.file_path\s*=\s*objectPath/);
 });
+
+test('document upload failures keep provider diagnostics server-side', () => {
+  const route = readRepoFile('src', 'app', 'api', 'au', 'document-upload', 'route.ts');
+
+  assert.match(route, /error: 'signed_url_failed',[\s\S]*message: 'Unable to prepare the upload\. Please try again\.'/);
+  assert.match(route, /error: 'insert_failed',[\s\S]*message: 'Unable to register the document\. Please try again\.'/);
+  assert.match(route, /error: 'job_creation_failed',[\s\S]*message: 'Unable to start document processing\. Please try again\.'/);
+  assert.match(route, /error: 'upload_failed',[\s\S]*message: 'Unable to process the upload\. Please try again\.'/);
+  assert.doesNotMatch(route, /message:\s*`Failed to create upload URL:\s*\$\{signedError\.message\}`/);
+  assert.doesNotMatch(route, /message:\s*`Failed to register document:\s*\$\{(?:retryError|insertError)\.message\}`/);
+  assert.doesNotMatch(route, /message:\s*`Failed to create processing job:\s*\$\{jobError\.message\}`/);
+  assert.doesNotMatch(route, /error:\s*code,\s*message:\s*String\(error\?\.message/);
+});
