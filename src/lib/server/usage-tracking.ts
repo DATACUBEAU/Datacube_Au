@@ -25,6 +25,20 @@ function isSchemaDriftError(error: any): boolean {
   );
 }
 
+function isMissingUsageAdminAdjustmentRpcError(error: any): boolean {
+  const code = String(error?.code || '').trim();
+  const message = String(error?.message || '').toLowerCase();
+  const details = String(error?.details || '').toLowerCase();
+  const hint = String(error?.hint || '').toLowerCase();
+  const context = `${message} ${details} ${hint}`;
+  const namesAdjustmentRpc = context.includes('get_usage_admin_adjustment_total');
+
+  return (
+    (code === '42883' && namesAdjustmentRpc) ||
+    (code === 'PGRST202' && namesAdjustmentRpc)
+  );
+}
+
 export type UsageTrackingResult = {
   tracked: boolean;
   deduped: boolean;
@@ -59,15 +73,47 @@ export type UsageHealthMetricRow = {
   trackedUsed: number;
   legacyUsed: number;
   effectiveUsed: number;
-  source: 'tracked' | 'legacy' | 'hybrid' | 'limit_snapshot';
+  source: 'tracked' | 'legacy' | 'hybrid' | 'limit_snapshot' | 'admin_adjusted';
   resetPolicy: string;
   resetWindowStart: string | null;
   resetWindowEnd: string | null;
   withinLimit: boolean;
 };
 
+type ResolvedUsageSource = UsageHealthMetricRow['source'];
+
 function shouldUseTrackedCountersForRuleMode(mode: string | null | undefined): boolean {
   return String(mode || '').trim().toLowerCase() === 'usage';
+}
+
+async function loadUsageAdminAdjustmentTotal(input: {
+  supabase: SupabaseClient;
+  userId: string;
+  metricKey: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+}): Promise<number> {
+  if (!input.userId || !input.metricKey || !input.windowStart) return 0;
+
+  try {
+    const { data, error } = await input.supabase.rpc('get_usage_admin_adjustment_total', {
+      p_user_id: input.userId,
+      p_metric_key: input.metricKey,
+      p_window_start: input.windowStart,
+      p_window_end: input.windowEnd,
+    });
+
+    if (error) {
+      if (isMissingUsageAdminAdjustmentRpcError(error)) return 0;
+      throw error;
+    }
+
+    const parsed = Number(data ?? 0);
+    return Number.isFinite(parsed) ? parsed : 0;
+  } catch (error) {
+    if (isMissingUsageAdminAdjustmentRpcError(error)) return 0;
+    throw error;
+  }
 }
 
 export function buildUsageEventKey(input: {
@@ -79,16 +125,12 @@ export function buildUsageEventKey(input: {
 }): string {
   const idempotencyKey = String(input.idempotencyKey || '').trim();
   if (idempotencyKey) return `${input.feature}:idempotency:${idempotencyKey}`;
-
   const requestId = String(input.requestId || '').trim();
   if (requestId) return `${input.feature}:request:${requestId}`;
-
   const correlationId = String(input.correlationId || '').trim();
   if (correlationId) return `${input.feature}:correlation:${correlationId}`;
-
   const fallbackSeed = String(input.fallbackSeed || '').trim();
   if (fallbackSeed) return `${input.feature}:fallback:${fallbackSeed}`;
-
   return `${input.feature}:anonymous`;
 }
 
@@ -104,10 +146,7 @@ export function buildChatTrackingPayload(input: {
   secondarySnippet?: unknown;
 }): { estimatedTokens: number; increments: Record<string, number> } {
   const estimatedTokens = estimateChatRequestTokens(input);
-  return {
-    estimatedTokens,
-    increments: buildChatUsageIncrements(estimatedTokens),
-  };
+  return { estimatedTokens, increments: buildChatUsageIncrements(estimatedTokens) };
 }
 
 export async function trackUsageEvent(input: {
@@ -123,13 +162,7 @@ export async function trackUsageEvent(input: {
 }): Promise<UsageTrackingResult> {
   const normalized = normalizeMetricIncrements(input.increments);
   if (!input.userId || !input.feature || !input.eventKey || Object.keys(normalized).length === 0) {
-    return {
-      tracked: false,
-      deduped: false,
-      eventId: null,
-      eventKey: input.eventKey,
-      snapshot: {},
-    };
+    return { tracked: false, deduped: false, eventId: null, eventKey: input.eventKey, snapshot: {} };
   }
 
   const { data, error } = await input.supabase.rpc('track_usage_event', {
@@ -145,13 +178,7 @@ export async function trackUsageEvent(input: {
 
   if (error) {
     if (isSchemaDriftError(error)) {
-      return {
-        tracked: false,
-        deduped: false,
-        eventId: null,
-        eventKey: input.eventKey,
-        snapshot: {},
-      };
+      return { tracked: false, deduped: false, eventId: null, eventKey: input.eventKey, snapshot: {} };
     }
     throw error;
   }
@@ -169,17 +196,13 @@ export async function trackUsageEvent(input: {
 export async function loadUsageMetricDefinitions(supabase: SupabaseClient): Promise<UsageMetricDefinitionRow[]> {
   const { data, error } = await supabase
     .from('au_usage_metric_definitions')
-    .select(
-      'metric_key,label,unit,category,limit_key,reset_policy,reset_interval_value,reset_interval_unit,is_enabled,is_integer,min_value,max_value,description',
-    )
+    .select('metric_key,label,unit,category,limit_key,reset_policy,reset_interval_value,reset_interval_unit,is_enabled,is_integer,min_value,max_value,description')
     .eq('is_enabled', true)
     .order('metric_key', { ascending: true });
-
   if (error) {
     if (isSchemaDriftError(error)) return [];
     throw error;
   }
-
   return (data || []) as UsageMetricDefinitionRow[];
 }
 
@@ -191,7 +214,6 @@ export async function loadUsageCounterSnapshots(
     supabase.from('usage_counters').select('counters').eq('user_id', userId).eq('day', new Date().toISOString().slice(0, 10)).maybeSingle(),
     supabase.from('usage_totals').select('counters').eq('user_id', userId).maybeSingle(),
   ]);
-
   const today = !todayRes.error && todayRes.data ? (((todayRes.data as any).counters || {}) as Record<string, unknown>) : {};
   const total = !totalRes.error && totalRes.data ? (((totalRes.data as any).counters || {}) as Record<string, unknown>) : {};
   return { today, total };
@@ -206,19 +228,16 @@ export async function loadTrackedUsageWindowTotals(input: {
 }): Promise<Record<string, number>> {
   const keys = Array.from(new Set(input.metricKeys.map((entry) => String(entry || '').trim()).filter(Boolean)));
   if (!input.userId || keys.length === 0) return {};
-
   const { data, error } = await input.supabase.rpc('get_usage_metric_window_totals', {
     p_user_id: input.userId,
     p_metric_keys: keys,
     p_window_start: input.windowStart,
     p_window_end: input.windowEnd,
   });
-
   if (error) {
     if (isSchemaDriftError(error)) return {};
     throw error;
   }
-
   return Object.entries((data || {}) as Record<string, unknown>).reduce((acc, [key, raw]) => {
     const parsed = Number(raw);
     if (Number.isFinite(parsed)) acc[key] = parsed;
@@ -238,23 +257,16 @@ export async function resolveUsageMetricForRule(input: {
   fallbackUsed: number;
   todayCounters?: Record<string, unknown>;
   totalCounters?: Record<string, unknown>;
-}): Promise<{ trackedUsed: number; effectiveUsed: number; source: 'tracked' | 'legacy' | 'hybrid' | 'limit_snapshot' }> {
+}): Promise<{ trackedUsed: number; effectiveUsed: number; source: ResolvedUsageSource }> {
   if (!shouldUseTrackedCountersForRuleMode(input.rule.mode)) {
-    return {
-      trackedUsed: 0,
-      effectiveUsed: Math.max(0, input.fallbackUsed),
-      source: 'limit_snapshot',
-    };
+    return { trackedUsed: 0, effectiveUsed: Math.max(0, input.fallbackUsed), source: 'limit_snapshot' };
   }
 
   const aliases = USAGE_METRIC_ALIASES[input.metricKey] || [input.metricKey];
   const window = computeResetWindow(input.rule);
   let trackedUsed = 0;
-
   const usingLifetimeWindow = !window.windowEnd && window.windowStart.startsWith('1970-01-01T00:00:00');
-  const usingCurrentDayWindow =
-    window.policy === 'daily' &&
-    window.windowStart === `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+  const usingCurrentDayWindow = window.policy === 'daily' && window.windowStart === `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
 
   if (usingLifetimeWindow) {
     trackedUsed = readUsageMetricValue(input.totalCounters || {}, aliases, 0);
@@ -271,26 +283,32 @@ export async function resolveUsageMetricForRule(input: {
     trackedUsed = readUsageMetricValue(totals, aliases, 0);
   }
 
+  let baseUsed = 0;
+  let source: ResolvedUsageSource = 'tracked';
   if (trackedUsed <= 0 && input.fallbackUsed <= 0) {
-    return { trackedUsed: 0, effectiveUsed: 0, source: 'tracked' };
+    baseUsed = 0;
+  } else if (trackedUsed > 0 && input.fallbackUsed > 0 && trackedUsed !== input.fallbackUsed) {
+    baseUsed = Math.max(trackedUsed, input.fallbackUsed);
+    source = 'hybrid';
+  } else if (trackedUsed > 0) {
+    baseUsed = trackedUsed;
+  } else {
+    baseUsed = Math.max(0, input.fallbackUsed);
+    source = 'legacy';
   }
 
-  if (trackedUsed > 0 && input.fallbackUsed > 0 && trackedUsed !== input.fallbackUsed) {
-    return {
-      trackedUsed,
-      effectiveUsed: Math.max(trackedUsed, input.fallbackUsed),
-      source: 'hybrid',
-    };
-  }
-
-  if (trackedUsed > 0) {
-    return { trackedUsed, effectiveUsed: trackedUsed, source: 'tracked' };
-  }
+  const adjustment = await loadUsageAdminAdjustmentTotal({
+    supabase: input.supabase,
+    userId: input.userId,
+    metricKey: input.metricKey,
+    windowStart: window.windowStart,
+    windowEnd: window.windowEnd,
+  });
 
   return {
-    trackedUsed: 0,
-    effectiveUsed: Math.max(0, input.fallbackUsed),
-    source: 'legacy',
+    trackedUsed,
+    effectiveUsed: Math.max(0, baseUsed + adjustment),
+    source: adjustment !== 0 ? 'admin_adjusted' : source,
   };
 }
 
@@ -302,94 +320,96 @@ export async function buildUsageHealthReport(input: {
   usageByLimit: Record<string, Record<string, unknown>>;
 }): Promise<UsageHealthMetricRow[]> {
   const { today, total } = await loadUsageCounterSnapshots(input.supabase, input.userId);
+  const rows = await Promise.all(input.definitions.map(async (definition) => {
+    const aliases = USAGE_METRIC_ALIASES[definition.metric_key] || [definition.metric_key];
+    const limitKey = definition.limit_key || null;
+    const limit = limitKey && Number.isFinite(Number(input.effectiveLimits[limitKey])) ? Number(input.effectiveLimits[limitKey]) : null;
+    const legacyEntry = limitKey ? (input.usageByLimit[limitKey] || {}) : {};
+    const legacyUsed = limitKey ? Number(legacyEntry.used || 0) || 0 : readUsageMetricValue(total, aliases, 0);
+    const limitMode = limitKey ? String((legacyEntry as any)?.mode || '').trim().toLowerCase() : '';
+    const useTrackedForLimit = !limitKey || shouldUseTrackedCountersForRuleMode(limitMode);
 
-  const rows = await Promise.all(
-    input.definitions.map(async (definition) => {
-      const aliases = USAGE_METRIC_ALIASES[definition.metric_key] || [definition.metric_key];
-      const limitKey = definition.limit_key || null;
-      const limit = limitKey && Number.isFinite(Number(input.effectiveLimits[limitKey]))
-        ? Number(input.effectiveLimits[limitKey])
-        : null;
-      const legacyEntry = limitKey ? (input.usageByLimit[limitKey] || {}) : {};
-      const legacyUsed = limitKey ? Number(legacyEntry.used || 0) || 0 : readUsageMetricValue(total, aliases, 0);
-      const limitMode = limitKey ? String((legacyEntry as any)?.mode || '').trim().toLowerCase() : '';
-      const useTrackedForLimit = !limitKey || shouldUseTrackedCountersForRuleMode(limitMode);
+    let trackedUsed = 0;
+    let resetWindowStart: string | null = null;
+    let resetWindowEnd: string | null = null;
+    const todayWindowStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
 
-      let trackedUsed = 0;
-      let resetWindowStart: string | null = null;
-      let resetWindowEnd: string | null = null;
-      const todayWindowStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
-
-      if (limitKey && input.usageByLimit[limitKey]?.reset) {
-        resetWindowStart = String((input.usageByLimit[limitKey] as any)?.reset?.window_start || '') || null;
-        resetWindowEnd = String((input.usageByLimit[limitKey] as any)?.reset?.window_end || '') || null;
-        if (useTrackedForLimit && resetWindowStart === todayWindowStart) {
-          trackedUsed = readUsageMetricValue(today, aliases, 0);
-        } else if (
-          useTrackedForLimit &&
-          !resetWindowEnd &&
-          resetWindowStart &&
-          resetWindowStart.startsWith('1970-01-01T00:00:00')
-        ) {
-          trackedUsed = readUsageMetricValue(total, aliases, 0);
-        }
-      } else if (definition.reset_policy === 'daily') {
+    if (limitKey && input.usageByLimit[limitKey]?.reset) {
+      resetWindowStart = String((input.usageByLimit[limitKey] as any)?.reset?.window_start || '') || null;
+      resetWindowEnd = String((input.usageByLimit[limitKey] as any)?.reset?.window_end || '') || null;
+      if (useTrackedForLimit && resetWindowStart === todayWindowStart) {
         trackedUsed = readUsageMetricValue(today, aliases, 0);
-        resetWindowStart = `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
-        resetWindowEnd = null;
-      } else if (definition.reset_policy === 'never') {
+      } else if (useTrackedForLimit && !resetWindowEnd && resetWindowStart && resetWindowStart.startsWith('1970-01-01T00:00:00')) {
         trackedUsed = readUsageMetricValue(total, aliases, 0);
-        resetWindowStart = '1970-01-01T00:00:00.000Z';
-        resetWindowEnd = null;
-      } else {
-        const now = new Date();
-        const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1, 0, 0, 0, 0));
-        const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 0, 0, 0, 0));
-        resetWindowStart = monthStart.toISOString();
-        resetWindowEnd = monthEnd.toISOString();
       }
+    } else if (definition.reset_policy === 'daily') {
+      trackedUsed = readUsageMetricValue(today, aliases, 0);
+      resetWindowStart = todayWindowStart;
+    } else if (definition.reset_policy === 'never') {
+      trackedUsed = readUsageMetricValue(total, aliases, 0);
+      resetWindowStart = '1970-01-01T00:00:00.000Z';
+    } else {
+      const now = new Date();
+      resetWindowStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+      resetWindowEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString();
+    }
 
-      if (useTrackedForLimit && trackedUsed === 0 && resetWindowStart) {
-        const totals = await loadTrackedUsageWindowTotals({
-          supabase: input.supabase,
-          userId: input.userId,
-          metricKeys: aliases,
-          windowStart: resetWindowStart,
-          windowEnd: resetWindowEnd,
-        });
-        trackedUsed = readUsageMetricValue(totals, aliases, trackedUsed);
+    if (useTrackedForLimit && trackedUsed === 0 && resetWindowStart) {
+      const totals = await loadTrackedUsageWindowTotals({
+        supabase: input.supabase,
+        userId: input.userId,
+        metricKeys: aliases,
+        windowStart: resetWindowStart,
+        windowEnd: resetWindowEnd,
+      });
+      trackedUsed = readUsageMetricValue(totals, aliases, trackedUsed);
+    }
+
+    let source: UsageHealthMetricRow['source'] = useTrackedForLimit ? 'tracked' : 'limit_snapshot';
+    let effectiveUsed = useTrackedForLimit ? trackedUsed : legacyUsed;
+    if (!useTrackedForLimit) {
+      trackedUsed = 0;
+    } else if (trackedUsed > 0 && legacyUsed > 0 && trackedUsed !== legacyUsed) {
+      source = 'hybrid';
+      effectiveUsed = Math.max(trackedUsed, legacyUsed);
+    } else if (trackedUsed <= 0 && legacyUsed > 0) {
+      source = 'legacy';
+      effectiveUsed = legacyUsed;
+    }
+
+    if (limitKey && useTrackedForLimit && resetWindowStart) {
+      const adjustment = await loadUsageAdminAdjustmentTotal({
+        supabase: input.supabase,
+        userId: input.userId,
+        metricKey: limitKey,
+        windowStart: resetWindowStart,
+        windowEnd: resetWindowEnd,
+      });
+      if (adjustment !== 0) {
+        source = 'admin_adjusted';
+        // usageByLimit already comes from the canonical resolver and already
+        // contains the signed admin adjustment, so do not add it twice here.
+        effectiveUsed = Math.max(0, legacyUsed);
       }
+    }
 
-      let source: UsageHealthMetricRow['source'] = useTrackedForLimit ? 'tracked' : 'limit_snapshot';
-      let effectiveUsed = useTrackedForLimit ? trackedUsed : legacyUsed;
-      if (!useTrackedForLimit) {
-        trackedUsed = 0;
-      } else if (trackedUsed > 0 && legacyUsed > 0 && trackedUsed !== legacyUsed) {
-        source = 'hybrid';
-        effectiveUsed = Math.max(trackedUsed, legacyUsed);
-      } else if (trackedUsed <= 0 && legacyUsed > 0) {
-        source = 'legacy';
-        effectiveUsed = legacyUsed;
-      }
-
-      return {
-        metricKey: definition.metric_key,
-        label: definition.label,
-        unit: definition.unit,
-        category: definition.category,
-        limitKey,
-        limit,
-        trackedUsed,
-        legacyUsed,
-        effectiveUsed,
-        source,
-        resetPolicy: definition.reset_policy,
-        resetWindowStart,
-        resetWindowEnd,
-        withinLimit: limit === null ? true : effectiveUsed <= limit,
-      } satisfies UsageHealthMetricRow;
-    }),
-  );
+    return {
+      metricKey: definition.metric_key,
+      label: definition.label,
+      unit: definition.unit,
+      category: definition.category,
+      limitKey,
+      limit,
+      trackedUsed,
+      legacyUsed,
+      effectiveUsed,
+      source,
+      resetPolicy: definition.reset_policy,
+      resetWindowStart,
+      resetWindowEnd,
+      withinLimit: limit === null ? true : effectiveUsed <= limit,
+    } satisfies UsageHealthMetricRow;
+  }));
 
   return rows.sort((a, b) => a.metricKey.localeCompare(b.metricKey));
 }

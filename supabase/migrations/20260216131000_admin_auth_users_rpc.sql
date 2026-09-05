@@ -69,9 +69,6 @@ BEGIN
        lower(coalesce(u.email, '')) LIKE '%' || lower(p_q) || '%' OR
        lower(u.id::text) LIKE '%' || lower(p_q) || '%')
   ),
-  tot AS (
-    SELECT count(*)::bigint AS c FROM base
-  ),
   paged AS (
     SELECT *
     FROM base
@@ -79,28 +76,30 @@ BEGIN
     OFFSET v_offset
     LIMIT v_limit
   )
-  SELECT c INTO v_total FROM tot;
-
-  SELECT coalesce(
-    jsonb_agg(
-      jsonb_build_object(
-        'id', p.id,
-        'user_id', p.id,
-        'email', p.email,
-        'created_at', p.created_at,
-        'last_sign_in_at', p.last_sign_in_at,
-        'provider', 'supabase',
-        'full_name', coalesce(
-          p.raw_user_meta_data->>'full_name',
-          p.raw_user_meta_data->>'name',
-          nullif(split_part(coalesce(p.email, ''), '@', 1), '')
-        )
+  SELECT
+    (SELECT count(*)::bigint FROM base),
+    (
+      SELECT coalesce(
+        jsonb_agg(
+          jsonb_build_object(
+            'id', p.id,
+            'user_id', p.id,
+            'email', p.email,
+            'created_at', p.created_at,
+            'last_sign_in_at', p.last_sign_in_at,
+            'provider', 'supabase',
+            'full_name', coalesce(
+              p.raw_user_meta_data->>'full_name',
+              p.raw_user_meta_data->>'name',
+              nullif(split_part(coalesce(p.email, ''), '@', 1), '')
+            )
+          )
+        ),
+        '[]'::jsonb
       )
-    ),
-    '[]'::jsonb
-  )
-  INTO v_users
-  FROM paged p;
+      FROM paged p
+    )
+  INTO v_total, v_users;
 
   RETURN jsonb_build_object(
     'users', v_users,

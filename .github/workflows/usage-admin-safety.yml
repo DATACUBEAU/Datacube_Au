@@ -1,0 +1,143 @@
+name: Usage Admin Safety
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: usage-admin-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  usage-admin-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Compile admin usage safety regressions
+        run: >-
+          pnpm exec tsc
+          --skipLibCheck
+          --module commonjs
+          --target es2022
+          --moduleResolution node
+          --esModuleInterop
+          --outDir .tmp-tests
+          tests/admin-usage-adjustments.unit.test.ts
+          tests/admin-usage-idempotency-sql.unit.test.ts
+          tests/admin-usage-decrease-fingerprint-required.unit.test.ts
+          tests/admin-usage-concurrency-sql.unit.test.ts
+          tests/admin-usage-request-serialization.unit.test.ts
+          tests/admin-usage-reason-fingerprint.unit.test.ts
+          tests/admin-usage-target-fingerprint.unit.test.ts
+          tests/admin-usage-api-error-safety.unit.test.ts
+          tests/admin-usage-inflight-reservation.unit.test.ts
+          tests/admin-usage-checkpoint-composition.unit.test.ts
+          tests/admin-usage-ai-lock-order.unit.test.ts
+          tests/usage-accounting-user-serialization.unit.test.ts
+          tests/ai-usage-terminal-user-serialization.unit.test.ts
+          tests/ai-usage-expiry-user-serialization.unit.test.ts
+          tests/admin-usage-delta-direction.unit.test.ts
+          tests/admin-usage-delta-magnitude.unit.test.ts
+          tests/admin-usage-actor-email-attribution.unit.test.ts
+          tests/admin-usage-actor-deletion-audit.unit.test.ts
+          tests/admin-usage-active-window.unit.test.ts
+          tests/admin-usage-entitlement-race.unit.test.ts
+          tests/usage-window-wall-clock-freshness.unit.test.ts
+          tests/simple-plan-rule-atomicity.unit.test.ts
+          tests/conex-usage-selection-race.unit.test.ts
+          tests/conex-usage-idempotent-retry.unit.test.ts
+          tests/settings-plan-usage-navigation.unit.test.ts
+          tests/document-owner-usage-version.unit.test.ts
+          tests/ai-usage-window-scope.unit.test.ts
+          tests/ai-usage-commit-window.unit.test.ts
+          tests/ai-usage-commit-snapshot-lock.unit.test.ts
+          tests/ai-usage-terminal-lock-order.unit.test.ts
+          tests/ai-usage-provider-started-expiry.unit.test.ts
+          tests/ai-usage-takeover-window.unit.test.ts
+          tests/ai-usage-release-attempt-binding.unit.test.ts
+          tests/ai-usage-commit-attempt-binding.unit.test.ts
+          tests/ai-usage-commit-lease-expiry.unit.test.ts
+          tests/ai-usage-ticket-reissue-acceptance.unit.test.ts
+          tests/ai-usage-replay-usage-day-lock.unit.test.ts
+          tests/ai-usage-event-namespace.unit.test.ts
+          tests/ai-usage-window-freshness.unit.test.ts
+          tests/usage-event-mutation-version.unit.test.ts
+          tests/usage-event-user-serialization.unit.test.ts
+          tests/usage-admin-adjustment-error-safety.unit.test.ts
+          tests/ai-usage-begin-settlement-safety.unit.test.ts
+          tests/worker-terminal-usage-event.unit.test.ts
+          src/lib/server/usage-tracking.ts
+          src/lib/server/ai-usage-accounting.ts
+          src/lib/limits/plan-limit-model.ts
+          shared/usage-metrics.ts
+
+      - name: Run admin usage safety regressions
+        run: |
+          node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
+          node .tmp-tests/tests/admin-usage-adjustments.unit.test.js
+          node .tmp-tests/tests/admin-usage-idempotency-sql.unit.test.js
+          node .tmp-tests/tests/admin-usage-decrease-fingerprint-required.unit.test.js
+          node .tmp-tests/tests/admin-usage-concurrency-sql.unit.test.js
+          node .tmp-tests/tests/admin-usage-request-serialization.unit.test.js
+          node .tmp-tests/tests/admin-usage-reason-fingerprint.unit.test.js
+          node .tmp-tests/tests/admin-usage-target-fingerprint.unit.test.js
+          node .tmp-tests/tests/admin-usage-api-error-safety.unit.test.js
+          node .tmp-tests/tests/admin-usage-inflight-reservation.unit.test.js
+          node .tmp-tests/tests/admin-usage-checkpoint-composition.unit.test.js
+          node .tmp-tests/tests/admin-usage-ai-lock-order.unit.test.js
+          node .tmp-tests/tests/usage-accounting-user-serialization.unit.test.js
+          node .tmp-tests/tests/ai-usage-terminal-user-serialization.unit.test.js
+          node .tmp-tests/tests/ai-usage-expiry-user-serialization.unit.test.js
+          node .tmp-tests/tests/admin-usage-delta-direction.unit.test.js
+          node .tmp-tests/tests/admin-usage-delta-magnitude.unit.test.js
+          node .tmp-tests/tests/admin-usage-actor-email-attribution.unit.test.js
+          node .tmp-tests/tests/admin-usage-actor-deletion-audit.unit.test.js
+          node .tmp-tests/tests/admin-usage-active-window.unit.test.js
+          node .tmp-tests/tests/admin-usage-entitlement-race.unit.test.js
+          node .tmp-tests/tests/usage-window-wall-clock-freshness.unit.test.js
+          node .tmp-tests/tests/simple-plan-rule-atomicity.unit.test.js
+          node .tmp-tests/tests/conex-usage-selection-race.unit.test.js
+          node .tmp-tests/tests/conex-usage-idempotent-retry.unit.test.js
+          node .tmp-tests/tests/settings-plan-usage-navigation.unit.test.js
+          node .tmp-tests/tests/document-owner-usage-version.unit.test.js
+          node .tmp-tests/tests/ai-usage-window-scope.unit.test.js
+          node .tmp-tests/tests/ai-usage-commit-window.unit.test.js
+          node .tmp-tests/tests/ai-usage-commit-snapshot-lock.unit.test.js
+          node .tmp-tests/tests/ai-usage-terminal-lock-order.unit.test.js
+          node .tmp-tests/tests/ai-usage-provider-started-expiry.unit.test.js
+          node .tmp-tests/tests/ai-usage-takeover-window.unit.test.js
+          node .tmp-tests/tests/ai-usage-release-attempt-binding.unit.test.js
+          node .tmp-tests/tests/ai-usage-commit-attempt-binding.unit.test.js
+          node .tmp-tests/tests/ai-usage-commit-lease-expiry.unit.test.js
+          node .tmp-tests/tests/ai-usage-ticket-reissue-acceptance.unit.test.js
+          node .tmp-tests/tests/ai-usage-replay-usage-day-lock.unit.test.js
+          node .tmp-tests/tests/ai-usage-event-namespace.unit.test.js
+          node .tmp-tests/tests/ai-usage-window-freshness.unit.test.js
+          node .tmp-tests/tests/usage-event-mutation-version.unit.test.js
+          node .tmp-tests/tests/usage-event-user-serialization.unit.test.js
+          node .tmp-tests/tests/usage-admin-adjustment-error-safety.unit.test.js
+          node .tmp-tests/tests/ai-usage-begin-settlement-safety.unit.test.js
+          node .tmp-tests/tests/worker-terminal-usage-event.unit.test.js

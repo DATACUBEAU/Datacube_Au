@@ -1,0 +1,57 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+
+const baseMigration = readFileSync(
+  'supabase/migrations/20260831044500_usage_window_wall_clock_freshness.sql',
+  'utf8',
+);
+const tierMigration = readFileSync(
+  'supabase/migrations/20260831074500_ai_tier_quota_wall_clock_freshness.sql',
+  'utf8',
+);
+const accountingSource = readFileSync('src/lib/server/ai-usage-accounting.ts', 'utf8');
+
+// Freshness must use actual execution time rather than PostgreSQL's stable
+// transaction timestamp, otherwise a lock wait can carry an old window past reset.
+assert.match(
+  baseMigration,
+  /CREATE OR REPLACE FUNCTION public\.assert_admin_usage_adjustment_active_window\(\)[\s\S]+v_wall_clock TIMESTAMPTZ := clock_timestamp\(\)[\s\S]+v_wall_clock < NEW\.window_start OR v_wall_clock >= NEW\.window_end/i,
+);
+
+// Reservation admission must capture the wall clock after daily/lifetime
+// serialization and only then validate genuinely new finite-window admissions.
+assert.match(
+  tierMigration,
+  /SELECT counters INTO v_locked_today[\s\S]+FOR UPDATE;[\s\S]+SELECT counters INTO v_locked_total[\s\S]+FOR UPDATE;[\s\S]+SELECT \* INTO v_existing[\s\S]+IF FOUND THEN[\s\S]+ELSE[\s\S]+v_wall_clock := clock_timestamp\(\);[\s\S]+USAGE_WINDOW_STALE/i,
+);
+
+// Exact existing reservation replays remain recoverable across reset boundaries.
+assert.match(
+  tierMigration,
+  /IF FOUND THEN[\s\S]+v_forward_ticket_id := NULL;[\s\S]+v_forward_expires_at := v_existing\.expires_at;[\s\S]+ELSE[\s\S]+v_wall_clock := clock_timestamp\(\)/i,
+);
+
+// Tier daily quotas must carry the explicit active UTC window into the database
+// boundary rather than relying only on transaction-stable "today" accounting.
+assert.match(
+  accountingSource,
+  /featureKey === 'prompt_starters'[\s\S]+computeResetWindow\(\{[\s\S]+resetPolicy: 'daily'[\s\S]+resetIntervalValue: null[\s\S]+resetIntervalUnit: null[\s\S]+\}\)[\s\S]+scope: 'tier_quota'[\s\S]+counter_scope: 'today'[\s\S]+window_start: reset\.windowStart[\s\S]+window_end: reset\.windowEnd/i,
+);
+assert.match(
+  tierMigration,
+  /v_scope IN \('canonical_plan', 'tier_quota'\)[\s\S]+v_counter_scope IN \('today', 'window'\)[\s\S]+window_start[\s\S]+window_end/i,
+);
+
+// The public reservation boundary stays service-role only.
+assert.match(
+  tierMigration,
+  /REVOKE ALL ON FUNCTION public\.reserve_ai_usage\([\s\S]+FROM PUBLIC, anon, authenticated;[\s\S]+GRANT EXECUTE ON FUNCTION public\.reserve_ai_usage\([\s\S]+TO service_role;/i,
+);
+
+assert.doesNotMatch(tierMigration, /\bTRUNCATE\b/i);
+assert.doesNotMatch(
+  tierMigration,
+  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+);
+
+console.log('usage window wall-clock freshness regressions passed');

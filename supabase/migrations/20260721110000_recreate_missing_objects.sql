@@ -21,14 +21,22 @@ create table if not exists memory_summaries (
   constraint unique_memory_summary unique (user_id, scope, doc_id)
 );
 
+-- Existing installations may already have the base table from the original
+-- hybrid-memory migration. CREATE TABLE IF NOT EXISTS does not add columns to
+-- an existing table, so restore the later recovery column explicitly.
+alter table memory_summaries add column if not exists doc_key text;
+
 -- Enable RLS
 alter table memory_summaries enable row level security;
 
--- Policies
+-- Policies. This migration is intentionally replay-safe because the original
+-- hybrid-memory migration may already have created these policies.
+drop policy if exists "Users can read own memory summaries" on memory_summaries;
 create policy "Users can read own memory summaries"
   on memory_summaries for select
   using (auth.uid() = user_id);
 
+drop policy if exists "Users can insert/update own memory summaries" on memory_summaries;
 create policy "Users can insert/update own memory summaries"
   on memory_summaries for all
   using (auth.uid() = user_id);
@@ -45,12 +53,13 @@ create table if not exists admin_access_logs (
 );
 
 -- Index for fast lookup
-create index idx_admin_access_logs_user_ip on admin_access_logs(user_id, ip_address);
+create index if not exists idx_admin_access_logs_user_ip on admin_access_logs(user_id, ip_address);
 
 -- Enable RLS
 alter table admin_access_logs enable row level security;
 
 -- Policy: only service role can really manage this, but we'll add a read policy for checking status
+drop policy if exists "Service role full access" on admin_access_logs;
 create policy "Service role full access"
   on admin_access_logs for all
   using ( auth.role() = 'service_role' );

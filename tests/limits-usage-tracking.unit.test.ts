@@ -108,6 +108,10 @@ class FakeSupabase {
       return { data: this.windowTotals, error: null };
     }
 
+    if (name === 'get_usage_admin_adjustment_total') {
+      return { data: 0, error: null };
+    }
+
     throw new Error(`Unsupported rpc ${name}`);
   }
 }

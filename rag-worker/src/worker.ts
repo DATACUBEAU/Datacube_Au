@@ -48,6 +48,13 @@ function normalizeJobErrorMessage(error: unknown): string {
   return 'Unknown worker error';
 }
 
+function createRecoverableJobError(message: string, reason: string): Error {
+  const error = new Error(message);
+  (error as any).recoverable = true;
+  (error as any).recoverableReason = reason;
+  return error;
+}
+
 function assertValidExtractedText(text: string, extension: string | undefined) {
   const trimmed = text.trim();
   const len = trimmed.length;
@@ -212,7 +219,6 @@ export class RAGWorker {
     try {
       await this.reconcileTerminalJobClaims();
 
-      // 1. Fix "Analyzing 100%" stuck jobs (1 minute grace period)
       const stuckThreshold = new Date(Date.now() - 60000).toISOString();
       const { data: stuckCompleted } = await this.supabase
         .from('au_worker_jobs')
@@ -229,7 +235,6 @@ export class RAGWorker {
         }
       }
 
-      // 2. Fix stale processing jobs (15 mins timeout)
       const staleThreshold = new Date(Date.now() - 15 * 60 * 1000).toISOString();
       const { data: staleJobs } = await this.supabase
         .from('au_worker_jobs')
@@ -508,7 +513,6 @@ export class RAGWorker {
   }
 
   private async claimJob(): Promise<UploadJob | null> {
-    // Preferred path: atomic DB function.
     const { data: rpcJobs, error: rpcError } = await this.supabase.rpc('claim_worker_job', {
       p_worker_id: this.workerInstanceId,
       p_lease_duration_ms: this.leaseDurationMs,
@@ -528,7 +532,6 @@ export class RAGWorker {
       });
     }
 
-    // Fallback path: optimistic claim via row update.
     const candidate = await this.findFallbackCandidate();
     if (!candidate) {
       return null;
@@ -574,7 +577,7 @@ export class RAGWorker {
     job: UploadJob,
     errorMessage: string,
     options?: { recoverable?: boolean; recoverableReason?: string },
-  ) {
+  ): Promise<Error | null> {
     const retryCount = Number((job as any)?.retry_count || 0);
     const shouldMarkRecoverable = Boolean(options?.recoverable) && retryCount <= 0;
     const metadataBase =
@@ -602,6 +605,7 @@ export class RAGWorker {
     if (error) {
       logger.error('Failed to mark job as failed', { jobId: job.id, error: error.message });
     }
+    return error;
   }
 
   private async markDocumentFailed(documentId: string, errorMessage: string) {
@@ -715,17 +719,15 @@ export class RAGWorker {
     try {
       await this.updateJobProgress(currentJob.id, 15);
       await this.processJob(currentJob);
-
-      // Critical fix: Combine final progress update and completion state
-      // Do not update to 100% separately to avoid "stuck at 100% analyzing" state
-      // if the subsequent completion update fails.
       await this.finalizeDocumentIngestion(currentJob);
     } catch (processErr) {
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
 
       const errorMessage = normalizeJobErrorMessage(processErr);
       const isRecoverable = Boolean((processErr as any)?.recoverable);
-      const recoverableReason = isRecoverable ? 'fastembed_cache_corruption' : undefined;
+      const recoverableReason = isRecoverable
+        ? String((processErr as any)?.recoverableReason || 'transient_worker_error')
+        : undefined;
 
       await this.logDebug('Job failed', {
         jobId: currentJob.id,
@@ -735,14 +737,21 @@ export class RAGWorker {
         recoverableReason,
       });
 
-      await this.markJobFailed(currentJob, errorMessage, {
+      const failurePersistError = await this.markJobFailed(currentJob, errorMessage, {
         recoverable: isRecoverable,
         recoverableReason,
       });
       await this.markDocumentFailed(currentJob.document_id, errorMessage);
-      await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
-        jobs_failed: 1,
-      });
+      if (!failurePersistError) {
+        await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
+          jobs_failed: 1,
+        });
+      } else {
+        logger.error('Skipping failed-job compatibility usage because terminal state did not persist', {
+          jobId: currentJob.id,
+          message: failurePersistError.message,
+        });
+      }
     } finally {
       stopHeartbeat();
     }
@@ -809,60 +818,6 @@ export class RAGWorker {
       .eq('id', job.document_id)
       .maybeSingle();
 
-    // Retention policy:
-    // - Past questions / exam questions inherit their parent textbook expiry.
-    // - Otherwise:
-    //   - Billing disabled (promo mode): 14 days for everyone
-    //   - Billing enabled + paid pro: 30 days
-    //   - Otherwise: 14 days
-    const now = new Date();
-    const [{ data: profile }, { data: billingFlag }, { data: conexConfig }, { data: legacyConfig }] = await Promise.all([
-      this.supabase
-        .from('au_user_profiles')
-        .select('tier,tier_expires_at')
-        .eq('user_id', ownerId)
-        .maybeSingle(),
-      this.supabase
-        .from('feature_flags')
-        .select('enabled')
-        .eq('key', 'billing_enabled')
-        .maybeSingle(),
-      this.supabase
-        .from('au_conex_config')
-        .select('billing_enabled')
-        .eq('id', 1)
-        .maybeSingle(),
-      this.supabase
-        .from('au_config')
-        .select('billing_enabled')
-        .limit(1)
-        .maybeSingle(),
-    ]);
-
-    const billingEnabled =
-      (typeof billingFlag?.enabled === 'boolean' ? billingFlag.enabled : null) ??
-      conexConfig?.billing_enabled ??
-      legacyConfig?.billing_enabled ??
-      true;
-    const tier = String(profile?.tier || 'free').toLowerCase();
-    const tierExpiry = profile?.tier_expires_at ? new Date(profile.tier_expires_at) : null;
-
-    let isPaidPro = false;
-    if (billingEnabled && tier === 'pro') {
-      if (!tierExpiry || tierExpiry > now) {
-        isPaidPro = true;
-      } else {
-        const { data: activeSubscription } = await this.supabase
-          .from('au_subscriptions')
-          .select('id')
-          .eq('owner_id', ownerId)
-          .in('status', ['active', 'non_renewing'])
-          .gt('current_period_end', now.toISOString())
-          .maybeSingle();
-        isPaidPro = Boolean(activeSubscription);
-      }
-    }
-
     const normalizedDocType = String((currentDoc as any)?.document_type || '').toLowerCase();
     const parentId = String((currentDoc as any)?.parent_id || '').trim();
     let inheritedParentExpiryMs: number | null = null;
@@ -879,11 +834,48 @@ export class RAGWorker {
       }
     }
 
-    const retentionDays = isPaidPro ? 30 : 14;
+    let retentionDays: number | null = null;
+    let effectivePlan: string | null = null;
+    let entitlementSource: string | null = null;
+
+    if (!inheritedParentExpiryMs) {
+      const { data: effectiveEntitlements, error: entitlementError } = await this.supabase.rpc(
+        'get_effective_entitlements',
+        { p_user_id: ownerId },
+      );
+
+      if (entitlementError) {
+        throw createRecoverableJobError(
+          `entitlement_resolution_failed: ${String(entitlementError.message || 'authoritative entitlement lookup failed')}`,
+          'entitlement_resolution_failed',
+        );
+      }
+
+      const entitlementRow = Array.isArray(effectiveEntitlements)
+        ? effectiveEntitlements[0]
+        : effectiveEntitlements;
+      const rawRetentionDays = Number(
+        (entitlementRow as any)?.retention_days ?? (entitlementRow as any)?.retentionDays,
+      );
+
+      if (!Number.isFinite(rawRetentionDays) || rawRetentionDays <= 0) {
+        throw createRecoverableJobError(
+          'entitlement_resolution_invalid: authoritative entitlement response did not include a valid retention_days value',
+          'entitlement_resolution_invalid',
+        );
+      }
+
+      retentionDays = Math.max(1, Math.floor(rawRetentionDays));
+      effectivePlan = String((entitlementRow as any)?.plan || '').trim().toLowerCase() || 'unknown';
+      entitlementSource = String(
+        (entitlementRow as any)?.entitlement_source ?? (entitlementRow as any)?.entitlementSource ?? '',
+      ).trim().toLowerCase() || 'unknown';
+    }
+
     const expiresAt = inheritedParentExpiryMs
       ? Math.floor(inheritedParentExpiryMs / 1000)
-      : Math.floor(Date.now() / 1000) + (retentionDays * 24 * 60 * 60);
-    const expirySource = inheritedParentExpiryMs ? 'parent_textbook' : 'policy';
+      : Math.floor(Date.now() / 1000) + ((retentionDays as number) * 24 * 60 * 60);
+    const expirySource = inheritedParentExpiryMs ? 'parent_textbook' : 'effective_entitlements';
 
     await this.updateJobProgress(job.id, 70);
     await this.ingestion.processDocument(
@@ -903,6 +895,8 @@ export class RAGWorker {
       chunkingMs: chunkDurationMs,
       totalMs: Date.now() - jobStartedAt,
       retentionDays,
+      effectivePlan,
+      entitlementSource,
       expirySource,
     });
   }
