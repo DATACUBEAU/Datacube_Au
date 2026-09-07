@@ -7,10 +7,10 @@ const pagePath = path.join(process.cwd(), 'src/app/conex/usage/page.tsx');
 const source = fs.readFileSync(routePath, 'utf8');
 const page = fs.readFileSync(pagePath, 'utf8');
 
-assert.match(
+assert.doesNotMatch(
   source,
-  /\.from\('au_plan_limit_rules'\)[\s\S]*?\.upsert\(row, \{ onConflict: 'scope,limit_key' \}\)/,
-  'simple plan edits must upsert only the requested scope + metric row',
+  /\.upsert\(row, \{ onConflict: 'scope,limit_key' \}\)/,
+  'simple plan edits must not unconditionally upsert a stale full rule row',
 );
 
 assert.doesNotMatch(
@@ -23,6 +23,68 @@ assert.doesNotMatch(
   source,
   /APPROVED_LIMIT_KEYS\.reduce\([\s\S]*?storedRulesByScope/,
   'simple per-metric edits must not reconstruct a stale full rule map before persistence',
+);
+
+assert.match(
+  source,
+  /revision:\s*z\.string\(\)\.min\(1\)\.max\(2_000\)\.optional\(\)/,
+  'the authoritative endpoint must accept the rule revision loaded by the editor',
+);
+
+assert.match(
+  source,
+  /revision:\s*planRuleRevision\(rule, storedRevisions\.get\(key\) \|\| null\)/,
+  'GET responses must bind each editable rule to its current stored/effective revision',
+);
+
+assert.match(
+  source,
+  /if \(!input\.revision\) return staleRuleResponse\(requestId\)/,
+  'old or incomplete clients must fail closed instead of performing an unversioned write',
+);
+
+assert.match(
+  source,
+  /if \(input\.revision !== currentRevision\) return staleRuleResponse\(requestId\)/,
+  'a plan rule changed after the dialog loaded must be rejected before persistence',
+);
+
+assert.match(
+  source,
+  /\.update\(simpleFields\)[\s\S]*?\.eq\('scope', input\.plan\)[\s\S]*?\.eq\('limit_key', input\.metricKey\)[\s\S]*?\.eq\('updated_at', storedUpdatedAt\)[\s\S]*?\.maybeSingle\(\)/,
+  'existing plan overrides must use updated_at compare-and-swap at the database write boundary',
+);
+
+assert.match(
+  source,
+  /if \(!saveResult\.data\) return staleRuleResponse\(requestId\)/,
+  'a concurrent update that wins after the preflight read must surface as a recoverable 409',
+);
+
+assert.match(
+  source,
+  /\.insert\(\{[\s\S]*?scope:\s*input\.plan,[\s\S]*?limit_key:\s*input\.metricKey,[\s\S]*?\.\.\.simpleFields,[\s\S]*?mode:\s*effective\.mode,[\s\S]*?is_enabled:\s*effective\.isEnabled/,
+  'inherited rules must create a plan-scoped override without upserting over a concurrent Advanced edit',
+);
+
+assert.match(
+  source,
+  /saveResult\.error\.code === '23505'\) return staleRuleResponse\(requestId\)/,
+  'a concurrent insert of the same plan rule must return a conflict instead of overwriting it',
+);
+
+assert.match(
+  source,
+  /code:\s*'plan_rule_changed'[\s\S]*?409/,
+  'stale saves must return an actionable conflict response',
+);
+
+const simpleFieldsMatch = source.match(/const simpleFields = \{([\s\S]*?)\n    \};/);
+assert.ok(simpleFieldsMatch, 'simple editor persistence fields must remain explicit and reviewable');
+assert.doesNotMatch(
+  simpleFieldsMatch[1],
+  /\bmode\b|\bis_enabled\b/,
+  'existing-row saves must not restore Advanced-only mode or enabled state from a stale snapshot',
 );
 
 assert.match(
@@ -79,10 +141,16 @@ assert.match(
   'simple plan persistence must use the resolved unlimited state instead of forcing finite limits',
 );
 
-assert.doesNotMatch(
-  source,
-  /is_unlimited:\s*false/,
-  'simple plan edits must never unconditionally collapse unlimited entitlements to finite limits',
+assert.match(
+  page,
+  /revision:\s*string;/,
+  'the client-side plan rule must retain the revision returned by the authoritative GET',
+);
+
+assert.match(
+  page,
+  /revision:\s*editingPlanRule\.revision/,
+  'the simple editor must send the exact revision captured when the rule was opened',
 );
 
 assert.match(
