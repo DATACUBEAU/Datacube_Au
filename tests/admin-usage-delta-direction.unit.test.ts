@@ -5,6 +5,10 @@ const migration = readFileSync(
   'supabase/migrations/20260831004500_admin_usage_delta_direction_guard.sql',
   'utf8',
 );
+const resetMigration = readFileSync(
+  'supabase/migrations/20260907024500_admin_usage_reset_delta_guard.sql',
+  'utf8',
+);
 const batchMigration = readFileSync(
   'supabase/migrations/20260827215500_admin_usage_adjustments_concurrency.sql',
   'utf8',
@@ -21,14 +25,20 @@ assert.match(
   /invalid_usage_adjustment_direction[\s\S]+pg_advisory_xact_lock[\s\S]+INSERT INTO public\.au_usage_admin_adjustments/i,
 );
 
-// Target-style set/reset operations retain signed-delta flexibility, including
-// legitimate zero no-ops, rather than inheriting the relative-action rule.
+// Target-style set operations retain signed-delta flexibility, including
+// legitimate zero no-ops. Reset operations may decrease usage or persist a
+// zero-delta idempotency receipt, but the append-only ledger must reject a reset
+// that would actually increase usage.
 assert.match(migration, /IF p_delta = 0[\s\S]+no_op[\s\S]+'delta', 0/i);
 assert.doesNotMatch(migration, /v_action = 'set' AND p_delta/i);
-assert.doesNotMatch(migration, /v_action = 'reset' AND p_delta/i);
+assert.match(
+  resetMigration,
+  /CHECK\s*\(action\s*<>\s*'reset'\s+OR\s+delta\s*<=\s*0\)\s+NOT\s+VALID/i,
+);
+assert.doesNotMatch(resetMigration, /\bUPDATE\s+public\.au_usage_admin_adjustments\b/i);
 
-// Batch writes delegate each item to the same checked implementation, so the
-// invariant cannot be bypassed through reset-all or internal batch composition.
+// Batch writes delegate each item to the same checked implementation, and the
+// table constraint protects the final persistence boundary for every path.
 assert.match(
   batchMigration,
   /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_checked[\s\S]+admin_adjust_usage_checked\([\s\S]+v_item->>'delta'[\s\S]+v_item->>'action'/i,
@@ -45,10 +55,12 @@ assert.match(
   /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_checked[\s\S]+TO service_role/i,
 );
 
-assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
-assert.doesNotMatch(
-  migration,
-  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
-);
+for (const sql of [migration, resetMigration]) {
+  assert.doesNotMatch(sql, /\bTRUNCATE\b/i);
+  assert.doesNotMatch(
+    sql,
+    /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+  );
+}
 
 console.log('admin usage delta-direction regressions passed');
