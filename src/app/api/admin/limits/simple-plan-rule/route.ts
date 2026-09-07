@@ -21,13 +21,52 @@ const requestSchema = z.object({
   limit: z.number().int().min(0).max(1_000_000_000),
   resetPolicy: z.enum(simpleResetPolicies),
   isUnlimited: z.boolean().optional(),
+  revision: z.string().min(1).max(2_000).optional(),
 });
+
+type AdminClient = Extract<Awaited<ReturnType<typeof requireConexAdmin>>, { ok: true }>['supabase'];
+type AdminLimitState = Awaited<ReturnType<typeof loadAdminPlanLimitState>>;
+type EffectiveRule = AdminLimitState['effectiveRulesByPlan'][EffectivePlanCode][(typeof APPROVED_LIMIT_KEYS)[number]];
 
 function json(payload: unknown, status = 200) {
   return NextResponse.json(payload, { status, headers: { 'Cache-Control': 'no-store' } });
 }
 
-function serializeSimpleRules(state: Awaited<ReturnType<typeof loadAdminPlanLimitState>>, plan: EffectivePlanCode) {
+function planRuleRevision(rule: EffectiveRule, storedUpdatedAt: string | null) {
+  return JSON.stringify({
+    v: 1,
+    storedUpdatedAt,
+    inherited: rule.inherited,
+    sourceScope: rule.sourceScope,
+    mode: rule.mode,
+    isEnabled: rule.isEnabled,
+    isUnlimited: rule.isUnlimited,
+    value: rule.value,
+    resetPolicy: rule.resetPolicy,
+    resetIntervalValue: rule.resetIntervalValue,
+    resetIntervalUnit: rule.resetIntervalUnit,
+  });
+}
+
+async function loadStoredRuleRevisions(supabase: AdminClient, plan: EffectivePlanCode) {
+  const result = await supabase
+    .from('au_plan_limit_rules')
+    .select('limit_key,updated_at')
+    .eq('scope', plan)
+    .in('limit_key', [...APPROVED_LIMIT_KEYS]);
+
+  if (result.error) throw result.error;
+
+  return new Map(
+    (result.data || []).map((row) => [String(row.limit_key), String(row.updated_at)] as const),
+  );
+}
+
+function serializeSimpleRules(
+  state: AdminLimitState,
+  plan: EffectivePlanCode,
+  storedRevisions: Map<string, string>,
+) {
   return APPROVED_LIMIT_KEYS.map((key) => {
     const rule = state.effectiveRulesByPlan[plan][key];
     return {
@@ -42,8 +81,18 @@ function serializeSimpleRules(state: Awaited<ReturnType<typeof loadAdminPlanLimi
       editableHere: rule.mode === 'usage' && rule.isEnabled,
       inherited: rule.inherited,
       sourceScope: rule.sourceScope,
+      revision: planRuleRevision(rule, storedRevisions.get(key) || null),
     };
   });
+}
+
+function staleRuleResponse(requestId: string) {
+  return json({
+    ok: false,
+    code: 'plan_rule_changed',
+    message: 'This plan rule changed after you opened it. Reload the latest rule and apply your change again.',
+    requestId,
+  }, 409);
 }
 
 export async function GET(req: NextRequest) {
@@ -58,8 +107,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const plan = planRaw as EffectivePlanCode;
-    const state = await loadAdminPlanLimitState(adminResult.supabase);
-    return json({ ok: true, requestId, plan, rules: serializeSimpleRules(state, plan) });
+    const [state, storedRevisions] = await Promise.all([
+      loadAdminPlanLimitState(adminResult.supabase),
+      loadStoredRuleRevisions(adminResult.supabase, plan),
+    ]);
+    return json({ ok: true, requestId, plan, rules: serializeSimpleRules(state, plan, storedRevisions) });
   } catch {
     return json({
       ok: false,
@@ -77,6 +129,8 @@ export async function POST(req: NextRequest) {
 
   try {
     const input = requestSchema.parse(await req.json());
+    if (!input.revision) return staleRuleResponse(requestId);
+
     const state = await loadAdminPlanLimitState(adminResult.supabase);
     const effective = state.effectiveRulesByPlan[input.plan][input.metricKey];
 
@@ -97,6 +151,21 @@ export async function POST(req: NextRequest) {
         requestId,
       }, 400);
     }
+
+    const currentRowResult = await adminResult.supabase
+      .from('au_plan_limit_rules')
+      .select('updated_at')
+      .eq('scope', input.plan)
+      .eq('limit_key', input.metricKey)
+      .maybeSingle();
+
+    if (currentRowResult.error) throw currentRowResult.error;
+
+    const storedUpdatedAt = currentRowResult.data?.updated_at
+      ? String(currentRowResult.data.updated_at)
+      : null;
+    const currentRevision = planRuleRevision(effective, storedUpdatedAt);
+    if (input.revision !== currentRevision) return staleRuleResponse(requestId);
 
     const existingCustomInterval = input.resetPolicy === 'custom'
       ? {
@@ -128,33 +197,59 @@ export async function POST(req: NextRequest) {
     }
 
     const isUnlimited = input.isUnlimited ?? false;
-
-    const row = {
-      scope: input.plan,
-      limit_key: input.metricKey,
+    const simpleFields = {
       value: isUnlimited ? null : input.limit,
-      mode: effective.mode,
       reset_policy: input.resetPolicy,
       reset_interval_value: existingCustomInterval.value,
       reset_interval_unit: existingCustomInterval.unit,
-      is_enabled: true,
       is_unlimited: isUnlimited,
-      updated_at: new Date().toISOString(),
     };
 
-    const saveResult = await adminResult.supabase
-      .from('au_plan_limit_rules')
-      .upsert(row, { onConflict: 'scope,limit_key' });
+    if (storedUpdatedAt) {
+      // Compare-and-swap against the exact row that was loaded into the simple
+      // editor. Only mutate fields owned by this editor so Advanced settings such
+      // as mode/is_enabled cannot be restored from a stale effective snapshot.
+      const saveResult = await adminResult.supabase
+        .from('au_plan_limit_rules')
+        .update(simpleFields)
+        .eq('scope', input.plan)
+        .eq('limit_key', input.metricKey)
+        .eq('updated_at', storedUpdatedAt)
+        .select('updated_at')
+        .maybeSingle();
 
-    if (saveResult.error) throw saveResult.error;
+      if (saveResult.error) throw saveResult.error;
+      if (!saveResult.data) return staleRuleResponse(requestId);
+    } else {
+      // Inherited rules have no plan-scoped row. Insert rather than upsert so a
+      // concurrent Advanced editor creating the same override wins with a 409
+      // instead of being silently overwritten.
+      const saveResult = await adminResult.supabase
+        .from('au_plan_limit_rules')
+        .insert({
+          scope: input.plan,
+          limit_key: input.metricKey,
+          ...simpleFields,
+          mode: effective.mode,
+          is_enabled: effective.isEnabled,
+        });
 
-    const refreshed = await loadAdminPlanLimitState(adminResult.supabase);
+      if (saveResult.error) {
+        if (saveResult.error.code === '23505') return staleRuleResponse(requestId);
+        throw saveResult.error;
+      }
+    }
+
+    const [refreshed, refreshedRevisions] = await Promise.all([
+      loadAdminPlanLimitState(adminResult.supabase),
+      loadStoredRuleRevisions(adminResult.supabase, input.plan),
+    ]);
     return json({
       ok: true,
       requestId,
       plan: input.plan,
       metricKey: input.metricKey,
-      rules: serializeSimpleRules(refreshed, input.plan),
+      rules: serializeSimpleRules(refreshed, input.plan, refreshedRevisions),
     });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
