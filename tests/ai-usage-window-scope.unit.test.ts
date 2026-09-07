@@ -109,10 +109,14 @@ async function main() {
       /ELSE[\s\S]+admin_usage_json_metric_value\(COALESCE\(v_total, '\{\}'::jsonb\), v_metric_aliases\)/i,
     );
 
-    // In-flight reservations write canonical + compatibility aliases together, so the
-    // reservation sum deliberately reads only the canonical bucket rather than summing aliases.
-    assert.match(sql, /r\.reserved_units[\s\S]+v_metric_key/i);
-    assert.doesNotMatch(sql, /SUM\([\s\S]+r\.reserved_units[\s\S]+v_metric_aliases/i);
+    // In-flight reservations write canonical + compatibility aliases together, so inspect
+    // only the bounded reservation aggregation statement and require its canonical bucket.
+    const reservationSum = sql.match(
+      /SELECT COALESCE\(SUM\(public\.ai_usage_jsonb_numeric_value\([\s\S]*?INTO v_active_reserved/i,
+    )?.[0];
+    assert.ok(reservationSum, 'expected active-reservation aggregation');
+    assert.match(reservationSum, /r\.reserved_units[\s\S]+v_metric_key/i);
+    assert.doesNotMatch(reservationSum, /v_metric_aliases/i);
 
     assert.match(
       sql,
