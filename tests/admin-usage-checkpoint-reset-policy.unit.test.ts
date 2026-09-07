@@ -14,7 +14,15 @@ assert.match(
 );
 assert.match(
   migration,
-  /pg_advisory_xact_lock[\s\S]+plan_limit_rule[\s\S]+SELECT r\.\*[\s\S]+FOR SHARE/i,
+  /concat_ws\('\|', 'plan_limit_rule', 'default', TRIM\(p_metric_key\)\)[\s\S]+concat_ws\('\|', 'plan_limit_rule', v_plan, TRIM\(p_metric_key\)\)/i,
+);
+assert.match(
+  migration,
+  /pg_advisory_xact_lock\(hashtextextended\(v_default_lock_key, 0\)\)[\s\S]+pg_advisory_xact_lock\(hashtextextended\(v_plan_lock_key, 0\)\)/i,
+);
+assert.match(
+  migration,
+  /SELECT r\.\*[\s\S]+FROM public\.au_plan_limit_rules AS r[\s\S]+FOR SHARE/i,
 );
 assert.match(
   migration,
