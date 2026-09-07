@@ -92,6 +92,7 @@ type PlanRule = {
   resetIntervalValue: number | null;
   resetIntervalUnit: string | null;
   editableHere: boolean;
+  revision: string;
 };
 
 type AdjustmentAction = 'increase' | 'decrease' | 'set' | 'reset';
@@ -441,6 +442,7 @@ export default function ConexUsagePage() {
           limit: numericLimit,
           isUnlimited: planUnlimited,
           resetPolicy: planReset,
+          revision: editingPlanRule.revision,
         }),
       });
       if (!res.ok) throw await responseError(res, 'Unable to update plan cap.');
@@ -561,7 +563,7 @@ export default function ConexUsagePage() {
           </div>
 
           <Button type="button" variant="outline" onClick={() => void loadUsage(selectedUserId)} disabled={!selectedUserId || loadingUsage}>
-            {loadingUsage ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            {loadingUsage ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
             Refresh
           </Button>
         </CardContent>
