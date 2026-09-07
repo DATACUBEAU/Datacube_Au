@@ -71,7 +71,7 @@ async function main() {
     assert.equal(check?.counter_scope, 'total');
   });
 
-  await run('reservation SQL reads committed and active window usage before enforcing non-daily caps', () => {
+  await run('historical reservation SQL reads committed and active window usage before enforcing non-daily caps', () => {
     const sql = readFileSync('supabase/migrations/20260829215500_ai_reservation_admin_adjustments.sql', 'utf8');
     assert.match(sql, /v_counter_scope NOT IN \('today', 'total', 'window'\)/i);
     assert.match(sql, /v_counter_scope = 'window'[\s\S]+get_usage_metric_window_totals/i);
@@ -84,6 +84,40 @@ async function main() {
     assert.match(sql, /v_window_end IS NULL OR r\.created_at < v_window_end/i);
     assert.match(sql, /ai_usage_jsonb_numeric_value\([\s\S]+r\.reserved_units[\s\S]+v_metric_key/i);
     assert.match(sql, /v_current := v_current \+ COALESCE\(v_active_reserved, 0\)/i);
+    assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
+  });
+
+  await run('final atomic AI admission resolves accepted aliases without double counting them', () => {
+    const sql = readFileSync('supabase/migrations/20260907164500_ai_usage_alias_aware_admission.sql', 'utf8');
+
+    assert.match(sql, /v_metric_aliases TEXT\[\]/i);
+    assert.match(sql, /v_metric_aliases := public\.admin_usage_metric_aliases\(v_metric_key\)/i);
+    assert.match(
+      sql,
+      /get_usage_metric_window_totals\([\s\S]+p_user_id,[\s\S]+v_metric_aliases,[\s\S]+v_window_start,[\s\S]+v_window_end/i,
+    );
+    assert.match(
+      sql,
+      /admin_usage_json_metric_value\(COALESCE\(v_window_totals, '\{\}'::jsonb\), v_metric_aliases\)/i,
+    );
+    assert.match(
+      sql,
+      /v_counter_scope = 'today'[\s\S]+admin_usage_json_metric_value\(COALESCE\(v_today, '\{\}'::jsonb\), v_metric_aliases\)/i,
+    );
+    assert.match(
+      sql,
+      /ELSE[\s\S]+admin_usage_json_metric_value\(COALESCE\(v_total, '\{\}'::jsonb\), v_metric_aliases\)/i,
+    );
+
+    // In-flight reservations write canonical + compatibility aliases together, so the
+    // reservation sum deliberately reads only the canonical bucket rather than summing aliases.
+    assert.match(sql, /r\.reserved_units[\s\S]+v_metric_key/i);
+    assert.doesNotMatch(sql, /SUM\([\s\S]+r\.reserved_units[\s\S]+v_metric_aliases/i);
+
+    assert.match(
+      sql,
+      /REVOKE ALL ON FUNCTION public\.reserve_ai_usage_window_unchecked\([\s\S]+FROM PUBLIC, anon, authenticated, service_role/i,
+    );
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
   });
 
