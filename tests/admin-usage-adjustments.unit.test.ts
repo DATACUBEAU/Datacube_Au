@@ -184,7 +184,9 @@ async function main() {
     assert.match(route, /plan: z\.enum\(DEFAULT_PLAN_ORDER\)/);
     assert.match(route, /effective\.mode !== 'usage'/);
     assert.match(route, /scope: input\.plan/);
-    assert.match(route, /\.from\('au_plan_limit_rules'\)[\s\S]*?\.upsert\(row, \{ onConflict: 'scope,limit_key' \}\)/);
+    assert.match(route, /\.update\(simpleFields\)[\s\S]*?\.eq\('scope', input\.plan\)[\s\S]*?\.eq\('limit_key', input\.metricKey\)[\s\S]*?\.eq\('updated_at', storedUpdatedAt\)/);
+    assert.match(route, /\.insert\(\{[\s\S]*?scope: input\.plan,[\s\S]*?limit_key: input\.metricKey/);
+    assert.doesNotMatch(route, /\.upsert\(row, \{ onConflict: 'scope,limit_key' \}\)/);
     assert.doesNotMatch(route, /savePlanLimitScopeRules/);
     assert.doesNotMatch(route, /scope:\s*'default'/);
   });
