@@ -55,6 +55,7 @@ jobs:
           tests/admin-usage-api-error-safety.unit.test.ts
           tests/admin-usage-inflight-reservation.unit.test.ts
           tests/admin-usage-checkpoint-composition.unit.test.ts
+          tests/admin-usage-checkpoint-reset-policy.unit.test.ts
           tests/admin-usage-ai-lock-order.unit.test.ts
           tests/usage-accounting-user-serialization.unit.test.ts
           tests/ai-usage-terminal-user-serialization.unit.test.ts
@@ -107,6 +108,7 @@ jobs:
           node .tmp-tests/tests/admin-usage-api-error-safety.unit.test.js
           node .tmp-tests/tests/admin-usage-inflight-reservation.unit.test.js
           node .tmp-tests/tests/admin-usage-checkpoint-composition.unit.test.js
+          node .tmp-tests/tests/admin-usage-checkpoint-reset-policy.unit.test.js
           node .tmp-tests/tests/admin-usage-ai-lock-order.unit.test.js
           node .tmp-tests/tests/usage-accounting-user-serialization.unit.test.js
           node .tmp-tests/tests/ai-usage-terminal-user-serialization.unit.test.js
