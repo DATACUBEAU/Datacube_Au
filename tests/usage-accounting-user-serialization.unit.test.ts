@@ -5,6 +5,10 @@ const migration = readFileSync(
   'supabase/migrations/20260901084500_usage_accounting_user_serialization.sql',
   'utf8',
 );
+const privilegeMigration = readFileSync(
+  'supabase/migrations/20260907184500_admin_usage_service_role_only_mutations.sql',
+  'utf8',
+);
 
 const reserve = migration.match(
   /CREATE OR REPLACE FUNCTION public\.reserve_ai_usage[\s\S]+?\n\$\$;/i,
@@ -36,7 +40,9 @@ assert.doesNotMatch(
   /reserve_ai_usage_user_serialized_unchecked[\s\S]+pg_advisory_xact_lock/i,
 );
 
-// Authenticated callers must be checked before they can hold the shared lock.
+// This historical wrapper still contains its defense-in-depth admin check before
+// the shared lock. A later migration narrows the externally callable role to the
+// trusted service-role server boundary.
 for (const body of [single, batch]) {
   assert.match(
     body,
@@ -67,25 +73,49 @@ assert.match(
   /REVOKE ALL ON FUNCTION public\.admin_adjust_usage_batch_versioned_user_serialized_unchecked[\s\S]+FROM PUBLIC, anon, authenticated, service_role/i,
 );
 
-// Public contracts stay unchanged: AI reservation remains service-role only,
-// while guarded Conex wrappers remain available to authenticated admins.
+// The original serialization migration granted authenticated Conex callers for
+// rollout compatibility; the latest privilege migration must close those direct
+// RPC surfaces because the authorized Next.js route already uses a service-role
+// Supabase client after authenticating the human administrator.
 assert.match(
   migration,
   /GRANT EXECUTE ON FUNCTION public\.reserve_ai_usage[\s\S]+TO service_role/i,
 );
 assert.match(
-  migration,
-  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+TO authenticated, service_role/i,
+  privilegeMigration,
+  /REVOKE ALL ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+FROM PUBLIC, anon, authenticated/i,
 );
 assert.match(
-  migration,
-  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+TO authenticated, service_role/i,
+  privilegeMigration,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+TO service_role/i,
+);
+assert.match(
+  privilegeMigration,
+  /REVOKE ALL ON FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+FROM PUBLIC, anon, authenticated/i,
+);
+assert.match(
+  privilegeMigration,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+TO service_role/i,
+);
+assert.match(
+  privilegeMigration,
+  /REVOKE ALL ON FUNCTION public\.admin_adjust_usage_reset_all_versioned[\s\S]+FROM PUBLIC, anon, authenticated/i,
+);
+assert.match(
+  privilegeMigration,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_reset_all_versioned[\s\S]+TO service_role/i,
+);
+assert.doesNotMatch(
+  privilegeMigration,
+  /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_(?:versioned|batch_versioned|reset_all_versioned)[\s\S]+TO authenticated/i,
 );
 
-assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
-assert.doesNotMatch(
-  migration,
-  /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments|ai_usage_reservations)/i,
-);
+for (const sql of [migration, privilegeMigration]) {
+  assert.doesNotMatch(sql, /\bTRUNCATE\b/i);
+  assert.doesNotMatch(
+    sql,
+    /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments|ai_usage_reservations)/i,
+  );
+}
 
 console.log('usage accounting per-user serialization regressions passed');
