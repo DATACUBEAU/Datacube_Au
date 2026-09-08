@@ -49,8 +49,20 @@ assert.match(
 
 assert.match(
   source,
-  /selectedUserIdRef\.current !== targetUserId \|\| payload\.plan !== targetPlan[\s\S]*?setPlanRules\(/,
-  'plan-rule mutation responses must not overwrite state after switching users or plans',
+  /const selectedPlanRef = useRef<string \| null>\(null\);/,
+  'plan-wide saves must track the currently selected canonical plan independently from user identity',
+);
+
+assert.match(
+  source,
+  /selectedPlanRef\.current = payload\.plan;[\s\S]*?setUsage\(payload\);/,
+  'validated usage responses must publish the selected user canonical plan for plan-scoped save guards',
+);
+
+assert.match(
+  source,
+  /if \(payload\.plan !== targetPlan\) return;[\s\S]*?const currentSelectedUserId = selectedUserIdRef\.current;[\s\S]*?selectedPlanRef\.current !== targetPlan[\s\S]*?planRuleRequestVersionRef\.current \+= 1;[\s\S]*?setPlanRules\([\s\S]*?await loadUsage\(currentSelectedUserId\);/,
+  'a successful plan-wide save must survive same-plan user switches, invalidate stale plan-rule GETs, and refresh the currently selected user',
 );
 
 assert.match(
