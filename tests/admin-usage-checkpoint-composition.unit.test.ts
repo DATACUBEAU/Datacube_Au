@@ -13,6 +13,10 @@ const batchReplayFastPathMigration = readFileSync(
   'supabase/migrations/20260901004500_admin_usage_batch_completed_replay_fast_path.sql',
   'utf8',
 );
+const increaseReservationGuardMigration = readFileSync(
+  'supabase/migrations/20260908014500_admin_usage_increase_reservation_guard.sql',
+  'utf8',
+);
 
 // Both exposed SECURITY DEFINER wrappers must authenticate before touching the
 // mutation-version row, replay ledger, reservations, checkpoint sources, or batch items.
@@ -25,7 +29,7 @@ assert.match(
   /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+v_requester UUID := auth\.uid\(\)[\s\S]+v_role TEXT[\s\S]+IF v_role <> 'service_role'[\s\S]+v_requester <> p_actor_user_id[\s\S]+NOT public\.is_conex_admin\(v_requester\)[\s\S]+RAISE EXCEPTION 'forbidden'[\s\S]+jsonb_typeof\(p_items\)/i,
 );
 
-// The composed wrapper must keep replay validation, reservation safety,
+// The historical composed wrapper must keep replay validation, reservation safety,
 // legacy checkpointing, and the checked write in one transaction.
 assert.match(
   migration,
@@ -48,10 +52,10 @@ assert.match(
   /admin_assert_usage_adjustment_replay\([\s\S]+p_metric_key[\s\S]+p_delta[\s\S]+p_action[\s\S]+p_window_start[\s\S]+p_window_end[\s\S]+p_request_id[\s\S]+p_context/i,
 );
 
-// Completed single-item replays are recovery of committed work. The final wrapper
-// must authenticate and take the quota-window lock, validate the replay fingerprint,
-// detect the persisted request, and return through the checked dedupe path before
-// mutation-version, active-reservation, or checkpoint guards for new work.
+// Completed single-item replays are recovery of committed work. The historical
+// fast-path migration authenticates and takes the quota-window lock, validates the
+// replay fingerprint, detects the persisted request, and returns through checked
+// dedupe before mutation-version/reservation/checkpoint guards for new work.
 assert.match(
   replayFastPathMigration,
   /IF v_role <> 'service_role'[\s\S]+pg_advisory_xact_lock[\s\S]+admin_assert_usage_adjustment_replay[\s\S]+SELECT EXISTS[\s\S]+au_usage_admin_adjustments[\s\S]+IF v_completed THEN[\s\S]+RETURN public\.admin_adjust_usage_checked[\s\S]+END IF[\s\S]+INSERT INTO public\.au_usage_mutation_versions[\s\S]+FOR UPDATE[\s\S]+assert_no_active_ai_usage_reservation[\s\S]+admin_checkpoint_legacy_usage_gap/i,
@@ -86,22 +90,55 @@ assert.match(
   /NULLIF\(TRIM\(COALESCE\(value ->> 'requestId', ''\)\), ''\) IS NOT NULL[\s\S]+a\.user_id = p_target_user_id[\s\S]+a\.metric_key = TRIM\(value ->> 'metricKey'\)[\s\S]+a\.request_id = NULLIF/i,
 );
 
-// Target-derived changes remain guarded; relative increases are not unnecessarily blocked.
+// Historically the target-derived actions were the only ones blocked by active
+// reservations. Preserve that migration-history expectation while asserting that
+// the final single-item implementation closes the additional checkpoint-specific
+// increase hazard without moving the guard ahead of completed replay recovery.
 assert.match(migration, /IN \('decrease', 'set', 'reset'\)/i);
 assert.doesNotMatch(migration, /IN \('increase',\s*'decrease',\s*'set',\s*'reset'\)/i);
 assert.match(replayFastPathMigration, /IN \('decrease', 'set', 'reset'\)/i);
 assert.match(batchReplayFastPathMigration, /IN \('decrease', 'set', 'reset'\)/i);
 
-// Keep the public RPC surface stable and avoid destructive remediation.
+assert.match(
+  increaseReservationGuardMigration,
+  /CREATE OR REPLACE FUNCTION public\.admin_adjust_usage_versioned_user_serialized_unchecked[\s\S]+admin_assert_usage_adjustment_replay[\s\S]+SELECT EXISTS[\s\S]+IF v_completed THEN[\s\S]+RETURN public\.admin_adjust_usage_checked[\s\S]+END IF[\s\S]+FOR UPDATE[\s\S]+IN \('increase', 'decrease', 'set', 'reset'\)[\s\S]+assert_no_active_ai_usage_reservation[\s\S]+admin_checkpoint_legacy_usage_gap[\s\S]+admin_adjust_usage_checked/i,
+);
+assert.doesNotMatch(
+  increaseReservationGuardMigration,
+  /assert_no_active_ai_usage_reservation[\s\S]+IF v_completed THEN/i,
+);
+
+// The new final-state guard must not reopen either the internal implementation or
+// the public mutation RPC to browser/authenticated callers.
+assert.match(
+  increaseReservationGuardMigration,
+  /REVOKE ALL ON FUNCTION public\.admin_adjust_usage_versioned_user_serialized_unchecked[\s\S]+FROM PUBLIC, anon, authenticated, service_role/i,
+);
+assert.match(
+  increaseReservationGuardMigration,
+  /REVOKE ALL ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+FROM PUBLIC, anon, authenticated[\s\S]+GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+TO service_role/i,
+);
+
+// Keep the historical public RPC surface assertions for the migration that
+// introduced these wrappers; later migrations intentionally narrow the final
+// mutation surface to service_role only.
 assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+TO authenticated/i);
 assert.match(migration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+TO authenticated/i);
 assert.match(replayFastPathMigration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_versioned[\s\S]+TO authenticated/i);
 assert.match(batchReplayFastPathMigration, /GRANT EXECUTE ON FUNCTION public\.admin_adjust_usage_batch_versioned[\s\S]+TO authenticated/i);
-assert.doesNotMatch(migration, /\bTRUNCATE\b/i);
-assert.doesNotMatch(migration, /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i);
-assert.doesNotMatch(replayFastPathMigration, /\bTRUNCATE\b/i);
-assert.doesNotMatch(replayFastPathMigration, /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i);
-assert.doesNotMatch(batchReplayFastPathMigration, /\bTRUNCATE\b/i);
-assert.doesNotMatch(batchReplayFastPathMigration, /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i);
+
+// No review remediation may delete durable usage/accounting history.
+for (const sql of [
+  migration,
+  replayFastPathMigration,
+  batchReplayFastPathMigration,
+  increaseReservationGuardMigration,
+]) {
+  assert.doesNotMatch(sql, /\bTRUNCATE\b/i);
+  assert.doesNotMatch(
+    sql,
+    /DELETE\s+FROM\s+public\.(?:au_usage_events|usage_counters|usage_totals|au_usage_admin_adjustments)/i,
+  );
+}
 
 console.log('admin usage authorization/checkpoint/replay composition regressions passed');
