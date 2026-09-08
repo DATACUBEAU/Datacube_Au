@@ -197,6 +197,7 @@ export default function ConexUsagePage() {
   const [planReset, setPlanReset] = useState('daily');
   const [savingPlanRule, setSavingPlanRule] = useState(false);
   const selectedUserIdRef = useRef('');
+  const selectedPlanRef = useRef<string | null>(null);
   const userListRequestVersionRef = useRef(0);
   const usageRequestVersionRef = useRef(0);
   const planRuleRequestVersionRef = useRef(0);
@@ -211,6 +212,7 @@ export default function ConexUsagePage() {
   const selectUser = useCallback((userId: string) => {
     if (selectedUserIdRef.current === userId) return;
     selectedUserIdRef.current = userId;
+    selectedPlanRef.current = null;
     usageRequestVersionRef.current += 1;
     planRuleRequestVersionRef.current += 1;
     adjustmentRequestRef.current = null;
@@ -252,6 +254,7 @@ export default function ConexUsagePage() {
     const requestVersion = ++usageRequestVersionRef.current;
     if (!userId) {
       if (requestVersion === usageRequestVersionRef.current) {
+        selectedPlanRef.current = null;
         setUsage(null);
         setLoadingUsage(false);
       }
@@ -267,9 +270,11 @@ export default function ConexUsagePage() {
         selectedUserIdRef.current !== userId ||
         payload.userId !== userId
       ) return;
+      selectedPlanRef.current = payload.plan;
       setUsage(payload);
     } catch (error: any) {
       if (requestVersion !== usageRequestVersionRef.current || selectedUserIdRef.current !== userId) return;
+      selectedPlanRef.current = null;
       setUsage(null);
       toast({ title: 'Usage could not load', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
@@ -419,7 +424,6 @@ export default function ConexUsagePage() {
 
   async function savePlanRule() {
     if (!editingPlanRule || !usage || !isSimplePlan(usage.plan)) return;
-    const targetUserId = selectedUserId;
     const targetPlan = usage.plan;
     const trimmedPlanLimit = planLimit.trim();
     if (!planUnlimited && trimmedPlanLimit === '') {
@@ -447,10 +451,13 @@ export default function ConexUsagePage() {
       });
       if (!res.ok) throw await responseError(res, 'Unable to update plan cap.');
       const payload = await res.json();
-      if (selectedUserIdRef.current !== targetUserId || payload.plan !== targetPlan) return;
+      if (payload.plan !== targetPlan) return;
+      const currentSelectedUserId = selectedUserIdRef.current;
+      if (!currentSelectedUserId || selectedPlanRef.current !== targetPlan) return;
+      planRuleRequestVersionRef.current += 1;
       setPlanRules(Array.isArray(payload.rules) ? payload.rules : []);
       setEditingPlanRule(null);
-      await loadUsage(targetUserId);
+      await loadUsage(currentSelectedUserId);
       toast({
         title: 'Plan rule updated',
         description: planUnlimited
@@ -458,7 +465,7 @@ export default function ConexUsagePage() {
           : `${editingPlanRule.label} now uses the new ${targetPlan.toUpperCase()} cap and reset schedule.`,
       });
     } catch (error: any) {
-      if (selectedUserIdRef.current !== targetUserId) return;
+      if (selectedPlanRef.current !== targetPlan) return;
       toast({ title: 'Plan rule update failed', description: error?.message || 'Try again.', variant: 'destructive' });
     } finally {
       setSavingPlanRule(false);
@@ -652,7 +659,7 @@ export default function ConexUsagePage() {
                         <PencilLine className="h-4 w-4 text-muted-foreground" />
                       </div>
                     </button>
-                  ))
+                  ))}
                 ) : (
                   <p className="text-sm text-muted-foreground">No simple usage rules are available for this plan.</p>
                 )}
