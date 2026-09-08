@@ -659,7 +659,7 @@ export default function ConexUsagePage() {
                         <PencilLine className="h-4 w-4 text-muted-foreground" />
                       </div>
                     </button>
-                  ))}
+                  ))
                 ) : (
                   <p className="text-sm text-muted-foreground">No simple usage rules are available for this plan.</p>
                 )}
