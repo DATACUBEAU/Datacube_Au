@@ -58,6 +58,7 @@ jobs:
           tests/admin-usage-checkpoint-reset-policy.unit.test.ts
           tests/admin-usage-ai-lock-order.unit.test.ts
           tests/usage-accounting-user-serialization.unit.test.ts
+          tests/usage-mutation-ownership-order.unit.test.ts
           tests/ai-usage-terminal-user-serialization.unit.test.ts
           tests/ai-usage-expiry-user-serialization.unit.test.ts
           tests/admin-usage-delta-direction.unit.test.ts
@@ -111,6 +112,7 @@ jobs:
           node .tmp-tests/tests/admin-usage-checkpoint-reset-policy.unit.test.js
           node .tmp-tests/tests/admin-usage-ai-lock-order.unit.test.js
           node .tmp-tests/tests/usage-accounting-user-serialization.unit.test.js
+          node .tmp-tests/tests/usage-mutation-ownership-order.unit.test.js
           node .tmp-tests/tests/ai-usage-terminal-user-serialization.unit.test.js
           node .tmp-tests/tests/ai-usage-expiry-user-serialization.unit.test.js
           node .tmp-tests/tests/admin-usage-delta-direction.unit.test.js
