@@ -47,6 +47,15 @@ assert.match(
   'mutation responses must not overwrite usage state for a newly selected user',
 );
 
+const mutationUsageInvalidations = source.match(
+  /if \(selectedUserIdRef\.current !== targetUserId\) return;\s+usageRequestVersionRef\.current \+= 1;\s+setLoadingUsage\(false\);\s+if \(Array\.isArray\(payload\.usage\)\)/g,
+) || [];
+assert.equal(
+  mutationUsageInvalidations.length,
+  2,
+  'adjustment and hard-reset successes must invalidate older usage GETs before publishing mutation snapshots',
+);
+
 assert.match(
   source,
   /const selectedPlanRef = useRef<string \| null>\(null\);/,
