@@ -81,6 +81,7 @@ export type UsageHealthMetricRow = {
 };
 
 type ResolvedUsageSource = UsageHealthMetricRow['source'];
+type ResetWindowSnapshot = ReturnType<typeof computeResetWindow>;
 
 function shouldUseTrackedCountersForRuleMode(mode: string | null | undefined): boolean {
   return String(mode || '').trim().toLowerCase() === 'usage';
@@ -209,9 +210,11 @@ export async function loadUsageMetricDefinitions(supabase: SupabaseClient): Prom
 export async function loadUsageCounterSnapshots(
   supabase: SupabaseClient,
   userId: string,
+  snapshotAt: Date = new Date(),
 ): Promise<{ today: Record<string, unknown>; total: Record<string, unknown> }> {
+  const day = snapshotAt.toISOString().slice(0, 10);
   const [todayRes, totalRes] = await Promise.all([
-    supabase.from('usage_counters').select('counters').eq('user_id', userId).eq('day', new Date().toISOString().slice(0, 10)).maybeSingle(),
+    supabase.from('usage_counters').select('counters').eq('user_id', userId).eq('day', day).maybeSingle(),
     supabase.from('usage_totals').select('counters').eq('user_id', userId).maybeSingle(),
   ]);
   const today = !todayRes.error && todayRes.data ? (((todayRes.data as any).counters || {}) as Record<string, unknown>) : {};
@@ -257,16 +260,19 @@ export async function resolveUsageMetricForRule(input: {
   fallbackUsed: number;
   todayCounters?: Record<string, unknown>;
   totalCounters?: Record<string, unknown>;
+  window?: ResetWindowSnapshot;
+  snapshotAt?: Date;
 }): Promise<{ trackedUsed: number; effectiveUsed: number; source: ResolvedUsageSource }> {
   if (!shouldUseTrackedCountersForRuleMode(input.rule.mode)) {
     return { trackedUsed: 0, effectiveUsed: Math.max(0, input.fallbackUsed), source: 'limit_snapshot' };
   }
 
   const aliases = USAGE_METRIC_ALIASES[input.metricKey] || [input.metricKey];
-  const window = computeResetWindow(input.rule);
+  const snapshotAt = input.snapshotAt ?? new Date();
+  const window = input.window ?? computeResetWindow(input.rule, snapshotAt);
   let trackedUsed = 0;
   const usingLifetimeWindow = !window.windowEnd && window.windowStart.startsWith('1970-01-01T00:00:00');
-  const usingCurrentDayWindow = window.policy === 'daily' && window.windowStart === `${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`;
+  const usingCurrentDayWindow = window.policy === 'daily' && window.windowStart === `${snapshotAt.toISOString().slice(0, 10)}T00:00:00.000Z`;
 
   if (usingLifetimeWindow) {
     trackedUsed = readUsageMetricValue(input.totalCounters || {}, aliases, 0);
