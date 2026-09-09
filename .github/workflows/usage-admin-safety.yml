@@ -68,6 +68,7 @@ jobs:
           tests/admin-usage-active-window.unit.test.ts
           tests/admin-usage-entitlement-race.unit.test.ts
           tests/usage-window-wall-clock-freshness.unit.test.ts
+          tests/usage-snapshot-window-consistency.unit.test.ts
           tests/simple-plan-rule-atomicity.unit.test.ts
           tests/conex-usage-selection-race.unit.test.ts
           tests/conex-usage-idempotent-retry.unit.test.ts
@@ -122,6 +123,7 @@ jobs:
           node .tmp-tests/tests/admin-usage-active-window.unit.test.js
           node .tmp-tests/tests/admin-usage-entitlement-race.unit.test.js
           node .tmp-tests/tests/usage-window-wall-clock-freshness.unit.test.js
+          node .tmp-tests/tests/usage-snapshot-window-consistency.unit.test.js
           node .tmp-tests/tests/simple-plan-rule-atomicity.unit.test.js
           node .tmp-tests/tests/conex-usage-selection-race.unit.test.js
           node .tmp-tests/tests/conex-usage-idempotent-retry.unit.test.js
