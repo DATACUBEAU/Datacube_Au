@@ -403,6 +403,8 @@ export default function ConexUsagePage() {
       if (!res.ok) throw await responseError(res, 'Unable to update usage.');
       const payload = await res.json();
       if (selectedUserIdRef.current !== targetUserId) return;
+      usageRequestVersionRef.current += 1;
+      setLoadingUsage(false);
       if (Array.isArray(payload.usage)) {
         setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage } : current);
       }
@@ -498,6 +500,8 @@ export default function ConexUsagePage() {
       if (!res.ok) throw await responseError(res, 'Unable to reset usage.');
       const payload = await res.json();
       if (selectedUserIdRef.current !== targetUserId) return;
+      usageRequestVersionRef.current += 1;
+      setLoadingUsage(false);
       if (Array.isArray(payload.usage)) {
         setUsage((current) => current?.userId === targetUserId ? { ...current, plan: payload.plan || current.plan, usage: payload.usage } : current);
       }
