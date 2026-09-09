@@ -58,7 +58,7 @@ function serializeUsage(effective: Awaited<ReturnType<typeof resolveCanonicalEff
 async function loadCommittedUsageSnapshot(input: {
   supabase: any;
   userId: string;
-  fallbackPlan: string;
+  fallbackPlan: string | null;
 }) {
   try {
     const refreshed = await resolveCanonicalEffectiveLimits({ supabase: input.supabase, userId: input.userId });
@@ -127,6 +127,80 @@ async function loadUsageMutationVersion(input: { supabase: any; userId: string }
     throw new Error('invalid_usage_mutation_version');
   }
   return parsed;
+}
+
+async function replayCompletedAdjustmentIfPresent(input: {
+  supabase: any;
+  actorUserId: string;
+  actorEmail: string | null;
+  userId: string;
+  metricKey: ApprovedLimitKey;
+  action: 'increase' | 'decrease' | 'set' | 'reset';
+  amount?: number;
+  reason: string;
+  requestId: string;
+}) {
+  const { data: existing, error: lookupError } = await input.supabase
+    .from('au_usage_admin_adjustments')
+    .select('delta, action, window_start, window_end, context')
+    .eq('user_id', input.userId)
+    .eq('metric_key', input.metricKey)
+    .eq('request_id', input.requestId)
+    .maybeSingle();
+  if (lookupError) throw lookupError;
+  if (!existing) return null;
+
+  const storedDelta = Number(existing.delta);
+  if (!Number.isSafeInteger(storedDelta) || !existing.window_start) {
+    throw new Error('invalid_usage_adjustment_replay_receipt');
+  }
+
+  const storedContext = existing.context && typeof existing.context === 'object'
+    ? (existing.context as Record<string, unknown>)
+    : {};
+
+  // Historical decreases created before requested_amount became mandatory cannot
+  // safely recover caller intent from the ledger alone. Let the normal live-state
+  // path handle those rows instead of broadening their legacy compatibility rule.
+  if (input.action === 'decrease' && storedContext.requested_amount == null) return null;
+
+  const amount = Math.max(0, Number(input.amount || 0));
+  const replayDelta = input.action === 'increase' ? amount : storedDelta;
+  const replayContext = {
+    ...(input.action === 'decrease' ? { requested_amount: amount } : {}),
+    ...(input.action === 'set' ? { requested_target: amount } : {}),
+    ...(input.action === 'reset' ? { requested_target: 0 } : {}),
+  };
+
+  // The authoritative RPC owns the immutable fingerprint check. We only supply
+  // the persisted window plus the caller's semantic intent so a completed replay
+  // can be recovered before current plan/rule eligibility is evaluated. New writes
+  // never enter this path because there is no completed ledger row yet.
+  const { data: receipt, error: replayError } = await input.supabase.rpc('admin_adjust_usage_versioned', {
+    p_actor_user_id: input.actorUserId,
+    p_actor_email: input.actorEmail,
+    p_target_user_id: input.userId,
+    p_metric_key: input.metricKey,
+    p_delta: replayDelta,
+    p_action: input.action,
+    p_window_start: existing.window_start,
+    p_window_end: existing.window_end,
+    p_reason: input.reason,
+    p_request_id: input.requestId,
+    p_expected_adjustment_total: 0,
+    p_expected_usage_version: 0,
+    p_context: replayContext,
+  });
+  if (replayError) throw replayError;
+
+  const receiptDelta = Number((receipt as { delta?: unknown } | null)?.delta ?? storedDelta);
+  return {
+    ok: true,
+    changed: receiptDelta !== 0,
+    delta: receiptDelta,
+    replayed: true,
+    rpc: receipt,
+  } as const;
 }
 
 async function applyAdjustment(input: {
@@ -246,15 +320,15 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = adjustmentSchema.parse(await req.json());
-    const initialEffective = await resolveCanonicalEffectiveLimits({
-      supabase: adminResult.supabase,
-      userId: body.userId,
-    });
     const actorUserId = adminResult.auth.userId;
     const actorEmail = adminResult.auth.email ?? null;
     const rootRequestId = body.requestId || requestId;
 
     if (body.action === 'reset_all') {
+      const initialEffective = await resolveCanonicalEffectiveLimits({
+        supabase: adminResult.supabase,
+        userId: body.userId,
+      });
       const adjustableKeys = APPROVED_LIMIT_KEYS.filter((key) => {
         const rule = initialEffective.limitRules[key];
         return rule.mode === 'usage' && rule.isEnabled;
@@ -351,6 +425,41 @@ export async function POST(req: NextRequest) {
       return json({ ok: false, code: 'amount_required', message: 'Enter an amount.', requestId }, 400);
     }
 
+    if (body.requestId) {
+      const replay = await replayCompletedAdjustmentIfPresent({
+        supabase: adminResult.supabase,
+        actorUserId,
+        actorEmail,
+        userId: body.userId,
+        metricKey: body.metricKey,
+        action: body.action,
+        amount: body.amount,
+        reason: body.reason,
+        requestId: rootRequestId,
+      });
+      if (replay) {
+        const snapshot = await loadCommittedUsageSnapshot({
+          supabase: adminResult.supabase,
+          userId: body.userId,
+          fallbackPlan: null,
+        });
+        return json({
+          ok: true,
+          requestId,
+          action: body.action,
+          metricKey: body.metricKey,
+          result: replay,
+          refreshRequired: snapshot.refreshRequired,
+          plan: snapshot.plan,
+          usage: snapshot.usage,
+        });
+      }
+    }
+
+    const initialEffective = await resolveCanonicalEffectiveLimits({
+      supabase: adminResult.supabase,
+      userId: body.userId,
+    });
     const initialRule = initialEffective.limitRules[body.metricKey];
     if (initialRule.mode !== 'usage' || !initialRule.isEnabled) {
       return json({
