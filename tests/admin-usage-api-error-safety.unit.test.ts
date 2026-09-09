@@ -25,6 +25,27 @@ assert.match(usageRoute, /This request ID was already used for a different usage
 
 assert.match(
   usageRoute,
+  /async function replayCompletedAdjustmentIfPresent[\s\S]*\.from\('au_usage_admin_adjustments'\)[\s\S]*\.eq\('request_id', input\.requestId\)[\s\S]*admin_adjust_usage_versioned/,
+  'completed single-adjustment retries must be discovered from the authoritative ledger and replayed through the existing fingerprint-enforcing RPC',
+);
+assert.match(
+  usageRoute,
+  /if \(input\.action === 'decrease' && storedContext\.requested_amount == null\) return null/,
+  'legacy decreases without an immutable requested_amount fingerprint must not gain a broader early-replay compatibility path',
+);
+assert.match(
+  usageRoute,
+  /if \(body\.requestId\) \{[\s\S]*replayCompletedAdjustmentIfPresent[\s\S]*if \(replay\) \{[\s\S]*return json\([\s\S]*const initialEffective = await resolveCanonicalEffectiveLimits/,
+  'completed retries must resolve before current plan/rule eligibility is loaded so later entitlement changes cannot turn a committed success into a failure',
+);
+assert.match(
+  usageRoute,
+  /p_window_start: existing\.window_start,[\s\S]*p_window_end: existing\.window_end,[\s\S]*p_expected_usage_version: 0/,
+  'completed replay recovery must use the persisted quota window and rely on the RPC completed-replay fast path rather than recomputing current quota state',
+);
+
+assert.match(
+  usageRoute,
   /async function loadCommittedUsageSnapshot[\s\S]*resolveCanonicalEffectiveLimits[\s\S]*refreshRequired: false[\s\S]*catch[\s\S]*refreshRequired: true[\s\S]*usage: null/,
   'a failed read after a committed usage mutation must degrade to reload-required success instead of throwing into mutation failure handling',
 );
@@ -47,4 +68,4 @@ assert.doesNotMatch(
 assert.match(simplePlanRoute, /code: 'simple_plan_rules_load_failed'/);
 assert.match(simplePlanRoute, /code: 'simple_plan_rule_save_failed'/);
 
-console.log('PASS admin usage APIs reject coerced amounts, classify deterministic conflicts, and preserve committed-write success without exposing raw internal failure messages');
+console.log('PASS admin usage APIs reject coerced amounts, classify deterministic conflicts, recover completed replays before live rule checks, and preserve committed-write success without exposing raw internal failure messages');
