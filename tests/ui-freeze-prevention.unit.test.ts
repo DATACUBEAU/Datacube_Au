@@ -66,6 +66,18 @@ async function main() {
     assert.match(docsPage, /await refresh\(\)/);
   });
 
+  await run('dashboard shell stays interactive while recent documents load', () => {
+    const dashboard = readRepoFile('src', 'app', 'dashboard', 'page.tsx');
+    assert.doesNotMatch(dashboard, /return <DashboardPageSkeleton \/>/);
+    assert.doesNotMatch(dashboard, /import \{ DashboardPageSkeleton/);
+    assert.match(dashboard, /Upload Document/);
+    assert.match(dashboard, /Start AU Chat/);
+    assert.match(dashboard, /aria-busy=\{documentsLoading\}/);
+    assert.match(dashboard, /aria-live="polite"/);
+    assert.match(dashboard, /Loading recent documents…/);
+    assert.match(dashboard, /showSkeleton \? \(/);
+  });
+
   if (failed > 0) {
     process.exit(1);
   }
