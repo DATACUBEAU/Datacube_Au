@@ -42,19 +42,6 @@ function isValidPaystackPayload(payload: any): boolean {
 export async function POST(req: NextRequest) {
   const traceId = randomUUID();
   try {
-    const rateLimit = consumeBillingRateLimit({
-      scope: 'paystack-webhook',
-      key: resolveBillingRequestIp(req),
-      maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
-      windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
-    });
-    if (rateLimit.limited) {
-      return NextResponse.json(
-        { error: 'rate_limited', traceId },
-        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
-      );
-    }
-
     const signature = req.headers.get('x-paystack-signature');
     const rawBody = await req.text();
     if (Buffer.byteLength(rawBody, 'utf8') > WEBHOOK_MAX_BODY_BYTES) {
@@ -62,6 +49,18 @@ export async function POST(req: NextRequest) {
     }
 
     if (!verifyPaystackWebhookSignature(rawBody, signature)) {
+      const rateLimit = consumeBillingRateLimit({
+        scope: 'paystack-webhook-invalid-signature',
+        key: resolveBillingRequestIp(req),
+        maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
+        windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+      });
+      if (rateLimit.limited) {
+        return NextResponse.json(
+          { error: 'rate_limited', traceId },
+          { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
+        );
+      }
       return NextResponse.json(
         { error: 'invalid_signature', traceId },
         { status: 401 }
