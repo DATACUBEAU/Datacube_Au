@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   BILLING_PLAN_CODES,
   DEFAULT_BILLING_PLAN_CATALOG,
@@ -315,6 +316,19 @@ async function main() {
     assert.equal(first.limited, false);
     assert.equal(second.limited, false);
     assert.equal(third.limited, true);
+  });
+
+  await run('valid signed Paystack webhooks are verified before abuse throttling', () => {
+    const route = readFileSync('src/app/api/webhooks/paystack/route.ts', 'utf8');
+    const signatureCheck = route.indexOf('if (!verifyPaystackWebhookSignature(rawBody, signature))');
+    const rateLimitCall = route.indexOf('consumeBillingRateLimit({');
+
+    assert.ok(signatureCheck >= 0, 'Paystack webhook signature verification must remain present');
+    assert.ok(rateLimitCall > signatureCheck, 'valid signed webhooks must not be throttled before verification');
+    assert.ok(
+      route.includes("scope: 'paystack-webhook-invalid-signature'"),
+      'the abuse throttle must remain scoped to invalid-signature traffic',
+    );
   });
 
   await run('stale concurrent billing refresh responses are ignored in favor of the latest authoritative snapshot', () => {
