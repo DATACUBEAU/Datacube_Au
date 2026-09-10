@@ -5,6 +5,8 @@ import { getFeatureFlagsSnapshot } from '@/lib/server/feature-flags';
 
 export const runtime = 'nodejs';
 
+const PLAN_CATALOG_CACHE_CONTROL = 'public, max-age=30, s-maxage=30, stale-while-revalidate=120';
+
 export async function GET() {
   const requestId = crypto.randomUUID();
 
@@ -29,7 +31,7 @@ export async function GET() {
           pro_required_knowledge_hub: Boolean(flags.get('pro_required_knowledge_hub')?.enabled ?? true),
         },
       },
-      { status: 200, headers: { 'Cache-Control': 'no-store' } },
+      { status: 200, headers: { 'Cache-Control': PLAN_CATALOG_CACHE_CONTROL } },
     );
   } catch (error: any) {
     return NextResponse.json(
