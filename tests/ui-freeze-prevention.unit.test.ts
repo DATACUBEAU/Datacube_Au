@@ -73,6 +73,7 @@ async function main() {
     assert.match(dashboard, /Upload Document/);
     assert.match(dashboard, /Start AU Chat/);
     assert.match(dashboard, /aria-busy=\{documentsLoading\}/);
+    assert.match(dashboard, /aria-live="polite"/);
     assert.match(dashboard, /Loading recent documents…/);
     assert.match(dashboard, /showSkeleton \? \(/);
   });
