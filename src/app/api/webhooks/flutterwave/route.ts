@@ -22,19 +22,6 @@ function isValidFlutterwavePayload(payload: any): boolean {
 export async function POST(req: NextRequest) {
   const traceId = randomUUID();
   try {
-    const rateLimit = consumeBillingRateLimit({
-      scope: 'flutterwave-webhook',
-      key: resolveBillingRequestIp(req),
-      maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
-      windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
-    });
-    if (rateLimit.limited) {
-      return NextResponse.json(
-        { error: 'rate_limited', traceId },
-        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
-      );
-    }
-
     const signature = req.headers.get('verif-hash') || req.headers.get('x-flutterwave-signature');
     let signatureValid = false;
     try {
@@ -51,6 +38,18 @@ export async function POST(req: NextRequest) {
     }
 
     if (!signatureValid) {
+      const rateLimit = consumeBillingRateLimit({
+        scope: 'flutterwave-webhook-invalid-signature',
+        key: resolveBillingRequestIp(req),
+        maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
+        windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+      });
+      if (rateLimit.limited) {
+        return NextResponse.json(
+          { error: 'rate_limited', traceId },
+          { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
+        );
+      }
       return NextResponse.json(
         { error: 'invalid_signature', traceId },
         { status: 401 }
