@@ -66,6 +66,15 @@ async function main() {
     assert.match(docsPage, /await refresh\(\)/);
   });
 
+  await run('public plan catalog avoids a no-store request on every dashboard mount', () => {
+    const hook = readRepoFile('src', 'hooks', 'api', 'use-plan-catalog.ts');
+    const route = readRepoFile('src', 'app', 'api', 'public', 'plan-catalog', 'route.ts');
+    assert.match(hook, /cache:\s*'default'/);
+    assert.doesNotMatch(hook, /cache:\s*'no-store'/);
+    assert.match(route, /public, max-age=30, s-maxage=30, stale-while-revalidate=120/);
+    assert.match(route, /500[\s\S]*Cache-Control': 'no-store'/);
+  });
+
   if (failed > 0) {
     process.exit(1);
   }
