@@ -1,7 +1,14 @@
 import { expect, test } from '@playwright/test';
 import { runReadinessProbe } from '../src/lib/server/health-readiness';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 test.describe('Network health and offline resilience', () => {
+  test('readiness endpoint is excluded from generic API caching', async () => {
+    const nextConfig = readFileSync(path.join(process.cwd(), 'next.config.ts'), 'utf8');
+    expect(nextConfig).toMatch(/\/api\/health\(\?:\\\/ready\)\?\$/i);
+  });
+
   test('readiness helper reports healthy dependencies without leaking internals', async () => {
     const result = await runReadinessProbe({
       check: async () => undefined,
