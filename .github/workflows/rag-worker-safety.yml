@@ -1,0 +1,43 @@
+name: RAG Worker Safety
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'rag-worker/**'
+      - '.github/workflows/rag-worker-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rag-worker-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rag-worker-safety:
+    name: Build and test RAG ingestion worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: rag-worker/package-lock.json
+
+      - name: Install worker dependencies
+        run: npm ci --prefix rag-worker
+
+      - name: Compile worker TypeScript
+        run: npm --prefix rag-worker run build
+
+      - name: Run worker unit tests
+        run: npm --prefix rag-worker test -- --runInBand
