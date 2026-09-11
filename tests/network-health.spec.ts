@@ -1,6 +1,51 @@
 import { expect, test } from '@playwright/test';
+import { runReadinessProbe } from '../src/lib/server/health-readiness';
 
 test.describe('Network health and offline resilience', () => {
+  test('readiness helper reports healthy dependencies without leaking internals', async () => {
+    const result = await runReadinessProbe({
+      check: async () => undefined,
+      timeoutMs: 1000,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.dependency).toBe('ok');
+    expect(Number.isFinite(result.durationMs)).toBe(true);
+  });
+
+  test('readiness helper sanitizes dependency failures', async () => {
+    const result = await runReadinessProbe({
+      check: async () => {
+        throw new Error('sensitive database implementation detail');
+      },
+      timeoutMs: 1000,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.dependency).toBe('unavailable');
+    expect(JSON.stringify(result)).not.toContain('sensitive');
+  });
+
+  test('readiness helper bounds hung dependency checks and aborts them', async () => {
+    let signalWasAborted = false;
+    const result = await runReadinessProbe({
+      timeoutMs: 100,
+      check: async (signal) => {
+        await new Promise<void>(() => {
+          signal.addEventListener('abort', () => {
+            signalWasAborted = true;
+          }, { once: true });
+        });
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.dependency).toBe('timeout');
+    expect(signalWasAborted).toBe(true);
+    expect(result.durationMs).toBeGreaterThanOrEqual(90);
+    expect(result.durationMs).toBeLessThan(1000);
+  });
+
   test('returns ok from /api/health', async ({ request }) => {
     const response = await request.get('/api/health', { failOnStatusCode: false });
     expect(response.status()).toBe(200);
