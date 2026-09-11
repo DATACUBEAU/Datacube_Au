@@ -1,0 +1,50 @@
+name: RAG Worker Safety
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'rag-worker/**'
+      - 'backend/rag-worker/**'
+      - '.github/workflows/rag-worker-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rag-worker-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rag-worker-safety:
+    name: Build and test ${{ matrix.worker_dir }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        worker_dir:
+          - rag-worker
+          - backend/rag-worker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.worker_dir }}/package-lock.json
+
+      - name: Install worker dependencies
+        run: npm ci --prefix "${{ matrix.worker_dir }}"
+
+      - name: Compile worker TypeScript
+        run: npm --prefix "${{ matrix.worker_dir }}" run build
+
+      - name: Run worker unit tests
+        run: npm --prefix "${{ matrix.worker_dir }}" test -- --runInBand
