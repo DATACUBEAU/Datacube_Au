@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'rag-worker/**'
+      - 'backend/rag-worker/**'
       - '.github/workflows/rag-worker-safety.yml'
   workflow_dispatch:
 
@@ -18,9 +19,15 @@ concurrency:
 
 jobs:
   rag-worker-safety:
-    name: Build and test RAG ingestion worker
+    name: Build and test ${{ matrix.worker_dir }}
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        worker_dir:
+          - rag-worker
+          - backend/rag-worker
 
     steps:
       - name: Checkout
@@ -31,13 +38,13 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: rag-worker/package-lock.json
+          cache-dependency-path: ${{ matrix.worker_dir }}/package-lock.json
 
       - name: Install worker dependencies
-        run: npm ci --prefix rag-worker
+        run: npm ci --prefix "${{ matrix.worker_dir }}"
 
       - name: Compile worker TypeScript
-        run: npm --prefix rag-worker run build
+        run: npm --prefix "${{ matrix.worker_dir }}" run build
 
       - name: Run worker unit tests
-        run: npm --prefix rag-worker test -- --runInBand
+        run: npm --prefix "${{ matrix.worker_dir }}" test -- --runInBand
