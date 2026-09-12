@@ -6,7 +6,11 @@ import path from 'node:path';
 test.describe('Network health and offline resilience', () => {
   test('readiness endpoint is excluded from generic API caching', async () => {
     const nextConfig = readFileSync(path.join(process.cwd(), 'next.config.ts'), 'utf8');
-    expect(nextConfig).toMatch(/\/api\/health\(\?:\\\/ready\)\?\$/i);
+
+    // Assert the canonical source-level guard rather than relying on a brittle
+    // regex-of-regexes representation. This keeps the regression check stable
+    // while still requiring the generic API cache matcher to reject readiness.
+    expect(nextConfig).toContain("if (/\\/api\\/health(?:\\/ready)?$/i.test(url.pathname)) return false;");
   });
 
   test('readiness helper reports healthy dependencies without leaking internals', async () => {
