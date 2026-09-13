@@ -151,4 +151,35 @@ describe('backend RAGWorker durable lease fencing', () => {
 
     stop();
   });
+
+  test('lease loss does not mark the reclaimed job or document failed or increment failure usage', async () => {
+    const supabase = new FakeSupabase();
+    supabase.currentOwner = 'worker-b';
+    const worker = new RAGWorker(supabase as any, {} as any);
+    const stopHeartbeat = jest.fn();
+    const markJobFailed = jest.fn();
+    const markDocumentFailed = jest.fn();
+    const incrementUsageCounters = jest.fn();
+
+    (worker as any).claimJob = jest.fn().mockResolvedValue({
+      id: 'job-5',
+      document_id: 'doc-5',
+      owner_id: 'owner-5',
+      user_id: 'owner-5',
+      bucket: 'documents',
+      object_path: 'owner-5/doc-5.pdf',
+    });
+    (worker as any).logDebug = jest.fn().mockResolvedValue(undefined);
+    (worker as any).beginLeaseHeartbeat = jest.fn().mockReturnValue(stopHeartbeat);
+    (worker as any).markJobFailed = markJobFailed;
+    (worker as any).markDocumentFailed = markDocumentFailed;
+    (worker as any).incrementUsageCounters = incrementUsageCounters;
+
+    await expect((worker as any).pollJobs()).resolves.toBeUndefined();
+
+    expect(markJobFailed).not.toHaveBeenCalled();
+    expect(markDocumentFailed).not.toHaveBeenCalled();
+    expect(incrementUsageCounters).not.toHaveBeenCalled();
+    expect(stopHeartbeat).toHaveBeenCalledTimes(1);
+  });
 });
