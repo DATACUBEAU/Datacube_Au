@@ -63,9 +63,11 @@ class FakeSupabase {
 
 describe('backend RAGWorker durable lease fencing', () => {
   const originalWorkerInstanceId = process.env.WORKER_INSTANCE_ID;
+  const originalHeartbeatMs = process.env.WORKER_LEASE_HEARTBEAT_MS;
 
   beforeEach(() => {
     process.env.WORKER_INSTANCE_ID = 'worker-a';
+    process.env.WORKER_LEASE_HEARTBEAT_MS = '10000';
   });
 
   afterEach(() => {
@@ -74,6 +76,11 @@ describe('backend RAGWorker durable lease fencing', () => {
       delete process.env.WORKER_INSTANCE_ID;
     } else {
       process.env.WORKER_INSTANCE_ID = originalWorkerInstanceId;
+    }
+    if (originalHeartbeatMs === undefined) {
+      delete process.env.WORKER_LEASE_HEARTBEAT_MS;
+    } else {
+      process.env.WORKER_LEASE_HEARTBEAT_MS = originalHeartbeatMs;
     }
   });
 
