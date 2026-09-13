@@ -1210,6 +1210,20 @@ export class RAGWorker {
       await this.updateJobProgress(currentJob.id, 100);
       await this.finalizeCompletedJob(currentJob, 'inline');
     } catch (processErr) {
+      if (processErr instanceof WorkerLeaseLostError) {
+        logger.warn('Stopped stale job attempt after lease ownership changed', {
+          jobId: currentJob.id,
+          documentId: currentJob.document_id,
+          workerId: this.workerInstanceId,
+        });
+        await this.logDebug('Stopped stale job attempt after lease ownership changed', {
+          jobId: currentJob.id,
+          documentId: currentJob.document_id,
+          workerId: this.workerInstanceId,
+        });
+        return;
+      }
+
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
 
       const errorMessage = normalizeJobErrorMessage(processErr);
