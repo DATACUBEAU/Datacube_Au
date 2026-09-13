@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { RAGWorker } from './worker';
 import { IngestionService } from './ingestion';
 import { logger } from './utils';
+import { ensureWorkerInstanceId } from './worker-identity';
 
 async function main() {
   const supabaseUrl = process.env.SUPABASE_URL;
@@ -14,6 +15,10 @@ async function main() {
     logger.error('Missing environment variables. Please check SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
     process.exit(1);
   }
+
+  // A claim owner must identify one process, not merely one host. Preserve an
+  // explicitly supplied instance id, otherwise create a process-unique fence.
+  ensureWorkerInstanceId();
 
   const supabase = createClient(supabaseUrl, supabaseServiceKey, {
     auth: {
