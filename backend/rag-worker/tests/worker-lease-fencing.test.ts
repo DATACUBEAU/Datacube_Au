@@ -137,16 +137,12 @@ describe('backend RAGWorker durable lease fencing', () => {
 
     const stop = (worker as any).beginLeaseHeartbeat('job-4');
 
-    jest.advanceTimersByTime(10000);
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(10000);
     expect(supabase.calls).toHaveLength(1);
     expect(supabase.calls[0].filters).toContainEqual(['claimed_by', 'worker-a']);
     expect(supabase.calls[0].payload).not.toHaveProperty('claimed_by');
 
-    jest.advanceTimersByTime(20000);
-    await Promise.resolve();
-    await Promise.resolve();
+    await jest.advanceTimersByTimeAsync(20000);
     expect(supabase.calls).toHaveLength(1);
 
     stop();
