@@ -16,6 +16,15 @@ type WorkerJobMutationResult =
       message: string;
     };
 
+type FailedJobMutationResult =
+  | { outcome: 'updated'; mode: 'full' | 'legacy_schema_fallback' }
+  | { outcome: 'ownership_lost' }
+  | {
+      outcome: 'error';
+      classification: WorkerJobMutationClassification;
+      message: string;
+    };
+
 type CompletionReconcileState = {
   attempts: number;
   nextAttemptAt: number;
@@ -1029,7 +1038,7 @@ export class RAGWorker {
     job: UploadJob,
     errorMessage: string,
     options?: { recoverable?: boolean; recoverableReason?: string },
-  ) {
+  ): Promise<FailedJobMutationResult> {
     const retryCount = Number((job as any)?.retry_count || 0);
     const shouldMarkRecoverable = Boolean(options?.recoverable) && retryCount <= 0;
     const metadataBase =
@@ -1043,43 +1052,79 @@ export class RAGWorker {
       metadataBase.recoverable_at = new Date().toISOString();
     }
 
-    const payload = {
+    const nowIso = new Date().toISOString();
+    const payload: Record<string, unknown> = {
       status: 'failed',
       error: errorMessage,
       claimed_by: null,
       locked_at: null,
       locked_until: null,
-      updated_at: new Date().toISOString(),
+      updated_at: nowIso,
       ...(shouldMarkRecoverable ? { metadata: metadataBase } : {}),
     };
 
-    const { error } = await this.supabase
-      .from('au_worker_jobs')
-      .update(payload)
-      .eq('id', job.id);
+    const executeUpdate = async (nextPayload: Record<string, unknown>) => {
+      return await this.supabase
+        .from('au_worker_jobs')
+        .update(nextPayload)
+        .eq('id', job.id)
+        .eq('status', 'processing')
+        .eq('claimed_by', this.workerInstanceId)
+        .select('id')
+        .maybeSingle();
+    };
+
+    let { data, error } = await executeUpdate(payload);
+    let mode: 'full' | 'legacy_schema_fallback' = 'full';
 
     if (error && this.isMissingColumnError(error, 'error')) {
-      const fallbackPayload: Record<string, unknown> = {
-        status: 'failed',
-        claimed_by: null,
-        locked_at: null,
-        locked_until: null,
-        updated_at: new Date().toISOString(),
-      };
-      if (shouldMarkRecoverable && !this.isMissingColumnError(error, 'metadata')) {
-        fallbackPayload.metadata = metadataBase;
-      }
+      this.warnSchemaFallbackOnce('failure:error', {
+        jobId: job.id,
+        documentId: job.document_id,
+        missingColumns: ['error'],
+        message: normalizeJobErrorMessage(error),
+      });
+      delete payload.error;
+      mode = 'legacy_schema_fallback';
+      ({ data, error } = await executeUpdate(payload));
+    }
 
-      await this.supabase
-        .from('au_worker_jobs')
-        .update(fallbackPayload)
-        .eq('id', job.id);
-      return;
+    if (error && shouldMarkRecoverable && this.isMissingColumnError(error, 'metadata')) {
+      this.warnSchemaFallbackOnce('failure:metadata', {
+        jobId: job.id,
+        documentId: job.document_id,
+        missingColumns: ['metadata'],
+        message: normalizeJobErrorMessage(error),
+      });
+      delete payload.metadata;
+      mode = 'legacy_schema_fallback';
+      ({ data, error } = await executeUpdate(payload));
     }
 
     if (error) {
-      logger.error('Failed to mark job as failed', { jobId: job.id, error: error.message });
+      const classified = this.classifyWorkerJobMutationError(error, ['error', 'metadata']);
+      logger.error('Failed to mark claimed job as failed', {
+        jobId: job.id,
+        classification: classified.classification,
+        message: classified.message,
+      });
+      return {
+        outcome: 'error',
+        classification: classified.classification,
+        message: classified.message,
+      };
     }
+
+    if (!data?.id) {
+      logger.warn('Suppressed stale terminal failure after lease ownership changed', {
+        jobId: job.id,
+        documentId: job.document_id,
+        workerId: this.workerInstanceId,
+      });
+      return { outcome: 'ownership_lost' };
+    }
+
+    return { outcome: 'updated', mode };
   }
 
   private async markDocumentFailed(documentId: string, errorMessage: string) {
@@ -1238,10 +1283,29 @@ export class RAGWorker {
         recoverableReason,
       });
 
-      await this.markJobFailed(currentJob, errorMessage, {
+      const failureMutation = await this.markJobFailed(currentJob, errorMessage, {
         recoverable: isRecoverable,
         recoverableReason,
       });
+
+      if (failureMutation.outcome !== 'updated') {
+        if (failureMutation.outcome === 'ownership_lost') {
+          await this.logDebug('Suppressed stale job failure after lease ownership changed', {
+            jobId: currentJob.id,
+            documentId: currentJob.document_id,
+            workerId: this.workerInstanceId,
+          });
+        } else {
+          logger.warn('Skipped document failure and failure usage after worker-job terminal mutation failed', {
+            jobId: currentJob.id,
+            documentId: currentJob.document_id,
+            classification: failureMutation.classification,
+            message: failureMutation.message,
+          });
+        }
+        return;
+      }
+
       await this.markDocumentFailed(currentJob.document_id, errorMessage);
       await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
         jobs_failed: 1,
