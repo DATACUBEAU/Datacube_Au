@@ -1,0 +1,232 @@
+name: Archive Entry Hardening One Shot
+
+on:
+  push:
+    branches:
+      - automation/worker-lease-fencing-20260911
+    paths:
+      - .github/workflows/archive-entry-hardening-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/worker-lease-fencing-20260911
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/rag-worker/package-lock.json
+
+      - name: Apply archive-entry hardening
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ingestion = Path('backend/rag-worker/src/ingestion.ts')
+          source = ingestion.read_text()
+
+          old_import = "import { pipeline } from 'stream/promises';\n"
+          new_import = old_import + "import { assertSafeModelArchiveEntry } from './archive-safety';\n"
+          if "from './archive-safety'" not in source:
+              if old_import not in source:
+                  raise SystemExit('expected ingestion import anchor not found')
+              source = source.replace(old_import, new_import, 1)
+
+          old_extract = """  private async extractModelArchive(model: StandardEmbeddingModel): Promise<void> {
+              const tar = await import('tar');
+              await tar.x({
+                file: this.modelArchivePath(model),
+                cwd: this.modelCacheDir,
+              });
+            }
+          """
+          new_extract = """  private async extractModelArchive(model: StandardEmbeddingModel): Promise<void> {
+              const tar = await import('tar');
+              const archivePath = this.modelArchivePath(model);
+
+              // Preflight the full archive without writing anything. Extraction only starts
+              // after every entry has passed the Datacube model-cache boundary checks.
+              await tar.t({
+                file: archivePath,
+                onentry: (entry) => assertSafeModelArchiveEntry(model, entry),
+              });
+
+              await tar.x({
+                file: archivePath,
+                cwd: this.modelCacheDir,
+              });
+            }
+          """
+          if old_extract not in source:
+              raise SystemExit('expected extractModelArchive block not found')
+          source = source.replace(old_extract, new_extract, 1)
+          ingestion.write_text(source)
+
+          Path('backend/rag-worker/src/archive-safety.ts').write_text("""export type TarEntryLike = {
+            path?: string;
+            type?: string;
+            linkpath?: string;
+          };
+
+          const SAFE_ENTRY_TYPES = new Set(['File', 'OldFile', 'ContiguousFile', 'Directory']);
+
+          function normalizeRelativeArchivePath(rawPath: string, label: string): string {
+            if (!rawPath || rawPath.includes('\\0')) {
+              throw new Error(`Unsafe FastEmbed model archive ${label}: empty or NUL-containing path`);
+            }
+
+            const slashed = rawPath.replace(/\\\\/g, '/');
+            if (slashed.startsWith('/') || slashed.startsWith('//') || /^[A-Za-z]:\\//.test(slashed)) {
+              throw new Error(`Unsafe FastEmbed model archive ${label}: absolute path ${rawPath}`);
+            }
+
+            const segments = slashed.split('/').filter((segment) => segment !== '' && segment !== '.');
+            if (segments.some((segment) => segment === '..')) {
+              throw new Error(`Unsafe FastEmbed model archive ${label}: traversal path ${rawPath}`);
+            }
+
+            const normalized = segments.join('/');
+            if (!normalized) {
+              throw new Error(`Unsafe FastEmbed model archive ${label}: empty normalized path`);
+            }
+            return normalized;
+          }
+
+          export function assertSafeModelArchiveEntry(model: string, entry: TarEntryLike): void {
+            const modelRoot = normalizeRelativeArchivePath(model, 'model root');
+            const entryPath = normalizeRelativeArchivePath(String(entry.path || ''), 'entry');
+
+            if (entryPath !== modelRoot && !entryPath.startsWith(`${modelRoot}/`)) {
+              throw new Error(`Unsafe FastEmbed model archive entry outside expected model root: ${entryPath}`);
+            }
+
+            const entryType = String(entry.type || '');
+            if (!SAFE_ENTRY_TYPES.has(entryType)) {
+              throw new Error(`Unsafe FastEmbed model archive entry type ${entryType || '<missing>'}: ${entryPath}`);
+            }
+
+            if (entry.linkpath) {
+              throw new Error(`Unsafe FastEmbed model archive link target on ${entryPath}`);
+            }
+          }
+          """)
+
+          Path('backend/rag-worker/src/tar.d.ts').write_text("""declare module 'tar' {
+            export type TarEntry = {
+              path?: string;
+              type?: string;
+              linkpath?: string;
+            };
+
+            export type ListOptions = {
+              file: string;
+              onentry?: (entry: TarEntry) => void;
+            };
+
+            export type ExtractOptions = {
+              file: string;
+              cwd: string;
+            };
+
+            export function t(options: ListOptions): Promise<void>;
+            export function x(options: ExtractOptions): Promise<void>;
+          }
+          """)
+
+          Path('backend/rag-worker/tests/archive-safety.test.ts').write_text("""import { assertSafeModelArchiveEntry } from '../src/archive-safety';
+
+          describe('FastEmbed archive entry safety', () => {
+            const model = 'sentence-transformers-all-MiniLM-L6-v2';
+
+            it('accepts ordinary files and directories inside the expected model root', () => {
+              expect(() => assertSafeModelArchiveEntry(model, { path: `${model}/`, type: 'Directory' })).not.toThrow();
+              expect(() => assertSafeModelArchiveEntry(model, { path: `./${model}/onnx/model.onnx`, type: 'File' })).not.toThrow();
+              expect(() => assertSafeModelArchiveEntry(model, { path: `${model}/config.json`, type: 'OldFile' })).not.toThrow();
+            });
+
+            it.each([
+              '../escape.txt',
+              `${model}/../escape.txt`,
+              '/tmp/escape.txt',
+              'C:\\\\temp\\\\escape.txt',
+              '\\\\server\\\\share\\\\escape.txt',
+              'other-model/config.json',
+            ])('rejects path escape %s', (entryPath) => {
+              expect(() => assertSafeModelArchiveEntry(model, { path: entryPath, type: 'File' })).toThrow(/Unsafe FastEmbed model archive/);
+            });
+
+            it.each(['SymbolicLink', 'Link', 'CharacterDevice', 'BlockDevice', 'FIFO'])('rejects unsafe entry type %s', (type) => {
+              expect(() => assertSafeModelArchiveEntry(model, { path: `${model}/unsafe`, type })).toThrow(/entry type/);
+            });
+
+            it('rejects link targets even if the entry is mislabeled as a file', () => {
+              expect(() => assertSafeModelArchiveEntry(model, {
+                path: `${model}/config.json`,
+                type: 'File',
+                linkpath: '../../escape',
+              })).toThrow(/link target/);
+            });
+          });
+          """)
+
+          bounds = Path('backend/rag-worker/tests/model-archive-bounds.test.ts')
+          test_source = bounds.read_text()
+          anchor = """  it('bounds decompressed gzip validation work', () => {
+              expect(source).toContain('FASTEMBED_MODEL_ARCHIVE_MAX_EXPANDED_BYTES');
+              expect(source).toContain('expandedBytes += Buffer.byteLength(chunk)');
+              expect(source).toContain('expandedBytes > maxExpandedBytes');
+            });
+          """
+          addition = anchor + """
+
+            it('preflights every tar entry before extraction', () => {
+              expect(source).toContain('assertSafeModelArchiveEntry');
+              const preflight = source.indexOf('await tar.t({');
+              const extraction = source.indexOf('await tar.x({');
+              expect(preflight).toBeGreaterThan(-1);
+              expect(extraction).toBeGreaterThan(preflight);
+            });
+          """
+          if "preflights every tar entry before extraction" not in test_source:
+              if anchor not in test_source:
+                  raise SystemExit('expected model-archive-bounds test anchor not found')
+              test_source = test_source.replace(anchor, addition, 1)
+              bounds.write_text(test_source)
+          PY
+
+      - name: Install backend worker dependencies
+        run: npm ci --prefix backend/rag-worker
+
+      - name: Compile backend worker
+        run: npm run build --prefix backend/rag-worker
+
+      - name: Test backend worker
+        run: npm test --prefix backend/rag-worker -- --runInBand
+
+      - name: Enforce critical production dependency audit
+        run: npm audit --prefix backend/rag-worker --omit=dev --audit-level=critical
+
+      - name: Commit validated production changes and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/archive-entry-hardening-once.yml
+          git config user.name "Datacube AU Hardening Bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add backend/rag-worker/src/ingestion.ts \
+                  backend/rag-worker/src/archive-safety.ts \
+                  backend/rag-worker/src/tar.d.ts \
+                  backend/rag-worker/tests/archive-safety.test.ts \
+                  backend/rag-worker/tests/model-archive-bounds.test.ts \
+                  .github/workflows/archive-entry-hardening-once.yml
+          git commit -m "security(worker): validate model archive entries before extraction"
+          git push origin HEAD:automation/worker-lease-fencing-20260911
