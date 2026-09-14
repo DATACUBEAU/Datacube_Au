@@ -18,55 +18,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  dependency-remediation-candidate:
-    name: Generate remediation lock ${{ matrix.worker_dir }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        worker_dir:
-          - rag-worker
-          - backend/rag-worker
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: ${{ matrix.worker_dir }}/package-lock.json
-
-      - name: Generate npm lockfile from reviewed manifest
-        run: npm install --prefix "${{ matrix.worker_dir }}" --package-lock-only --ignore-scripts
-
-      - name: Install generated dependency graph
-        run: npm ci --prefix "${{ matrix.worker_dir }}"
-
-      - name: Compile generated dependency graph
-        run: npm --prefix "${{ matrix.worker_dir }}" run build
-
-      - name: Test generated dependency graph
-        run: npm --prefix "${{ matrix.worker_dir }}" test -- --runInBand
-
-      - name: Audit generated production graph
-        run: npm audit --prefix "${{ matrix.worker_dir }}" --omit=dev --audit-level=critical --json > "${{ matrix.worker_dir }}/audit-remediation-candidate.json"
-
-      - name: Upload generated remediation candidate
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: remediation-candidate-${{ strategy.job-index }}
-          path: |
-            ${{ matrix.worker_dir }}/package.json
-            ${{ matrix.worker_dir }}/package-lock.json
-            ${{ matrix.worker_dir }}/audit-remediation-candidate.json
-          if-no-files-found: error
-          retention-days: 3
-
   rag-worker-safety:
     name: Build and test ${{ matrix.worker_dir }}
     runs-on: ubuntu-latest
