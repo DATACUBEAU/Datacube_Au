@@ -1,7 +1,9 @@
 import { assertSafeModelArchiveEntry } from '../src/archive-safety';
 
 describe('FastEmbed archive entry safety', () => {
-  const model = 'sentence-transformers-all-MiniLM-L6-v2';
+  // fastembed-js downloads the sentence-transformers archive URL but extracts it
+  // under the original enum/model directory name.
+  const model = 'fast-all-MiniLM-L6-v2';
 
   it('accepts ordinary files and directories inside the expected model root', () => {
     expect(() => assertSafeModelArchiveEntry(model, { path: `${model}/`, type: 'Directory' })).not.toThrow();
@@ -15,6 +17,7 @@ describe('FastEmbed archive entry safety', () => {
     '/tmp/escape.txt',
     'C:\\temp\\escape.txt',
     '\\server\\share\\escape.txt',
+    `${model}-evil/config.json`,
     'other-model/config.json',
   ])('rejects path escape %s', (entryPath) => {
     expect(() => assertSafeModelArchiveEntry(model, { path: entryPath, type: 'File' })).toThrow(/Unsafe FastEmbed model archive/);
