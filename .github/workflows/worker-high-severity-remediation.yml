@@ -1,0 +1,114 @@
+name: Worker High Severity Remediation
+
+on:
+  push:
+    branches:
+      - automation/worker-lease-fencing-20260911
+    paths:
+      - '.github/workflows/worker-high-severity-remediation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  remediate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/worker-lease-fencing-20260911
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply reviewed transitive security overrides
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          for (const dir of ['rag-worker', 'backend/rag-worker']) {
+            const file = `${dir}/package.json`;
+            const pkg = JSON.parse(fs.readFileSync(file, 'utf8'));
+            pkg.overrides = {
+              ...(pkg.overrides || {}),
+              '@xmldom/xmldom': '0.8.15',
+              underscore: '1.13.8',
+              undici: '6.28.0',
+              ws: '8.21.0'
+            };
+            fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`);
+          }
+          NODE
+
+      - name: Regenerate npm lockfiles
+        run: |
+          npm install --package-lock-only --prefix rag-worker
+          npm install --package-lock-only --prefix backend/rag-worker
+
+      - name: Frozen install and worker validation
+        run: |
+          npm ci --prefix rag-worker
+          npm --prefix rag-worker run build
+          npm --prefix rag-worker test -- --runInBand
+          npm ci --prefix backend/rag-worker
+          npm --prefix backend/rag-worker run build
+          npm --prefix backend/rag-worker test -- --runInBand
+
+      - name: Verify resolved security versions
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const expected = {
+            '@xmldom/xmldom': '0.8.15',
+            underscore: '1.13.8',
+            undici: '6.28.0',
+            ws: '8.21.0',
+            tar: '7.5.22',
+            protobufjs: '7.6.5'
+          };
+          for (const dir of ['rag-worker', 'backend/rag-worker']) {
+            const lock = JSON.parse(fs.readFileSync(`${dir}/package-lock.json`, 'utf8'));
+            for (const [name, version] of Object.entries(expected)) {
+              const key = `node_modules/${name}`;
+              const actual = lock.packages?.[key]?.version;
+              if (actual !== version) {
+                throw new Error(`${dir}: expected ${name}@${version}, got ${actual || 'missing'}`);
+              }
+            }
+          }
+          NODE
+
+      - name: Validate production audit reduction
+        shell: bash
+        run: |
+          set +e
+          npm audit --prefix rag-worker --omit=dev --audit-level=high --json > /tmp/audit-root.json
+          npm audit --prefix backend/rag-worker --omit=dev --audit-level=high --json > /tmp/audit-backend.json
+          set -e
+          node <<'NODE'
+          const fs = require('fs');
+          for (const [name, file] of [['rag-worker','/tmp/audit-root.json'], ['backend/rag-worker','/tmp/audit-backend.json']]) {
+            const audit = JSON.parse(fs.readFileSync(file, 'utf8'));
+            const v = audit.metadata?.vulnerabilities || {};
+            if ((v.critical || 0) !== 0) throw new Error(`${name}: critical vulnerabilities remain: ${v.critical}`);
+            if ((v.high || 0) > 2) throw new Error(`${name}: expected at most the Transformers/sharp high findings, got ${v.high}`);
+            const names = Object.keys(audit.vulnerabilities || {}).sort();
+            const unexpected = names.filter((pkg) => !['@huggingface/transformers', 'sharp'].includes(pkg));
+            if (unexpected.length) throw new Error(`${name}: unexpected remaining production vulnerabilities: ${unexpected.join(', ')}`);
+            console.log(`${name}: production audit remaining packages: ${names.join(', ') || 'none'}`);
+          }
+          NODE
+
+      - name: Commit validated dependency graph and remove one-shot workflow
+        shell: bash
+        run: |
+          rm .github/workflows/worker-high-severity-remediation.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add rag-worker/package.json rag-worker/package-lock.json backend/rag-worker/package.json backend/rag-worker/package-lock.json .github/workflows/worker-high-severity-remediation.yml
+          git commit -m 'security(worker): remediate fixable high dependencies'
+          git push origin HEAD:automation/worker-lease-fencing-20260911
