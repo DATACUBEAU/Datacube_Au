@@ -34,4 +34,13 @@ describe('FastEmbed archive entry safety', () => {
       linkpath: '../../escape',
     })).toThrow(/link target/);
   });
+
+  it('classifies policy rejection as cache corruption so the existing cleanup-and-retry path removes it', () => {
+    try {
+      assertSafeModelArchiveEntry(model, { path: '../escape.txt', type: 'File' });
+      throw new Error('expected archive policy rejection');
+    } catch (error: any) {
+      expect(error?.code).toBe('TAR_BAD_ARCHIVE');
+    }
+  });
 });
