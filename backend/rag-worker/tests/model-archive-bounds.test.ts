@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
+// These assertions intentionally pin the worker's bootstrap resource bounds.
 describe('FastEmbed model archive bootstrap safety', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'src', 'ingestion.ts'), 'utf8');
 
