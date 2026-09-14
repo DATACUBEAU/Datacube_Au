@@ -49,5 +49,35 @@ jobs:
       - name: Run worker unit tests
         run: npm --prefix "${{ matrix.worker_dir }}" test -- --runInBand
 
+      - name: Capture production dependency audit
+        id: production_audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --prefix "${{ matrix.worker_dir }}" --omit=dev --json > "${{ matrix.worker_dir }}/audit-production.json"
+          audit_status=$?
+          echo "exit_code=${audit_status}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload production dependency audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-audit-${{ strategy.job-index }}
+          path: ${{ matrix.worker_dir }}/audit-production.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Enforce production dependency audit
-        run: npm audit --prefix "${{ matrix.worker_dir }}" --omit=dev --audit-level=critical
+        if: always()
+        shell: bash
+        run: |
+          audit_status="${{ steps.production_audit.outputs.exit_code }}"
+          if [ -z "$audit_status" ]; then
+            echo "Production dependency audit did not produce a status."
+            exit 1
+          fi
+          if [ "$audit_status" -ne 0 ]; then
+            echo "Production dependency audit found vulnerabilities at or above the configured npm audit threshold. See the uploaded production-audit artifact for the exact dependency graph."
+            exit "$audit_status"
+          fi
