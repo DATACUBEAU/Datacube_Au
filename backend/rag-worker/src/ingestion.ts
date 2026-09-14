@@ -11,6 +11,7 @@ import https from 'https';
 import zlib from 'zlib';
 import { Writable } from 'stream';
 import { pipeline } from 'stream/promises';
+import { assertSafeModelArchiveEntry } from './archive-safety';
 
 type ChunkRow = {
   id: string;
@@ -73,6 +74,9 @@ export class IngestionService {
   private modelCacheDir: string;
   private modelLockTimeoutMs: number;
   private modelLockStaleMs: number;
+  private modelArchiveMaxBytes: number;
+  private modelArchiveMaxExpandedBytes: number;
+  private modelArchiveMaxRedirects: number;
   private transformersFallbackEnabled: boolean;
   private transformersModelId: string;
   private hfCacheDir: string;
@@ -98,6 +102,9 @@ export class IngestionService {
     this.modelCacheDir = path.resolve(configuredCacheDir);
     this.modelLockTimeoutMs = this.parsePositiveInt(process.env.FASTEMBED_MODEL_LOCK_TIMEOUT_MS, 120000);
     this.modelLockStaleMs = this.parsePositiveInt(process.env.FASTEMBED_MODEL_LOCK_STALE_MS, 600000);
+    this.modelArchiveMaxBytes = this.parsePositiveInt(process.env.FASTEMBED_MODEL_ARCHIVE_MAX_BYTES, 512 * 1024 * 1024);
+    this.modelArchiveMaxExpandedBytes = this.parsePositiveInt(process.env.FASTEMBED_MODEL_ARCHIVE_MAX_EXPANDED_BYTES, 2 * 1024 * 1024 * 1024);
+    this.modelArchiveMaxRedirects = Math.min(10, this.parsePositiveInt(process.env.FASTEMBED_MODEL_ARCHIVE_MAX_REDIRECTS, 5));
     const fallbackRaw = String(process.env.TRANSFORMERS_FALLBACK_ENABLED ?? process.env.ENABLE_TRANSFORMERS_FALLBACK ?? 'true').toLowerCase();
     this.transformersFallbackEnabled = !(fallbackRaw === 'false' || fallbackRaw === '0' || fallbackRaw === 'no');
     this.transformersModelId = (process.env.TRANSFORMERS_EMBEDDING_MODEL || 'Xenova/all-MiniLM-L6-v2').trim();
@@ -232,12 +239,19 @@ export class IngestionService {
 
   private async isValidGzip(filePath: string): Promise<boolean> {
     if (!fs.existsSync(filePath)) return false;
+    let expandedBytes = 0;
+    const maxExpandedBytes = this.modelArchiveMaxExpandedBytes;
     try {
       await pipeline(
         fs.createReadStream(filePath),
         zlib.createGunzip(),
         new Writable({
-          write(_chunk, _encoding, callback) {
+          write(chunk, _encoding, callback) {
+            expandedBytes += Buffer.byteLength(chunk);
+            if (expandedBytes > maxExpandedBytes) {
+              callback(new Error(`FastEmbed model archive exceeds decompressed size limit of ${maxExpandedBytes} bytes`));
+              return;
+            }
             callback();
           },
         }),
@@ -290,19 +304,44 @@ export class IngestionService {
     );
   }
 
-  private async downloadToTempFile(url: string, tempPath: string): Promise<DownloadInfo> {
+  private async downloadToTempFile(url: string, tempPath: string, redirectCount = 0): Promise<DownloadInfo> {
     const headers = { 'User-Agent': 'DatacubeAU-RAGWorker/1.0' };
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'https:') {
+      throw new Error(`Refusing non-HTTPS model archive URL: ${parsedUrl.protocol}`);
+    }
 
     return new Promise((resolve, reject) => {
-      const request = https.get(url, { headers }, (response) => {
+      const request = https.get(parsedUrl, { headers }, (response) => {
         if (
           response.statusCode &&
           response.statusCode >= 300 &&
           response.statusCode < 400 &&
           response.headers.location
         ) {
+          if (redirectCount >= this.modelArchiveMaxRedirects) {
+            response.resume();
+            reject(new Error(`FastEmbed model archive redirect limit exceeded (${this.modelArchiveMaxRedirects})`));
+            return;
+          }
+
+          let redirectUrl: URL;
+          try {
+            redirectUrl = new URL(response.headers.location, parsedUrl);
+          } catch {
+            response.resume();
+            reject(new Error('FastEmbed model archive redirect returned an invalid Location header'));
+            return;
+          }
+
+          if (redirectUrl.protocol !== 'https:') {
+            response.resume();
+            reject(new Error(`Refusing non-HTTPS model archive redirect: ${redirectUrl.protocol}`));
+            return;
+          }
+
           response.resume();
-          void this.downloadToTempFile(response.headers.location, tempPath).then(resolve).catch(reject);
+          void this.downloadToTempFile(redirectUrl.toString(), tempPath, redirectCount + 1).then(resolve).catch(reject);
           return;
         }
 
@@ -350,6 +389,13 @@ export class IngestionService {
           return;
         }
 
+        const contentLength = Number(response.headers['content-length'] || 0);
+        if (Number.isFinite(contentLength) && contentLength > this.modelArchiveMaxBytes) {
+          response.resume();
+          reject(new Error(`FastEmbed model archive exceeds compressed size limit of ${this.modelArchiveMaxBytes} bytes`));
+          return;
+        }
+
         const out = fs.createWriteStream(tempPath);
         let bytes = 0;
         const previewChunks: Buffer[] = [];
@@ -360,6 +406,13 @@ export class IngestionService {
 
         response.on('data', (chunk: Buffer) => {
           bytes += chunk.length;
+          if (bytes > this.modelArchiveMaxBytes) {
+            const sizeError = new Error(`FastEmbed model archive exceeds compressed size limit of ${this.modelArchiveMaxBytes} bytes`);
+            response.unpipe(out);
+            response.destroy(sizeError);
+            out.destroy(sizeError);
+            return;
+          }
           if (firstBytes.length < 8) {
             const needed = 8 - firstBytes.length;
             firstBytes = Buffer.concat([firstBytes, chunk.subarray(0, needed)]);
@@ -523,8 +576,17 @@ export class IngestionService {
 
   private async extractModelArchive(model: StandardEmbeddingModel): Promise<void> {
     const tar = await import('tar');
+    const archivePath = this.modelArchivePath(model);
+
+    // Preflight the full archive without writing anything. Extraction only starts
+    // after every entry has passed the Datacube model-cache boundary checks.
+    await tar.t({
+      file: archivePath,
+      onentry: (entry) => assertSafeModelArchiveEntry(model, entry),
+    });
+
     await tar.x({
-      file: this.modelArchivePath(model),
+      file: archivePath,
       cwd: this.modelCacheDir,
     });
   }

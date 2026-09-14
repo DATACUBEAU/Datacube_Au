@@ -2,6 +2,36 @@ import { RAGWorker } from '../src/worker';
 import { IngestionService } from '../src/ingestion';
 import { SupabaseClient } from '@supabase/supabase-js';
 
+function createSupabaseBuilder() {
+  const builder: any = {
+    select: jest.fn(),
+    update: jest.fn(),
+    insert: jest.fn(),
+    delete: jest.fn(),
+    eq: jest.fn(),
+    order: jest.fn(),
+    limit: jest.fn(),
+    maybeSingle: jest.fn(),
+  };
+
+  builder.select.mockReturnValue(builder);
+  builder.update.mockReturnValue(builder);
+  builder.insert.mockResolvedValue({ data: {}, error: null });
+  builder.delete.mockReturnValue(builder);
+  builder.eq.mockReturnValue(builder);
+  builder.order.mockReturnValue(builder);
+  builder.limit.mockReturnValue(builder);
+  builder.maybeSingle.mockResolvedValue({
+    data: {
+      id: 'job-id',
+      document_type: 'textbook',
+    },
+    error: null,
+  });
+
+  return builder;
+}
+
 describe('Ingestion Validation', () => {
   let worker: RAGWorker;
   let ingestion: IngestionService;
@@ -18,16 +48,7 @@ describe('Ingestion Validation', () => {
       rpc: jest.fn(),
     } as unknown as SupabaseClient;
 
-    (supabase.from as jest.Mock).mockImplementation(() => ({
-      select: jest.fn().mockReturnThis(),
-      update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ data: {} }) }),
-      insert: jest.fn().mockResolvedValue({ data: {} }),
-      delete: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      order: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({ data: { document_type: 'textbook' } })
-    }));
+    (supabase.from as jest.Mock).mockImplementation(() => createSupabaseBuilder());
 
     ingestion = new IngestionService(supabase, 'http://localhost:6333');
     ingestion['qdrant'] = {
@@ -54,7 +75,6 @@ describe('Ingestion Validation', () => {
     worker = new RAGWorker(supabase, ingestion);
   });
 
-
   it('should process a valid text document successfully', async () => {
     const job = {
       id: 'job-id',
@@ -67,16 +87,7 @@ describe('Ingestion Validation', () => {
     const buffer = Buffer.from(text);
 
     (supabase.storage.from('documents').download as jest.Mock).mockResolvedValueOnce({ data: { arrayBuffer: () => Promise.resolve(buffer) } });
-    (supabase.from as jest.Mock).mockImplementation(() => ({
-      select: jest.fn().mockReturnThis(),
-      update: jest.fn().mockReturnValue({ eq: jest.fn().mockResolvedValue({ data: {} }) }),
-      insert: jest.fn().mockResolvedValue({ data: {} }),
-      delete: jest.fn().mockReturnThis(),
-      eq: jest.fn().mockReturnThis(),
-      order: jest.fn().mockReturnThis(),
-      limit: jest.fn().mockReturnThis(),
-      maybeSingle: jest.fn().mockResolvedValue({ data: { document_type: 'textbook' } })
-    }));
+    (supabase.from as jest.Mock).mockImplementation(() => createSupabaseBuilder());
 
     ingestion['getEmbedder'] = jest.fn().mockResolvedValue({
       kind: 'fastembed',

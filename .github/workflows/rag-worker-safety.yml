@@ -1,0 +1,83 @@
+name: RAG Worker Safety
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'rag-worker/**'
+      - 'backend/rag-worker/**'
+      - '.github/workflows/rag-worker-safety.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rag-worker-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rag-worker-safety:
+    name: Build and test ${{ matrix.worker_dir }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        worker_dir:
+          - rag-worker
+          - backend/rag-worker
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.worker_dir }}/package-lock.json
+
+      - name: Install worker dependencies
+        run: npm ci --prefix "${{ matrix.worker_dir }}"
+
+      - name: Compile worker TypeScript
+        run: npm --prefix "${{ matrix.worker_dir }}" run build
+
+      - name: Run worker unit tests
+        run: npm --prefix "${{ matrix.worker_dir }}" test -- --runInBand
+
+      - name: Capture production dependency audit
+        id: production_audit
+        shell: bash
+        run: |
+          set +e
+          npm audit --prefix "${{ matrix.worker_dir }}" --omit=dev --audit-level=critical --json > "${{ matrix.worker_dir }}/audit-production.json"
+          audit_status=$?
+          echo "exit_code=${audit_status}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload production dependency audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-audit-${{ strategy.job-index }}
+          path: ${{ matrix.worker_dir }}/audit-production.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enforce production dependency audit
+        if: always()
+        shell: bash
+        run: |
+          audit_status="${{ steps.production_audit.outputs.exit_code }}"
+          if [ -z "$audit_status" ]; then
+            echo "Production dependency audit did not produce a status."
+            exit 1
+          fi
+          if [ "$audit_status" -ne 0 ]; then
+            echo "Production dependency audit found critical production vulnerabilities. See the uploaded production-audit artifact for the exact dependency graph."
+            exit "$audit_status"
+          fi

@@ -6,6 +6,13 @@ import { finalizeDocumentSourceCleanup, markDocumentCleanupPending } from './sou
 import * as pdfParseModule from 'pdf-parse';
 import mammoth from 'mammoth';
 
+class WorkerLeaseLostError extends Error {
+  constructor(jobId: string) {
+    super(`Worker lease no longer owned for job ${jobId}`);
+    this.name = 'WorkerLeaseLostError';
+  }
+}
+
 function normalizeJobErrorMessage(error: unknown): string {
   const candidateStrings: string[] = [];
 
@@ -126,33 +133,42 @@ export class RAGWorker {
       updated_at: nowIso,
       last_progress_at: nowIso,
     };
-    const error = await this.updateJobRow(jobId, payload, ['last_progress_at']);
-    if (error) {
-      logger.warn('Failed to update job progress', { jobId, message: error.message });
+    const result = await this.updateClaimedJobRow(jobId, payload, ['last_progress_at']);
+    if (result.error) {
+      logger.warn('Failed to update job progress', { jobId, message: result.error.message });
+      return;
+    }
+    if (!result.updated) {
+      throw new WorkerLeaseLostError(jobId);
     }
   }
 
   private beginLeaseHeartbeat(jobId: string): () => void {
     const intervalMs = Math.max(10000, this.leaseHeartbeatMs);
-    const timer = setInterval(async () => {
+    let timer: ReturnType<typeof setInterval>;
+    timer = setInterval(async () => {
       try {
         const now = new Date();
         const leaseUntil = new Date(now.getTime() + this.leaseDurationMs).toISOString();
         const payload: Record<string, unknown> = {
           locked_at: now.toISOString(),
           locked_until: leaseUntil,
-          claimed_by: this.workerInstanceId,
           updated_at: now.toISOString(),
           last_heartbeat_at: now.toISOString(),
         };
-        const error = await this.updateJobRow(
+        const result = await this.updateClaimedJobRow(
           jobId,
           payload,
           ['last_heartbeat_at'],
-          (query) => query.eq('status', 'processing'),
         );
-        if (error) {
-          logger.warn('Failed to renew worker lease', { jobId, message: error.message });
+        if (result.error) {
+          logger.warn('Failed to renew worker lease', { jobId, message: result.error.message });
+        } else if (!result.updated) {
+          logger.warn('Stopped lease heartbeat after ownership changed', {
+            jobId,
+            workerId: this.workerInstanceId,
+          });
+          clearInterval(timer);
         }
       } catch (error) {
         logger.warn('Lease heartbeat threw an exception', {
@@ -299,17 +315,35 @@ export class RAGWorker {
     }
   }
 
-  private async finalizeDocumentIngestion(job: UploadJob) {
-    let completionError = await this.markJobCompleted(job);
+  private async finalizeDocumentIngestion(
+    job: UploadJob,
+    options?: { requireClaim?: boolean },
+  ): Promise<boolean> {
+    const requireClaim = Boolean(options?.requireClaim);
+    let completionError = await this.markJobCompleted(job, { requireClaim });
+    if (completionError instanceof WorkerLeaseLostError) {
+      logger.warn('Skipped stale job completion after lease ownership changed', {
+        jobId: job.id,
+        workerId: this.workerInstanceId,
+      });
+      return false;
+    }
     if (completionError) {
       logger.warn('Job completion update failed, retrying...', { jobId: job.id, message: completionError.message });
       await this.wait(1000);
-      completionError = await this.markJobCompleted(job);
+      completionError = await this.markJobCompleted(job, { requireClaim });
     }
 
+    if (completionError instanceof WorkerLeaseLostError) {
+      logger.warn('Skipped stale job completion after lease ownership changed', {
+        jobId: job.id,
+        workerId: this.workerInstanceId,
+      });
+      return false;
+    }
     if (completionError) {
       logger.error('CRITICAL: Job finished but status update failed', { jobId: job.id, message: completionError.message });
-      return;
+      return false;
     }
 
     await this.incrementUsageCounters(String(job.owner_id || job.user_id || ''), {
@@ -356,6 +390,8 @@ export class RAGWorker {
     } catch (cleanupError) {
       logger.error('Failed to finalize document source cleanup (exception)', cleanupError);
     }
+
+    return true;
   }
 
   stop() {
@@ -447,7 +483,48 @@ export class RAGWorker {
     return retryError ?? null;
   }
 
-  private async markJobCompleted(job: UploadJob): Promise<Error | null> {
+  private async updateClaimedJobRow(
+    jobId: string,
+    payload: Record<string, unknown>,
+    fallbackColumns: string[] = [],
+  ): Promise<{ updated: boolean; error: any | null }> {
+    const executeUpdate = async (nextPayload: Record<string, unknown>) => {
+      return await this.supabase
+        .from('au_worker_jobs')
+        .update(nextPayload)
+        .eq('id', jobId)
+        .eq('status', 'processing')
+        .eq('claimed_by', this.workerInstanceId)
+        .select('id')
+        .maybeSingle();
+    };
+
+    let { data, error } = await executeUpdate(payload);
+    if (!error) {
+      return { updated: Boolean(data?.id), error: null };
+    }
+
+    const missingColumns = fallbackColumns.filter((column) => this.isMissingColumnError(error, column));
+    if (missingColumns.length === 0) {
+      return { updated: false, error };
+    }
+
+    const nextPayload = { ...payload };
+    for (const column of missingColumns) {
+      delete (nextPayload as any)[column];
+    }
+
+    ({ data, error } = await executeUpdate(nextPayload));
+    return {
+      updated: Boolean(data?.id),
+      error: error ?? null,
+    };
+  }
+
+  private async markJobCompleted(
+    job: UploadJob,
+    options?: { requireClaim?: boolean },
+  ): Promise<Error | null> {
     const nowIso = new Date().toISOString();
     const payload: Record<string, unknown> = {
       status: 'completed',
@@ -460,7 +537,16 @@ export class RAGWorker {
       completed_at: nowIso,
       last_progress_at: nowIso,
     };
-    return await this.updateJobRow(job.id, payload, ['completed_at', 'last_progress_at', 'error', 'claimed_by']);
+    const fallbackColumns = ['completed_at', 'last_progress_at', 'error', 'claimed_by'];
+
+    if (options?.requireClaim) {
+      const result = await this.updateClaimedJobRow(job.id, payload, fallbackColumns);
+      if (result.error) return result.error;
+      if (!result.updated) return new WorkerLeaseLostError(job.id);
+      return null;
+    }
+
+    return await this.updateJobRow(job.id, payload, fallbackColumns);
   }
 
   private async findFallbackCandidate(): Promise<any | null> {
@@ -573,8 +659,8 @@ export class RAGWorker {
   private async markJobFailed(
     job: UploadJob,
     errorMessage: string,
-    options?: { recoverable?: boolean; recoverableReason?: string },
-  ) {
+    options?: { recoverable?: boolean; recoverableReason?: string; requireClaim?: boolean },
+  ): Promise<boolean> {
     const retryCount = Number((job as any)?.retry_count || 0);
     const shouldMarkRecoverable = Boolean(options?.recoverable) && retryCount <= 0;
     const metadataBase =
@@ -598,10 +684,29 @@ export class RAGWorker {
       ...(shouldMarkRecoverable ? { metadata: metadataBase } : {}),
     };
 
-    const error = await this.updateJobRow(job.id, payload, ['error', 'metadata', 'claimed_by']);
+    const fallbackColumns = ['error', 'metadata', 'claimed_by'];
+    if (options?.requireClaim) {
+      const result = await this.updateClaimedJobRow(job.id, payload, fallbackColumns);
+      if (result.error) {
+        logger.error('Failed to mark claimed job as failed', { jobId: job.id, error: result.error.message });
+        return false;
+      }
+      if (!result.updated) {
+        logger.warn('Skipped stale job failure after lease ownership changed', {
+          jobId: job.id,
+          workerId: this.workerInstanceId,
+        });
+        return false;
+      }
+      return true;
+    }
+
+    const error = await this.updateJobRow(job.id, payload, fallbackColumns);
     if (error) {
       logger.error('Failed to mark job as failed', { jobId: job.id, error: error.message });
+      return false;
     }
+    return true;
   }
 
   private async markDocumentFailed(documentId: string, errorMessage: string) {
@@ -719,8 +824,20 @@ export class RAGWorker {
       // Critical fix: Combine final progress update and completion state
       // Do not update to 100% separately to avoid "stuck at 100% analyzing" state
       // if the subsequent completion update fails.
-      await this.finalizeDocumentIngestion(currentJob);
+      await this.finalizeDocumentIngestion(currentJob, { requireClaim: true });
     } catch (processErr) {
+      if (processErr instanceof WorkerLeaseLostError) {
+        logger.warn('Abandoning stale worker attempt after lease ownership changed', {
+          jobId: currentJob.id,
+          workerId: this.workerInstanceId,
+        });
+        await this.logDebug('Worker lease lost; stale attempt abandoned', {
+          jobId: currentJob.id,
+          workerId: this.workerInstanceId,
+        });
+        return;
+      }
+
       logger.error('Job failed', { jobId: currentJob.id, error: processErr });
 
       const errorMessage = normalizeJobErrorMessage(processErr);
@@ -735,10 +852,19 @@ export class RAGWorker {
         recoverableReason,
       });
 
-      await this.markJobFailed(currentJob, errorMessage, {
+      const failureRecorded = await this.markJobFailed(currentJob, errorMessage, {
         recoverable: isRecoverable,
         recoverableReason,
+        requireClaim: true,
       });
+      if (!failureRecorded) {
+        logger.warn('Skipped document failure and failed-usage accounting for stale worker attempt', {
+          jobId: currentJob.id,
+          workerId: this.workerInstanceId,
+        });
+        return;
+      }
+
       await this.markDocumentFailed(currentJob.document_id, errorMessage);
       await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
         jobs_failed: 1,

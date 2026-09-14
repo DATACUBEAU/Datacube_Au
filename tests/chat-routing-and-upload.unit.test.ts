@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   GLOBAL_CHAT_WELCOME_COPY,
   matchGlobalChatTemplate,
@@ -173,6 +175,46 @@ async function main() {
     const nowMs = Date.parse('2024-01-01T00:10:00Z');
     assert.equal(isJobOlderThan('2024-01-01T00:00:00Z', 5 * 60 * 1000, nowMs), true);
     assert.equal(isJobOlderThan('2024-01-01T00:08:00Z', 5 * 60 * 1000, nowMs), false);
+  });
+
+  await run('worker lease mutations are fenced to the current processing claim', () => {
+    const workerSource = readFileSync(join(process.cwd(), 'rag-worker/src/worker.ts'), 'utf8');
+    const start = workerSource.indexOf('private async updateClaimedJobRow');
+    const end = workerSource.indexOf('private async markJobCompleted', start);
+    assert.ok(start >= 0 && end > start, 'expected updateClaimedJobRow helper');
+    const claimUpdateBlock = workerSource.slice(start, end);
+
+    assert.match(claimUpdateBlock, /\.eq\('status', 'processing'\)/);
+    assert.match(claimUpdateBlock, /\.eq\('claimed_by', this\.workerInstanceId\)/);
+    assert.match(claimUpdateBlock, /\.select\('id'\)/);
+    assert.match(claimUpdateBlock, /updated: Boolean\(data\?\.id\)/);
+  });
+
+  await run('worker heartbeat cannot steal a reclaimed lease', () => {
+    const workerSource = readFileSync(join(process.cwd(), 'rag-worker/src/worker.ts'), 'utf8');
+    const start = workerSource.indexOf('private beginLeaseHeartbeat');
+    const end = workerSource.indexOf('private async extractPdfText', start);
+    assert.ok(start >= 0 && end > start, 'expected lease heartbeat block');
+    const heartbeatBlock = workerSource.slice(start, end);
+
+    assert.match(heartbeatBlock, /updateClaimedJobRow/);
+    assert.doesNotMatch(heartbeatBlock, /claimed_by:\s*this\.workerInstanceId/);
+    assert.match(heartbeatBlock, /Stopped lease heartbeat after ownership changed/);
+  });
+
+  await run('stale worker attempts cannot write terminal state or usage after claim loss', () => {
+    const workerSource = readFileSync(join(process.cwd(), 'rag-worker/src/worker.ts'), 'utf8');
+    const pollStart = workerSource.indexOf('private async pollJobs');
+    const pollEnd = workerSource.indexOf('private async processJob', pollStart);
+    assert.ok(pollStart >= 0 && pollEnd > pollStart, 'expected pollJobs block');
+    const pollBlock = workerSource.slice(pollStart, pollEnd);
+
+    assert.match(pollBlock, /finalizeDocumentIngestion\(currentJob, \{ requireClaim: true \}\)/);
+    assert.match(pollBlock, /processErr instanceof WorkerLeaseLostError/);
+    assert.match(pollBlock, /requireClaim: true/);
+    assert.match(pollBlock, /const failureRecorded = await this\.markJobFailed/);
+    assert.match(pollBlock, /if \(!failureRecorded\)/);
+    assert.match(pollBlock, /Skipped document failure and failed-usage accounting for stale worker attempt/);
   });
 
   await run('large-file gate triggers only above 50 MB when the future flag is disabled', () => {
