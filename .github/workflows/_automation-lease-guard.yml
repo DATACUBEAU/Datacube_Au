@@ -1,0 +1,289 @@
+name: Automation Lease Guard Patch
+
+on:
+  push:
+    branches:
+      - automation/worker-lease-fencing-20260911
+    paths:
+      - '.github/workflows/_automation-lease-guard.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch-validate-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: automation/worker-lease-fencing-20260911
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/rag-worker/package-lock.json
+      - name: Apply narrow lease-guard patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          worker = Path('backend/rag-worker/src/worker.ts')
+          text = worker.read_text()
+          old = """  private beginLeaseHeartbeat(jobId: string): () => void {"""
+          new = """  private async assertJobLeaseOwned(jobId: string): Promise<void> {
+    const { data, error } = await this.supabase
+      .from('au_worker_jobs')
+      .select('id')
+      .eq('id', jobId)
+      .eq('status', 'processing')
+      .eq('claimed_by', this.workerInstanceId)
+      .maybeSingle();
+
+    if (error) {
+      const classified = this.classifyWorkerJobMutationError(error);
+      logger.warn('Failed to verify worker lease ownership', {
+        jobId,
+        workerId: this.workerInstanceId,
+        classification: classified.classification,
+        message: classified.message,
+      });
+      throw error;
+    }
+
+    if (!data?.id) {
+      throw new WorkerLeaseLostError(jobId);
+    }
+  }
+
+  private beginLeaseHeartbeat(jobId: string): () => void {"""
+          assert old in text, 'worker heartbeat anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """      contentHash,
+    );"""
+          new = """      contentHash,
+      () => this.assertJobLeaseOwned(job.id),
+    );"""
+          assert old in text, 'processDocument call anchor missing'
+          text = text.replace(old, new, 1)
+          worker.write_text(text)
+
+          ingestion = Path('backend/rag-worker/src/ingestion.ts')
+          text = ingestion.read_text()
+
+          old = """type ChunkRow = {
+  id: string;
+  document_id: string;
+  owner_id?: string;
+  user_id?: string;
+  chunk_index: number;
+  text: string;
+};"""
+          new = old + """
+
+export type IngestionLeaseGuard = () => Promise<void>;"""
+          assert old in text, 'ChunkRow anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """  private async insertChunkRows(rows: ChunkRow[]): Promise<void> {"""
+          new = """  private async insertChunkRows(rows: ChunkRow[], assertLeaseOwned?: IngestionLeaseGuard): Promise<void> {"""
+          assert old in text, 'insertChunkRows signature anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """      for (let start = 0; start < variant.length; start += this.chunkInsertBatchSize) {
+        const batch = variant.slice(start, start + this.chunkInsertBatchSize);"""
+          new = """      for (let start = 0; start < variant.length; start += this.chunkInsertBatchSize) {
+        if (assertLeaseOwned) await assertLeaseOwned();
+        const batch = variant.slice(start, start + this.chunkInsertBatchSize);"""
+          assert old in text, 'insert batch anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """  private async tryReuseExistingEmbeddings(params: {
+    documentId: string;
+    ownerId: string;
+    contentHash: string;
+    expectedChunkCount: number;
+    expiresAt: number;
+  }): Promise<boolean> {"""
+          new = """  private async tryReuseExistingEmbeddings(params: {
+    documentId: string;
+    ownerId: string;
+    contentHash: string;
+    expectedChunkCount: number;
+    expiresAt: number;
+  }, assertLeaseOwned?: IngestionLeaseGuard): Promise<boolean> {"""
+          assert old in text, 'reuse signature anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    await this.markDocumentVersionActive(params.documentId, versionId);
+    await this.updateDocumentCompletion(params.documentId, params.expiresAt, params.contentHash);"""
+          new = """    if (assertLeaseOwned) await assertLeaseOwned();
+    await this.markDocumentVersionActive(params.documentId, versionId);
+    if (assertLeaseOwned) await assertLeaseOwned();
+    await this.updateDocumentCompletion(params.documentId, params.expiresAt, params.contentHash);"""
+          assert old in text, 'reuse mutation anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    contentHash: string,
+  ): Promise<void> {
+    if (!Array.isArray(chunks) || chunks.length === 0) {"""
+          new = """    contentHash: string,
+    assertLeaseOwned?: IngestionLeaseGuard,
+  ): Promise<void> {
+    if (!Array.isArray(chunks) || chunks.length === 0) {"""
+          assert old in text, 'processDocument signature anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    const startedAt = Date.now();
+    logger.info('Processing document', { documentId, ownerId, chunkCount: chunks.length, expiresAt });"""
+          new = """    const assertOwned = async () => {
+      if (assertLeaseOwned) await assertLeaseOwned();
+    };
+
+    const startedAt = Date.now();
+    logger.info('Processing document', { documentId, ownerId, chunkCount: chunks.length, expiresAt });"""
+          assert old in text, 'processDocument start anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    if (await this.tryReuseExistingEmbeddings({
+      documentId,
+      ownerId,
+      contentHash,
+      expectedChunkCount: chunkData.length,
+      expiresAt,
+    })) {"""
+          new = """    await assertOwned();
+    if (await this.tryReuseExistingEmbeddings({
+      documentId,
+      ownerId,
+      contentHash,
+      expectedChunkCount: chunkData.length,
+      expiresAt,
+    }, assertLeaseOwned)) {"""
+          assert old in text, 'reuse call anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    await this.clearChunkRows(documentId, ownerId);
+    const chunkRows: ChunkRow[] ="""
+          new = """    await assertOwned();
+    await this.clearChunkRows(documentId, ownerId);
+    const chunkRows: ChunkRow[] ="""
+          assert old in text, 'clear chunks anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    await this.insertChunkRows(chunkRows);"""
+          new = """    await assertOwned();
+    await this.insertChunkRows(chunkRows, assertLeaseOwned);"""
+          assert old in text, 'insert chunks call anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """      await this.withQdrantRetry('Qdrant delete preflight', () =>
+        this.qdrant.delete(collectionName, {
+          filter: this.ownerFilter(documentId, ownerId),
+        })
+      );"""
+          new = """      await this.withQdrantRetry('Qdrant delete preflight', async () => {
+        await assertOwned();
+        return this.qdrant.delete(collectionName, {
+          filter: this.ownerFilter(documentId, ownerId),
+        });
+      });"""
+          assert old in text, 'Qdrant delete anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    for (let start = 0; start < chunkData.length; start += this.embedBatchSize) {
+      const batch = chunkData.slice(start, start + this.embedBatchSize);
+      const embeddings = await this.embedTexts(embedder, batch.map((chunk) => chunk.text));"""
+          new = """    for (let start = 0; start < chunkData.length; start += this.embedBatchSize) {
+      await assertOwned();
+      const batch = chunkData.slice(start, start + this.embedBatchSize);
+      const embeddings = await this.embedTexts(embedder, batch.map((chunk) => chunk.text));"""
+          assert old in text, 'embedding batch anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """      await this.withQdrantRetry('Qdrant upsert', () =>
+        this.qdrant.upsert(collectionName, { wait: true, points })
+      );"""
+          new = """      await this.withQdrantRetry('Qdrant upsert', async () => {
+        await assertOwned();
+        return this.qdrant.upsert(collectionName, { wait: true, points });
+      });"""
+          assert old in text, 'Qdrant upsert anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    const countRes = await this.withQdrantRetry('Qdrant verification count', () =>
+      this.qdrant.count(collectionName, {
+        filter: this.ownerFilter(documentId, ownerId),
+        exact: true,
+      } as any)
+    );"""
+          new = """    const countRes = await this.withQdrantRetry('Qdrant verification count', async () => {
+      await assertOwned();
+      return this.qdrant.count(collectionName, {
+        filter: this.ownerFilter(documentId, ownerId),
+        exact: true,
+      } as any);
+    });"""
+          assert old in text, 'Qdrant count anchor missing'
+          text = text.replace(old, new, 1)
+
+          old = """    await this.upsertActiveDocumentVersion(documentId, contentHash);
+    await this.updateDocumentCompletion(documentId, expiresAt, contentHash);"""
+          new = """    await assertOwned();
+    await this.upsertActiveDocumentVersion(documentId, contentHash);
+    await assertOwned();
+    await this.updateDocumentCompletion(documentId, expiresAt, contentHash);"""
+          assert old in text, 'terminal document mutation anchor missing'
+          text = text.replace(old, new, 1)
+
+          ingestion.write_text(text)
+
+          test = Path('backend/rag-worker/tests/ingestion-lease-guard.test.ts')
+          test.write_text(r'''import fs from 'fs';
+import path from 'path';
+
+const source = fs.readFileSync(path.join(__dirname, '../src/ingestion.ts'), 'utf8');
+const workerSource = fs.readFileSync(path.join(__dirname, '../src/worker.ts'), 'utf8');
+
+describe('ingestion durable lease guard wiring', () => {
+  test('worker verifies durable ownership and passes the guard into processDocument', () => {
+    expect(workerSource).toContain(".eq('status', 'processing')");
+    expect(workerSource).toContain(".eq('claimed_by', this.workerInstanceId)");
+    expect(workerSource).toContain("() => this.assertJobLeaseOwned(job.id)");
+  });
+
+  test('ingestion checkpoints ownership before destructive and terminal phases', () => {
+    expect(source).toContain('export type IngestionLeaseGuard = () => Promise<void>;');
+    expect(source).toContain('await this.insertChunkRows(chunkRows, assertLeaseOwned);');
+    expect(source).toContain("await this.withQdrantRetry('Qdrant delete preflight', async () => {");
+    expect(source).toContain("await this.withQdrantRetry('Qdrant upsert', async () => {");
+    expect(source).toContain("const countRes = await this.withQdrantRetry('Qdrant verification count', async () => {");
+    expect((source.match(/await assertOwned\(\);/g) || []).length).toBeGreaterThanOrEqual(7);
+  });
+
+  test('chunk insertion rechecks ownership between database batches', () => {
+    expect(source).toContain('if (assertLeaseOwned) await assertLeaseOwned();\n        const batch = variant.slice');
+  });
+});
+''')
+          PY
+      - name: Install backend worker dependencies
+        run: npm ci --prefix backend/rag-worker
+      - name: Compile backend worker
+        run: npm --prefix backend/rag-worker run build
+      - name: Run backend worker tests
+        run: npm --prefix backend/rag-worker test -- --runInBand
+      - name: Enforce production critical audit
+        run: npm audit --prefix backend/rag-worker --omit=dev --audit-level=critical
+      - name: Commit validated production slice and self-remove workflow
+        shell: bash
+        run: |
+          rm .github/workflows/_automation-lease-guard.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend/rag-worker/src/worker.ts backend/rag-worker/src/ingestion.ts backend/rag-worker/tests/ingestion-lease-guard.test.ts .github/workflows/_automation-lease-guard.yml
+          git commit -m 'fix(worker): stop stale ingestion after lease takeover'
+          git push origin HEAD:automation/worker-lease-fencing-20260911
