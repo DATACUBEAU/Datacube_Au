@@ -48,3 +48,6 @@ jobs:
 
       - name: Run worker unit tests
         run: npm --prefix "${{ matrix.worker_dir }}" test -- --runInBand
+
+      - name: Enforce production dependency audit
+        run: npm audit --prefix "${{ matrix.worker_dir }}" --omit=dev --audit-level=critical
