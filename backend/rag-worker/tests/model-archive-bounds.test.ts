@@ -26,4 +26,13 @@ describe('FastEmbed model archive bootstrap safety', () => {
     expect(source).toContain('expandedBytes += Buffer.byteLength(chunk)');
     expect(source).toContain('expandedBytes > maxExpandedBytes');
   });
+
+
+  it('preflights every tar entry before extraction', () => {
+    expect(source).toContain('assertSafeModelArchiveEntry');
+    const preflight = source.indexOf('await tar.t({');
+    const extraction = source.indexOf('await tar.x({');
+    expect(preflight).toBeGreaterThan(-1);
+    expect(extraction).toBeGreaterThan(preflight);
+  });
 });

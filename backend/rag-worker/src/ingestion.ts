@@ -11,6 +11,7 @@ import https from 'https';
 import zlib from 'zlib';
 import { Writable } from 'stream';
 import { pipeline } from 'stream/promises';
+import { assertSafeModelArchiveEntry } from './archive-safety';
 
 type ChunkRow = {
   id: string;
@@ -575,8 +576,17 @@ export class IngestionService {
 
   private async extractModelArchive(model: StandardEmbeddingModel): Promise<void> {
     const tar = await import('tar');
+    const archivePath = this.modelArchivePath(model);
+
+    // Preflight the full archive without writing anything. Extraction only starts
+    // after every entry has passed the Datacube model-cache boundary checks.
+    await tar.t({
+      file: archivePath,
+      onentry: (entry) => assertSafeModelArchiveEntry(model, entry),
+    });
+
     await tar.x({
-      file: this.modelArchivePath(model),
+      file: archivePath,
       cwd: this.modelCacheDir,
     });
   }
