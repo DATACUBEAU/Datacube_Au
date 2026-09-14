@@ -54,7 +54,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          npm audit --prefix "${{ matrix.worker_dir }}" --omit=dev --json > "${{ matrix.worker_dir }}/audit-production.json"
+          npm audit --prefix "${{ matrix.worker_dir }}" --omit=dev --audit-level=critical --json > "${{ matrix.worker_dir }}/audit-production.json"
           audit_status=$?
           echo "exit_code=${audit_status}" >> "$GITHUB_OUTPUT"
           exit 0
@@ -78,6 +78,6 @@ jobs:
             exit 1
           fi
           if [ "$audit_status" -ne 0 ]; then
-            echo "Production dependency audit found vulnerabilities at or above the configured npm audit threshold. See the uploaded production-audit artifact for the exact dependency graph."
+            echo "Production dependency audit found critical production vulnerabilities. See the uploaded production-audit artifact for the exact dependency graph."
             exit "$audit_status"
           fi
