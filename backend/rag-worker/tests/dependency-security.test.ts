@@ -33,4 +33,13 @@ describe('production dependency security pins', () => {
   test('protobufjs override stays above the critical vulnerable range', () => {
     expect(resolvedPackageVersion('protobufjs')).toBe('7.6.5');
   });
+
+  test.each([
+    ['@xmldom/xmldom', '0.8.15'],
+    ['underscore', '1.13.8'],
+    ['undici', '6.28.0'],
+    ['ws', '8.21.0'],
+  ])('%s stays on the reviewed high-severity remediation', (moduleName, version) => {
+    expect(resolvedPackageVersion(moduleName)).toBe(version);
+  });
 });
