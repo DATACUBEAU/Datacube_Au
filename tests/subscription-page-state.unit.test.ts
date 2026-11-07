@@ -253,6 +253,15 @@ async function main() {
     assert.equal(concurrentJobsRow?.resetText, '1 of 3 processing slots active · 2 available');
   });
 
+  await run('subscription page does not render a duplicate usage card while the dedicated usage page remains available', () => {
+    const subscriptionSource = readProjectFile('src/app/dashboard/settings/subscription/page.tsx');
+    const usageSource = readProjectFile('src/app/dashboard/settings/usage/page.tsx');
+
+    assert.equal(subscriptionSource.includes('<UsageMeter />'), false);
+    assert.equal(usageSource.includes('export default function UsagePage()'), true);
+    assert.equal(usageSource.includes('Usage allowances'), true);
+  });
+
   if (failed > 0) {
     process.exit(1);
   }
