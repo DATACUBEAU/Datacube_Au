@@ -2224,7 +2224,6 @@ export default function SubscriptionPage() {
 
         {/* Pricing Cards Grid */}
         <div className="container relative z-20 mx-auto max-w-6xl px-4 pt-10 sm:px-6">
-            <UsageMeter />
             {ownerPlanControls}
             {activeBillingSummary}
             {pricingOptions}
