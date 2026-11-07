@@ -91,6 +91,33 @@ async function main() {
     assert.equal(source.includes('refreshUsageSection'), true);
   });
 
+  await run('usage page treats every enabled zero-cap allowance as blocked', () => {
+    const source = readProjectFile('src/app/dashboard/settings/usage/page.tsx');
+
+    assert.equal(source.includes("if (limit === null) return { percent: 0, label: 'Unlimited'"), true);
+    assert.equal(source.includes("if (limit <= 0) return { percent: 100, label: 'Limit reached', level: 'blocked' as const };"), true);
+    assert.equal(source.includes("{ percent: 0, label: 'Unavailable', level: 'normal' as const }"), false);
+    assert.equal(source.includes("if ((row.limit || 0) <= 0) return sum + 100;"), true);
+  });
+
+  await run('usage page determines exhaustion before rounding display percentage', () => {
+    const source = readProjectFile('src/app/dashboard/settings/usage/page.tsx');
+
+    assert.equal(source.includes('const blocked = normalizedUsed >= limit;'), true);
+    assert.equal(source.includes("if (blocked) return { percent, label: 'Limit reached', level: 'blocked' as const };"), true);
+    assert.equal(source.includes("if (percent >= 100) return { percent, label: 'Limit reached', level: 'blocked' as const };"), false);
+  });
+
+  await run('usage page distinguishes disabled rules from unlimited allowances and excludes them from averages', () => {
+    const source = readProjectFile('src/app/dashboard/settings/usage/page.tsx');
+
+    assert.equal(source.includes("if (!enabled) return { percent: 0, label: 'Disabled', level: 'disabled' as const }"), true);
+    assert.equal(source.includes("enabled: rule?.is_enabled !== false"), true);
+    assert.equal(source.includes("'Not included in your current plan'"), true);
+    assert.equal(source.includes("'This feature is currently unavailable on your plan.'"), true);
+    assert.equal(source.includes("usageRows.filter((row) => row.enabled && row.limit !== null)"), true);
+  });
+
   await run('usage rows normalize numeric strings, fall back to saved limits, and preserve unlimited rules', () => {
     const result = buildSubscriptionUsageRows({
       snapshot: { managedPlan: 'pro' },
