@@ -857,7 +857,7 @@ export class RAGWorker {
         recoverableReason,
       });
       if (failureMutation.outcome !== 'updated') {
-        logger.warn('Skipped document failure and failure usage because claimed failure mutation did not persist', {
+        logger.warn('Skipping failed-job compatibility usage because terminal state did not persist; document failure was also skipped', {
           jobId: currentJob.id,
           documentId: currentJob.document_id,
           ...failureMutation,

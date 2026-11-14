@@ -174,13 +174,13 @@ assert.match(
 // trigger did not fire, so the legacy snapshot must also stay unchanged.
 assert.match(
   worker,
-  /private\s+async\s+markJobFailed\([\s\S]*\):\s*Promise<Error\s*\|\s*null>[\s\S]*return\s+error;/i,
-  'markJobFailed must surface terminal persistence failure to its caller',
+  /private\s+async\s+markJobFailed\([\s\S]*\):\s*Promise<[\s\S]*outcome:\s*'updated'[\s\S]*outcome:\s*'ownership_lost'[\s\S]*outcome:\s*'error'[\s\S]*this\.updateClaimedJobRow\([\s\S]*return\s+\{\s*outcome:\s*'error'/i,
+  'markJobFailed must return an explicit result from the owner-fenced terminal update',
 );
 assert.match(
   worker,
-  /const\s+failurePersistError\s*=\s*await\s+this\.markJobFailed\([\s\S]*await\s+this\.markDocumentFailed\([\s\S]*if\s*\(!failurePersistError\)\s*\{[\s\S]*jobs_failed\s*:\s*1/i,
-  'legacy jobs_failed usage must only advance after the durable failed state persists',
+  /const\s+failureMutation\s*=\s*await\s+this\.markJobFailed\([\s\S]*if\s*\(failureMutation\.outcome\s*!==\s*'updated'\)\s*\{[\s\S]*return;[\s\S]*await\s+this\.markDocumentFailed\([\s\S]*await\s+this\.incrementUsageCounters\([\s\S]*jobs_failed\s*:\s*1/i,
+  'document failure and legacy jobs_failed usage must only follow a confirmed durable terminal update',
 );
 assert.match(
   worker,

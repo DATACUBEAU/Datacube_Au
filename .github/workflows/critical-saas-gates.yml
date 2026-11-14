@@ -16,7 +16,7 @@ concurrency:
 jobs:
   critical-gates:
     name: Typecheck, lint, security, auth lifecycle, admin authorization, account integrity, billing, usage, limits, feature flags, AI routing, RAG, ingestion, retention, observability, UX and build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
 
     steps:
