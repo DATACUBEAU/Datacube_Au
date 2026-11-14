@@ -1,0 +1,53 @@
+name: RAG Worker Safety
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'backend/rag-worker/**'
+      - 'rag-worker/**'
+      - '.github/workflows/rag-worker-safety.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rag-worker-safety-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker-safety:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - directory: backend/rag-worker
+            label: Backend RAG worker
+          - directory: rag-worker
+            label: VPS RAG worker
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ${{ matrix.directory }}/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Build worker
+        run: npm run build
+
+      - name: Run worker test suite
+        run: npm test -- --runInBand
