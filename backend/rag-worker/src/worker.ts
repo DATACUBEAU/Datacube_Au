@@ -223,11 +223,12 @@ export class RAGWorker {
         .maybeSingle();
 
     let { data, error } = await executeUpdate(payload);
+    let fallbackUsed = false;
     if (error) {
       const missingColumns = fallbackColumns.filter((column) =>
         this.isMissingColumnError(error, column) || this.isSchemaCacheMissingColumnError(error, column),
       );
-      if (missingColumns.length === 0) return { updated: false, error };
+      if (missingColumns.length === 0) return { updated: false, error, fallbackUsed: false };
 
       this.warnSchemaFallbackOnce('claimed-update:' + missingColumns.sort().join(','), {
         jobId,
@@ -238,10 +239,12 @@ export class RAGWorker {
       const fallbackPayload = { ...payload };
       for (const column of missingColumns) delete (fallbackPayload as any)[column];
       ({ data, error } = await executeUpdate(fallbackPayload));
+      fallbackUsed = !error;
     }
 
-    return { updated: Boolean(data?.id), error: error ?? null };
+    return { updated: Boolean(data?.id), error: error ?? null, fallbackUsed };
   }
+
 
   private assertLeaseOwnership(jobId: string): Promise<void> {
     return assertWorkerLeaseOwnership(this.supabase, jobId, this.workerInstanceId);
@@ -512,7 +515,7 @@ export class RAGWorker {
       completed_at: nowIso,
       last_progress_at: nowIso,
       updated_at: nowIso,
-      metadata: { ...currentMetadata, worker_completion_attempt: token },
+      metadata: { ...currentMetadata, worker_completion_attempt: token, worker_completion_source: source },
     };
 
     const result = await this.updateClaimedJobRow(
@@ -662,7 +665,7 @@ export class RAGWorker {
       const workerFilter = `worker_id.eq.${this.pipelineId},worker_id.is.null`;
       const { data, error } = await this.supabase
         .from('au_worker_jobs')
-        .select('id,document_id,owner_id,user_id,bucket,object_path,status,progress,updated_at')
+        .select('id,document_id,owner_id,user_id,bucket,object_path,status,progress,updated_at,metadata')
         .eq('status', 'processing')
         .eq('progress', 100)
         .or(workerFilter)
@@ -693,6 +696,7 @@ export class RAGWorker {
           status: String(raw?.status || ''),
           progress: Number(raw?.progress || 0),
           updated_at: raw?.updated_at ? String(raw.updated_at) : undefined,
+          metadata: raw?.metadata,
         };
 
         if (!job.id || !job.document_id) continue;

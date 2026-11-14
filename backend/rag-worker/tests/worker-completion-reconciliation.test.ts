@@ -1,27 +1,39 @@
 import { RAGWorker } from '../src/worker';
 
 class FakeWorkerJobsQuery {
-  private mode: 'update' | null = null;
+  private mode: 'update' | 'select' | null = null;
   private payload: Record<string, unknown> | null = null;
+  private currentId: string | null = null;
 
   constructor(private parent: FakeSupabase) {}
 
   update(payload: Record<string, unknown>) {
     this.mode = 'update';
     this.payload = payload;
+    this.currentId = null;
+    return this;
+  }
+
+  select() {
+    this.mode = this.mode || 'select';
     return this;
   }
 
   eq(column: string, value: string) {
-    if (this.mode === 'update' && column === 'id') {
-      this.parent.jobUpdates.push({ id: value, payload: this.payload || {} });
-      const error = this.parent.jobUpdateErrors.length > 0 ? this.parent.jobUpdateErrors.shift() : null;
-      return Promise.resolve({ error });
-    }
+    if (column === 'id') this.currentId = value;
     return this;
   }
-}
 
+  maybeSingle() {
+    if (this.mode === 'update') {
+      const id = this.currentId || '';
+      this.parent.jobUpdates.push({ id, payload: this.payload || {} });
+      const error = this.parent.jobUpdateErrors.length > 0 ? this.parent.jobUpdateErrors.shift() : null;
+      return Promise.resolve({ data: error ? null : { id }, error });
+    }
+    return Promise.resolve({ data: null, error: null });
+  }
+}
 class FakeDocumentQuery {
   private mode: 'select' | 'update' | null = null;
   private payload: Record<string, unknown> | null = null;

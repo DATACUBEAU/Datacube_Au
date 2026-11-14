@@ -283,7 +283,7 @@ export class RAGWorker {
       const stuckThreshold = new Date(Date.now() - 60000).toISOString();
       const { data: stuckCompleted } = await this.supabase
         .from('au_worker_jobs')
-        .select('id, document_id, bucket, object_path, owner_id, user_id')
+        .select('id, document_id, bucket, object_path, owner_id, user_id, metadata')
         .eq('status', 'processing')
         .eq('progress', 100)
         .lt('updated_at', stuckThreshold)

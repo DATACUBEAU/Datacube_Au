@@ -96,6 +96,7 @@ describe('RAGWorker Lifecycle', () => {
     mockStorageRemove.mockResolvedValue({ error: null });
     
     mockRpc.mockResolvedValue({ data: [], error: null });
+    mockMaybeSingle.mockResolvedValue({ data: { id: 'job-test' }, error: null });
     (finalizeDocumentSourceCleanup as jest.Mock).mockClear();
     (markDocumentCleanupPending as jest.Mock).mockClear();
 
