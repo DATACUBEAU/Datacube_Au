@@ -52,6 +52,7 @@ describe('Ingestion Validation', () => {
     ingestion['verifyQdrantPayloadInvariants'] = jest.fn();
 
     worker = new RAGWorker(supabase, ingestion);
+    jest.spyOn(worker as any, 'assertLeaseOwnership').mockResolvedValue(undefined);
   });
 
 

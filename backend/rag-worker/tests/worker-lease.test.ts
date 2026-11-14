@@ -2,14 +2,13 @@ import { assertWorkerLeaseOwnership, WorkerLeaseLostError } from '../src/worker-
 
 function makeSupabase(response: { data: any; error: any }) {
   const filters: Array<[string, unknown]> = [];
-  const query = {
-    select: jest.fn().mockReturnThis(),
-    eq: jest.fn((column: string, value: unknown) => {
-      filters.push([column, value]);
-      return query;
-    }),
-    maybeSingle: jest.fn().mockResolvedValue(response),
-  };
+  const query: any = {};
+  query.select = jest.fn(() => query);
+  query.eq = jest.fn((column: string, value: unknown) => {
+    filters.push([column, value]);
+    return query;
+  });
+  query.maybeSingle = jest.fn().mockResolvedValue(response);
   return { supabase: { from: jest.fn(() => query) }, filters, query };
 }
 

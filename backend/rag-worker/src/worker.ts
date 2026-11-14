@@ -532,7 +532,7 @@ export class RAGWorker {
           'worker_completion_attempt',
           token,
         )) {
-          return { ok: true, mode: 'full' };
+          return { ok: true, mode: result.fallbackUsed ? 'legacy_schema_fallback' : 'full' };
         }
       } catch (ownershipError) {
         if (ownershipError instanceof WorkerLeaseLostError) throw ownershipError;
