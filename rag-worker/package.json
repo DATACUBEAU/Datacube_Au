@@ -22,8 +22,16 @@
     "fastembed": "^2.1.0",
     "mammoth": "^1.11.0",
     "pdf-parse": "^2.4.5",
-    "tar": "^6.2.0",
+    "tar": "7.5.22",
     "zod": "^3.22.4"
+  },
+  "overrides": {
+    "protobufjs": "7.6.5",
+    "tar": "7.5.22",
+    "@xmldom/xmldom": "0.8.15",
+    "underscore": "1.13.8",
+    "undici": "6.28.0",
+    "ws": "8.21.0"
   },
   "devDependencies": {
     "@types/istanbul-lib-coverage": "^2.0.6",
