@@ -1,9 +1,11 @@
 import { RAGWorker } from '../src/worker';
+import { WorkerLeaseLostError } from '../src/worker-lease';
 
 class FakeWorkerJobsQuery {
   private mode: 'update' | 'select' | null = null;
   private payload: Record<string, unknown> | null = null;
   private currentId: string | null = null;
+  private filters: Array<[string, string]> = [];
 
   constructor(private parent: FakeSupabase) {}
 
@@ -21,6 +23,7 @@ class FakeWorkerJobsQuery {
 
   eq(column: string, value: string) {
     if (column === 'id') this.currentId = value;
+    this.filters.push([column, value]);
     return this;
   }
 
@@ -29,7 +32,11 @@ class FakeWorkerJobsQuery {
       const id = this.currentId || '';
       this.parent.jobUpdates.push({ id, payload: this.payload || {} });
       const error = this.parent.jobUpdateErrors.length > 0 ? this.parent.jobUpdateErrors.shift() : null;
-      return Promise.resolve({ data: error ? null : { id }, error });
+      this.parent.jobUpdateFilters.push([...this.filters]);
+      const response = this.parent.jobUpdateResponses.length > 0
+        ? this.parent.jobUpdateResponses.shift()
+        : { data: error ? null : { id }, error };
+      return Promise.resolve(response);
     }
     return Promise.resolve({ data: null, error: null });
   }
@@ -82,6 +89,8 @@ class FakeSupabase {
   public documentUpdates: Array<{ id: string; payload: Record<string, unknown> }> = [];
   public debugLogs: Array<Record<string, unknown>> = [];
   public jobUpdateErrors: any[] = [];
+  public jobUpdateResponses: any[] = [];
+  public jobUpdateFilters: Array<Array<[string, string]>> = [];
   public documentSelectRow: Record<string, unknown> = { cleanup_attempts: 0 };
 
   from(table: string) {
@@ -126,7 +135,30 @@ describe('RAGWorker completion reconciliation', () => {
       updated_at: expect.any(String),
     });
     expect(supabase.jobUpdates[1].payload.completed_at).toBeUndefined();
-    expect(supabase.jobUpdates[1].payload.last_progress_at).toBeUndefined();
+    expect(supabase.jobUpdates[1].payload.last_progress_at).toEqual(expect.any(String));
+  });
+
+  test('fences completion writes by processing status and current worker owner', async () => {
+    const supabase = new FakeSupabase();
+    const worker = new RAGWorker(supabase as any, {} as any);
+
+    const result = await (worker as any).attemptJobCompletionUpdate(job, 'inline');
+
+    expect(result).toEqual({ ok: true, mode: 'full' });
+    expect(supabase.jobUpdateFilters[0]).toEqual([
+      ['id', 'job-1'],
+      ['status', 'processing'],
+      ['claimed_by', (worker as any).workerInstanceId],
+    ]);
+  });
+
+  test('treats a zero-row terminal update as lease loss rather than success', async () => {
+    const supabase = new FakeSupabase();
+    supabase.jobUpdateResponses = [{ data: null, error: null }];
+    const worker = new RAGWorker(supabase as any, {} as any);
+
+    await expect((worker as any).attemptJobCompletionUpdate(job, 'inline'))
+      .rejects.toBeInstanceOf(WorkerLeaseLostError);
   });
 
   test('schedules bounded reconciliation on transient completion update failure without running cleanup', async () => {
