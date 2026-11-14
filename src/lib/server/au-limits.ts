@@ -600,8 +600,6 @@ async function loadLegacyPlanRuleSet(
   supabase: SupabaseClient,
   plan: EffectivePlanCode,
 ): Promise<LegacyPlanLimitRuleSetResult> {
-  // Legacy columns are read only to migrate existing production values into the
-  // canonical rule table when older environments have not been backfilled yet.
   const primary = await supabase
     .from('au_plan_limits')
     .select(
@@ -1227,12 +1225,13 @@ export async function buildUsageSnapshotForUser(
   userId: string,
   limitRules: Record<ApprovedLimitKey, EffectivePlanLimitRule>,
 ): Promise<EffectiveUsage> {
-  const uploadWindow = computeResetWindow(limitRules.max_uploads_total);
-  const predictionWindow = computeResetWindow(limitRules.max_exam_predictions);
-  const practiceWindow = computeResetWindow(limitRules.max_practice_exams);
-  const knowledgeWindow = computeResetWindow(limitRules.max_knowledge_hub);
-  const chatWindow = computeResetWindow(limitRules.max_chats_total);
-  const tokenWindow = computeResetWindow(limitRules.max_tokens_total);
+  const snapshotAt = new Date();
+  const uploadWindow = computeResetWindow(limitRules.max_uploads_total, snapshotAt);
+  const predictionWindow = computeResetWindow(limitRules.max_exam_predictions, snapshotAt);
+  const practiceWindow = computeResetWindow(limitRules.max_practice_exams, snapshotAt);
+  const knowledgeWindow = computeResetWindow(limitRules.max_knowledge_hub, snapshotAt);
+  const chatWindow = computeResetWindow(limitRules.max_chats_total, snapshotAt);
+  const tokenWindow = computeResetWindow(limitRules.max_tokens_total, snapshotAt);
 
   const [
     documentRows,
@@ -1295,7 +1294,7 @@ export async function buildUsageSnapshotForUser(
       featureValues: ['knowledge_hub'],
       statuses: ['ready', 'running'],
     }),
-    loadUsageCounterSnapshots(supabase, userId).catch(() => ({ today: {}, total: {} })),
+    loadUsageCounterSnapshots(supabase, userId, snapshotAt).catch(() => ({ today: {}, total: {} })),
   ]);
 
   const currentUploads = countCurrentDocuments(documentRows);
@@ -1317,6 +1316,8 @@ export async function buildUsageSnapshotForUser(
       fallbackUsed: legacyChatsCount,
       todayCounters: trackedSnapshots.today,
       totalCounters: trackedSnapshots.total,
+      window: chatWindow,
+      snapshotAt,
     }),
     resolveUsageMetricForRule({
       supabase,
@@ -1326,6 +1327,8 @@ export async function buildUsageSnapshotForUser(
       fallbackUsed: legacyTokensUsed,
       todayCounters: trackedSnapshots.today,
       totalCounters: trackedSnapshots.total,
+      window: tokenWindow,
+      snapshotAt,
     }),
     resolveUsageMetricForRule({
       supabase,
@@ -1335,6 +1338,8 @@ export async function buildUsageSnapshotForUser(
       fallbackUsed: limitRules.max_uploads_total.mode === 'current' ? currentUploads : windowUploads,
       todayCounters: trackedSnapshots.today,
       totalCounters: trackedSnapshots.total,
+      window: uploadWindow,
+      snapshotAt,
     }),
     resolveUsageMetricForRule({
       supabase,
@@ -1344,6 +1349,8 @@ export async function buildUsageSnapshotForUser(
       fallbackUsed: limitRules.max_exam_predictions.mode === 'current' ? predictionCurrentCount : predictionWindowCount,
       todayCounters: trackedSnapshots.today,
       totalCounters: trackedSnapshots.total,
+      window: predictionWindow,
+      snapshotAt,
     }),
     resolveUsageMetricForRule({
       supabase,
@@ -1353,6 +1360,8 @@ export async function buildUsageSnapshotForUser(
       fallbackUsed: limitRules.max_practice_exams.mode === 'current' ? practiceCurrentCount : practiceWindowCount,
       todayCounters: trackedSnapshots.today,
       totalCounters: trackedSnapshots.total,
+      window: practiceWindow,
+      snapshotAt,
     }),
     resolveUsageMetricForRule({
       supabase,
@@ -1362,6 +1371,8 @@ export async function buildUsageSnapshotForUser(
       fallbackUsed: limitRules.max_knowledge_hub.mode === 'current' ? knowledgeCurrentCount : knowledgeWindowCount,
       todayCounters: trackedSnapshots.today,
       totalCounters: trackedSnapshots.total,
+      window: knowledgeWindow,
+      snapshotAt,
     }),
   ]);
 
@@ -1377,7 +1388,7 @@ export async function buildUsageSnapshotForUser(
   } satisfies Record<ApprovedLimitKey, number>;
 
   const by_limit = APPROVED_LIMIT_KEYS.reduce((acc, key) => {
-    const window = computeResetWindow(limitRules[key]);
+    const window = computeResetWindow(limitRules[key], snapshotAt);
     const cap = getLimitCap(limitRules[key]);
     const used = totals[key];
     acc[key] = {

@@ -1,0 +1,224 @@
+-- Reserve the ai-reservation:* usage-event namespace for the trusted AI commit path.
+--
+-- Authenticated callers can legitimately track their own usage events, but they must
+-- not be able to pre-create the deterministic event key used by commit_ai_usage.
+-- Otherwise ON CONFLICT deduplication could accept attacker-controlled increments
+-- and then remove the reservation from in-flight quota accounting.
+
+BEGIN;
+
+CREATE OR REPLACE FUNCTION public.guard_ai_usage_event_namespace()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF NEW.event_key LIKE 'ai-reservation:%'
+    AND COALESCE(auth.role(), '') <> 'service_role' THEN
+    RAISE EXCEPTION 'reserved usage event namespace'
+      USING ERRCODE = '42501';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.guard_ai_usage_event_namespace() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.guard_ai_usage_event_namespace() FROM anon, authenticated, service_role;
+
+DROP TRIGGER IF EXISTS au_usage_events_ai_reservation_namespace_guard
+  ON public.au_usage_events;
+
+CREATE TRIGGER au_usage_events_ai_reservation_namespace_guard
+BEFORE INSERT OR UPDATE OF event_key
+ON public.au_usage_events
+FOR EACH ROW
+EXECUTE FUNCTION public.guard_ai_usage_event_namespace();
+
+-- Harden the commit-side dedupe path as defense in depth for any legacy/conflicting
+-- row that predates this trigger. A trusted reservation event must match its source,
+-- reservation identity, feature, units, and admission timestamp before a conflict is
+-- accepted as idempotent.
+CREATE OR REPLACE FUNCTION public.assert_ai_reservation_usage_event(
+  p_event_id UUID,
+  p_user_id UUID,
+  p_reservation_id UUID,
+  p_feature_key TEXT,
+  p_metric_increments JSONB,
+  p_occurred_at TIMESTAMPTZ
+)
+RETURNS VOID
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_event public.au_usage_events%ROWTYPE;
+BEGIN
+  SELECT *
+  INTO v_event
+  FROM public.au_usage_events
+  WHERE id = p_event_id
+  FOR UPDATE;
+
+  IF NOT FOUND
+    OR v_event.user_id IS DISTINCT FROM p_user_id
+    OR v_event.event_key IS DISTINCT FROM ('ai-reservation:' || p_reservation_id::text)
+    OR v_event.source IS DISTINCT FROM 'vps-ai-gateway'
+    OR v_event.feature IS DISTINCT FROM p_feature_key
+    OR v_event.metric_increments IS DISTINCT FROM p_metric_increments
+    OR (v_event.context ->> 'reservation_id') IS DISTINCT FROM p_reservation_id::text
+    OR v_event.occurred_at IS DISTINCT FROM p_occurred_at THEN
+    RAISE EXCEPTION 'conflicting AI reservation usage event'
+      USING ERRCODE = '23505';
+  END IF;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.assert_ai_reservation_usage_event(UUID, UUID, UUID, TEXT, JSONB, TIMESTAMPTZ) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.assert_ai_reservation_usage_event(UUID, UUID, UUID, TEXT, JSONB, TIMESTAMPTZ) FROM anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.commit_ai_usage(
+  p_reservation_id UUID,
+  p_user_id UUID,
+  p_feature_key TEXT,
+  p_route TEXT,
+  p_idempotency_key TEXT,
+  p_ticket_id TEXT DEFAULT NULL,
+  p_provider TEXT DEFAULT NULL,
+  p_model TEXT DEFAULT NULL
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_probe public.ai_usage_reservations%ROWTYPE;
+  v_row public.ai_usage_reservations%ROWTYPE;
+  v_event_id UUID;
+  v_event_key TEXT;
+  v_locked_today JSONB;
+  v_locked_total JSONB;
+BEGIN
+  PERFORM public.ai_usage_require_service_role();
+
+  SELECT * INTO v_probe
+  FROM public.ai_usage_reservations
+  WHERE id = p_reservation_id;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', FALSE, 'code', 'USAGE_RESERVATION_NOT_FOUND', 'status', 'missing');
+  END IF;
+
+  IF v_probe.user_id <> p_user_id THEN
+    RETURN jsonb_build_object('ok', FALSE, 'code', 'USAGE_RESERVATION_CLAIM_MISMATCH', 'status', v_probe.status);
+  END IF;
+
+  SELECT counters INTO v_locked_today
+  FROM public.usage_counters
+  WHERE user_id = p_user_id AND day = v_probe.usage_day
+  FOR UPDATE;
+
+  SELECT counters INTO v_locked_total
+  FROM public.usage_totals
+  WHERE user_id = p_user_id
+  FOR UPDATE;
+
+  SELECT * INTO v_row
+  FROM public.ai_usage_reservations
+  WHERE id = p_reservation_id
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('ok', FALSE, 'code', 'USAGE_RESERVATION_NOT_FOUND', 'status', 'missing');
+  END IF;
+
+  IF v_row.user_id <> p_user_id
+    OR v_row.feature_key <> p_feature_key
+    OR v_row.route <> p_route
+    OR v_row.idempotency_key <> p_idempotency_key THEN
+    RETURN jsonb_build_object('ok', FALSE, 'code', 'USAGE_RESERVATION_CLAIM_MISMATCH', 'status', v_row.status);
+  END IF;
+
+  IF v_row.status = 'committed' THEN
+    v_event_key := 'ai-reservation:' || v_row.id::text;
+    SELECT id INTO v_event_id
+    FROM public.au_usage_events
+    WHERE user_id = v_row.user_id AND event_key = v_event_key
+    LIMIT 1;
+
+    IF v_event_id IS NULL THEN
+      RAISE EXCEPTION 'committed reservation is missing its usage event'
+        USING ERRCODE = '23514';
+    END IF;
+
+    PERFORM public.assert_ai_reservation_usage_event(
+      v_event_id, v_row.user_id, v_row.id, v_row.feature_key,
+      v_row.committed_units, v_row.created_at
+    );
+
+    RETURN jsonb_build_object('ok', TRUE, 'deduped', TRUE, 'reservation_id', v_row.id,
+      'idempotency_key', v_row.idempotency_key, 'status', v_row.status, 'event_id', v_event_id);
+  END IF;
+
+  IF v_row.status <> 'reserved' THEN
+    RETURN jsonb_build_object('ok', FALSE, 'code', 'USAGE_RESERVATION_NOT_ACTIVE', 'status', v_row.status);
+  END IF;
+
+  UPDATE public.ai_usage_reservations
+  SET status = 'committed',
+      committed_units = reserved_units,
+      provider = COALESCE(NULLIF(TRIM(COALESCE(p_provider, '')), ''), provider),
+      model = COALESCE(NULLIF(TRIM(COALESCE(p_model, '')), ''), model),
+      ticket_id = COALESCE(NULLIF(TRIM(COALESCE(p_ticket_id, '')), ''), ticket_id),
+      committed_at = now(), updated_at = now()
+  WHERE id = v_row.id
+  RETURNING * INTO v_row;
+
+  v_event_key := 'ai-reservation:' || v_row.id::text;
+
+  INSERT INTO public.au_usage_events (
+    user_id, feature, source, event_key, request_id, correlation_id,
+    metric_increments, context, occurred_at
+  ) VALUES (
+    v_row.user_id, v_row.feature_key, 'vps-ai-gateway', v_event_key,
+    NULLIF(TRIM(COALESCE(p_ticket_id, '')), ''), NULL, v_row.committed_units,
+    jsonb_build_object('reservation_id', v_row.id, 'route', v_row.route,
+      'provider', COALESCE(v_row.provider, ''), 'model', COALESCE(v_row.model, ''),
+      'admitted_at', v_row.created_at, 'committed_at', v_row.committed_at),
+    v_row.created_at
+  )
+  ON CONFLICT (user_id, event_key) DO NOTHING
+  RETURNING id INTO v_event_id;
+
+  IF v_event_id IS NULL THEN
+    SELECT id INTO v_event_id
+    FROM public.au_usage_events
+    WHERE user_id = v_row.user_id AND event_key = v_event_key
+    LIMIT 1;
+
+    IF v_event_id IS NULL THEN
+      RAISE EXCEPTION 'AI reservation usage-event conflict could not be resolved'
+        USING ERRCODE = '23505';
+    END IF;
+
+    PERFORM public.assert_ai_reservation_usage_event(
+      v_event_id, v_row.user_id, v_row.id, v_row.feature_key,
+      v_row.committed_units, v_row.created_at
+    );
+  END IF;
+
+  RETURN jsonb_build_object('ok', TRUE, 'deduped', FALSE, 'reservation_id', v_row.id,
+    'idempotency_key', v_row.idempotency_key, 'status', v_row.status, 'event_id', v_event_id);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.commit_ai_usage(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.commit_ai_usage(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) FROM anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.commit_ai_usage(UUID, UUID, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT) TO service_role;
+
+NOTIFY pgrst, 'reload schema';
+
+COMMIT;

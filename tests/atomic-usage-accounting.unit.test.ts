@@ -86,8 +86,12 @@ async function main() {
     assert.equal(payload.increments.max_chats_total, 1);
     assert.equal(payload.increments.api_calls, 1);
     assert.ok(Number(payload.increments.max_tokens_total) >= 768);
-    assert.ok(payload.limitChecks.some((entry) => entry.metric_key === 'max_chats_total' && entry.counter_scope === 'today'));
-    assert.ok(payload.limitChecks.some((entry) => entry.metric_key === 'max_tokens_total' && entry.counter_scope === 'today'));
+    const chatCheck = payload.limitChecks.find((entry) => entry.metric_key === 'max_chats_total');
+    const tokenCheck = payload.limitChecks.find((entry) => entry.metric_key === 'max_tokens_total');
+    assert.equal(chatCheck?.counter_scope, 'today');
+    assert.equal(tokenCheck?.counter_scope, 'today');
+    assert.match(String(chatCheck?.window_start || ''), /^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
+    assert.match(String(chatCheck?.window_end || ''), /^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
     assert.match(payload.requestFingerprint, /^[a-f0-9]{64}$/);
   });
 
@@ -131,6 +135,8 @@ async function main() {
     assert.equal(supabase.calls.length, 1);
     assert.equal(supabase.calls[0]?.name, 'reserve_ai_usage');
     assert.equal((supabase.calls[0]?.payload.p_metric_increments as any).max_chats_total, 1);
+    const limitChecks = supabase.calls[0]?.payload.p_limit_checks as any[];
+    assert.ok(limitChecks.some((entry) => entry.scope === 'canonical_plan' && entry.window_start));
   });
 
   await run('failed Next.js ticket issuance can release a reserved usage claim', async () => {
@@ -202,6 +208,18 @@ async function main() {
     assert.match(sql, /v_row\.provider_started_at IS NOT NULL/);
     assert.doesNotMatch(sql, /now\(\) - interval '2 minutes'/i);
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b|\bRESET\b/i);
+  });
+
+  await run('atomic reservation applies admin corrections inside the quota transaction', () => {
+    const sql = readFileSync('supabase/migrations/20260829215500_ai_reservation_admin_adjustments.sql', 'utf8');
+    assert.match(sql, /CREATE OR REPLACE FUNCTION public\.reserve_ai_usage/i);
+    assert.match(sql, /v_limit_scope = 'canonical_plan'/);
+    assert.match(sql, /window_start/);
+    assert.match(sql, /public\.get_usage_admin_adjustment_total\(/);
+    assert.match(sql, /pg_advisory_xact_lock/);
+    assert.match(sql, /concat_ws\('\|', p_user_id::TEXT, v_metric_key, v_window_start::TEXT/);
+    assert.match(sql, /v_current := GREATEST\(0, v_current \+ COALESCE\(v_adjustment, 0\)\)/);
+    assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
   });
 
   await run('VPS ticket route reserves before signing and includes reservation claims', () => {

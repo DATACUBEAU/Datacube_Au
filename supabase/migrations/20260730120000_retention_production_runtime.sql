@@ -78,7 +78,8 @@ CREATE INDEX IF NOT EXISTS idx_au_user_activity_last_active_at
 
 DO $$
 BEGIN
-  IF to_regclass('public.au_document_embeddings') IS NOT NULL THEN
+  IF to_regclass('public.au_document_embeddings') IS NOT NULL
+     AND to_regclass('public.au_document_chunks') IS NOT NULL THEN
     ALTER TABLE public.au_document_embeddings
       ADD COLUMN IF NOT EXISTS owner_id uuid NULL,
       ADD COLUMN IF NOT EXISTS user_id uuid NULL;
@@ -87,12 +88,13 @@ BEGIN
     SET
       owner_id = COALESCE(embeddings.owner_id, documents.owner_id, documents.user_id),
       user_id = COALESCE(embeddings.user_id, documents.user_id, documents.owner_id)
-    FROM public.au_documents documents
-    WHERE embeddings.document_id = documents.id
+    FROM public.au_document_chunks chunks
+    JOIN public.au_documents documents ON documents.id = chunks.document_id
+    WHERE embeddings.chunk_id = chunks.id
       AND (embeddings.owner_id IS NULL OR embeddings.user_id IS NULL);
 
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_au_document_embeddings_owner_document ON public.au_document_embeddings (owner_id, document_id)';
-    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_au_document_embeddings_user_document ON public.au_document_embeddings (user_id, document_id)';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_au_document_embeddings_owner_chunk ON public.au_document_embeddings (owner_id, chunk_id)';
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_au_document_embeddings_user_chunk ON public.au_document_embeddings (user_id, chunk_id)';
   END IF;
 END;
 $$;
