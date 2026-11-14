@@ -874,11 +874,6 @@ export class RAGWorker {
     }
   }
 
-  private async processJob(job: UploadJob) {    } finally {
-      stopHeartbeat();
-    }
-  }
-
   private async processJob(job: UploadJob) {
     const jobStartedAt = Date.now();
     const assertLeaseOwnership = () => this.assertLeaseOwnership(job.id);
