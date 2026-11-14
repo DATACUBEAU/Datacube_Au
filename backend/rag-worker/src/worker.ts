@@ -211,7 +211,7 @@ export class RAGWorker {
     jobId: string,
     payload: Record<string, unknown>,
     fallbackColumns: string[] = [],
-  ): Promise<{ updated: boolean; error: any | null }> {
+  ): Promise<{ updated: boolean; error: any | null; fallbackUsed: boolean }> {
     const executeUpdate = async (nextPayload: Record<string, unknown>) =>
       await this.supabase
         .from('au_worker_jobs')

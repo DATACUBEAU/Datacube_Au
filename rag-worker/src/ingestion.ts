@@ -1328,6 +1328,7 @@ export class IngestionService {
         };
       });
 
+      await assertLeaseOwnership?.();
       await this.withQdrantRetry('Qdrant upsert', () =>
         this.qdrant.upsert(collectionName, { wait: true, points })
       );
