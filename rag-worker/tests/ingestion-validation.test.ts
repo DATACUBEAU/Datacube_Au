@@ -53,6 +53,11 @@ describe('Ingestion Validation', () => {
 
     worker = new RAGWorker(supabase, ingestion);
     jest.spyOn(worker as any, 'assertLeaseOwnership').mockResolvedValue(undefined);
+    jest.spyOn(worker as any, 'updateJobProgress').mockResolvedValue(undefined);
+    (supabase.rpc as jest.Mock).mockResolvedValue({
+      data: { retention_days: 365, plan: 'test', entitlement_source: 'test' },
+      error: null,
+    });
   });
 
 

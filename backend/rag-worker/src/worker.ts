@@ -549,7 +549,7 @@ export class RAGWorker {
     }
 
     if (!result.updated) throw new WorkerLeaseLostError(job.id);
-    return { ok: true, mode: 'full' };
+    return { ok: true, mode: result.fallbackUsed ? 'legacy_schema_fallback' : 'full' };
   }
 
   private scheduleCompletionReconciliation(
