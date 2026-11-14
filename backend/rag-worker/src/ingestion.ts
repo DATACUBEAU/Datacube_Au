@@ -1,5 +1,6 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import type { WorkerLeaseGuard } from './worker-lease';
 import { logger, computeHash } from './utils';
 import { FlagEmbedding, EmbeddingModel } from 'fastembed';
 import { QdrantClient } from '@qdrant/js-client-rest';
@@ -877,7 +878,8 @@ export class IngestionService {
     }
   }
 
-  private async clearChunkRows(documentId: string, ownerId: string): Promise<void> {
+  private async clearChunkRows(documentId: string, ownerId: string, assertLeaseOwnership?: WorkerLeaseGuard): Promise<void> {
+    await assertLeaseOwnership?.();
     const strategies: Array<(query: any) => any> = [
       (query) => query.eq('owner_id', ownerId),
       (query) => query.eq('user_id', ownerId),
@@ -886,6 +888,7 @@ export class IngestionService {
 
     let lastError: any = null;
     for (const apply of strategies) {
+      await assertLeaseOwnership?.();
       const query = this.supabase
         .from('au_document_chunks')
         .delete()
@@ -912,7 +915,7 @@ export class IngestionService {
     if (lastError) throw lastError;
   }
 
-  private async insertChunkRows(rows: ChunkRow[]): Promise<void> {
+  private async insertChunkRows(rows: ChunkRow[], assertLeaseOwnership?: WorkerLeaseGuard): Promise<void> {
     const variants: ChunkRow[][] = [
       rows,
       rows.map(({ owner_id, ...rest }) => ({ ...rest })),
@@ -924,6 +927,7 @@ export class IngestionService {
     for (const variant of variants) {
       let variantError: any = null;
       for (let start = 0; start < variant.length; start += this.chunkInsertBatchSize) {
+        await assertLeaseOwnership?.();
         const batch = variant.slice(start, start + this.chunkInsertBatchSize);
         const { error } = await this.supabase
           .from('au_document_chunks')
@@ -1030,7 +1034,8 @@ export class IngestionService {
     return typeof (data as any)?.id === 'string' ? (data as any).id : null;
   }
 
-  private async markDocumentVersionActive(documentId: string, versionId: string): Promise<void> {
+  private async markDocumentVersionActive(documentId: string, versionId: string, assertLeaseOwnership?: WorkerLeaseGuard): Promise<void> {
+    await assertLeaseOwnership?.();
     const deactivate = await this.supabase
       .from('au_document_versions')
       .update({ is_active: false })
@@ -1041,6 +1046,7 @@ export class IngestionService {
       throw deactivate.error;
     }
 
+    await assertLeaseOwnership?.();
     const activate = await this.supabase
       .from('au_document_versions')
       .update({ is_active: true })
@@ -1051,7 +1057,8 @@ export class IngestionService {
     }
   }
 
-  private async upsertActiveDocumentVersion(documentId: string, contentHash: string): Promise<string | null> {
+  private async upsertActiveDocumentVersion(documentId: string, contentHash: string, assertLeaseOwnership?: WorkerLeaseGuard): Promise<string | null> {
+    await assertLeaseOwnership?.();
     const { data, error } = await this.supabase
       .from('au_document_versions')
       .upsert(
@@ -1074,12 +1081,12 @@ export class IngestionService {
 
     const versionId = typeof (data as any)?.id === 'string' ? (data as any).id : null;
     if (versionId) {
-      await this.markDocumentVersionActive(documentId, versionId);
+      await this.markDocumentVersionActive(documentId, versionId, assertLeaseOwnership);
     }
     return versionId;
   }
 
-  private async updateDocumentCompletion(documentId: string, expiresAt: number, contentHash: string): Promise<void> {
+  private async updateDocumentCompletion(documentId: string, expiresAt: number, contentHash: string, assertLeaseOwnership?: WorkerLeaseGuard): Promise<void> {
     const variants = [
       {
         status: 'completed',
@@ -1096,6 +1103,7 @@ export class IngestionService {
 
     let lastError: any = null;
     for (const payload of variants) {
+      await assertLeaseOwnership?.();
       const result = await this.supabase
         .from('au_documents')
         .update(payload)
@@ -1127,7 +1135,9 @@ export class IngestionService {
     contentHash: string;
     expectedChunkCount: number;
     expiresAt: number;
+    assertLeaseOwnership?: WorkerLeaseGuard;
   }): Promise<boolean> {
+    await params.assertLeaseOwnership?.();
     const versionId = await this.findDocumentVersion(params.documentId, params.contentHash);
     if (!versionId) {
       return false;
@@ -1142,8 +1152,8 @@ export class IngestionService {
       return false;
     }
 
-    await this.markDocumentVersionActive(params.documentId, versionId);
-    await this.updateDocumentCompletion(params.documentId, params.expiresAt, params.contentHash);
+    await this.markDocumentVersionActive(params.documentId, versionId, params.assertLeaseOwnership);
+    await this.updateDocumentCompletion(params.documentId, params.expiresAt, params.contentHash, params.assertLeaseOwnership);
     logger.info('Skipping embeddings for unchanged document version', {
       documentId: params.documentId,
       ownerId: params.ownerId,
@@ -1182,6 +1192,7 @@ export class IngestionService {
     ownerId: string,
     expiresAt: number,
     contentHash: string,
+    assertLeaseOwnership?: WorkerLeaseGuard,
   ): Promise<void> {
     if (!Array.isArray(chunks) || chunks.length === 0) {
       throw new Error('Cannot process empty chunk list');
@@ -1190,7 +1201,9 @@ export class IngestionService {
     const startedAt = Date.now();
     logger.info('Processing document', { documentId, ownerId, chunkCount: chunks.length, expiresAt });
     const collectionName = 'au_chunks';
+    await assertLeaseOwnership?.();
     await this.ensureCollection(collectionName);
+    await assertLeaseOwnership?.();
 
     const chunkData = chunks.map((text, index) => ({
       id: this.stablePointId(ownerId, documentId, index),
@@ -1205,13 +1218,15 @@ export class IngestionService {
       contentHash,
       expectedChunkCount: chunkData.length,
       expiresAt,
+      assertLeaseOwnership,
     })) {
       return;
     }
 
     const createdAt = Math.floor(Date.now() / 1000);
 
-    await this.clearChunkRows(documentId, ownerId);
+    await assertLeaseOwnership?.();
+    await this.clearChunkRows(documentId, ownerId, assertLeaseOwnership);
     const chunkRows: ChunkRow[] = chunkData.map((chunk) => ({
       id: chunk.id,
       document_id: documentId,
@@ -1220,13 +1235,14 @@ export class IngestionService {
       chunk_index: chunk.index,
       text: chunk.text,
     }));
-    await this.insertChunkRows(chunkRows);
+    await this.insertChunkRows(chunkRows, assertLeaseOwnership);
 
     const dbChunkCount = await this.countChunkRows(documentId, ownerId);
     if (dbChunkCount !== chunkData.length) {
       throw new Error(`Chunk row mismatch: expected ${chunkData.length}, got ${dbChunkCount}`);
     }
 
+    await assertLeaseOwnership?.();
     try {
       await this.withQdrantRetry('Qdrant delete preflight', () =>
         this.qdrant.delete(collectionName, {
@@ -1244,8 +1260,10 @@ export class IngestionService {
     const embedder = await this.getEmbedder();
     let upserted = 0;
     for (let start = 0; start < chunkData.length; start += this.embedBatchSize) {
+      await assertLeaseOwnership?.();
       const batch = chunkData.slice(start, start + this.embedBatchSize);
       const embeddings = await this.embedTexts(embedder, batch.map((chunk) => chunk.text));
+      await assertLeaseOwnership?.();
 
       if (embeddings.length !== batch.length) {
         throw new Error(`Embedding count mismatch in batch: expected ${batch.length}, got ${embeddings.length}`);
@@ -1285,6 +1303,7 @@ export class IngestionService {
       upserted += points.length;
     }
 
+    await assertLeaseOwnership?.();
     const countRes = await this.withQdrantRetry('Qdrant verification count', () =>
       this.qdrant.count(collectionName, {
         filter: this.ownerFilter(documentId, ownerId),
@@ -1297,8 +1316,9 @@ export class IngestionService {
       throw new Error(`Qdrant stored count mismatch: expected ${chunkData.length}, got ${storedCount}`);
     }
 
-    await this.upsertActiveDocumentVersion(documentId, contentHash);
-    await this.updateDocumentCompletion(documentId, expiresAt, contentHash);
+    await assertLeaseOwnership?.();
+    await this.upsertActiveDocumentVersion(documentId, contentHash, assertLeaseOwnership);
+    await this.updateDocumentCompletion(documentId, expiresAt, contentHash, assertLeaseOwnership);
 
     logger.info('Document ingestion completed', {
       documentId,

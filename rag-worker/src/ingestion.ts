@@ -1,5 +1,6 @@
 
 import { SupabaseClient } from '@supabase/supabase-js';
+import type { WorkerLeaseGuard } from './worker-lease';
 import { logger, computeHash } from './utils';
 import { FlagEmbedding, EmbeddingModel } from 'fastembed';
 import { QdrantClient } from '@qdrant/js-client-rest';
@@ -873,7 +874,8 @@ export class IngestionService {
     }
   }
 
-  private async clearChunkRows(documentId: string, ownerId: string): Promise<void> {
+  private async clearChunkRows(documentId: string, ownerId: string, assertLeaseOwnership?: WorkerLeaseGuard): Promise<void> {
+    await assertLeaseOwnership?.();
     const strategies: Array<(query: any) => any> = [
       (query) => query.eq('owner_id', ownerId),
       (query) => query.eq('user_id', ownerId),
@@ -882,6 +884,7 @@ export class IngestionService {
 
     let lastError: any = null;
     for (const apply of strategies) {
+      await assertLeaseOwnership?.();
       const query = this.supabase
         .from('au_document_chunks')
         .delete()
@@ -908,7 +911,7 @@ export class IngestionService {
     if (lastError) throw lastError;
   }
 
-  private async insertChunkRows(rows: ChunkRow[]): Promise<void> {
+  private async insertChunkRows(rows: ChunkRow[], assertLeaseOwnership?: WorkerLeaseGuard): Promise<void> {
     const variants: ChunkRow[][] = [
       rows,
       rows.map(({ owner_id, ...rest }) => ({ ...rest })),
@@ -920,6 +923,7 @@ export class IngestionService {
     for (const variant of variants) {
       let variantError: any = null;
       for (let start = 0; start < variant.length; start += this.chunkInsertBatchSize) {
+        await assertLeaseOwnership?.();
         const batch = variant.slice(start, start + this.chunkInsertBatchSize);
         const { error } = await this.supabase
           .from('au_document_chunks')
@@ -1232,7 +1236,8 @@ export class IngestionService {
     documentId: string,
     chunks: string[],
     ownerId: string,
-    expiresAt: number
+    expiresAt: number,
+    assertLeaseOwnership?: WorkerLeaseGuard,
   ): Promise<void> {
     if (!Array.isArray(chunks) || chunks.length === 0) {
       throw new Error('Cannot process empty chunk list');
@@ -1241,13 +1246,16 @@ export class IngestionService {
     const startedAt = Date.now();
     logger.info('Processing document', { documentId, ownerId, chunkCount: chunks.length, expiresAt });
     const collectionName = 'au_chunks';
+    await assertLeaseOwnership?.();
     await this.ensureCollection(collectionName);
+    await assertLeaseOwnership?.();
 
     const chunkData = this.buildCanonicalChunkRecords(documentId, ownerId, chunks);
 
     const createdAt = Math.floor(Date.now() / 1000);
 
-    await this.clearChunkRows(documentId, ownerId);
+    await assertLeaseOwnership?.();
+    await this.clearChunkRows(documentId, ownerId, assertLeaseOwnership);
     const chunkRows: ChunkRow[] = chunkData.map((chunk) => ({
       id: chunk.id,
       document_id: documentId,
@@ -1256,7 +1264,7 @@ export class IngestionService {
       chunk_index: chunk.index,
       text: chunk.text,
     }));
-    await this.insertChunkRows(chunkRows);
+    await this.insertChunkRows(chunkRows, assertLeaseOwnership);
 
     const dbChunkCount = await this.countChunkRows(documentId, ownerId);
     if (dbChunkCount !== chunkData.length) {
@@ -1266,6 +1274,7 @@ export class IngestionService {
     const persistedChunkRows = await this.fetchChunkRowsForVerification(documentId, ownerId);
     this.verifyChunkRowInvariants(documentId, chunkData, persistedChunkRows);
 
+    await assertLeaseOwnership?.();
     try {
       await this.withQdrantRetry('Qdrant delete preflight', () =>
         this.qdrant.delete(collectionName, {
@@ -1283,8 +1292,10 @@ export class IngestionService {
     const embedder = await this.getEmbedder();
     let upserted = 0;
     for (let start = 0; start < chunkData.length; start += this.embedBatchSize) {
+      await assertLeaseOwnership?.();
       const batch = chunkData.slice(start, start + this.embedBatchSize);
       const embeddings = await this.embedTexts(embedder, batch.map((chunk) => chunk.text));
+      await assertLeaseOwnership?.();
 
       if (embeddings.length !== batch.length) {
         throw new Error(`Embedding count mismatch in batch: expected ${batch.length}, got ${embeddings.length}`);
@@ -1324,6 +1335,7 @@ export class IngestionService {
       upserted += points.length;
     }
 
+    await assertLeaseOwnership?.();
     const countRes = await this.withQdrantRetry('Qdrant verification count', () =>
       this.qdrant.count(collectionName, {
         filter: this.ownerFilter(documentId, ownerId),
@@ -1336,6 +1348,7 @@ export class IngestionService {
       throw new Error(`Qdrant stored count mismatch: expected ${chunkData.length}, got ${storedCount}`);
     }
 
+    await assertLeaseOwnership?.();
     const storedPoints = await this.fetchQdrantPointsForDocument(
       collectionName,
       documentId,
@@ -1344,6 +1357,7 @@ export class IngestionService {
     );
     this.verifyQdrantPayloadInvariants(documentId, chunkData, storedPoints);
 
+    await assertLeaseOwnership?.();
     const documentUpdate = await this.supabase
       .from('au_documents')
       .update({

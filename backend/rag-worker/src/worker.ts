@@ -1,4 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'node:crypto';
+import { assertWorkerLeaseOwnership, WorkerLeaseLostError } from './worker-lease';
 import { IngestionService } from './ingestion';
 import { logger, deterministicChunking, computeHash } from './utils';
 import { UploadJob } from './types';
@@ -84,6 +86,8 @@ export class RAGWorker {
   private completionReconcileState = new Map<string, CompletionReconcileState>();
   private suppressedCompletionReconcileUntil = new Map<string, number>();
   private warnedSchemaFallbacks = new Set<string>();
+  private completionAttemptTokens = new Map<string, string>();
+  private failureAttemptTokens = new Map<string, string>();
 
   constructor(
     private supabase: SupabaseClient,
@@ -203,84 +207,119 @@ export class RAGWorker {
     return { classification: 'logic_error', message };
   }
 
-  private async updateJobProgress(jobId: string, progress: number) {
-    try {
-      const clamped = Math.max(0, Math.min(100, Math.floor(progress)));
-      const nowIso = new Date().toISOString();
-      const { error } = await this.supabase
+  private async updateClaimedJobRow(
+    jobId: string,
+    payload: Record<string, unknown>,
+    fallbackColumns: string[] = [],
+  ): Promise<{ updated: boolean; error: any | null }> {
+    const executeUpdate = async (nextPayload: Record<string, unknown>) =>
+      await this.supabase
         .from('au_worker_jobs')
-        .update({
-          progress: clamped,
-          last_progress_at: nowIso,
-          updated_at: nowIso,
-        })
-        .eq('id', jobId);
+        .update(nextPayload)
+        .eq('id', jobId)
+        .eq('status', 'processing')
+        .eq('claimed_by', this.workerInstanceId)
+        .select('id')
+        .maybeSingle();
 
-      if (!error) return;
+    let { data, error } = await executeUpdate(payload);
+    if (error) {
+      const missingColumns = fallbackColumns.filter((column) =>
+        this.isMissingColumnError(error, column) || this.isSchemaCacheMissingColumnError(error, column),
+      );
+      if (missingColumns.length === 0) return { updated: false, error };
 
-      if (this.isMissingColumnError(error, 'last_progress_at') || this.isSchemaCacheMissingColumnError(error, 'last_progress_at')) {
-        this.warnSchemaFallbackOnce('progress:last_progress_at', {
-          jobId,
-          column: 'last_progress_at',
-          message: error.message,
-        });
+      this.warnSchemaFallbackOnce('claimed-update:' + missingColumns.sort().join(','), {
+        jobId,
+        workerId: this.workerInstanceId,
+        missingColumns,
+        message: normalizeJobErrorMessage(error),
+      });
+      const fallbackPayload = { ...payload };
+      for (const column of missingColumns) delete (fallbackPayload as any)[column];
+      ({ data, error } = await executeUpdate(fallbackPayload));
+    }
 
-        const { error: fallbackError } = await this.supabase
-          .from('au_worker_jobs')
-          .update({
-            progress: clamped,
-            updated_at: nowIso,
-          })
-          .eq('id', jobId);
+    return { updated: Boolean(data?.id), error: error ?? null };
+  }
 
-        if (!fallbackError) return;
+  private assertLeaseOwnership(jobId: string): Promise<void> {
+    return assertWorkerLeaseOwnership(this.supabase, jobId, this.workerInstanceId);
+  }
 
-        const classified = this.classifyWorkerJobMutationError(fallbackError, ['last_progress_at']);
-        logger.warn('Failed to update worker job progress after schema fallback', {
-          jobId,
-          progress: clamped,
-          classification: classified.classification,
-          message: classified.message,
-        });
-        return;
-      }
+  private async reconcileTerminalAttemptMarker(
+    jobId: string,
+    expectedStatus: 'completed' | 'failed',
+    markerKey: 'worker_completion_attempt' | 'worker_failure_attempt',
+    token: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.supabase
+      .from('au_worker_jobs')
+      .select('id,status,claimed_by,metadata')
+      .eq('id', jobId)
+      .maybeSingle();
 
-      const classified = this.classifyWorkerJobMutationError(error, ['last_progress_at']);
+    if (error || !data) return false;
+    const metadata = data.metadata && typeof data.metadata === 'object' && !Array.isArray(data.metadata)
+      ? data.metadata as Record<string, unknown>
+      : {};
+    if (data.status === expectedStatus && metadata[markerKey] === token) return true;
+
+    if (data.status !== 'processing' || data.claimed_by !== this.workerInstanceId) {
+      throw new WorkerLeaseLostError(jobId);
+    }
+    return false;
+  }
+
+  private async updateJobProgress(jobId: string, progress: number) {
+    const clamped = Math.max(0, Math.min(100, Math.floor(progress)));
+    const nowIso = new Date().toISOString();
+    const result = await this.updateClaimedJobRow(
+      jobId,
+      { progress: clamped, last_progress_at: nowIso, updated_at: nowIso },
+      ['last_progress_at'],
+    );
+
+    if (result.error) {
+      const classified = this.classifyWorkerJobMutationError(result.error, ['last_progress_at']);
       logger.warn('Failed to update worker job progress', {
         jobId,
         progress: clamped,
         classification: classified.classification,
         message: classified.message,
       });
-    } catch (error) {
-      const classified = this.classifyWorkerJobMutationError(error, ['last_progress_at']);
-      logger.warn('Worker job progress update threw', {
-        jobId,
-        progress,
-        classification: classified.classification,
-        message: classified.message,
-      });
+      return;
     }
+    if (!result.updated) throw new WorkerLeaseLostError(jobId);
   }
 
   private beginLeaseHeartbeat(jobId: string): () => void {
     const intervalMs = Math.max(10000, this.leaseHeartbeatMs);
-    const timer = setInterval(async () => {
+    let timer: ReturnType<typeof setInterval>;
+    timer = setInterval(async () => {
       try {
         const now = new Date();
-        const leaseUntil = new Date(now.getTime() + this.leaseDurationMs).toISOString();
-        const { error } = await this.supabase
-          .from('au_worker_jobs')
-          .update({
+        const result = await this.updateClaimedJobRow(
+          jobId,
+          {
             locked_at: now.toISOString(),
-            locked_until: leaseUntil,
-            claimed_by: this.workerInstanceId,
+            locked_until: new Date(now.getTime() + this.leaseDurationMs).toISOString(),
             updated_at: now.toISOString(),
-          })
-          .eq('id', jobId)
-          .eq('status', 'processing');
-        if (error) {
-          logger.warn('Failed to renew worker lease', { jobId, message: error.message });
+          },
+        );
+        if (result.error) {
+          const classified = this.classifyWorkerJobMutationError(result.error);
+          logger.warn('Failed to renew worker lease', {
+            jobId,
+            classification: classified.classification,
+            message: classified.message,
+          });
+        } else if (!result.updated) {
+          logger.warn('Stopped lease heartbeat after durable ownership changed', {
+            jobId,
+            workerId: this.workerInstanceId,
+          });
+          clearInterval(timer);
         }
       } catch (error) {
         logger.warn('Lease heartbeat threw an exception', {
@@ -457,6 +496,12 @@ export class RAGWorker {
     source: 'inline' | 'reconcile',
   ): Promise<WorkerJobMutationResult> {
     const nowIso = new Date().toISOString();
+    const token = this.completionAttemptTokens.get(job.id) || randomUUID();
+    this.completionAttemptTokens.set(job.id, token);
+    const currentMetadata =
+      job.metadata && typeof job.metadata === 'object' && !Array.isArray(job.metadata)
+        ? { ...(job.metadata as Record<string, unknown>) }
+        : {};
     const fullPayload = {
       status: 'completed',
       progress: 100,
@@ -467,83 +512,41 @@ export class RAGWorker {
       completed_at: nowIso,
       last_progress_at: nowIso,
       updated_at: nowIso,
+      metadata: { ...currentMetadata, worker_completion_attempt: token },
     };
 
-    let { error } = await this.supabase
-      .from('au_worker_jobs')
-      .update(fullPayload)
-      .eq('id', job.id);
+    const result = await this.updateClaimedJobRow(
+      job.id,
+      fullPayload,
+      ['completed_at', 'last_progress_at', 'error'],
+    );
 
-    if (!error) {
-      return { ok: true, mode: 'full' };
-    }
-
-    const lifecycleColumns = ['completed_at', 'last_progress_at'];
-    if (
-      lifecycleColumns.some((column) =>
-        this.isMissingColumnError(error, column) || this.isSchemaCacheMissingColumnError(error, column),
-      )
-    ) {
-      this.warnSchemaFallbackOnce(`completion:${lifecycleColumns.join(',')}`, {
-        jobId: job.id,
-        documentId: job.document_id,
-        source,
-        missingColumns: lifecycleColumns.filter((column) =>
-          this.isMissingColumnError(error, column) || this.isSchemaCacheMissingColumnError(error, column),
-        ),
-        message: error.message,
-      });
-
-      ({ error } = await this.supabase
-        .from('au_worker_jobs')
-        .update({
-          status: 'completed',
-          progress: 100,
-          error: null,
-          claimed_by: null,
-          locked_at: null,
-          locked_until: null,
-          updated_at: nowIso,
-        })
-        .eq('id', job.id));
-
-      if (!error) {
-        return { ok: true, mode: 'legacy_schema_fallback' };
+    if (result.error) {
+      try {
+        if (await this.reconcileTerminalAttemptMarker(
+          job.id,
+          'completed',
+          'worker_completion_attempt',
+          token,
+        )) {
+          return { ok: true, mode: 'full' };
+        }
+      } catch (ownershipError) {
+        if (ownershipError instanceof WorkerLeaseLostError) throw ownershipError;
       }
+      const classified = this.classifyWorkerJobMutationError(
+        result.error,
+        ['completed_at', 'last_progress_at', 'error'],
+      );
+      return {
+        ok: false,
+        classification: classified.classification,
+        message: classified.message,
+      };
     }
 
-    if (error && this.isMissingColumnError(error, 'error')) {
-      this.warnSchemaFallbackOnce('completion:error', {
-        jobId: job.id,
-        documentId: job.document_id,
-        source,
-        missingColumns: ['error'],
-        message: error.message,
-      });
-
-      ({ error } = await this.supabase
-        .from('au_worker_jobs')
-        .update({
-          status: 'completed',
-          progress: 100,
-          claimed_by: null,
-          locked_at: null,
-          locked_until: null,
-          updated_at: nowIso,
-        })
-        .eq('id', job.id));
-
-      if (!error) {
-        return { ok: true, mode: 'legacy_schema_fallback' };
-      }
-    }
-
-    const classified = this.classifyWorkerJobMutationError(error, ['completed_at', 'last_progress_at', 'error']);
-    return {
-      ok: false,
-      classification: classified.classification,
-      message: classified.message,
-    };
+    if (!result.updated) throw new WorkerLeaseLostError(job.id);
+    return { ok: true, mode: 'full' };
   }
 
   private scheduleCompletionReconciliation(
@@ -615,6 +618,7 @@ export class RAGWorker {
       await this.incrementUsageCounters(String(job.owner_id || job.user_id || ''), {
         jobs_completed: 1,
       });
+      this.completionAttemptTokens.delete(job.id);
 
       if (source === 'reconcile') {
         logger.info('Worker-job completion reconciliation succeeded', {
@@ -642,6 +646,7 @@ export class RAGWorker {
       });
       return true;
     } catch (error) {
+      if (error instanceof WorkerLeaseLostError) throw error;
       const classified = this.classifyWorkerJobMutationError(error, ['completed_at', 'last_progress_at', 'error']);
       this.scheduleCompletionReconciliation(job, classified, source);
       return false;
@@ -992,20 +997,28 @@ export class RAGWorker {
     job: UploadJob,
     errorMessage: string,
     options?: { recoverable?: boolean; recoverableReason?: string },
-  ) {
+  ): Promise<
+    | { outcome: 'updated' }
+    | { outcome: 'ownership_lost' }
+    | { outcome: 'error'; classification: WorkerJobMutationClassification; message: string }
+  > {
     const retryCount = Number((job as any)?.retry_count || 0);
     const shouldMarkRecoverable = Boolean(options?.recoverable) && retryCount <= 0;
-    const metadataBase =
+    const previousMetadata =
       job?.metadata && typeof job.metadata === 'object' && !Array.isArray(job.metadata)
         ? { ...(job.metadata as Record<string, unknown>) }
         : {};
-
-    if (shouldMarkRecoverable) {
-      metadataBase.recoverable = true;
-      metadataBase.recoverable_reason = options?.recoverableReason || 'transient_worker_error';
-      metadataBase.recoverable_at = new Date().toISOString();
-    }
-
+    const token = this.failureAttemptTokens.get(job.id) || randomUUID();
+    this.failureAttemptTokens.set(job.id, token);
+    const metadata = {
+      ...previousMetadata,
+      worker_failure_attempt: token,
+      ...(shouldMarkRecoverable ? {
+        recoverable: true,
+        recoverable_reason: options?.recoverableReason || 'transient_worker_error',
+        recoverable_at: new Date().toISOString(),
+      } : {}),
+    };
     const payload = {
       status: 'failed',
       error: errorMessage,
@@ -1013,36 +1026,47 @@ export class RAGWorker {
       locked_at: null,
       locked_until: null,
       updated_at: new Date().toISOString(),
-      ...(shouldMarkRecoverable ? { metadata: metadataBase } : {}),
+      metadata,
     };
 
-    const { error } = await this.supabase
-      .from('au_worker_jobs')
-      .update(payload)
-      .eq('id', job.id);
-
-    if (error && this.isMissingColumnError(error, 'error')) {
-      const fallbackPayload: Record<string, unknown> = {
-        status: 'failed',
-        claimed_by: null,
-        locked_at: null,
-        locked_until: null,
-        updated_at: new Date().toISOString(),
-      };
-      if (shouldMarkRecoverable && !this.isMissingColumnError(error, 'metadata')) {
-        fallbackPayload.metadata = metadataBase;
+    const result = await this.updateClaimedJobRow(job.id, payload, ['error']);
+    if (result.error) {
+      try {
+        if (await this.reconcileTerminalAttemptMarker(
+          job.id,
+          'failed',
+          'worker_failure_attempt',
+          token,
+        )) {
+          this.failureAttemptTokens.delete(job.id);
+          return { outcome: 'updated' };
+        }
+      } catch (ownershipError) {
+        if (ownershipError instanceof WorkerLeaseLostError) {
+          return { outcome: 'ownership_lost' };
+        }
       }
-
-      await this.supabase
-        .from('au_worker_jobs')
-        .update(fallbackPayload)
-        .eq('id', job.id);
-      return;
+      const classified = this.classifyWorkerJobMutationError(result.error, ['error']);
+      logger.error('Failed to mark claimed job as failed', {
+        jobId: job.id,
+        classification: classified.classification,
+        message: classified.message,
+      });
+      return { outcome: 'error', classification: classified.classification, message: classified.message };
     }
 
-    if (error) {
-      logger.error('Failed to mark job as failed', { jobId: job.id, error: error.message });
+    if (!result.updated) {
+      this.failureAttemptTokens.delete(job.id);
+      logger.warn('Suppressed stale terminal failure after lease ownership changed', {
+        jobId: job.id,
+        documentId: job.document_id,
+        workerId: this.workerInstanceId,
+      });
+      return { outcome: 'ownership_lost' };
     }
+
+    this.failureAttemptTokens.delete(job.id);
+    return { outcome: 'updated' };
   }
 
   private async markDocumentFailed(documentId: string, errorMessage: string) {
@@ -1173,11 +1197,26 @@ export class RAGWorker {
       await this.updateJobProgress(currentJob.id, 100);
       await this.finalizeCompletedJob(currentJob, 'inline');
     } catch (processErr) {
-      logger.error('Job failed', { jobId: currentJob.id, error: processErr });
+      if (processErr instanceof WorkerLeaseLostError) {
+        logger.warn('Stopped stale job attempt after lease ownership changed', {
+          jobId: currentJob.id,
+          documentId: currentJob.document_id,
+          workerId: this.workerInstanceId,
+        });
+        await this.logDebug('Stopped stale job attempt after lease ownership changed', {
+          jobId: currentJob.id,
+          documentId: currentJob.document_id,
+          workerId: this.workerInstanceId,
+        });
+        return;
+      }
 
+      logger.error('Job failed', { jobId: currentJob.id, error: processErr });
       const errorMessage = normalizeJobErrorMessage(processErr);
       const isRecoverable = Boolean((processErr as any)?.recoverable);
-      const recoverableReason = isRecoverable ? 'fastembed_cache_corruption' : undefined;
+      const recoverableReason = isRecoverable
+        ? String((processErr as any)?.recoverableReason || 'transient_worker_error')
+        : undefined;
 
       await this.logDebug('Job failed', {
         jobId: currentJob.id,
@@ -1187,10 +1226,22 @@ export class RAGWorker {
         recoverableReason,
       });
 
-      await this.markJobFailed(currentJob, errorMessage, {
+      const failureMutation = await this.markJobFailed(currentJob, errorMessage, {
         recoverable: isRecoverable,
         recoverableReason,
       });
+      if (failureMutation.outcome !== 'updated') {
+        logger.warn('Skipped document failure and failure usage because the claimed terminal mutation did not persist', {
+          jobId: currentJob.id,
+          documentId: currentJob.document_id,
+          outcome: failureMutation.outcome,
+          ...(failureMutation.outcome === 'error'
+            ? { classification: failureMutation.classification, message: failureMutation.message }
+            : {}),
+        });
+        return;
+      }
+
       await this.markDocumentFailed(currentJob.document_id, errorMessage);
       await this.incrementUsageCounters(String(currentJob.owner_id || currentJob.user_id || ''), {
         jobs_failed: 1,
@@ -1200,8 +1251,15 @@ export class RAGWorker {
     }
   }
 
+  private async processJob(job: UploadJob) {    } finally {
+      stopHeartbeat();
+    }
+  }
+
   private async processJob(job: UploadJob) {
     const jobStartedAt = Date.now();
+    const assertLeaseOwnership = () => this.assertLeaseOwnership(job.id);
+    await assertLeaseOwnership();
     const ownerId = String(job.owner_id || job.user_id || '').trim();
     if (!ownerId) {
       throw new Error('Missing owner_id/user_id for job processing.');
@@ -1310,6 +1368,7 @@ export class RAGWorker {
       ownerId,
       expiresAt,
       contentHash,
+      assertLeaseOwnership,
     );
 
     await this.updateJobProgress(job.id, 95);
