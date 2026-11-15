@@ -1,98 +1,21 @@
-
-import {
-  supabase,
-  getEffectiveOwnershipConditions,
-  applyOwnershipFilter,
-  getSupabaseAccessToken,
-} from '@/lib/supabase-client/client';
-import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 import type { User } from '@supabase/supabase-js';
-import { clearDocWorkingMemory } from '@/lib/memory/working-memory';
-import { normalizeAuDocumentRow, resolveDocumentRetentionDays } from '@/lib/au/document-normalization';
-import { SAFE_DOC_COLUMNS } from '@/lib/au/documents';
-import { safeFetch } from '@/lib/api/safe-fetch';
+import type { AuDocumentRow, AuDocumentType } from '@/lib/au/types';
 
 export type { AuDocumentRow, AuDocumentType };
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
-const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  const errorMsg = "Configuration Error: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY is missing.";
-  console.error(errorMsg);
-  if (typeof window !== 'undefined') {
-    throw new Error(errorMsg);
-  }
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  const name = String((error as any)?.name || '');
-  const message = String((error as any)?.message || '').toLowerCase();
-  return (
-    name === 'AbortError' ||
-    message.includes('aborterror') ||
-    message.includes('signal is aborted') ||
-    message.includes('aborted without reason')
+const localOnlyError = (operation: string) =>
+  Object.assign(
+    new Error(`${operation} is now handled locally by the AU app. Cloud document storage and processing have been retired.`),
+    { status: 410, code: 'DOCUMENTS_ARE_LOCAL' },
   );
-}
-
-function extractApiErrorCode(error: any): string | null {
-  const direct = typeof error?.code === 'string' ? error.code : null;
-  const details = error?.details;
-  let parsedDetails: any = null;
-  if (typeof details === 'string') {
-    try {
-      parsedDetails = JSON.parse(details);
-    } catch {
-      parsedDetails = null;
-    }
-  }
-  const nested =
-    typeof details?.code === 'string'
-      ? details.code
-      : typeof details?.details?.code === 'string'
-        ? details.details.code
-        : typeof details?.error?.code === 'string'
-          ? details.error.code
-          : typeof parsedDetails?.code === 'string'
-            ? parsedDetails.code
-            : typeof parsedDetails?.details?.code === 'string'
-              ? parsedDetails.details.code
-          : null;
-  const code = (nested || direct || '').trim();
-  return code || null;
-}
-
-function isMissingColumnError(error: unknown, column: string): boolean {
-  const message = String((error as any)?.message || '').toLowerCase();
-  const details = String((error as any)?.details || '').toLowerCase();
-  const lowered = column.toLowerCase();
-  return (
-    (message.includes(lowered) && message.includes('does not exist')) ||
-    (details.includes(lowered) && details.includes('does not exist'))
-  );
-}
-
-async function getOwnershipConditionCandidates(user: User | null): Promise<string[]> {
-  const fallback = await getEffectiveOwnershipConditions(user);
-  if (!user?.id) return [fallback];
-
-  const conditions = [
-    `owner_id.eq.${user.id},user_id.eq.${user.id}`,
-    `owner_id.eq.${user.id}`,
-    `user_id.eq.${user.id}`,
-    fallback,
-  ];
-
-  return Array.from(new Set(conditions.filter(Boolean)));
-}
 
 /**
- * Initiates an upload: Validates limits and gets a Signed URL.
+ * Legacy cloud-upload API. Retained temporarily for compatibility with callers,
+ * but it must never upload document bytes or create server-side document records.
  */
 export async function initiateUpload(
-  user: User | null,
-  metadata: {
+  _user: User | null,
+  _metadata: {
     fileName: string;
     fileSize: number;
     documentType: string;
@@ -102,50 +25,16 @@ export async function initiateUpload(
     documentId: string;
     parentId?: string;
     parentDocumentId?: string;
-    metadata?: any;
+    metadata?: unknown;
   },
-  accessToken?: string
+  _accessToken?: string,
 ): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string; token?: string; bucket?: string; contentType?: string }> {
-  throw Object.assign(new Error('Cloud document upload has been retired. Documents are now stored and managed locally in the AU app.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (metadata.correlationId) headers['x-correlation-id'] = metadata.correlationId;
-
-  const res = await safeFetch('/api/au/document-upload', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ action: 'initiate', ...metadata }),
-    credentials: 'include',
-  });
-
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    const message = String(errBody?.message || errBody?.error || `Upload initiation failed (HTTP ${res.status})`);
-    const code = extractApiErrorCode(errBody) || errBody?.error || 'initiate_failed';
-    const requestId = errBody?.requestId || null;
-    console.error('[API] initiateUpload failed:', {
-      status: res.status,
-      code,
-      message,
-      requestId,
-      details: errBody?.details || null,
-    });
-    const wrapped: any = new Error(message);
-    wrapped.status = res.status;
-    wrapped.code = code;
-    wrapped.details = errBody?.details || null;
-    wrapped.requestId = requestId;
-    throw wrapped;
-  }
-
-  return await res.json();
+  throw localOnlyError('Document upload');
 }
 
-/**
- * Completes an upload: Registers the job for processing.
- */
 export async function completeUpload(
-  user: User | null,
-  metadata: {
+  _user: User | null,
+  _metadata: {
     documentId: string;
     jobId: string;
     uploadId?: string;
@@ -155,202 +44,37 @@ export async function completeUpload(
     mimeType?: string;
     path?: string;
     bucket?: string;
-    metadata?: any;
+    metadata?: unknown;
   },
-  accessToken?: string
+  _accessToken?: string,
 ): Promise<{ ok: boolean; jobId: string }> {
-  throw Object.assign(new Error('Cloud document ingestion has been retired. The AU app processes documents locally on the device.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (metadata.correlationId) headers['x-correlation-id'] = metadata.correlationId;
-
-  const res = await safeFetch('/api/au/document-upload', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({ action: 'complete', ...metadata }),
-    credentials: 'include',
-  });
-
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    const message = String(errBody?.message || errBody?.error || `Upload completion failed (HTTP ${res.status})`);
-    const code = extractApiErrorCode(errBody) || errBody?.error || 'complete_failed';
-    const requestId = errBody?.requestId || null;
-    console.error('[API] completeUpload failed:', {
-      status: res.status,
-      code,
-      message,
-      requestId,
-      details: errBody?.details || null,
-    });
-    const wrapped: any = new Error(message);
-    wrapped.status = res.status;
-    wrapped.code = code;
-    wrapped.details = errBody?.details || null;
-    wrapped.requestId = requestId;
-    throw wrapped;
-  }
-
-  return await res.json();
+  throw localOnlyError('Document ingestion');
 }
 
-/**
- * Legacy wrapper (Deprecated)
- */
+/** @deprecated Use the device-local document manager. */
 export async function uploadDocument(
-  user: User | null,
-  metadata: any,
-  accessToken?: string
+  _user: User | null,
+  _metadata: unknown,
+  _accessToken?: string,
 ): Promise<{ ok: boolean; jobId: string }> {
-  console.error("uploadDocument is deprecated. Use initiateUpload/completeUpload.");
-  throw new Error("Legacy upload flow not supported.");
+  throw localOnlyError('Document upload');
 }
 
-/**
- * Lists documents for the current user.
- * Mirrors RLS: USING (auth.uid() = user_id)
- */
-export async function listDocuments(user: User | null): Promise<AuDocumentRow[]> {
-  throw Object.assign(new Error('Cloud document listings have been retired. Open AU on the device that stores your documents.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
-  const ownershipConditions = await getOwnershipConditionCandidates(user);
-  const retentionDays = await resolveDocumentRetentionDays(user?.id ?? null);
-
-  for (const conditions of ownershipConditions) {
-    const query = supabase
-      .from('au_documents')
-      .select(SAFE_DOC_COLUMNS);
-
-    applyOwnershipFilter(query, conditions);
-    const { data, error } = await query.order('created_at', { ascending: false });
-
-    if (!error) {
-      const rows = (data || []).map((row) => normalizeAuDocumentRow(row, retentionDays, user?.id ?? null));
-      return rows;
-    }
-
-    if (isAbortLikeError(error)) throw error;
-
-    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
-      continue;
-    }
-    if (!isAbortLikeError(error)) {
-      console.error('[API] Error listing documents:', error);
-    }
-    throw error;
-  }
-
-  return [];
+export async function listDocuments(_user: User | null): Promise<AuDocumentRow[]> {
+  throw localOnlyError('Cloud document listing');
 }
 
-/**
- * Deletes a document and its associated data.
- * Calls the first-party API route, which performs server-side cleanup.
- */
-export async function deleteDocument(user: User | null, documentId: string): Promise<{ ok: boolean }> {
-  throw Object.assign(new Error('Cloud document deletion has been retired. Manage documents on the device where they are stored.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
-  // 1. Clear local browser working memory. Server-side summary cleanup happens in the API route.
-  if (user?.id) {
-    try {
-      await clearDocWorkingMemory(user.id, documentId);
-    } catch (e) {
-      console.warn('[deleteDocument] Memory cleanup warning:', e);
-    }
-  }
-
-  let accessToken = await getSupabaseAccessToken();
-
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const headers = new Headers({ Accept: 'application/json' });
-    if (accessToken) {
-      headers.set('Authorization', `Bearer ${accessToken}`);
-    }
-
-    const response = await safeFetch(`/api/au/documents/${documentId}`, {
-      method: 'DELETE',
-      headers,
-      credentials: 'include',
-      timeout: 30000,
-      silent: true,
-      suppressAuthError: true,
-      offlineQueueable: true,
-      offlineQueueLabel: 'Delete document',
-      offlineQueueUserId: user?.id ?? null,
-    });
-
-    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
-    const payload = contentType.includes('application/json')
-      ? await response.json().catch(() => null)
-      : await response.text().catch(() => null);
-
-    if (response.ok) {
-      return (payload as { ok: boolean }) || { ok: true };
-    }
-
-    if ((response.status === 401 || response.status === 403) && attempt === 0) {
-      try {
-        await supabase.auth.refreshSession();
-        accessToken = await getSupabaseAccessToken();
-        continue;
-      } catch {
-      }
-    }
-
-    const message =
-      (payload && typeof payload === 'object'
-        ? (payload as any).message || (payload as any).error
-        : null) ||
-      response.statusText ||
-      'Delete failed';
-    const error: any = new Error(String(message));
-    error.status = response.status;
-    error.details = payload;
-    error.body = payload;
-
-    if (response.status === 404) {
-      return { ok: true };
-    }
-
-    throw error;
-  }
-
-  return { ok: true };
+export async function deleteDocument(
+  _user: User | null,
+  _documentId: string,
+): Promise<{ ok: boolean }> {
+  throw localOnlyError('Cloud document deletion');
 }
 
-/**
- * Helper to apply ownership filters consistently
- */
-function applyOwnershipFilters(query: any, conditions: string) {
-  return applyOwnershipFilter(query, conditions);
-}
-
-/**
- * Fetches a bounded text preview for a document.
- */
-export async function getDocumentText(user: User | null, documentId: string, limit = 15): Promise<string> {
-  throw Object.assign(new Error('Cloud document text retrieval has been retired. AU performs document retrieval locally on your device.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
-  const ownershipConditions = await getOwnershipConditionCandidates(user);
-
-  for (const conditions of ownershipConditions) {
-    const query = supabase
-      .from('au_document_chunks')
-      .select('text')
-      .eq('document_id', documentId)
-      .limit(limit);
-
-    applyOwnershipFilter(query, conditions);
-    const { data, error } = await query.order('chunk_index', { ascending: true });
-
-    if (!error) {
-      const text = (data || []).map(chunk => chunk.text).join('\n\n');
-      return text.slice(0, 12000); // hard char limit
-    }
-
-    if (isMissingColumnError(error, 'owner_id') && conditions.includes('owner_id')) {
-      continue;
-    }
-
-    console.error('[API] Error fetching document text:', error);
-    throw error;
-  }
-
-  return '';
+export async function getDocumentText(
+  _user: User | null,
+  _documentId: string,
+  _limit = 15,
+): Promise<string> {
+  throw localOnlyError('Cloud document text retrieval');
 }
