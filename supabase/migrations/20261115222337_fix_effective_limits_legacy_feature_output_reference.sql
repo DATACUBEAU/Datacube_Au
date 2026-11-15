@@ -199,14 +199,12 @@ BEGIN
   END;
   v_legacy_limits := COALESCE(v_legacy_limits, '{}'::jsonb);
 
-  BEGIN
-    EXECUTE 'SELECT COALESCE(limits_override, ''{}''::jsonb) FROM public.au_user_profiles WHERE user_id = $1'
-    INTO v_profile_overrides
-    USING p_user_id;
-  EXCEPTION
-    WHEN undefined_column THEN
-      v_profile_overrides := '{}'::jsonb;
-  END;
+  -- Read optional compatibility fields through the row JSON so this resolver
+  -- remains valid when an older profile schema does not expose limits_override.
+  SELECT COALESCE(to_jsonb(profile_row)->'limits_override', '{}'::jsonb)
+  INTO v_profile_overrides
+  FROM public.au_user_profiles AS profile_row
+  WHERE profile_row.user_id = p_user_id;
 
   IF jsonb_typeof(v_profile_overrides) = 'object' THEN
     v_legacy_limits := v_legacy_limits || v_profile_overrides;
