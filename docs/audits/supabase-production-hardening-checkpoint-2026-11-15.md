@@ -93,3 +93,11 @@ No document/chat data was moved, no historical billing rows were deleted, no bil
 - Actual settlement preserved the reserved chat count (`max_chats_total: 1)), reconciled estimated tokens from 100 to measured 25, and recorded token metrics.
 - Duplicate commit returned `deduped: true` with the same event ID.
 - Post-rollback verification found zero smoke reservations, zero smoke events and no smoke counter keys. No production usage or quota rows were retained.
+
+
+### Paystack / Flutterwave webhook retry safety
+- Fixed a real billing reliability defect: the old webhook handler inserted an idempotency row with `processed_at` set before processing, then treated every unique conflict as a completed duplicate. A transient failure after insert could therefore suppress all provider retries.
+- Added a service-role-only claim/complete/fail RPC lifecycle with a 180-second processing lease, attempt counter, claim token fencing and sanitized error code.
+- Both Paystack and Flutterwave handlers now mark events processed only after all effects succeed; on failure they mark the claim failed and rethrow so the webhook route returns 500 and the provider can retry.
+- Concurrent duplicate deliveries during an active lease are acknowledged without double-processing. Failed/stale claims can be reclaimed; an old worker cannot complete a newer claim.
+- Live production transaction smoke test (rolled back): first claim acquired, concurrent claim blocked, failure marked, retry acquired a new token, stale token rejected with `WEBHOOK_CLAIM_LOST`, new token completed, and final duplicate recognized as processed. Post-rollback verification found zero smoke webhook rows.
