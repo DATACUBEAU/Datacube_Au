@@ -307,6 +307,7 @@ export class ChatHandler {
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
 
       return reply.code(200).send({ answer: generated.text });
