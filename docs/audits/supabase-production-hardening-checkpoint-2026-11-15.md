@@ -84,3 +84,12 @@ No document/chat data was moved, no historical billing rows were deleted, no bil
 - The three legacy functions without an explicit path were pinned to `pg_catalog, public`: `au_rate_limit_hit`, `cleanup_inactive_accounts`, and `decide_auth_executor`.
 - Legacy admin auth-user count/list and database-stats RPCs were re-revoked from `authenticated` after a follow-up privilege check showed old grants had been restored. Verified: anon/authenticated cannot execute; service_role can.
 - Some remaining SECURITY DEFINER functions are intentionally callable by authenticated users because they enforce caller ownership/admin checks internally (effective entitlement/limit reads, username availability, user activity and usage event tracking). These still need route-level regression coverage; no blanket revocation was applied.
+
+
+### Controlled live atomic-usage smoke test (rolled back)
+- Ran a real transaction against the production database using an existing test subject, then explicitly rolled it back.
+- Reserve → provider-start → expiry sweep → actual commit → duplicate commit replay all behaved as expected.
+- Expiry sweep reported `expired: 0` after provider start, so the in-flight reservation was protected even after its expiry timestamp was moved into the past inside the test transaction.
+- Actual settlement preserved the reserved chat count (`max_chats_total: 1)), reconciled estimated tokens from 100 to measured 25, and recorded token metrics.
+- Duplicate commit returned `deduped: true` with the same event ID.
+- Post-rollback verification found zero smoke reservations, zero smoke events and no smoke counter keys. No production usage or quota rows were retained.
