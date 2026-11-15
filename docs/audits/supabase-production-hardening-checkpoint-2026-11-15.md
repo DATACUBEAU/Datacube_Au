@@ -63,3 +63,17 @@ No document/chat data was moved, no historical billing rows were deleted, no bil
 - Updated static security regressions to match the retired local-first upload endpoint rather than obsolete server-upload behavior.
 - Added a final migration that recreates only the empty, metadata-only `au_documents` compatibility shell required by retained plan/limits RPCs; no document contents are stored there.
 - Latest CI runs are being re-evaluated. No merge or Vercel production promotion until the critical SaaS and migration-chain workflows are green.
+
+
+### Additional privileged RPC exposure closed
+- Live catalog review found more SECURITY DEFINER functions with direct `anon` / `authenticated` EXECUTE grants than the original billing renewal finding.
+- Restricted these high-impact routines to `service_role`: `approve_manual_payment`, `apply_verified_billing_payment`, `apply_plan_transition`, `admin_set_user_plan_override`, `admin_count_auth_users`, `admin_list_auth_users`, and `au_admin_db_stats`.
+- Pinned their search paths. The manual-payment routine explicitly lacked an in-function admin check, and the payment/plan-transition routines can write billing and paid entitlement state. Browser roles must not invoke these directly.
+- Live privilege verification confirms `anon` and `authenticated` cannot execute any of the seven routines; `service_role` can. No payment, subscription, or entitlement rows were changed.
+- The admin plan-assignment API route was inspected and uses the service-role Supabase client. Other callers still require a complete route/function inventory before any broader grant revocation.
+
+### Billing price/source-of-truth discrepancy
+- `billing_plans` currently contains Paystack weekly/monthly rows priced at 1,500 / 4,500 NGN (150,000 / 450,000 kobo) with codes `PLN_h3teb0z285iuyet` and `PLN_bo7k3ulauwdhzjl`.
+- `au_billing_plans` contains a separate weekly/monthly set priced at 1,900 / 4,500 NGN with different Paystack codes.
+- This is a real pricing/provider-plan mismatch, not just duplicate schema. `billing_subscriptions` has one row and `au_subscriptions` has zero; `billing_transactions` has nine rows and `au_payments` has two. No merge/drop is safe until the product price decision and Paystack plan-code mapping are reconciled.
+- Current canonical candidate for live Paystack checkout is `billing_plans`, because the verified-payment routine writes `billing_transactions`, `billing_customers`, `entitlement_grants`, and `billing_subscriptions`. The `au_*` structures remain compatibility/history surfaces until callers are proven inactive.
