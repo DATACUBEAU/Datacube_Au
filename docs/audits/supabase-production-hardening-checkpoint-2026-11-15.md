@@ -42,3 +42,24 @@ Project ref: `dhmukdeljiwvvwjdcxgn`.
 ## Non-goals of this checkpoint
 
 No document/chat data was moved, no historical billing rows were deleted, no billing registry was renamed/dropped, no secrets were changed, and no customer document storage was removed. Flutter-first local-first architecture remains the target: documents, embeddings, retrieval and chat history stay on-device; Supabase remains the auth/billing/entitlement/usage control plane and stateless AU Cloud gateway.
+
+## Additional work completed
+
+### Canonical model registry — additive first stage
+- Added `capabilities text[]` and `size_class text` to `au_models_registry`.
+- Copied the two paid models from `au_pro_models_registry` into `au_models_registry` with their capabilities and size classes.
+- Live verification now shows all four models in `au_models_registry`: two free and two paid.
+- Kept `au_pro_models_registry` intact. The application resolver and admin callers still read/write both registry surfaces; removing the legacy table now would be premature.
+- `au_model_usage_stats` continues to reference the canonical `au_models_registry` table.
+
+### Billing dependency map
+- Live function references include `apply_verified_billing_payment`, `apply_billing_renewal_failure`, `apply_plan_transition`, `get_active_subscription`, `get_effective_entitlements`, `get_effective_limits`, and admin/manual-payment routines.
+- Live foreign keys include `billing_cancellation_feedback.subscription_id → billing_subscriptions.id`, `au_payments.owner_id → au_users.id`, and `au_user_entitlements.plan → au_plans.plan`.
+- This confirms that billing tables are not interchangeable just because some similarly named pairs exist. No consolidation or deletion has been performed.
+- Current verified counts remain: billing_plans 2 / au_billing_plans 2; billing_subscriptions 1 / au_subscriptions 0; billing_transactions 9 / au_payments 2; billing_webhook_events 0 / au_billing_events 0; entitlement_grants 1 / au_user_entitlements 4.
+
+### CI corrections in progress
+- Corrected the protected API regression to assert that the legacy cloud document API fails closed while the actual legacy query helper uses the safe projection.
+- Updated static security regressions to match the retired local-first upload endpoint rather than obsolete server-upload behavior.
+- Added a final migration that recreates only the empty, metadata-only `au_documents` compatibility shell required by retained plan/limits RPCs; no document contents are stored there.
+- Latest CI runs are being re-evaluated. No merge or Vercel production promotion until the critical SaaS and migration-chain workflows are green.
