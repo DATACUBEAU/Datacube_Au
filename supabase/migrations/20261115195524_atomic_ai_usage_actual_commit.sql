@@ -1,4 +1,46 @@
 -- Restore the server-side measured usage settlement RPC.
+CREATE OR REPLACE FUNCTION public.ai_usage_delta_units(p_actual_units jsonb, p_reserved_units jsonb)
+ RETURNS jsonb
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public'
+AS $function$
+  WITH keys AS (
+    SELECT key
+    FROM jsonb_each(
+      CASE WHEN jsonb_typeof(COALESCE(p_actual_units, '{}'::jsonb)) = 'object'
+        THEN COALESCE(p_actual_units, '{}'::jsonb) ELSE '{}'::jsonb END
+    )
+    UNION
+    SELECT key
+    FROM jsonb_each(
+      CASE WHEN jsonb_typeof(COALESCE(p_reserved_units, '{}'::jsonb)) = 'object'
+        THEN COALESCE(p_reserved_units, '{}'::jsonb) ELSE '{}'::jsonb END
+    )
+  ),
+  deltas AS (
+    SELECT
+      key,
+      COALESCE(
+        CASE WHEN jsonb_typeof(COALESCE(p_actual_units, '{}'::jsonb)->key) = 'number'
+          THEN ((p_actual_units->>key)::numeric) END,
+        0
+      )
+      -
+      COALESCE(
+        CASE WHEN jsonb_typeof(COALESCE(p_reserved_units, '{}'::jsonb)->key) = 'number'
+          THEN ((p_reserved_units->>key)::numeric) END,
+        0
+      ) AS delta
+    FROM keys
+  )
+  SELECT COALESCE(
+    jsonb_object_agg(key, to_jsonb(delta)) FILTER (WHERE delta <> 0),
+    '{}'::jsonb
+  )
+  FROM deltas;
+$function$
+
 CREATE OR REPLACE FUNCTION public.commit_ai_usage_actual(p_reservation_id uuid, p_user_id uuid, p_feature_key text, p_route text, p_idempotency_key text, p_actual_units jsonb DEFAULT NULL::jsonb, p_ticket_id text DEFAULT NULL::text, p_provider text DEFAULT NULL::text, p_model text DEFAULT NULL::text, p_prompt_tokens integer DEFAULT NULL::integer, p_completion_tokens integer DEFAULT NULL::integer, p_total_tokens integer DEFAULT NULL::integer, p_cost_usd numeric DEFAULT NULL::numeric, p_price_version text DEFAULT NULL::text, p_provider_request_id text DEFAULT NULL::text, p_latency_ms integer DEFAULT NULL::integer, p_correlation_id text DEFAULT NULL::text)
  RETURNS jsonb
  LANGUAGE plpgsql
