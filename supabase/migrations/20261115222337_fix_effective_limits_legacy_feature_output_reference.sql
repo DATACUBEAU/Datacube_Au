@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION public.get_effective_limits(p_user_id uuid DEFAULT au
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public'
-AS $function$
+AS $function$;
 DECLARE
   v_requester UUID := auth.uid();
   v_role TEXT := COALESCE(current_setting('request.jwt.claim.role', true), '');
