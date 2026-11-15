@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { GatewayProviderError, isAmbiguousProviderFailure } from '../vps-ai-gateway/src/utils';
 import { readFileSync } from 'node:fs';
 import {
   buildAiUsageReservationPayload,
@@ -66,6 +67,16 @@ function limitsFixture(overrides?: Record<string, Partial<Record<'value' | 'isEn
 }
 
 async function main() {
+  await run('ambiguous provider outcomes keep reserved credits disputed instead of releasing them', () => {
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 400)), false);
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 429)), false);
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 408)), true);
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 502)), true);
+    assert.equal(isAmbiguousProviderFailure(new Error('OPENROUTER_API_KEY not configured')), false);
+    assert.equal(isAmbiguousProviderFailure(new Error('fetch failed: socket disconnected')), true);
+    assert.equal(isAmbiguousProviderFailure(new Error('provider response stream terminated')), true);
+  });
+
   await run('idempotency keys are reused when valid and rejected when malformed', () => {
     assert.equal(normalizeAiIdempotencyKey('chat_123456789abc'), 'chat_123456789abc');
     assert.equal(normalizeAiIdempotencyKey('short', 'chat'), '');
