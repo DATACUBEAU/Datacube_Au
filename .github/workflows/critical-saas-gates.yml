@@ -41,11 +41,20 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: VPS AI gateway dependency install and production build
+      - name: VPS AI gateway dependency install
         working-directory: vps-ai-gateway
+        run: npm ci
+
+      - name: Audit VPS AI gateway production dependencies
+        working-directory: vps-ai-gateway
+        continue-on-error: true
         run: |
-          npm ci
-          npm run build
+          npm audit --omit=dev --json > /tmp/vps-gateway-audit.json || true
+          node -e "const report=require('/tmp/vps-gateway-audit.json'); const entries=Object.entries(report.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:(v.via||[]).map(x=>typeof x==='string'?x:{title:x.title,url:x.url,range:x.range})})); console.log(JSON.stringify({summary:report.metadata?.vulnerabilities,packages:entries},null,2));"
+
+      - name: Build VPS AI gateway for production
+        working-directory: vps-ai-gateway
+        run: npm run build
 
       - name: Lint
         run: pnpm lint
