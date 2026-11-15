@@ -60,10 +60,12 @@ async function main() {
     assert.doesNotMatch(smartAuth, /session:\s*resolved\.session/);
   });
 
-  await run('document delete no longer forces a full page reload', () => {
+  await run('local-first documents placeholder has no full-page reload behavior', () => {
     const docsPage = readRepoFile('src', 'app', 'dashboard', 'documents', 'page.tsx');
+    assert.match(docsPage, /Your documents stay on your device/);
+    assert.match(docsPage, /The Flutter local document workspace is not yet available/);
     assert.doesNotMatch(docsPage, /window\.location\.reload/);
-    assert.match(docsPage, /await refresh\(\)/);
+    assert.doesNotMatch(docsPage, /await refresh\(\)/);
   });
 
   if (failed > 0) {
