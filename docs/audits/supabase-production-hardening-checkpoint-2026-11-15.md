@@ -34,7 +34,7 @@ Project ref: `dhmukdeljiwvvwjdcxgn`.
 
 1. **Atomic usage:** trace each cloud inference route from reserve → provider-start → provider response → actual commit/release; test concurrent requests, duplicate idempotency keys, provider failure, timeout-after-provider-response, and insufficient credit. Local inference must bypass cloud billing.
 2. **Billing source of truth:** reconcile `billing_plans` / `au_billing_plans`, `billing_subscriptions` / `au_subscriptions`, `billing_transactions` / `au_payments`, webhook events and entitlements. Current live counts are small but not interchangeable. Preserve Paystack and all transaction history. No table drops until code/FK/RPC/webhook dependencies and a rollback copy are proven.
-3. **Model registry:** `au_models_registry` currently holds two free models; `au_pro_models_registry` holds two paid models. `au_model_routing` is empty. `au_model_usage_stats` references the free registry. Consolidate additively into `au_models_registry`, preserve the old table as a compatibility surface until code and admin callers move.
+3. **Model registry:** `au_models_registry` is the canonical model catalogue (four models: two free, two paid); the runtime resolver now reads only this table. `au_pro_models_registry` remains intact as a compatibility/rollback surface; do not drop it until every external/admin consumer is confirmed migrated.
 4. **RLS and privileged functions:** review grants plus policies together. RLS-enabled tables with no policies are default-deny for API roles; do not add permissive policies just to silence the advisor. Review every SECURITY DEFINER function's callers, grants and search-path dependencies before changing it.
 5. **Migration chain:** restore all missing migration sources, run clean local reset/lint, compare the schema against production, and only then permit CLI db push.
 6. **Release:** merge/deploy only after all critical CI, migration-chain, security and Vercel checks pass; then run production auth, billing, usage and AI smoke tests.
@@ -49,7 +49,7 @@ No document/chat data was moved, no historical billing rows were deleted, no bil
 - Added `capabilities text[]` and `size_class text` to `au_models_registry`.
 - Copied the two paid models from `au_pro_models_registry` into `au_models_registry` with their capabilities and size classes.
 - Live verification now shows all four models in `au_models_registry`: two free and two paid.
-- Kept `au_pro_models_registry` intact. The application resolver and admin callers still read/write both registry surfaces; removing the legacy table now would be premature.
+- Kept `au_pro_models_registry` intact as a compatibility/rollback surface. The runtime resolver has been switched to `au_models_registry` only; Conex routing overrides remain in the separate `au_model_routing` table. The legacy paid table is not dropped until the remaining consumers are fully inventoried.
 - `au_model_usage_stats` continues to reference the canonical `au_models_registry` table.
 
 ### Billing dependency map
