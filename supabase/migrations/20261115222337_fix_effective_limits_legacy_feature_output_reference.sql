@@ -6,7 +6,7 @@ CREATE OR REPLACE FUNCTION public.get_effective_limits(p_user_id uuid DEFAULT au
  LANGUAGE plpgsql
  SECURITY DEFINER
  SET search_path TO 'public'
-AS $function$;
+AS $function$
 DECLARE
   v_requester UUID := auth.uid();
   v_role TEXT := COALESCE(current_setting('request.jwt.claim.role', true), '');
@@ -42,11 +42,14 @@ BEGIN
     RAISE EXCEPTION 'unauthorized' USING ERRCODE = '42501';
   END IF;
 
-  IF v_role <> 'service_role'
-     AND v_requester IS NOT NULL
-     AND p_user_id <> v_requester
-     AND NOT public.is_conex_admin(v_requester) THEN
-    RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
+  IF v_role <> 'service_role' THEN
+    IF v_requester IS NULL THEN
+      RAISE EXCEPTION 'unauthorized' USING ERRCODE = '42501';
+    END IF;
+
+    IF p_user_id <> v_requester AND NOT public.is_conex_admin(v_requester) THEN
+      RAISE EXCEPTION 'forbidden' USING ERRCODE = '42501';
+    END IF;
   END IF;
 
   SELECT LOWER(COALESCE(tier, 'free'))
@@ -342,4 +345,4 @@ BEGIN
     'as_of', v_now
   );
 END;
-$function$
+$function$;
