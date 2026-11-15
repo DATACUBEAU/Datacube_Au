@@ -6,21 +6,21 @@ Status: audit-backed target design. This document does not apply schema changes 
 
 - Global Chat is general-purpose chat. It does not retrieve from uploaded documents.
 - Global Chat supports both on-device AU Local models and server-routed AU Cloud models.
-- A conversation keeps its thread context when the user returns. Cloud conversations sync through Supabase; local-only conversations remain on-device unless the user explicitly enables sync.
+- **All Global Chat history stays on the user's device**, for both AU Local and AU Cloud. Supabase must not store transcripts, prompts, assistant answers, thread histories, conversation summaries, or chat memory. There is no automatic or optional chat-history sync.
 - Document intelligence is a separate on-device feature. No server-side document parsing, chunking, embeddings, vector search, document storage, or document retention is part of this target.
 - Provider credentials stay server-side. Flutter never receives OpenRouter or other provider API keys.
-- Local inference does not consume cloud credits or incur provider cost. Cloud inference is metered and charged against the user's server-authoritative allowance.
-- Supabase remains the SaaS control plane: Auth, profiles, subscriptions, entitlements, admin, cloud model routing, usage accounting, and synced cloud chat.
+- Local inference does not consume cloud credits or incur provider cost. AU Cloud sends only the minimum relevant recent turns to the provider transiently for the current inference; DataCube does not persist that context or the returned answer. Cloud usage and cost metadata may be recorded without prompt/answer content.
+- Supabase remains the SaaS control plane: Auth, profiles, subscriptions, entitlements, admin, cloud model routing, usage accounting, billing records, and operational/security metadata. It is not a chat-history store.
 
 ## Global Chat execution path
 
-1. Flutter loads the thread and model preference.
-2. The user chooses AU Local or AU Cloud (or a user-configured automatic policy).
-3. AU Local runs on-device and reads only the current conversation context. It makes no provider request and creates no cloud-credit reservation.
-4. AU Cloud sends the minimum conversation turns needed to preserve context to the authenticated model-router Edge Function. It does not attach document content.
-5. The server resolves entitlement, allowed model, provider, price schedule, budget, and rate limits. It reserves usage atomically before contacting the provider.
-6. The server calls the provider using a server-held secret, records actual tokens/cost, commits the reservation, and returns the answer.
-7. Cloud thread/messages are persisted in Supabase. Local-only thread/messages are stored on-device. If sync is enabled, sync is an explicit separate operation.
+1. Flutter loads the user's thread and selected model from the device's private local database.
+2. The user explicitly chooses AU Local or AU Cloud. The choice is shown before a cloud request is sent.
+3. AU Local reads the thread from device storage and runs the model on-device. It makes no cloud/provider request and creates no cloud-credit reservation.
+4. AU Cloud sends only the minimum recent turns needed for the current answer to the authenticated model-router Edge Function. It never attaches document content; Global Chat is not document RAG.
+5. The server validates an explicit cloud execution mode, resolves entitlement/model/provider/pricing/limits, and reserves cloud usage atomically before provider execution.
+6. The server sends the selected context to the provider for this request, receives the answer, records metadata only (tokens, cost, provider/model, latency, request ID), commits actual usage, and returns the answer.
+7. Flutter saves user and assistant messages locally. Supabase receives no prompt, answer, message body, conversation transcript, summary, thread/session ID, or response cache. Chat-history sync is not supported.
 
 ## Canonical table direction
 
@@ -37,7 +37,7 @@ Status: audit-backed target design. This document does not apply schema changes 
 | Payments | `billing_transactions` | `billing_transactions`, `au_payments`, `au_manual_payments` | Prefer `billing_transactions` for gateway transactions. Preserve manual-review workflows and the dependency on `au_admin_manual_review_queue` before retiring `au_payments`. Decide whether manual payments remain a separate review domain or become transaction types. |
 | Webhook inbox | `billing_webhook_events` | `billing_webhook_events`, `au_billing_events` | Prefer a single durable webhook inbox with provider + provider event ID unique constraint, payload hash, signature verification result, processing status and idempotent handler. Both current tables need dependency verification before consolidation. |
 | Entitlements | `entitlement_grants` + explicit override table | `entitlement_grants`, `au_user_entitlements`, profile tier fields, `entitlement_audit` | Grants should be the authoritative subscription/promo/admin-grant ledger. Move admin overrides into a dedicated audited override table. Profiles must not be the paid-plan source of truth. Retire mirrored entitlement state after resolver cutover. |
-| Chat | `au_sessions` + `au_messages` | `au_sessions`, `au_messages` | Preserve. These are not document-ingestion tables. Add/standardize thread ID, execution mode, selected model, sync state and idempotent message IDs as needed. Never delete chats when a document is deleted. |
+| Chat history | Device-local database | Legacy `au_sessions`, `au_messages`, `au_request_idempotency.response_json` | Device storage is the only source of truth for Global Chat history. Stop all server transcript/message/answer-cache writes. Existing server-side chat records require an explicit export-to-device and retention/purge plan; do not silently drop or rewrite them. Document deletion remains separate from chat-history deletion. |
 
 ## Audit facts observed in the connected database
 
@@ -54,9 +54,9 @@ Status: audit-backed target design. This document does not apply schema changes 
 - `billing_webhook_events`: 0; `au_billing_events`: 0.
 - The current entitlement RPC reads `billing_subscriptions` and `entitlement_grants`, but also consults profile tier and mirrored entitlement state. The effective-limits RPC still contains legacy fallbacks and old document-related limits.
 - The current model resolver selects from `au_models_registry` and `au_pro_models_registry`; it does not use the empty `au_model_routing` table.
-- The inspected model usage logger inserts into `au_model_usage`; the atomic reservation functions are not wired into that path. The reservation commit function still labels events as originating from `vps-ai-gateway`, which must be replaced during the gateway refactor.
-- `get_rotated_api_key(text)` was callable by anon/authenticated roles before this audit; execute permission has now been restricted to `service_role`. A matching forward migration was committed separately.
-- Legacy RLS policies on `au_billing_events`, `au_payments`, and `au_manual_payments` used `TO public` with unconditional access despite being labelled service-role policies. A forward migration now scopes those policies to `service_role`. It has not been applied to the live database.
+- The inspected model usage logger inserts into `au_model_usage`; an additive actual-usage commit RPC is now installed, but inference paths still require wiring and load testing before quota enforcement is fully atomic. Reservation expiry now excludes provider-started requests and disputed releases keep quota held for reconciliation.
+- `get_rotated_api_key(text)` was callable by anon/authenticated roles before this audit; execute permission has now been restricted to `service_role`.
+- Legacy RLS policies on `au_billing_events`, `au_payments`, `au_manual_payments`, and `au_model_routing` used or relied on broad policy scope. The write/manage policies are now explicitly scoped to `service_role` in the live database; user-owned payment/manual-payment access and the model metadata read policy remain in place.
 
 ## Atomic cloud-usage protocol
 
@@ -103,7 +103,7 @@ The existing reservation RPCs provide a useful base, but the live model-call pat
 2. Apply the RLS policy correction migration and verify anon/authenticated cannot write billing records.
 3. Move provider key material to Vault/managed secrets, rotate the keys, then remove plaintext columns only after code cutover.
 4. Merge model registry data into one schema and update model resolution; dual-read/compare before retiring the Pro table.
-5. Wire all cloud model calls (Global Chat, predictions, study features) through the reservation/commit/release protocol.
+5. Remove Global Chat response-cache and transcript persistence; migrate existing server-side chat records to users' devices only through an explicit supported export path, then apply a separately approved purge. Wire all cloud model calls (Global Chat, predictions, study features) through the reservation/commit/release protocol.
 6. Consolidate entitlement and billing reads onto canonical tables; backfill with reconciliation and retain compatibility views during rollout.
 7. Move all model and quota telemetry to the canonical event model and rebuild projections.
 8. Retire duplicate tables only after zero code references, zero external API clients, validated row reconciliation, and a rollback window.
