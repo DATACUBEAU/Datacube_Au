@@ -77,3 +77,10 @@ No document/chat data was moved, no historical billing rows were deleted, no bil
 - `au_billing_plans` contains a separate weekly/monthly set priced at 1,900 / 4,500 NGN with different Paystack codes.
 - This is a real pricing/provider-plan mismatch, not just duplicate schema. `billing_subscriptions` has one row and `au_subscriptions` has zero; `billing_transactions` has nine rows and `au_payments` has two. No merge/drop is safe until the product price decision and Paystack plan-code mapping are reconciled.
 - Current canonical candidate for live Paystack checkout is `billing_plans`, because the verified-payment routine writes `billing_transactions`, `billing_customers`, `entitlement_grants`, and `billing_subscriptions`. The `au_*` structures remain compatibility/history surfaces until callers are proven inactive.
+
+
+### Remaining SECURITY DEFINER posture after hardening
+- Live catalog re-check: zero public SECURITY DEFINER functions remain with a mutable search path.
+- The three legacy functions without an explicit path were pinned to `pg_catalog, public`: `au_rate_limit_hit`, `cleanup_inactive_accounts`, and `decide_auth_executor`.
+- Legacy admin auth-user count/list and database-stats RPCs were re-revoked from `authenticated` after a follow-up privilege check showed old grants had been restored. Verified: anon/authenticated cannot execute; service_role can.
+- Some remaining SECURITY DEFINER functions are intentionally callable by authenticated users because they enforce caller ownership/admin checks internally (effective entitlement/limit reads, username availability, user activity and usage event tracking). These still need route-level regression coverage; no blanket revocation was applied.
