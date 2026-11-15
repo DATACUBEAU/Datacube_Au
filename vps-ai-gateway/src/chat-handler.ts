@@ -204,7 +204,6 @@ export class ChatHandler {
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
-      usage: { ...generated.usage, correlationId: String(correlationId) },
       });
       providerAttemptStarted = true;
       
@@ -298,7 +297,6 @@ export class ChatHandler {
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
-        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       const generated = await this.generateWithRouting(routingCandidate, question, body, null);
       providerSucceeded = true;
