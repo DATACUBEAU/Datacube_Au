@@ -210,7 +210,7 @@ BEGIN
     'snapshot', COALESCE(v_snapshot, '{}'::jsonb)
   );
 END;
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.begin_ai_usage_reservation(p_reservation_id uuid, p_user_id uuid, p_feature_key text, p_route text, p_idempotency_key text, p_ticket_id text DEFAULT NULL::text, p_provider text DEFAULT NULL::text, p_model text DEFAULT NULL::text)
@@ -279,7 +279,7 @@ BEGIN
     'attempt_count', v_row.attempt_count
   );
 END;
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.release_ai_usage(p_reservation_id uuid, p_user_id uuid, p_feature_key text, p_route text, p_idempotency_key text, p_ticket_id text DEFAULT NULL::text, p_failure_code text DEFAULT NULL::text, p_status text DEFAULT 'released'::text)
@@ -352,7 +352,7 @@ BEGIN
     'snapshot', COALESCE(v_snapshot, '{}'::jsonb)
   );
 END;
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.expire_ai_usage_reservations(p_limit integer DEFAULT 500)
@@ -392,5 +392,5 @@ BEGIN
 
   RETURN jsonb_build_object('ok', TRUE, 'expired', v_count);
 END;
-$function$
+$function$;
 
