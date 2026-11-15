@@ -6,6 +6,13 @@ import Image from 'next/image';
 import { Icons } from '@/components/icons';
 import { CompanyFooter } from '@/components/company-footer';
 import { Button } from '@/components/ui/button';
+import { Menu } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 const navigation = [
   { href: '/', label: 'Home' },
@@ -81,9 +88,27 @@ export default function AboutPage() {
             ))}
           </nav>
 
-          <Button asChild size="sm">
-            <Link href="/dashboard">Go to Dashboard</Link>
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="icon" aria-label="Open navigation menu">
+                <Menu className="h-5 w-5" />
+                <span className="sr-only">Open navigation menu</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {navigation.map((item) => (
+                <DropdownMenuItem key={item.href} asChild>
+                  <Link
+                    href={item.href}
+                    aria-current={item.href === '/about' ? 'page' : undefined}
+                    className={item.href === '/about' ? 'font-semibold text-primary' : undefined}
+                  >
+                    {item.label}
+                  </Link>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
