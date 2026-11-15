@@ -4,17 +4,21 @@ ALTER TABLE public.au_models_registry
   ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT ARRAY[]::text[],
   ADD COLUMN IF NOT EXISTS size_class text;
 
+ALTER TABLE public.au_pro_models_registry
+  ADD COLUMN IF NOT EXISTS capabilities text[] NOT NULL DEFAULT ARRAY[]::text[],
+  ADD COLUMN IF NOT EXISTS size_class text;
+
 INSERT INTO public.au_models_registry (
   model_id, display_name, provider, type, is_free, is_active,
   context_window, rate_limit_rpm, rate_limit_tpm, usage_constraints,
   created_at, updated_at, capabilities, size_class
 )
 SELECT
-  model_id, display_name, provider, COALESCE(type, 'chat'), COALESCE(is_free, false),
-  COALESCE(is_active, false), context_window, rate_limit_rpm, rate_limit_tpm,
-  usage_constraints, COALESCE(created_at, now()), COALESCE(updated_at, now()),
-  COALESCE(capabilities, ARRAY[]::text[]), size_class
-FROM public.au_pro_models_registry
+  paid.model_id, paid.display_name, paid.provider, COALESCE(paid.type, 'chat'), COALESCE(paid.is_free, false),
+  COALESCE(paid.is_active, false), paid.context_window, paid.rate_limit_rpm, paid.rate_limit_tpm,
+  paid.usage_constraints, COALESCE(paid.created_at, now()), COALESCE(paid.updated_at, now()),
+  COALESCE(paid.capabilities, ARRAY[]::text[]), paid.size_class
+FROM public.au_pro_models_registry AS paid
 ON CONFLICT (model_id) DO UPDATE SET
   display_name = EXCLUDED.display_name,
   provider = EXCLUDED.provider,
