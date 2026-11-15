@@ -13,7 +13,6 @@ BEGIN
     'public.cleanup_inactive_accounts()',
     'public.au_rate_limit_hit(text,uuid,text,text,timestamptz,integer)',
     'public.decide_auth_executor(uuid)',
-    'public.ensure_user_consistency()',
     'public.protect_platform_owner_auth_user()',
     'public.protect_platform_owner_billing_row()',
     'public.protect_platform_owner_entitlement()',
@@ -34,7 +33,8 @@ BEGIN
     'public.apply_verified_billing_payment(uuid,text,bigint,text,text,timestamptz,jsonb,text,jsonb,text,text,text,text,text,text,text,text,text,text,text,text)',
     'public.approve_manual_payment(uuid,uuid,text)',
     'public.cleanup_inactive_accounts()',
-    'public.au_rate_limit_hit(text,uuid,text,text,timestamptz,integer)'
+    'public.au_rate_limit_hit(text,uuid,text,text,timestamptz,integer)',
+    'public.decide_auth_executor(uuid)'
   ])
   LOOP
     IF to_regprocedure(v_fn) IS NOT NULL THEN
@@ -57,5 +57,12 @@ BEGIN
       EXECUTE format('REVOKE ALL PRIVILEGES ON FUNCTION %s FROM anon', v_fn);
     END IF;
   END LOOP;
+
+  -- This helper deliberately operates only on auth.uid() and is used by the
+  -- signed-in user's account bootstrap. Preserve authenticated execution.
+  IF to_regprocedure('public.ensure_user_consistency()') IS NOT NULL THEN
+    EXECUTE 'REVOKE ALL PRIVILEGES ON FUNCTION public.ensure_user_consistency() FROM PUBLIC, anon';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.ensure_user_consistency() TO authenticated';
+  END IF;
 END;
-$$;
+$;
