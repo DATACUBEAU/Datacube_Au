@@ -103,6 +103,7 @@ export class GenerationHandler {
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
@@ -175,6 +176,7 @@ export class GenerationHandler {
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
@@ -248,6 +250,7 @@ export class GenerationHandler {
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
@@ -317,6 +320,7 @@ export class GenerationHandler {
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
