@@ -145,7 +145,7 @@ export default function AboutPage() {
               <div className="md:col-span-1 flex justify-center">
                 <div className="relative h-48 w-48 rounded-full overflow-hidden border-2 border-primary">
                   <Image
-                    src="/avater.png"
+                    src="/Prova.png"
                     alt="Datacube AU ownership representative"
                     fill
                     sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
