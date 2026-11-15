@@ -194,20 +194,25 @@ test('authenticated profile updates cannot mutate authorization or billing-contr
   }
 });
 
-test('document completion binds worker ingestion to the persisted owner-scoped storage object', () => {
+test('legacy document upload endpoint fails closed because documents are local-first', () => {
   const route = readRepoFile('src', 'app', 'api', 'au', 'document-upload', 'route.ts');
 
-  assert.match(route, /select\('id,file_name,file_path,file_size_bytes,bucket'\)/);
-  assert.match(route, /\.eq\('id', documentId\)[\s\S]*\.eq\('user_id', userId\)[\s\S]*\.maybeSingle\(\)/);
-  assert.match(route, /const objectPath = String\(ownedDocument\.file_path \|\| ''\)\.trim\(\)/);
-  assert.match(route, /const bucket = String\(ownedDocument\.bucket \|\| DEFAULT_BUCKET\)\.trim\(\)/);
-  assert.match(route, /const expectedPrefix = `uploads\/\$\{userId\}\/\$\{documentId\}\//);
-  assert.match(route, /!objectPath\.startsWith\(expectedPrefix\)/);
-  assert.match(route, /bucket !== DEFAULT_BUCKET/);
-  assert.match(route, /object_path:\s*objectPath/);
-  assert.doesNotMatch(route, /const objectPath = String\(body\.path/);
-  assert.doesNotMatch(route, /const bucket = String\(body\.bucket/);
-  assert.doesNotMatch(route, /updatePayload\.file_path\s*=\s*objectPath/);
+  assert.match(route, /DOCUMENTS_ARE_LOCAL/);
+  assert.match(route, /status: 410/);
+  assert.match(route, /export async function POST\(\)/);
+  assert.match(route, /export async function GET\(\)/);
+  assert.doesNotMatch(route, /createSignedUrl|storage\.from|from\('au_documents'\)|from\('au_worker_jobs'\)/);
+});
+
+test('retired document upload route returns a fixed safe response without provider diagnostics', () => {
+  const route = readRepoFile('src', 'app', 'api', 'au', 'document-upload', 'route.ts');
+
+  assert.match(route, /error: 'DOCUMENTS_ARE_LOCAL'/);
+  assert.match(route, /code: 'DOCUMENTS_ARE_LOCAL'/);
+  assert.match(route, /status: 410/);
+  assert.match(route, /Cache-Control/);
+  assert.doesNotMatch(route, /signed_url_failed|insert_failed|job_creation_failed|upload_failed/);
+  assert.doesNotMatch(route, /error\?\.message|signedError\.message|insertError\.message|jobError\.message/);
 });
 
 test('document upload failures keep provider diagnostics server-side', () => {
