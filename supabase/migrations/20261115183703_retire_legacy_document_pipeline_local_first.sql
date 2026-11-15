@@ -36,4 +36,6 @@ drop function if exists public.try_claim_retention_lease(text, text, integer);
 drop function if exists public.release_retention_lease(text, text);
 drop function if exists public.trigger_process_upload_job();
 
-drop extension if exists vector;
+-- Keep pgvector installed while any retained table (for example legacy
+-- au_document_embeddings) still has vector-typed columns. Extension retirement
+-- is a separate, dependency-verified cleanup after those tables are migrated.
