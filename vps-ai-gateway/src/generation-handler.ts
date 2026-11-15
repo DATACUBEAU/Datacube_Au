@@ -331,7 +331,7 @@ export class GenerationHandler {
         }
       } catch {}
 
-      const lines = result.split('\n').filter(l => l.trim().length > 0).slice(0, 4);
+      const lines = generated.text.split('\n').filter(l => l.trim().length > 0).slice(0, 4);
       return reply.code(200).send({ prompts: lines, sources });
     } catch (err: any) {
       await this.settleFailedUsage({ context: usageContext, error: err, providerAttemptStarted, providerSucceeded });
