@@ -65,4 +65,4 @@ BEGIN
     EXECUTE 'GRANT EXECUTE ON FUNCTION public.ensure_user_consistency() TO authenticated';
   END IF;
 END;
-$;
+$$;
