@@ -142,19 +142,19 @@ async function main() {
     assert.match(route, /no-store/);
   });
 
-  await run('upload initiation stores a plan-based expiry before issuing the signed upload response', () => {
+  await run('retired cloud document upload route fails closed without creating cloud document records', () => {
     const upload = readRepoFile('src', 'app', 'api', 'au', 'document-upload', 'route.ts');
-    const expiryIndex = upload.indexOf('const uploadExpiresAt');
-    const insertIndex = upload.indexOf("supabase.from('au_documents').upsert");
-    assert.ok(expiryIndex > 0, 'missing upload expiry calculation');
-    assert.ok(insertIndex > expiryIndex, 'expiry must be calculated before document upsert');
-    assert.match(upload, /computeUploadExpiryFromPlan/);
-    assert.match(upload, /insertPayload\.expires_at = uploadExpiresAt/);
-    assert.match(upload, /retention_granted_at/);
-    assert.match(upload, /retention_expires_at/);
-    assert.match(upload, /retention_tier/);
-    assert.match(upload, /retention_days/);
-    assert.match(upload, /RETENTION_POLICY_VERSION/);
+
+    assert.match(upload, /DOCUMENTS_ARE_LOCAL/);
+    assert.match(upload, /Cloud document upload and ingestion have been retired/);
+    assert.match(upload, /status:\s*410/);
+    assert.match(upload, /Cache-Control/);
+    assert.match(upload, /no-store, private/);
+    assert.match(upload, /export async function POST\(\)/);
+    assert.match(upload, /export async function GET\(\)/);
+    assert.doesNotMatch(upload, /createSupabaseAdminClient/);
+    assert.doesNotMatch(upload, /\.from\(['"]au_documents['"]\)/);
+    assert.doesNotMatch(upload, /\.storage\.from\(/);
   });
 
   if (failed > 0) {
