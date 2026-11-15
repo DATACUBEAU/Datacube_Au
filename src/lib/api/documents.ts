@@ -106,6 +106,8 @@ export async function initiateUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string; token?: string; bucket?: string; contentType?: string }> {
+  throw Object.assign(new Error('Documents are now stored and managed locally in the AU app.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
+  throw Object.assign(new Error('Documents are now stored and processed locally in the AU app.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (metadata.correlationId) headers['x-correlation-id'] = metadata.correlationId;
 
@@ -208,6 +210,7 @@ export async function uploadDocument(
  * Mirrors RLS: USING (auth.uid() = user_id)
  */
 export async function listDocuments(user: User | null): Promise<AuDocumentRow[]> {
+  throw Object.assign(new Error('Cloud document listings have been retired. Open AU on the device that stores your documents.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
   const ownershipConditions = await getOwnershipConditionCandidates(user);
   const retentionDays = await resolveDocumentRetentionDays(user?.id ?? null);
 
@@ -243,6 +246,7 @@ export async function listDocuments(user: User | null): Promise<AuDocumentRow[]>
  * Calls the first-party API route, which performs server-side cleanup.
  */
 export async function deleteDocument(user: User | null, documentId: string): Promise<{ ok: boolean }> {
+  throw Object.assign(new Error('Cloud document deletion has been retired. Manage documents on the device where they are stored.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
   // 1. Clear local browser working memory. Server-side summary cleanup happens in the API route.
   if (user?.id) {
     try {
@@ -322,6 +326,7 @@ function applyOwnershipFilters(query: any, conditions: string) {
  * Fetches a bounded text preview for a document.
  */
 export async function getDocumentText(user: User | null, documentId: string, limit = 15): Promise<string> {
+  throw Object.assign(new Error('Cloud document text retrieval has been retired. AU performs document retrieval locally on your device.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
   const ownershipConditions = await getOwnershipConditionCandidates(user);
 
   for (const conditions of ownershipConditions) {
