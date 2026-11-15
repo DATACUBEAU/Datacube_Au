@@ -545,10 +545,10 @@ export class GenerationHandler {
     return {
       text: result.choices?.[0]?.message?.content || '',
       usage: {
-        promptTokens: Number.isFinite(Number(usage.prompt_tokens)) ? Number(usage.prompt_tokens) : null,
-        completionTokens: Number.isFinite(Number(usage.completion_tokens)) ? Number(usage.completion_tokens) : null,
-        totalTokens: Number.isFinite(Number(usage.total_tokens)) ? Number(usage.total_tokens) : null,
-        costUsd: Number.isFinite(Number(usage.cost)) ? Number(usage.cost) : null,
+        promptTokens: typeof usage.prompt_tokens === 'number' && Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : null,
+        completionTokens: typeof usage.completion_tokens === 'number' && Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : null,
+        totalTokens: typeof usage.total_tokens === 'number' && Number.isFinite(usage.total_tokens) ? usage.total_tokens : null,
+        costUsd: typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null,
         providerRequestId: typeof result.id === 'string' ? result.id : response.headers.get('x-request-id'),
         latencyMs: Date.now() - startedAt,
       },
@@ -586,8 +586,8 @@ export class GenerationHandler {
 
     const result: any = await response.json();
     const usage = result.usage || {};
-    const promptTokens = Number.isFinite(Number(usage.input_tokens)) ? Number(usage.input_tokens) : null;
-    const completionTokens = Number.isFinite(Number(usage.output_tokens)) ? Number(usage.output_tokens) : null;
+    const promptTokens = typeof usage.input_tokens === 'number' && Number.isFinite(usage.input_tokens) ? usage.input_tokens : null;
+    const completionTokens = typeof usage.output_tokens === 'number' && Number.isFinite(usage.output_tokens) ? usage.output_tokens : null;
     return {
       text: result.content?.[0]?.text || '',
       usage: {
