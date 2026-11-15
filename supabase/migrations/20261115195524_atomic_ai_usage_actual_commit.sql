@@ -162,7 +162,7 @@ BEGIN
     'delta_units', v_delta
   );
 END;
-$function$
+$function$;
 
 REVOKE ALL PRIVILEGES ON FUNCTION public.commit_ai_usage_actual(uuid,uuid,text,text,text,jsonb,text,text,text,integer,integer,integer,numeric,text,text,integer,text) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.commit_ai_usage_actual(uuid,uuid,text,text,text,jsonb,text,text,text,integer,integer,integer,numeric,text,text,integer,text) TO service_role;
