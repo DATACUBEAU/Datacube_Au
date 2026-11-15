@@ -243,7 +243,7 @@ export class GenerationHandler {
       });
       providerAttemptStarted = true;
       const prompt = this.buildPracticeExamPrompt(documentContent, pastQuestionsContent);
-      const result = await this.generate(candidate, prompt);
+      const generated = await this.generate(candidate, prompt);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
@@ -313,7 +313,7 @@ export class GenerationHandler {
       });
       providerAttemptStarted = true;
       const prompt = this.buildPromptStartersPrompt(documentTitle, documentContent, userIdea);
-      const result = await this.generate(candidate, prompt);
+      const generated = await this.generate(candidate, prompt);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
