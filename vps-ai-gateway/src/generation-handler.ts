@@ -169,7 +169,7 @@ export class GenerationHandler {
       });
       providerAttemptStarted = true;
       const prompt = this.buildPredictionsPrompt(mainTextbookContent, pastQuestionsContent);
-      const result = await this.generate(candidate, prompt);
+      const generated = await this.generate(candidate, prompt);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
@@ -325,7 +325,7 @@ export class GenerationHandler {
       providerAttemptStarted = false;
 
       try {
-        const prompts = JSON.parse(result);
+        const prompts = JSON.parse(generated.text);
         if (Array.isArray(prompts)) {
           return reply.code(200).send({ prompts, sources });
         }
