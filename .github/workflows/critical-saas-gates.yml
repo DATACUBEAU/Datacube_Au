@@ -41,6 +41,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: VPS AI gateway dependency install and production build
+        working-directory: vps-ai-gateway
+        run: |
+          npm ci
+          npm run build
+
       - name: Lint
         run: pnpm lint
 
