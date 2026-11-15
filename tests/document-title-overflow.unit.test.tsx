@@ -48,12 +48,13 @@ async function main() {
     }
   });
 
-  await run('document rows still enforce overflow-safe filename containers', () => {
+  await run('documents page explains the local-first workspace and remaining filename rows stay overflow-safe', () => {
     const documentsPage = readProjectFile('src/app/dashboard/documents/page.tsx');
     const uploadCenter = readProjectFile('src/components/upload/upload-center.tsx');
     const chatPage = readProjectFile('src/app/dashboard/chat/page.tsx');
 
-    assert.equal(documentsPage.includes('flex min-w-0 items-center gap-2 overflow-hidden'), true);
+    assert.equal(documentsPage.includes('Your documents stay on your device'), true);
+    assert.equal(documentsPage.includes('The Flutter local document workspace is not yet available'), true);
     assert.equal(uploadCenter.includes('flex min-w-0 items-center gap-2 overflow-hidden'), true);
     assert.equal(chatPage.includes('Chatting with:'), true);
     assert.equal(chatPage.includes('DocumentSelectValue'), true);
