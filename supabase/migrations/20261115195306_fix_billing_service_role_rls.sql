@@ -11,3 +11,13 @@ BEGIN
   END LOOP;
 END;
 $$;
+
+-- The canonical public plan catalogue exposes only active plan rows; all other
+-- billing state remains server-only.
+GRANT SELECT ON TABLE public.billing_plans TO anon, authenticated;
+DROP POLICY IF EXISTS billing_plans_public_active_read ON public.billing_plans;
+CREATE POLICY billing_plans_public_active_read
+  ON public.billing_plans
+  FOR SELECT
+  TO anon, authenticated
+  USING (is_active = true);
