@@ -106,8 +106,7 @@ export async function initiateUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; uploadUrl: string; documentId: string; path: string; token?: string; bucket?: string; contentType?: string }> {
-  throw Object.assign(new Error('Documents are now stored and managed locally in the AU app.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
-  throw Object.assign(new Error('Documents are now stored and processed locally in the AU app.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
+  throw Object.assign(new Error('Cloud document upload has been retired. Documents are now stored and managed locally in the AU app.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (metadata.correlationId) headers['x-correlation-id'] = metadata.correlationId;
 
@@ -160,6 +159,7 @@ export async function completeUpload(
   },
   accessToken?: string
 ): Promise<{ ok: boolean; jobId: string }> {
+  throw Object.assign(new Error('Cloud document ingestion has been retired. The AU app processes documents locally on the device.'), { status: 410, code: 'DOCUMENTS_ARE_LOCAL' });
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (metadata.correlationId) headers['x-correlation-id'] = metadata.correlationId;
 
