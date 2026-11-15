@@ -1,14 +1,19 @@
--- Remove inherited PUBLIC execute as well as direct anon grants on admin-session RPCs.
-REVOKE ALL PRIVILEGES ON FUNCTION public.admin_count_auth_users(uuid) FROM PUBLIC, anon;
-REVOKE ALL PRIVILEGES ON FUNCTION public.admin_list_auth_users(uuid,text,integer,integer) FROM PUBLIC, anon;
-REVOKE ALL PRIVILEGES ON FUNCTION public.au_admin_db_stats(uuid) FROM PUBLIC, anon;
-REVOKE ALL PRIVILEGES ON FUNCTION public.set_feature_flag(text,boolean,text,text,text,jsonb) FROM PUBLIC, anon;
-
-GRANT EXECUTE ON FUNCTION public.admin_count_auth_users(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.admin_count_auth_users(uuid) TO service_role;
-GRANT EXECUTE ON FUNCTION public.admin_list_auth_users(uuid,text,integer,integer) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.admin_list_auth_users(uuid,text,integer,integer) TO service_role;
-GRANT EXECUTE ON FUNCTION public.au_admin_db_stats(uuid) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.au_admin_db_stats(uuid) TO service_role;
-GRANT EXECUTE ON FUNCTION public.set_feature_flag(text,boolean,text,text,text,jsonb) TO authenticated;
-GRANT EXECUTE ON FUNCTION public.set_feature_flag(text,boolean,text,text,text,jsonb) TO service_role;
+-- Remove inherited PUBLIC/anon execute while preserving the authenticated admin-session
+-- RPC contract. Each admin RPC validates its own active session token.
+DO $$
+DECLARE v_fn text;
+BEGIN
+  FOR v_fn IN SELECT unnest(ARRAY[
+    'public.admin_count_auth_users(uuid)',
+    'public.admin_list_auth_users(uuid,text,integer,integer)',
+    'public.au_admin_db_stats(uuid)',
+    'public.set_feature_flag(text,boolean,text,text,text,jsonb)'
+  ])
+  LOOP
+    IF to_regprocedure(v_fn) IS NOT NULL THEN
+      EXECUTE format('REVOKE ALL PRIVILEGES ON FUNCTION %s FROM PUBLIC, anon', v_fn);
+      EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO authenticated, service_role', v_fn);
+    END IF;
+  END LOOP;
+END;
+$$;
