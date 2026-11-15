@@ -204,6 +204,7 @@ export class ChatHandler {
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
+      usage: { ...generated.usage, correlationId: String(correlationId) },
       });
       providerAttemptStarted = true;
       
@@ -224,6 +225,7 @@ export class ChatHandler {
           context: usageContext,
           provider: routingCandidate.service,
           model: routingCandidate.model,
+        usage: { ...generated.usage, correlationId: String(correlationId) },
         });
         providerAttemptStarted = false;
 
@@ -243,6 +245,7 @@ export class ChatHandler {
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
+      usage: { ...generated.usage, correlationId: String(correlationId) },
       });
       providerAttemptStarted = false;
       return reply.code(200).send({
@@ -295,8 +298,9 @@ export class ChatHandler {
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
-      const answer = await this.generateWithRouting(routingCandidate, question, body, null);
+      const generated = await this.generateWithRouting(routingCandidate, question, body, null);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
@@ -305,7 +309,7 @@ export class ChatHandler {
         model: routingCandidate.model,
       });
 
-      return reply.code(200).send({ answer });
+      return reply.code(200).send({ answer: generated.text });
     } catch (err: any) {
       await this.settleFailedUsage({
         context: usageContext,
