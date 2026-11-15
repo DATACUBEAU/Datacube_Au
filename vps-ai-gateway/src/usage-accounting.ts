@@ -121,9 +121,9 @@ export async function commitUsageReservation(input: {
   usage?: ProviderUsage | null;
 }): Promise<void> {
   const usage = input.usage || {};
-  const promptTokens = Number.isFinite(Number(usage.promptTokens)) ? Math.max(0, Math.floor(Number(usage.promptTokens))) : null;
-  const completionTokens = Number.isFinite(Number(usage.completionTokens)) ? Math.max(0, Math.floor(Number(usage.completionTokens))) : null;
-  const suppliedTotal = Number.isFinite(Number(usage.totalTokens)) ? Math.max(0, Math.floor(Number(usage.totalTokens))) : null;
+  const promptTokens = typeof usage.promptTokens === 'number' && Number.isFinite(usage.promptTokens) ? Math.max(0, Math.floor(usage.promptTokens)) : null;
+  const completionTokens = typeof usage.completionTokens === 'number' && Number.isFinite(usage.completionTokens) ? Math.max(0, Math.floor(usage.completionTokens)) : null;
+  const suppliedTotal = typeof usage.totalTokens === 'number' && Number.isFinite(usage.totalTokens) ? Math.max(0, Math.floor(usage.totalTokens)) : null;
   const totalTokens = suppliedTotal ?? (
     promptTokens !== null || completionTokens !== null
       ? (promptTokens || 0) + (completionTokens || 0)
@@ -148,10 +148,10 @@ export async function commitUsageReservation(input: {
     p_prompt_tokens: promptTokens,
     p_completion_tokens: completionTokens,
     p_total_tokens: totalTokens,
-    p_cost_usd: Number.isFinite(Number(usage.costUsd)) ? Math.max(0, Number(usage.costUsd)) : null,
+    p_cost_usd: typeof usage.costUsd === 'number' && Number.isFinite(usage.costUsd) ? Math.max(0, usage.costUsd) : null,
     p_price_version: usage.priceVersion || null,
     p_provider_request_id: usage.providerRequestId || null,
-    p_latency_ms: Number.isFinite(Number(usage.latencyMs)) ? Math.max(0, Math.floor(Number(usage.latencyMs))) : null,
+    p_latency_ms: typeof usage.latencyMs === 'number' && Number.isFinite(usage.latencyMs) ? Math.max(0, Math.floor(usage.latencyMs)) : null,
     p_correlation_id: usage.correlationId || null,
   });
 
