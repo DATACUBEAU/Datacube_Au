@@ -118,7 +118,7 @@ BEGIN
   VALUES (
     v_row.user_id,
     v_row.feature_key,
-    'supabase-edge',
+    'vps-ai-gateway',
     v_event_key,
     COALESCE(NULLIF(TRIM(COALESCE(p_ticket_id, '')), ''), NULLIF(TRIM(COALESCE(p_provider_request_id, '')), '')),
     NULLIF(TRIM(COALESCE(p_correlation_id, '')), ''),
