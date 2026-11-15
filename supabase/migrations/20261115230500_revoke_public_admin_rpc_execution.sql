@@ -4,7 +4,11 @@ REVOKE ALL PRIVILEGES ON FUNCTION public.admin_list_auth_users(uuid,text,integer
 REVOKE ALL PRIVILEGES ON FUNCTION public.au_admin_db_stats(uuid) FROM PUBLIC, anon;
 REVOKE ALL PRIVILEGES ON FUNCTION public.set_feature_flag(text,boolean,text,text,text,jsonb) FROM PUBLIC, anon;
 
-GRANT EXECUTE ON FUNCTION public.admin_count_auth_users(uuid) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.admin_list_auth_users(uuid,text,integer,integer) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.au_admin_db_stats(uuid) TO authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.set_feature_flag(text,boolean,text,text,text,jsonb) TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.admin_count_auth_users(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_count_auth_users(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.admin_list_auth_users(uuid,text,integer,integer) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.admin_list_auth_users(uuid,text,integer,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.au_admin_db_stats(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.au_admin_db_stats(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.set_feature_flag(text,boolean,text,text,text,jsonb) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_feature_flag(text,boolean,text,text,text,jsonb) TO service_role;
