@@ -4,6 +4,7 @@ import {
   GatewayProviderError,
   clampPositiveInt,
   errorLogDetails,
+  isAmbiguousProviderFailure,
   getAnthropicKey,
   getOpenRouterKey,
   logger,
@@ -420,7 +421,9 @@ export class GenerationHandler {
       supabase: this.supabase,
       context: input.context,
       failureCode: this.failureCodeFor(input.error, input.providerAttemptStarted, input.providerSucceeded),
-      status: input.providerSucceeded ? 'disputed' : 'released',
+      status: input.providerSucceeded || (
+        input.providerAttemptStarted && isAmbiguousProviderFailure(input.error)
+      ) ? 'disputed' : 'released',
     });
   }
 
