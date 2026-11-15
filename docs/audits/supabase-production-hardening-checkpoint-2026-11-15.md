@@ -104,3 +104,10 @@ No document/chat data was moved, no historical billing rows were deleted, no bil
 
 
 - Additional plan-code drift: the active `billing_plans` monthly row stores `PLN_bo7k3ulauwdhzjl`, while the application fallback catalog expects `PLN_bo7k3ulauwdhzjli` and explicitly lets configured `PAYSTACK_PLAN_MONTHLY_CODE` override stale DB values. The legacy `au_billing_plans` rows carry yet another pair of codes (`PLN_axsdw7s4zniurzr`, `PLN_bc7vhwfff2mqc57`). Do not rewrite any live Paystack plan code until the configured environment value and provider-side plan are verified; current checkout code protects itself by preferring configured/fallback canonical values over stale DB codes.
+
+
+### Clean migration replay and CI compatibility fixes
+- Clean local migration replay exposed two source-history defects: the older `get_effective_limits` definition referenced a retired `au_feature_outputs` relation that does not exist in production, and the restored atomic settlement migration lacked its `ai_usage_delta_units` helper.
+- Restored the helper in the historical atomic-commit migration and added a later source-aligned `get_effective_limits` definition matching the live resolver, removing the retired relation dependency without creating a fake output table.
+- Pinned the Playwright-heavy critical CI workflow to Ubuntu 24.04 because the latest `ubuntu-latest` image moved to Ubuntu 26.04, which the repository's Playwright Chromium version does not support.
+- Migration replay and the full critical workflow are being rerun after these corrections.
