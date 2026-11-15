@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   BILLING_PLAN_CODES,
   DEFAULT_BILLING_PLAN_CATALOG,
@@ -375,6 +376,23 @@ async function main() {
       }),
       null,
     );
+  });
+
+
+  await run('webhook claims distinguish received, processing, failed and processed states and allow safe retries', () => {
+    const billing = readFileSync('src/lib/server/billing.ts', 'utf8');
+    const migration = readFileSync('supabase/migrations/20261115221457_harden_billing_webhook_processing_leases.sql', 'utf8');
+
+    assert.match(billing, /rpc\('claim_billing_webhook_event'/);
+    assert.match(billing, /rpc\('mark_billing_webhook_event_processed'/);
+    assert.match(billing, /rpc\('mark_billing_webhook_event_failed'/);
+    assert.match(billing, /markWebhookEventFailed\([\s\S]*throw error/);
+    assert.doesNotMatch(billing, /from\('billing_webhook_events'\)\.insert/);
+    assert.match(migration, /status = 'processed'/);
+    assert.match(migration, /processing_started_at > now\(\) - make_interval/);
+    assert.match(migration, /processing_token = p_claim_token/);
+    assert.match(migration, /status = 'failed'/);
+    assert.match(migration, /attempt_count = GREATEST/);
   });
 
   if (failed > 0) {
