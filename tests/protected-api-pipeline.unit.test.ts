@@ -166,7 +166,12 @@ async function main() {
     const apiDocuments = readRepoFile('src/lib/api/documents.ts');
     const auDocuments = readRepoFile('src/lib/au/documents.ts');
     assert.match(auDocuments, /export const SAFE_DOC_COLUMNS =/);
-    assert.match(apiDocuments, /\.select\(SAFE_DOC_COLUMNS\)/);
+    assert.match(auDocuments, /\.select\(SAFE_DOC_COLUMNS\)/);
+    assert.equal(auDocuments.includes(".select('*')"), false);
+    assert.match(apiDocuments, /DOCUMENTS_ARE_LOCAL/);
+    assert.match(apiDocuments, /status: 410/);
+    assert.match(apiDocuments, /throw localOnlyError\('Cloud document listing'\)/);
+    assert.doesNotMatch(apiDocuments, /\.from\(['"]au_documents['"]\)/);
     assert.equal(apiDocuments.includes(".select('*')"), false);
   });
 
