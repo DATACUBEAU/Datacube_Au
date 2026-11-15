@@ -39,7 +39,7 @@ AS $function$
     '{}'::jsonb
   )
   FROM deltas;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.commit_ai_usage_actual(p_reservation_id uuid, p_user_id uuid, p_feature_key text, p_route text, p_idempotency_key text, p_actual_units jsonb DEFAULT NULL::jsonb, p_ticket_id text DEFAULT NULL::text, p_provider text DEFAULT NULL::text, p_model text DEFAULT NULL::text, p_prompt_tokens integer DEFAULT NULL::integer, p_completion_tokens integer DEFAULT NULL::integer, p_total_tokens integer DEFAULT NULL::integer, p_cost_usd numeric DEFAULT NULL::numeric, p_price_version text DEFAULT NULL::text, p_provider_request_id text DEFAULT NULL::text, p_latency_ms integer DEFAULT NULL::integer, p_correlation_id text DEFAULT NULL::text)
  RETURNS jsonb
