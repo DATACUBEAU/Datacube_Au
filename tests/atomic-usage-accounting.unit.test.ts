@@ -273,6 +273,21 @@ async function main() {
     assert.match(store, /createAiIdempotencyKey\('knowledge'\)/);
   });
 
+
+  await run('gateway commits measured provider usage through the atomic actual-settlement RPC without losing reserved feature units', () => {
+    const gatewayUsage = readFileSync('vps-ai-gateway/src/usage-accounting.ts', 'utf8');
+    const settlement = readFileSync('supabase/migrations/20261115220430_merge_actual_usage_with_reserved_units.sql', 'utf8');
+
+    assert.match(gatewayUsage, /rpc\('commit_ai_usage_actual'/);
+    assert.match(gatewayUsage, /p_actual_units:\s*actualUnits/);
+    assert.match(gatewayUsage, /max_tokens_total:\s*totalTokens/);
+    assert.match(gatewayUsage, /p_prompt_tokens:\s*promptTokens/);
+    assert.match(gatewayUsage, /p_cost_usd:/);
+    assert.match(settlement, /v_actual_units := COALESCE\(v_row\.reserved_units, '\{\}'::jsonb\) \|\| COALESCE\(p_actual_units, '\{\}'::jsonb\)/);
+    assert.match(settlement, /ai_usage_delta_units\(v_actual_units, v_row\.reserved_units\)/);
+    assert.match(settlement, /ON CONFLICT \(user_id, event_key\) DO NOTHING/);
+  });
+
   if (failed > 0) process.exit(1);
 }
 
