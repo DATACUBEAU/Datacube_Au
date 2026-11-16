@@ -99,6 +99,26 @@ export class GatewayProviderError extends Error {
   }
 }
 
+/**
+ * A provider request may be accepted upstream even when the gateway does not
+ * receive a complete response. Preserve the reservation for ambiguous outcomes.
+ */
+export function isAmbiguousProviderFailure(error: unknown): boolean {
+  if (error instanceof GatewayProviderError) {
+    return error.statusCode === 408 || error.statusCode >= 500;
+  }
+
+  if (!(error instanceof Error)) return false;
+
+  // These are local preflight failures; no provider request was accepted.
+  if (/not configured|unsupported service/i.test(error.message)) return false;
+
+  // After the provider attempt has started, treat otherwise unknown failures as
+  // ambiguous. This covers timeouts, socket resets, stream truncation and bad
+  // provider responses without accidentally releasing an accepted request.
+  return true;
+}
+
 export function publicErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof GatewayProviderError) {
     return 'AI provider request failed. Please try again.';

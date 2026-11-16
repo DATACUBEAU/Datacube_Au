@@ -4,6 +4,7 @@ import {
   GatewayProviderError,
   clampPositiveInt,
   errorLogDetails,
+  isAmbiguousProviderFailure,
   getAnthropicKey,
   getOpenRouterKey,
   logger,
@@ -19,6 +20,7 @@ import {
   UsageAccountingError,
   usageReservationFromHeaders,
   type UsageReservationContext,
+  type ProviderUsage,
 } from './usage-accounting.js';
 
 const MAX_CONTEXT_CHARS = parsePositiveInt(process.env.AI_CONTEXT_CHAR_LIMIT, 12000);
@@ -26,6 +28,8 @@ const MAX_CHAT_MESSAGES = parsePositiveInt(process.env.AI_CHAT_HISTORY_MESSAGES,
 const MAX_MESSAGE_CHARS = parsePositiveInt(process.env.AI_CHAT_MESSAGE_CHAR_LIMIT, 4000);
 const AI_PROVIDER_TIMEOUT_MS = parsePositiveInt(process.env.AI_PROVIDER_TIMEOUT_MS, 60000);
 const AI_MAX_OUTPUT_TOKENS = clampPositiveInt(process.env.AI_MAX_OUTPUT_TOKENS, 2048, 256, 4096);
+
+type ProviderCompletion = { text: string; usage: ProviderUsage };
 
 type GatewayCitation = {
   document_id: string;
@@ -110,7 +114,7 @@ export class ChatHandler {
           'X-Request-Id': correlationId,
         });
 
-        const answer = await this.generateWithRouting(routingCandidate, question, body, ragContext, (text) => {
+        const generated = await this.generateWithRouting(routingCandidate, question, body, ragContext, (text) => {
           reply.raw.write(`data: ${JSON.stringify({ type: 'delta', text })}\n\n`);
         });
         providerSucceeded = true;
@@ -119,12 +123,13 @@ export class ChatHandler {
           context: usageContext,
           provider: routingCandidate.service,
           model: routingCandidate.model,
+          usage: { ...generated.usage, correlationId: String(correlationId) },
         });
         providerAttemptStarted = false;
 
         reply.raw.write(`data: ${JSON.stringify({ 
           type: 'done', 
-          answer, 
+          answer: generated.text, 
           citations,
           requestId: correlationId 
         })}\n\n`);
@@ -132,17 +137,18 @@ export class ChatHandler {
         return reply;
       }
 
-      const answer = await this.generateWithRouting(routingCandidate, question, body, ragContext);
+      const generated = await this.generateWithRouting(routingCandidate, question, body, ragContext);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
+        usage: { ...generated.usage, correlationId: String(correlationId) },
       });
       providerAttemptStarted = false;
       return reply.code(200).send({
-        answer,
+        answer: generated.text,
         thought: null,
         citations,
         requestId: correlationId,
@@ -210,7 +216,7 @@ export class ChatHandler {
           'X-Request-Id': correlationId,
         });
 
-        const answer = await this.generateWithRouting(routingCandidate, question, body, null, (text: string) => {
+        const generated = await this.generateWithRouting(routingCandidate, question, body, null, (text: string) => {
           reply.raw.write(`data: ${JSON.stringify({ type: 'delta', text })}\n\n`);
         });
         providerSucceeded = true;
@@ -219,29 +225,31 @@ export class ChatHandler {
           context: usageContext,
           provider: routingCandidate.service,
           model: routingCandidate.model,
+        usage: { ...generated.usage, correlationId: String(correlationId) },
         });
         providerAttemptStarted = false;
 
         reply.raw.write(`data: ${JSON.stringify({ 
           type: 'done', 
-          answer, 
+          answer: generated.text, 
           requestId: correlationId 
         })}\n\n`);
         reply.raw.write('data: [DONE]\n\n');
         return reply;
       }
 
-      const answer = await this.generateWithRouting(routingCandidate, question, body, null);
+      const generated = await this.generateWithRouting(routingCandidate, question, body, null);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
+      usage: { ...generated.usage, correlationId: String(correlationId) },
       });
       providerAttemptStarted = false;
       return reply.code(200).send({
-        answer,
+        answer: generated.text,
         requestId: correlationId,
         correlation_id: correlationId,
       });
@@ -291,16 +299,17 @@ export class ChatHandler {
         provider: routingCandidate.service,
         model: routingCandidate.model,
       });
-      const answer = await this.generateWithRouting(routingCandidate, question, body, null);
+      const generated = await this.generateWithRouting(routingCandidate, question, body, null);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
         context: usageContext,
         provider: routingCandidate.service,
         model: routingCandidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
 
-      return reply.code(200).send({ answer });
+      return reply.code(200).send({ answer: generated.text });
     } catch (err: any) {
       await this.settleFailedUsage({
         context: usageContext,
@@ -366,7 +375,9 @@ export class ChatHandler {
       supabase: this.supabase,
       context: input.context,
       failureCode: this.failureCodeFor(input.error, input.providerAttemptStarted, input.providerSucceeded),
-      status: input.providerSucceeded ? 'disputed' : 'released',
+      status: input.providerSucceeded || (
+        input.providerAttemptStarted && isAmbiguousProviderFailure(input.error)
+      ) ? 'disputed' : 'released',
     });
   }
 
@@ -409,7 +420,7 @@ export class ChatHandler {
     body: any,
     ragContext: string | null = null,
     onChunk?: (text: string) => void
-  ): Promise<string> {
+  ): Promise<ProviderCompletion> {
     const messages = this.buildMessages(question, body, ragContext);
     
     if (candidate.service === 'openrouter') {
@@ -455,7 +466,8 @@ export class ChatHandler {
     candidate: RoutingCandidate,
     messages: { role: string; content: string }[],
     onChunk?: (text: string) => void
-  ): Promise<string> {
+  ): Promise<ProviderCompletion> {
+    const startedAt = Date.now();
     const apiKey = getOpenRouterKey();
     if (!apiKey) {
       throw new Error('OPENROUTER_API_KEY not configured');
@@ -474,6 +486,7 @@ export class ChatHandler {
         model: candidate.model,
         messages,
         stream: !!onChunk,
+        ...(onChunk ? { stream_options: { include_usage: true } } : {}),
         max_tokens: AI_MAX_OUTPUT_TOKENS,
       }),
     });
@@ -489,6 +502,11 @@ export class ChatHandler {
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
+      let promptTokens: number | null = null;
+      let completionTokens: number | null = null;
+      let totalTokens: number | null = null;
+      let costUsd: number | null = null;
+      let providerRequestId = response.headers.get('x-request-id');
 
       while (true) {
         const { done, value } = await reader!.read();
@@ -506,6 +524,13 @@ export class ChatHandler {
           
           try {
             const parsed = JSON.parse(data);
+            if (typeof parsed.id === 'string') providerRequestId = parsed.id;
+            if (parsed.usage) {
+              promptTokens = typeof parsed.usage.prompt_tokens === 'number' && Number.isFinite(parsed.usage.prompt_tokens) ? parsed.usage.prompt_tokens : promptTokens;
+              completionTokens = typeof parsed.usage.completion_tokens === 'number' && Number.isFinite(parsed.usage.completion_tokens) ? parsed.usage.completion_tokens : completionTokens;
+              totalTokens = typeof parsed.usage.total_tokens === 'number' && Number.isFinite(parsed.usage.total_tokens) ? parsed.usage.total_tokens : totalTokens;
+              costUsd = typeof parsed.usage.cost === 'number' && Number.isFinite(parsed.usage.cost) ? parsed.usage.cost : costUsd;
+            }
             const content = parsed.choices?.[0]?.delta?.content || '';
             if (content) {
               fullText += content;
@@ -514,18 +539,30 @@ export class ChatHandler {
           } catch {}
         }
       }
-      return fullText;
+      return { text: fullText, usage: { promptTokens, completionTokens, totalTokens, costUsd, providerRequestId, latencyMs: Date.now() - startedAt } };
     }
 
     const result: any = await response.json();
-    return result.choices?.[0]?.message?.content || '';
+    const usage = result.usage || {};
+    return {
+      text: result.choices?.[0]?.message?.content || '',
+      usage: {
+        promptTokens: typeof usage.prompt_tokens === 'number' && Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : null,
+        completionTokens: typeof usage.completion_tokens === 'number' && Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : null,
+        totalTokens: typeof usage.total_tokens === 'number' && Number.isFinite(usage.total_tokens) ? usage.total_tokens : null,
+        costUsd: typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null,
+        providerRequestId: typeof result.id === 'string' ? result.id : response.headers.get('x-request-id'),
+        latencyMs: Date.now() - startedAt,
+      },
+    };
   }
 
   private async callAnthropic(
     candidate: RoutingCandidate,
     messages: { role: string; content: string }[],
     onChunk?: (text: string) => void
-  ): Promise<string> {
+  ): Promise<ProviderCompletion> {
+    const startedAt = Date.now();
     const apiKey = getAnthropicKey();
     if (!apiKey) {
       throw new Error('ANTHROPIC_API_KEY not configured');
@@ -562,6 +599,9 @@ export class ChatHandler {
       const decoder = new TextDecoder();
       let buffer = '';
       let fullText = '';
+      let promptTokens: number | null = null;
+      let completionTokens: number | null = null;
+      let providerRequestId = response.headers.get('request-id');
 
       while (true) {
         const { done, value } = await reader!.read();
@@ -578,6 +618,13 @@ export class ChatHandler {
           
           try {
             const parsed = JSON.parse(data);
+            if (parsed.type === 'message_start') {
+              promptTokens = Number.isFinite(Number(parsed.message?.usage?.input_tokens)) ? Number(parsed.message.usage.input_tokens) : promptTokens;
+              if (typeof parsed.message?.id === 'string') providerRequestId = parsed.message.id;
+            }
+            if (parsed.type === 'message_delta') {
+              completionTokens = Number.isFinite(Number(parsed.usage?.output_tokens)) ? Number(parsed.usage.output_tokens) : completionTokens;
+            }
             if (parsed.type === 'content_block_delta') {
               const text = parsed.delta?.text || '';
               fullText += text;
@@ -586,11 +633,24 @@ export class ChatHandler {
           } catch {}
         }
       }
-      return fullText;
+      const totalTokens = promptTokens !== null || completionTokens !== null ? (promptTokens || 0) + (completionTokens || 0) : null;
+      return { text: fullText, usage: { promptTokens, completionTokens, totalTokens, providerRequestId, latencyMs: Date.now() - startedAt } };
     }
 
     const result: any = await response.json();
-    return result.content?.[0]?.text || '';
+    const usage = result.usage || {};
+    const promptTokens = typeof usage.input_tokens === 'number' && Number.isFinite(usage.input_tokens) ? usage.input_tokens : null;
+    const completionTokens = typeof usage.output_tokens === 'number' && Number.isFinite(usage.output_tokens) ? usage.output_tokens : null;
+    return {
+      text: result.content?.[0]?.text || '',
+      usage: {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens !== null || completionTokens !== null ? (promptTokens || 0) + (completionTokens || 0) : null,
+        providerRequestId: typeof result.id === 'string' ? result.id : response.headers.get('request-id'),
+        latencyMs: Date.now() - startedAt,
+      },
+    };
   }
 
   private formatContext(chunks: RetrievedChunk[]): string {

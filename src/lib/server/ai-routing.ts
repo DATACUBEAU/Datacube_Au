@@ -91,9 +91,7 @@ const FREE_MODEL_SUFFIX = `${String.fromCharCode(58)}free`;
 const PROVIDER_KEY_TABLES = ['au_api_keys', 'ai_provider_keys'] as const;
 type ProviderKeyTableName = (typeof PROVIDER_KEY_TABLES)[number];
 let providerKeyTableCache: ProviderKeyTableName | null = null;
-const MODEL_REGISTRY_TABLES = ['au_pro_models_registry', 'au_models_registry'] as const;
-type ModelRegistryTableName = (typeof MODEL_REGISTRY_TABLES)[number];
-let modelRegistryTableCache: ModelRegistryTableName | null = null;
+const MODEL_REGISTRY_TABLE = 'au_models_registry' as const;
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
   const parsed = Number(raw ?? '');
@@ -272,11 +270,6 @@ function providerKeyTablesInOrder(): ProviderKeyTableName[] {
   return [providerKeyTableCache, ...PROVIDER_KEY_TABLES.filter((table) => table !== providerKeyTableCache)];
 }
 
-function modelRegistryTablesInOrder(): ModelRegistryTableName[] {
-  if (!modelRegistryTableCache) return [...MODEL_REGISTRY_TABLES];
-  return [modelRegistryTableCache, ...MODEL_REGISTRY_TABLES.filter((table) => table !== modelRegistryTableCache)];
-}
-
 function modelLookup(models: string[]): Map<string, string> {
   const lookup = new Map<string, string>();
   for (const model of models) {
@@ -309,126 +302,37 @@ function resolveEffectivePaidModelsForKey(
 }
 
 async function fetchActivePaidRegistryModels(supabase: SupabaseClient): Promise<string[]> {
-  const union = new Map<string, string>();
-  let lastError: any = null;
-  let sawReadableTable = false;
+  const { data, error } = await supabase
+    .from(MODEL_REGISTRY_TABLE)
+    .select('model_id,is_active,is_free,provider')
+    .eq('is_active', true)
+    .eq('is_free', false)
+    .eq('provider', DEFAULT_PROVIDER_TYPE)
+    .order('model_id', { ascending: true });
 
-  for (const table of modelRegistryTablesInOrder()) {
-    if (table === 'au_pro_models_registry') {
-      const fullQuery = await supabase
-        .from(table)
-        .select('model_id,is_active,provider')
-        .eq('is_active', true)
-        .eq('provider', DEFAULT_PROVIDER_TYPE)
-        .order('model_id', { ascending: true });
-
-      if (!fullQuery.error) {
-        sawReadableTable = true;
-        modelRegistryTableCache = table;
-        for (const row of fullQuery.data || []) {
-          const model = normalizeModelId((row as any)?.model_id);
-          if (!model || isFreeModelId(model)) continue;
-          const normalized = model.toLowerCase();
-          if (!union.has(normalized)) union.set(normalized, model);
-        }
-        continue;
-      }
-
-      if (!isMissingColumnError(fullQuery.error) && !isMissingProviderKeyTableError(fullQuery.error, table)) {
-        lastError = fullQuery.error;
-        continue;
-      }
-
-      const legacyQuery = await supabase
-        .from(table)
-        .select('model_id,is_active')
-        .eq('is_active', true)
-        .order('model_id', { ascending: true });
-
-      if (!legacyQuery.error) {
-        sawReadableTable = true;
-        modelRegistryTableCache = table;
-        for (const row of legacyQuery.data || []) {
-          const model = normalizeModelId((row as any)?.model_id);
-          if (!model || isFreeModelId(model)) continue;
-          const normalized = model.toLowerCase();
-          if (!union.has(normalized)) union.set(normalized, model);
-        }
-        continue;
-      }
-
-      if (!isMissingProviderKeyTableError(legacyQuery.error, table)) {
-        lastError = legacyQuery.error;
-      }
-      continue;
-    }
-
-    const fullQuery = await supabase
-      .from(table)
-      .select('model_id,is_active,is_free,provider')
-      .eq('is_active', true)
-      .eq('is_free', false)
-      .eq('provider', DEFAULT_PROVIDER_TYPE)
-      .order('model_id', { ascending: true });
-
-    if (!fullQuery.error) {
-      sawReadableTable = true;
-      modelRegistryTableCache = table;
-      for (const row of fullQuery.data || []) {
-        const model = normalizeModelId((row as any)?.model_id);
-        if (!model || isFreeModelId(model)) continue;
-        const normalized = model.toLowerCase();
-        if (!union.has(normalized)) union.set(normalized, model);
-      }
-      continue;
-    }
-
-    if (!isMissingColumnError(fullQuery.error) && !isMissingProviderKeyTableError(fullQuery.error, table)) {
-      lastError = fullQuery.error;
-      continue;
-    }
-
-    const legacyQuery = await supabase
-      .from(table)
-      .select('model_id,is_active')
-      .eq('is_active', true)
-      .order('model_id', { ascending: true });
-
-    if (!legacyQuery.error) {
-      sawReadableTable = true;
-      modelRegistryTableCache = table;
-      for (const row of legacyQuery.data || []) {
-        const model = normalizeModelId((row as any)?.model_id);
-        if (!model || isFreeModelId(model)) continue;
-        const normalized = model.toLowerCase();
-        if (!union.has(normalized)) union.set(normalized, model);
-      }
-      continue;
-    }
-
-    if (!isMissingProviderKeyTableError(legacyQuery.error, table)) {
-      lastError = legacyQuery.error;
-    }
-  }
-
-  const models = sortModelsByPreference(Array.from(union.values()));
-  if (models.length > 0) return models;
-
-  if (lastError) {
-    throw new ModelRoutingError(503, 'model_registry_fetch_failed', String(lastError.message || lastError), {
-      table: modelRegistryTableCache,
+  if (error) {
+    throw new ModelRoutingError(503, 'model_registry_fetch_failed', String(error.message || error), {
+      table: MODEL_REGISTRY_TABLE,
     });
   }
 
-  if (!sawReadableTable) {
-    throw new ModelRoutingError(503, 'model_registry_fetch_failed', 'No model registry table available.', {
-      tablesTried: modelRegistryTablesInOrder(),
+  const models = (data || [])
+    .map((row: any) => normalizeModelId(row?.model_id))
+    .filter((model: string) => model.length > 0 && !isFreeModelId(model));
+
+  const unique = new Map<string, string>();
+  for (const model of models) {
+    const normalized = model.toLowerCase();
+    if (!unique.has(normalized)) unique.set(normalized, model);
+  }
+
+  if (unique.size === 0) {
+    throw new ModelRoutingError(503, 'no_paid_models_registered', 'No paid models are active in the canonical registry.', {
+      table: MODEL_REGISTRY_TABLE,
     });
   }
 
-  throw new ModelRoutingError(503, 'no_paid_models_registered', 'No paid models are active in registry.', {
-    tablesTried: modelRegistryTablesInOrder(),
-  });
+  return sortModelsByPreference(Array.from(unique.values()));
 }
 
 async function resolveProviderKeyTableForUpdates(supabase: SupabaseClient): Promise<ProviderKeyTableName> {

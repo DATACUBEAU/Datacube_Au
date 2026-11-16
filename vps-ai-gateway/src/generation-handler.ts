@@ -4,6 +4,7 @@ import {
   GatewayProviderError,
   clampPositiveInt,
   errorLogDetails,
+  isAmbiguousProviderFailure,
   getAnthropicKey,
   getOpenRouterKey,
   logger,
@@ -20,6 +21,7 @@ import {
   UsageAccountingError,
   usageReservationFromHeaders,
   type UsageReservationContext,
+  type ProviderUsage,
 } from './usage-accounting.js';
 
 const MAX_GENERATION_CONTEXT_CHARS = parsePositiveInt(process.env.AI_CONTEXT_CHAR_LIMIT, 12000);
@@ -27,6 +29,8 @@ const MAX_PAST_QUESTION_CONTEXT_CHARS = parsePositiveInt(process.env.AI_PAST_QUE
 const MAX_PAST_QUESTION_IDS = parsePositiveInt(process.env.AI_PAST_QUESTION_LIMIT, 10);
 const AI_PROVIDER_TIMEOUT_MS = parsePositiveInt(process.env.AI_PROVIDER_TIMEOUT_MS, 60000);
 const AI_MAX_OUTPUT_TOKENS = clampPositiveInt(process.env.AI_MAX_OUTPUT_TOKENS, 2048, 256, 4096);
+
+type ProviderCompletion = { text: string; usage: ProviderUsage };
 
 type GenerationSource = {
   document_id: string;
@@ -93,18 +97,19 @@ export class GenerationHandler {
       });
       providerAttemptStarted = true;
       const prompt = this.buildKnowledgePrompt(documentContent, pastQuestionsContent);
-      const result = await this.generate(candidate, prompt);
+      const generated = await this.generate(candidate, prompt);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
       return reply.code(200).send({
-        output: result,
+        output: generated.text,
         status: 'ready',
         model: candidate.model,
         sources,
@@ -165,18 +170,19 @@ export class GenerationHandler {
       });
       providerAttemptStarted = true;
       const prompt = this.buildPredictionsPrompt(mainTextbookContent, pastQuestionsContent);
-      const result = await this.generate(candidate, prompt);
+      const generated = await this.generate(candidate, prompt);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
       return reply.code(200).send({
-        predictions: result,
+        predictions: generated.text,
         status: 'ready',
         model: candidate.model,
         sources,
@@ -238,18 +244,19 @@ export class GenerationHandler {
       });
       providerAttemptStarted = true;
       const prompt = this.buildPracticeExamPrompt(documentContent, pastQuestionsContent);
-      const result = await this.generate(candidate, prompt);
+      const generated = await this.generate(candidate, prompt);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
       return reply.code(200).send({
-        exam: result,
+        exam: generated.text,
         status: 'ready',
         model: candidate.model,
         sources,
@@ -307,24 +314,25 @@ export class GenerationHandler {
       });
       providerAttemptStarted = true;
       const prompt = this.buildPromptStartersPrompt(documentTitle, documentContent, userIdea);
-      const result = await this.generate(candidate, prompt);
+      const generated = await this.generate(candidate, prompt);
       providerSucceeded = true;
       await commitUsageReservation({
         supabase: this.supabase,
         context: usageContext,
         provider: candidate.service,
         model: candidate.model,
+        usage: { ...generated.usage, correlationId: String(headers['x-correlation-id'] || '') },
       });
       providerAttemptStarted = false;
 
       try {
-        const prompts = JSON.parse(result);
+        const prompts = JSON.parse(generated.text);
         if (Array.isArray(prompts)) {
           return reply.code(200).send({ prompts, sources });
         }
       } catch {}
 
-      const lines = result.split('\n').filter(l => l.trim().length > 0).slice(0, 4);
+      const lines = generated.text.split('\n').filter(l => l.trim().length > 0).slice(0, 4);
       return reply.code(200).send({ prompts: lines, sources });
     } catch (err: any) {
       await this.settleFailedUsage({ context: usageContext, error: err, providerAttemptStarted, providerSucceeded });
@@ -413,7 +421,9 @@ export class GenerationHandler {
       supabase: this.supabase,
       context: input.context,
       failureCode: this.failureCodeFor(input.error, input.providerAttemptStarted, input.providerSucceeded),
-      status: input.providerSucceeded ? 'disputed' : 'released',
+      status: input.providerSucceeded || (
+        input.providerAttemptStarted && isAmbiguousProviderFailure(input.error)
+      ) ? 'disputed' : 'released',
     });
   }
 
@@ -495,7 +505,7 @@ export class GenerationHandler {
     return `Based on the document "${title}", generate 4 smart and relevant questions the user might want to ask. Return ONLY a JSON array of strings. Document content preview: ${String(content || '').slice(0, 1000)}`;
   }
 
-  private async generate(candidate: any, prompt: string): Promise<string> {
+  private async generate(candidate: any, prompt: string): Promise<ProviderCompletion> {
     const messages = [{ role: 'user', content: prompt }];
     
     if (candidate.service === 'openrouter') {
@@ -507,7 +517,8 @@ export class GenerationHandler {
     throw new Error(`Unsupported service: ${candidate.service}`);
   }
 
-  private async callOpenRouter(candidate: any, messages: any[]): Promise<string> {
+  private async callOpenRouter(candidate: any, messages: any[]): Promise<ProviderCompletion> {
+    const startedAt = Date.now();
     const apiKey = getOpenRouterKey();
     if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured');
 
@@ -533,10 +544,22 @@ export class GenerationHandler {
     }
 
     const result: any = await response.json();
-    return result.choices?.[0]?.message?.content || '';
+    const usage = result.usage || {};
+    return {
+      text: result.choices?.[0]?.message?.content || '',
+      usage: {
+        promptTokens: typeof usage.prompt_tokens === 'number' && Number.isFinite(usage.prompt_tokens) ? usage.prompt_tokens : null,
+        completionTokens: typeof usage.completion_tokens === 'number' && Number.isFinite(usage.completion_tokens) ? usage.completion_tokens : null,
+        totalTokens: typeof usage.total_tokens === 'number' && Number.isFinite(usage.total_tokens) ? usage.total_tokens : null,
+        costUsd: typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null,
+        providerRequestId: typeof result.id === 'string' ? result.id : response.headers.get('x-request-id'),
+        latencyMs: Date.now() - startedAt,
+      },
+    };
   }
 
-  private async callAnthropic(candidate: any, messages: any[]): Promise<string> {
+  private async callAnthropic(candidate: any, messages: any[]): Promise<ProviderCompletion> {
+    const startedAt = Date.now();
     const apiKey = getAnthropicKey();
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured');
 
@@ -565,7 +588,19 @@ export class GenerationHandler {
     }
 
     const result: any = await response.json();
-    return result.content?.[0]?.text || '';
+    const usage = result.usage || {};
+    const promptTokens = typeof usage.input_tokens === 'number' && Number.isFinite(usage.input_tokens) ? usage.input_tokens : null;
+    const completionTokens = typeof usage.output_tokens === 'number' && Number.isFinite(usage.output_tokens) ? usage.output_tokens : null;
+    return {
+      text: result.content?.[0]?.text || '',
+      usage: {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens !== null || completionTokens !== null ? (promptTokens || 0) + (completionTokens || 0) : null,
+        providerRequestId: typeof result.id === 'string' ? result.id : response.headers.get('request-id'),
+        latencyMs: Date.now() - startedAt,
+      },
+    };
   }
 
   private formatContext(chunks: RetrievedChunk[]): string {

@@ -1862,30 +1862,82 @@ export async function resumeUserSubscription(
   };
 }
 
+function safeWebhookErrorCode(error: unknown): string {
+  const value = error && typeof error === 'object'
+    ? String((error as any).code || (error as any).name || 'webhook_processing_failed')
+    : 'webhook_processing_failed';
+  return /^[A-Za-z0-9_.:-]{1,80}$/.test(value) ? value : 'webhook_processing_failed';
+}
+
 async function insertWebhookEvent(
   supabase: SupabaseClient,
   payload: any
-): Promise<{ isDuplicate: boolean; key: string }> {
+): Promise<{ isDuplicate: boolean; key: string; claimToken: string | null }> {
   const key = webhookIdempotencyKey(payload);
   const event = String(payload?.event || 'unknown');
   const ref = String(payload?.data?.reference || payload?.data?.tx_ref || '');
   const id = String(payload?.id || payload?.data?.id || '');
 
-  const { error } = await supabase.from('billing_webhook_events').insert({
-    event_id: id || null,
-    event_type: event,
-    reference: ref || null,
-    idempotency_key: key,
-    payload,
-    status: 'received',
-    processed_at: new Date().toISOString(),
+  const { data, error } = await supabase.rpc('claim_billing_webhook_event', {
+    p_event_id: id || null,
+    p_event_type: event,
+    p_reference: ref || null,
+    p_idempotency_key: key,
+    p_payload: payload,
+    p_lease_seconds: 180,
   });
+  if (error) throw error;
 
-  if (!error) return { isDuplicate: false, key };
-  if (String((error as any)?.code || '') === '23505') {
-    return { isDuplicate: true, key };
+  const result = (Array.isArray(data) ? data[0] : data) as any;
+  if (!result || result.ok !== true) {
+    throw new Error('webhook_claim_failed');
   }
-  throw error;
+
+  const shouldProcess = result.should_process === true;
+  const claimToken = typeof result.claim_token === 'string' ? result.claim_token : null;
+  if (shouldProcess && !claimToken) {
+    throw new Error('webhook_claim_token_missing');
+  }
+
+  return {
+    isDuplicate: !shouldProcess,
+    key,
+    claimToken,
+  };
+}
+
+async function markWebhookEventProcessed(
+  supabase: SupabaseClient,
+  idempotencyKey: string,
+  claimToken: string
+): Promise<void> {
+  const { data, error } = await supabase.rpc('mark_billing_webhook_event_processed', {
+    p_idempotency_key: idempotencyKey,
+    p_claim_token: claimToken,
+  });
+  if (error) throw error;
+  const result = (Array.isArray(data) ? data[0] : data) as any;
+  if (result?.ok !== true) {
+    throw new Error(String(result?.code || 'webhook_claim_lost'));
+  }
+}
+
+async function markWebhookEventFailed(
+  supabase: SupabaseClient,
+  idempotencyKey: string,
+  claimToken: string,
+  error: unknown
+): Promise<void> {
+  const { data, error: rpcError } = await supabase.rpc('mark_billing_webhook_event_failed', {
+    p_idempotency_key: idempotencyKey,
+    p_claim_token: claimToken,
+    p_error_code: safeWebhookErrorCode(error),
+  });
+  if (rpcError) throw rpcError;
+  const result = (Array.isArray(data) ? data[0] : data) as any;
+  if (result?.ok !== true) {
+    throw new Error(String(result?.code || 'webhook_claim_lost'));
+  }
 }
 
 async function handleSuccessfulPayment(input: {
@@ -2123,45 +2175,51 @@ export async function processPaystackWebhook(input: {
     return { duplicate: false, event };
   }
 
-  const inserted = await insertWebhookEvent(supabase, payload);
-  if (inserted.isDuplicate) {
+  const claim = await insertWebhookEvent(supabase, payload);
+  if (claim.isDuplicate || !claim.claimToken) {
     return { duplicate: true, event };
   }
 
-  if (event === 'charge.success') {
-    await processSuccessfulCharge({
-      supabase,
-      payload,
-      idempotencyKey: inserted.key,
-      traceId,
-      gateway: 'paystack',
-    });
-  } else if (
-    event === 'charge.failed' ||
-    event === 'transfer.failed' ||
-    event === 'bank.transfer.rejected'
-  ) {
-    await processFailedCharge({
-      supabase,
-      payload,
-      idempotencyKey: inserted.key,
-      gateway: 'paystack',
-    });
-  } else if (
-    event === 'subscription.create' ||
-    event === 'subscription.disable' ||
-    event === 'subscription.not_renew' ||
-    event === 'invoice.payment_failed' ||
-    event === 'invoice.update'
-  ) {
-    await processSubscriptionEvent({
-      supabase,
-      payload,
-      traceId,
-    });
-  }
+  try {
+    if (event === 'charge.success') {
+      await processSuccessfulCharge({
+        supabase,
+        payload,
+        idempotencyKey: claim.key,
+        traceId,
+        gateway: 'paystack',
+      });
+    } else if (
+      event === 'charge.failed' ||
+      event === 'transfer.failed' ||
+      event === 'bank.transfer.rejected'
+    ) {
+      await processFailedCharge({
+        supabase,
+        payload,
+        idempotencyKey: claim.key,
+        gateway: 'paystack',
+      });
+    } else if (
+      event === 'subscription.create' ||
+      event === 'subscription.disable' ||
+      event === 'subscription.not_renew' ||
+      event === 'invoice.payment_failed' ||
+      event === 'invoice.update'
+    ) {
+      await processSubscriptionEvent({
+        supabase,
+        payload,
+        traceId,
+      });
+    }
 
-  return { duplicate: false, event };
+    await markWebhookEventProcessed(supabase, claim.key, claim.claimToken);
+    return { duplicate: false, event };
+  } catch (error) {
+    await markWebhookEventFailed(supabase, claim.key, claim.claimToken, error).catch(() => undefined);
+    throw error;
+  }
 }
 
 function normalizeFlutterwaveWebhookPayload(payload: any): any {
@@ -2195,51 +2253,52 @@ export async function processFlutterwaveWebhook(input: {
     return { duplicate: false, event };
   }
 
-  const inserted = await insertWebhookEvent(supabase, normalizedPayload);
-  if (inserted.isDuplicate) {
+  const claim = await insertWebhookEvent(supabase, normalizedPayload);
+  if (claim.isDuplicate || !claim.claimToken) {
     return { duplicate: true, event };
   }
 
-  const transactionId = String(normalizedPayload?.data?.id || '').trim();
-  const reference = String(normalizedPayload?.data?.reference || '').trim();
-  const verifyTarget = transactionId || reference;
-  if (!verifyTarget) {
-    return { duplicate: false, event };
-  }
-
-  const verified = await getPaymentGatewayById('flutterwave').verifyPayment(verifyTarget);
-  if (verified.success) {
-    await handleSuccessfulPayment({
-      supabase,
-      gateway: 'flutterwave',
-      verified,
-      payload: normalizedPayload,
-      idempotencyKey: inserted.key,
-      traceId,
-    });
-    return { duplicate: false, event };
-  }
-
-  if (isFailedPaymentStatus(verified.status)) {
-    await processFailedCharge({
-      supabase,
-      payload: {
-        ...normalizedPayload,
-        data: {
-          ...normalizedPayload.data,
-          amount: Number(verified.amountKobo || 0) / 100,
-          channel: verified.channel,
-          customer: {
-            email: verified.customerEmail,
+  try {
+    const transactionId = String(normalizedPayload?.data?.id || '').trim();
+    const reference = String(normalizedPayload?.data?.reference || '').trim();
+    const verifyTarget = transactionId || reference;
+    if (verifyTarget) {
+      const verified = await getPaymentGatewayById('flutterwave').verifyPayment(verifyTarget);
+      if (verified.success) {
+        await handleSuccessfulPayment({
+          supabase,
+          gateway: 'flutterwave',
+          verified,
+          payload: normalizedPayload,
+          idempotencyKey: claim.key,
+          traceId,
+        });
+      } else if (isFailedPaymentStatus(verified.status)) {
+        await processFailedCharge({
+          supabase,
+          payload: {
+            ...normalizedPayload,
+            data: {
+              ...normalizedPayload.data,
+              amount: Number(verified.amountKobo || 0) / 100,
+              channel: verified.channel,
+              customer: {
+                email: verified.customerEmail,
+              },
+            },
           },
-        },
-      },
-      idempotencyKey: inserted.key,
-      gateway: 'flutterwave',
-    });
-  }
+          idempotencyKey: claim.key,
+          gateway: 'flutterwave',
+        });
+      }
+    }
 
-  return { duplicate: false, event };
+    await markWebhookEventProcessed(supabase, claim.key, claim.claimToken);
+    return { duplicate: false, event };
+  } catch (error) {
+    await markWebhookEventFailed(supabase, claim.key, claim.claimToken, error).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function reconcileBilling(

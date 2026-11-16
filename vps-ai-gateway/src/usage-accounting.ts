@@ -10,6 +10,17 @@ export type UsageReservationContext = {
   idempotencyKey: string;
 };
 
+export type ProviderUsage = {
+  promptTokens?: number | null;
+  completionTokens?: number | null;
+  totalTokens?: number | null;
+  costUsd?: number | null;
+  providerRequestId?: string | null;
+  latencyMs?: number | null;
+  priceVersion?: string | null;
+  correlationId?: string | null;
+};
+
 export type UsageAccountingResult = {
   ok: boolean;
   code: string | null;
@@ -107,16 +118,41 @@ export async function commitUsageReservation(input: {
   context: UsageReservationContext;
   provider?: string | null;
   model?: string | null;
+  usage?: ProviderUsage | null;
 }): Promise<void> {
-  const { data, error } = await input.supabase.rpc('commit_ai_usage', {
+  const usage = input.usage || {};
+  const promptTokens = typeof usage.promptTokens === 'number' && Number.isFinite(usage.promptTokens) ? Math.max(0, Math.floor(usage.promptTokens)) : null;
+  const completionTokens = typeof usage.completionTokens === 'number' && Number.isFinite(usage.completionTokens) ? Math.max(0, Math.floor(usage.completionTokens)) : null;
+  const suppliedTotal = typeof usage.totalTokens === 'number' && Number.isFinite(usage.totalTokens) ? Math.max(0, Math.floor(usage.totalTokens)) : null;
+  const totalTokens = suppliedTotal ?? (
+    promptTokens !== null || completionTokens !== null
+      ? (promptTokens || 0) + (completionTokens || 0)
+      : null
+  );
+  const actualUnits = totalTokens === null ? null : {
+    max_tokens_total: totalTokens,
+    used_tokens: totalTokens,
+    tokens_used: totalTokens,
+  };
+
+  const { data, error } = await input.supabase.rpc('commit_ai_usage_actual', {
     p_reservation_id: input.context.reservationId,
     p_user_id: input.context.userId,
     p_feature_key: input.context.featureKey,
     p_route: input.context.route,
     p_idempotency_key: input.context.idempotencyKey,
+    p_actual_units: actualUnits,
     p_ticket_id: input.context.ticketId,
     p_provider: input.provider || null,
     p_model: input.model || null,
+    p_prompt_tokens: promptTokens,
+    p_completion_tokens: completionTokens,
+    p_total_tokens: totalTokens,
+    p_cost_usd: typeof usage.costUsd === 'number' && Number.isFinite(usage.costUsd) ? Math.max(0, usage.costUsd) : null,
+    p_price_version: usage.priceVersion || null,
+    p_provider_request_id: usage.providerRequestId || null,
+    p_latency_ms: typeof usage.latencyMs === 'number' && Number.isFinite(usage.latencyMs) ? Math.max(0, Math.floor(usage.latencyMs)) : null,
+    p_correlation_id: usage.correlationId || null,
   });
 
   if (error) {

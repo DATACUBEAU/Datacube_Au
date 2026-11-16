@@ -87,3 +87,12 @@ run('VPS provider routing uses the same plan and default-model contract as ticke
   assert.match(gatewayRouting, /isPaidPlanCode/);
   assert.doesNotMatch(gatewayRouting, /new Set\(\['pro', 'premium'/);
 });
+
+run('paid model routing reads one canonical registry and excludes the legacy paid table', () => {
+  const routing = readRepoFile('src/lib/server/ai-routing.ts');
+
+  assert.match(routing, /const MODEL_REGISTRY_TABLE = 'au_models_registry'/);
+  assert.match(routing, /\.eq\('is_free', false\)/);
+  assert.doesNotMatch(routing, /au_pro_models_registry/);
+  assert.doesNotMatch(routing, /MODEL_REGISTRY_TABLES/);
+});

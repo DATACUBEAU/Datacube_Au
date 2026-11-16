@@ -194,31 +194,44 @@ test('authenticated profile updates cannot mutate authorization or billing-contr
   }
 });
 
-test('document completion binds worker ingestion to the persisted owner-scoped storage object', () => {
+test('legacy document upload endpoint fails closed because documents are local-first', () => {
   const route = readRepoFile('src', 'app', 'api', 'au', 'document-upload', 'route.ts');
 
-  assert.match(route, /select\('id,file_name,file_path,file_size_bytes,bucket'\)/);
-  assert.match(route, /\.eq\('id', documentId\)[\s\S]*\.eq\('user_id', userId\)[\s\S]*\.maybeSingle\(\)/);
-  assert.match(route, /const objectPath = String\(ownedDocument\.file_path \|\| ''\)\.trim\(\)/);
-  assert.match(route, /const bucket = String\(ownedDocument\.bucket \|\| DEFAULT_BUCKET\)\.trim\(\)/);
-  assert.match(route, /const expectedPrefix = `uploads\/\$\{userId\}\/\$\{documentId\}\//);
-  assert.match(route, /!objectPath\.startsWith\(expectedPrefix\)/);
-  assert.match(route, /bucket !== DEFAULT_BUCKET/);
-  assert.match(route, /object_path:\s*objectPath/);
-  assert.doesNotMatch(route, /const objectPath = String\(body\.path/);
-  assert.doesNotMatch(route, /const bucket = String\(body\.bucket/);
-  assert.doesNotMatch(route, /updatePayload\.file_path\s*=\s*objectPath/);
+  assert.match(route, /DOCUMENTS_ARE_LOCAL/);
+  assert.match(route, /status: 410/);
+  assert.match(route, /export async function POST\(\)/);
+  assert.match(route, /export async function GET\(\)/);
+  assert.doesNotMatch(route, /createSignedUrl|storage\.from|from\('au_documents'\)|from\('au_worker_jobs'\)/);
 });
 
-test('document upload failures keep provider diagnostics server-side', () => {
+test('retired document upload route returns a fixed safe response without provider diagnostics', () => {
   const route = readRepoFile('src', 'app', 'api', 'au', 'document-upload', 'route.ts');
 
-  assert.match(route, /error: 'signed_url_failed',[\s\S]*message: 'Unable to prepare the upload\. Please try again\.'/);
-  assert.match(route, /error: 'insert_failed',[\s\S]*message: 'Unable to register the document\. Please try again\.'/);
-  assert.match(route, /error: 'job_creation_failed',[\s\S]*message: 'Unable to start document processing\. Please try again\.'/);
-  assert.match(route, /error: 'upload_failed',[\s\S]*message: 'Unable to process the upload\. Please try again\.'/);
-  assert.doesNotMatch(route, /message:\s*`Failed to create upload URL:\s*\$\{signedError\.message\}`/);
-  assert.doesNotMatch(route, /message:\s*`Failed to register document:\s*\$\{(?:retryError|insertError)\.message\}`/);
-  assert.doesNotMatch(route, /message:\s*`Failed to create processing job:\s*\$\{jobError\.message\}`/);
-  assert.doesNotMatch(route, /error:\s*code,\s*message:\s*String\(error\?\.message/);
+  assert.match(route, /error: 'DOCUMENTS_ARE_LOCAL'/);
+  assert.match(route, /code: 'DOCUMENTS_ARE_LOCAL'/);
+  assert.match(route, /status: 410/);
+  assert.match(route, /Cache-Control/);
+  assert.doesNotMatch(route, /signed_url_failed|insert_failed|job_creation_failed|upload_failed/);
+  assert.doesNotMatch(route, /error\?\.message|signedError\.message|insertError\.message|jobError\.message/);
+});
+
+
+
+test('production profile ACL migrations revoke all browser privilege escalation paths', () => {
+  const initialAcl = readRepoFile(
+    'supabase',
+    'migrations',
+    '20261116094720_protect_profile_privileged_columns.sql',
+  );
+  const finalAcl = readRepoFile(
+    'supabase',
+    'migrations',
+    '20261116094903_restrict_profile_username_updates.sql',
+  );
+
+  assert.match(initialAcl, /REVOKE ALL PRIVILEGES ON TABLE public\\.au_user_profiles FROM PUBLIC, anon, authenticated/i);
+  assert.match(initialAcl, /GRANT SELECT ON TABLE public\\.au_user_profiles TO authenticated/i);
+  assert.match(initialAcl, /GRANT UPDATE \\(full_name, avatar_url, username\\)/i);
+  assert.match(finalAcl, /REVOKE UPDATE \\(username\\) ON TABLE public\\.au_user_profiles FROM authenticated/i);
+  assert.doesNotMatch(finalAcl, /GRANT UPDATE/i);
 });

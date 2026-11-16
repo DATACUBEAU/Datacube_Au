@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { GatewayProviderError, isAmbiguousProviderFailure } from '../vps-ai-gateway/src/utils';
 import { readFileSync } from 'node:fs';
 import {
   buildAiUsageReservationPayload,
@@ -66,6 +67,16 @@ function limitsFixture(overrides?: Record<string, Partial<Record<'value' | 'isEn
 }
 
 async function main() {
+  await run('ambiguous provider outcomes keep reserved credits disputed instead of releasing them', () => {
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 400)), false);
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 429)), false);
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 408)), true);
+    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 502)), true);
+    assert.equal(isAmbiguousProviderFailure(new Error('OPENROUTER_API_KEY not configured')), false);
+    assert.equal(isAmbiguousProviderFailure(new Error('fetch failed: socket disconnected')), true);
+    assert.equal(isAmbiguousProviderFailure(new Error('provider response stream terminated')), true);
+  });
+
   await run('idempotency keys are reused when valid and rejected when malformed', () => {
     assert.equal(normalizeAiIdempotencyKey('chat_123456789abc'), 'chat_123456789abc');
     assert.equal(normalizeAiIdempotencyKey('short', 'chat'), '');
@@ -271,6 +282,21 @@ async function main() {
     assert.match(exams, /createAiIdempotencyKey\('practice_exam'\)/);
     assert.match(exams, /createAiIdempotencyKey\('exam_predictions'\)/);
     assert.match(store, /createAiIdempotencyKey\('knowledge'\)/);
+  });
+
+
+  await run('gateway commits measured provider usage through the atomic actual-settlement RPC without losing reserved feature units', () => {
+    const gatewayUsage = readFileSync('vps-ai-gateway/src/usage-accounting.ts', 'utf8');
+    const settlement = readFileSync('supabase/migrations/20261115220430_merge_actual_usage_with_reserved_units.sql', 'utf8');
+
+    assert.match(gatewayUsage, /rpc\('commit_ai_usage_actual'/);
+    assert.match(gatewayUsage, /p_actual_units:\s*actualUnits/);
+    assert.match(gatewayUsage, /max_tokens_total:\s*totalTokens/);
+    assert.match(gatewayUsage, /p_prompt_tokens:\s*promptTokens/);
+    assert.match(gatewayUsage, /p_cost_usd:/);
+    assert.match(settlement, /v_actual_units := COALESCE\(v_row\.reserved_units, '\{\}'::jsonb\) \|\| COALESCE\(p_actual_units, '\{\}'::jsonb\)/);
+    assert.match(settlement, /ai_usage_delta_units\(v_actual_units, v_row\.reserved_units\)/);
+    assert.match(settlement, /ON CONFLICT \(user_id, event_key\) DO NOTHING/);
   });
 
   if (failed > 0) process.exit(1);
