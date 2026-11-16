@@ -62,10 +62,7 @@ void main() {
       expect(await jobs.recoverInterruptedJobs(), 0);
 
       // Zero staleness simulates a job whose last checkpoint is already stale.
-      expect(
-        await jobs.recoverInterruptedJobs(staleAfter: Duration.zero),
-        1,
-      );
+      expect(await jobs.recoverInterruptedJobs(staleAfter: Duration.zero), 1);
       final recoverable = await jobs.recoverableJobs();
 
       expect(recoverable.single['id'], 'job-4');
