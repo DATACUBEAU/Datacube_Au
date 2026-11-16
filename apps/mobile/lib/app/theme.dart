@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 abstract final class DataCubeTheme {
   static const blue = Color(0xFF3F51B5);
