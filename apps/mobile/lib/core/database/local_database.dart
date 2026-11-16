@@ -1,23 +1,60 @@
-import 'package:path/path.dart' as path;
-import 'package:path_provider/path_provider.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:drift/drift.dart';
+import 'package:drift_flutter/drift_flutter.dart';
 
-/// Local-only database foundation. Evolve schema using forward migrations.
-class LocalDatabase {
-  LocalDatabase._();
-  static final LocalDatabase instance = LocalDatabase._();
-  Database? _db;
-  Future<Database> get database async {
-    if (_db != null) return _db!;
-    final dir = await getApplicationSupportDirectory();
-    _db = await openDatabase(path.join(dir.path, 'datacube_au.db'), version: 1,
-      onConfigure: (db) async { await db.execute('PRAGMA foreign_keys = ON'); await db.execute('PRAGMA journal_mode = WAL'); await db.execute('PRAGMA synchronous = NORMAL'); },
-      onCreate: (db, version) async {
-        await db.execute('CREATE TABLE local_jobs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, status TEXT NOT NULL, payload_json TEXT NOT NULL, progress REAL NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, last_error TEXT)');
-        await db.execute('CREATE INDEX idx_local_jobs_status_created ON local_jobs(status, created_at)');
-        await db.execute('CREATE TABLE app_kv (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL)');
-      });
-    return _db!;
-  }
-  Future<void> close() async { await _db?.close(); _db = null; }
+part 'local_database.g.dart';
+
+class LocalJobs extends Table {
+  TextColumn get id => text()();
+  TextColumn get kind => text()();
+  TextColumn get status => text()();
+  TextColumn get payloadJson => text()();
+  RealColumn get progress => real().withDefault(const Constant(0))();
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+  TextColumn get lastError => text().nullable()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {id};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [];
+}
+
+class AppKv extends Table {
+  TextColumn get key => text()();
+  TextColumn get value => text()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {key};
+}
+
+/// Device-local database. drift_flutter chooses a durable app-private location
+/// and supports opening the same database from background isolates.
+@DriftDatabase(tables: [LocalJobs, AppKv])
+class LocalDatabase extends _$LocalDatabase {
+  LocalDatabase() : super(driftDatabase(name: 'datacube_au'));
+
+  @override
+  int get schemaVersion => 1;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onCreate: (m) async {
+          await m.createAll();
+          await customStatement(
+            'CREATE INDEX idx_local_jobs_status_created '
+            'ON local_jobs (status, created_at)',
+          );
+        },
+        onUpgrade: (m, from, to) async {
+          // Add forward-only migrations here. Never drop user document data.
+        },
+        beforeOpen: (details) async {
+          await customStatement('PRAGMA foreign_keys = ON');
+          await customStatement('PRAGMA journal_mode = WAL');
+          await customStatement('PRAGMA synchronous = NORMAL');
+        },
+      );
 }
