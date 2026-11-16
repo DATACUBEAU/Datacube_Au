@@ -15,6 +15,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: flutter-mobile-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-foundation:
     runs-on: ubuntu-latest
@@ -43,7 +47,7 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
       - name: Generate Drift database code
-        run: dart run build_runner build --delete-conflicting-outputs
+        run: dart run build_runner build
       - name: Apply Dart formatting
         run: dart format lib test
       - name: Commit formatted Dart sources to the working branch
@@ -56,7 +60,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/mobile/lib apps/mobile/test
+          git add apps/mobile/lib apps/mobile/test apps/mobile/pubspec.yaml apps/mobile/pubspec.lock
           if ! git diff --cached --quiet; then
             git commit -m "style(mobile): apply Dart formatter"
             git push origin "HEAD:${TARGET_BRANCH}"
