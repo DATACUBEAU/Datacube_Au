@@ -1,0 +1,86 @@
+name: Flutter mobile foundation
+
+on:
+  pull_request:
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/flutter-mobile.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/mobile/**"
+      - ".github/workflows/flutter-mobile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  android-foundation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Android platform scaffold
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android --org com.datacubeau --project-name datacube_au .
+          fi
+      - name: Resolve dependencies
+        run: flutter pub get
+      - name: Generate Drift database code
+        run: dart run build_runner build --delete-conflicting-outputs
+      - name: Format check
+        run: dart format --output=none --set-exit-if-changed lib test
+      - name: Static analysis
+        run: flutter analyze --fatal-infos
+      - name: Unit and widget tests
+        run: flutter test
+      - name: Build debug APK
+        run: flutter build apk --debug
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-debug
+          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+      - name: Commit verified Android scaffold to the working branch
+        if: >-
+          ${{ success() &&
+              (github.event_name == 'workflow_dispatch' ||
+               (github.event_name == 'pull_request' &&
+                github.event.pull_request.head.repo.full_name == github.repository)) }}
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -d apps/mobile/android ]; then
+            git add apps/mobile/android
+            if ! git diff --cached --quiet -- apps/mobile/android; then
+              git commit -m "Build: add verified Android platform scaffold"
+              git push origin "HEAD:${TARGET_BRANCH}"
+            else
+              echo "Android scaffold is already committed; no changes to push."
+            fi
+          else
+            echo "Android scaffold directory was not generated."
+            exit 1
+          fi
