@@ -7,10 +7,11 @@ import 'local_database.dart';
 /// Durable job state. Payloads contain IDs and small metadata only; never
 /// document text, embeddings, prompts or other user content.
 class LocalJobRepository {
-  LocalJobRepository._();
-  static final instance = LocalJobRepository._();
+  LocalJobRepository([LocalDatabase? database])
+      : _database = database ?? LocalDatabase();
+  static final instance = LocalJobRepository();
 
-  final LocalDatabase _database = LocalDatabase();
+  final LocalDatabase _database;
 
   Future<void> enqueue({
     required String id,
