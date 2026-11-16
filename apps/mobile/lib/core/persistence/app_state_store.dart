@@ -1,13 +1,16 @@
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Lightweight UI preferences only; feature content belongs in private storage.
+/// Stores non-critical UI preferences only. Critical job and feature state
+/// belongs in the local database; secrets belong in secure storage.
 class AppStateStore {
   AppStateStore._();
   static final AppStateStore instance = AppStateStore._();
-  SharedPreferences? _prefs;
-  Future<void> initialize() async { _prefs ??= await SharedPreferences.getInstance(); }
-  String? get lastRoute => _prefs?.getString('app.last_route');
-  Future<void> saveLastRoute(String route) async { await _prefs?.setString('app.last_route', route); }
-  bool get onboardingComplete => _prefs?.getBool('app.onboarding_complete') ?? false;
-  Future<void> saveOnboardingComplete(bool value) async { await _prefs?.setBool('app.onboarding_complete', value); }
+  final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
+
+  Future<String?> getLastRoute() => _preferences.getString('app.last_route');
+  Future<void> saveLastRoute(String route) => _preferences.setString('app.last_route', route);
+  Future<bool> getOnboardingComplete() async =>
+      await _preferences.getBool('app.onboarding_complete') ?? false;
+  Future<void> saveOnboardingComplete(bool value) =>
+      _preferences.setBool('app.onboarding_complete', value);
 }
