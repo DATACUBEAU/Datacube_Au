@@ -115,8 +115,8 @@ class LocalJobRepository {
         .write(LocalJobsCompanion(
       status: Value(nextStatus),
       updatedAt: Value(DateTime.now().toUtc()),
-      if (progress != null) progress: Value(progress),
-      if (lastError != null) lastError: Value(lastError),
+      progress: progress == null ? const Value.absent() : Value(progress),
+      lastError: lastError == null ? const Value.absent() : Value(lastError),
     ));
     return changed == 1;
   }
