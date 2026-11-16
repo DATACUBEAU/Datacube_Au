@@ -6,7 +6,7 @@ This is the native Android-first customer application. The Next.js public websit
 - Flutter app entry, Material 3 blue/white/navy theme and initial app shell.
 - Riverpod root scope and go_router foundation.
 - SharedPreferences for lightweight UI preferences only.
-- SQLite local database foundation using WAL, foreign keys and a durable local job table.
+- Drift-backed SQLite local database using WAL, foreign keys, schema versioning and a durable local job table.
 - WorkManager callback and one-off/periodic scheduling wrappers.
 - Local notification service and Android notification permission request.
 
@@ -35,7 +35,7 @@ This is the native Android-first customer application. The Next.js public websit
 ## Verification still required
 - Generate Android platform files/Gradle wrapper with Flutter tooling.
 - Verify plugin compatibility and Android manifest/Gradle configuration.
-- Implement transactional job repository, checkpoint/retry/cancel and restart reconciliation.
+- Add integration coverage for transactional job claiming, checkpoint/retry/cancel and restart reconciliation.
 - Register real ingestion executor; implement foreground execution where justified.
 - Add process-death/reboot, lifecycle, scheduler and notification tests.
 - Run flutter pub get, dart format, flutter analyze, flutter test, flutter build apk --debug and a real-device smoke test.
