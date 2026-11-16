@@ -122,9 +122,14 @@ class LocalJobRepository {
   }
 
   /// Jobs left running by process death become eligible for idempotent resume.
-  Future<int> recoverInterruptedJobs() async {
+  Future<int> recoverInterruptedJobs({
+    Duration staleAfter = const Duration(minutes: 15),
+  }) async {
+    final cutoff = DateTime.now().toUtc().subtract(staleAfter);
     return (_database.update(_database.localJobs)
-          ..where((job) => job.status.equals('running')))
+          ..where((job) =>
+              job.status.equals('running') &
+              job.updatedAt.isSmallerOrEqualValue(cutoff)))
         .write(LocalJobsCompanion(
       status: const Value('retryable'),
       lastError: const Value('Interrupted; resume from last durable checkpoint.'),
