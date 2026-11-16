@@ -7,7 +7,7 @@ void main() {
   ) async {
     await tester.pumpWidget(const DataCubeAuApp());
 
-    expect(find.text('DataCube AU'), findsOneWidget);
+    expect(find.text('DATACUBE AU'), findsOneWidget);
     expect(find.text('Good to have you here.'), findsOneWidget);
   });
 }
