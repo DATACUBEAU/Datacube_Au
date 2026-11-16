@@ -11,20 +11,35 @@ void main() {
   setUp(() async {
     database = LocalDatabase.forTesting(NativeDatabase.memory());
     repository = LocalDocumentRepository(database);
-    temporaryDirectory = await Directory.systemTemp.createTemp('datacube-docs-');
+    temporaryDirectory = await Directory.systemTemp.createTemp(
+      'datacube-docs-',
+    );
   });
   tearDown(() async {
     await database.close();
-    if (await temporaryDirectory.exists()) await temporaryDirectory.delete(recursive: true);
+    if (await temporaryDirectory.exists())
+      await temporaryDirectory.delete(recursive: true);
   });
   test('rejects unsupported document extensions', () async {
     final file = File('${temporaryDirectory.path}/script.exe');
     await file.writeAsString('not an allowed document');
-    expect(() => repository.importDocument(sourcePath: file.path, displayName: 'script.exe'), throwsA(isA<FormatException>()));
+    expect(
+      () => repository.importDocument(
+        sourcePath: file.path,
+        displayName: 'script.exe',
+      ),
+      throwsA(isA<FormatException>()),
+    );
   });
   test('rejects empty documents', () async {
     final file = File('${temporaryDirectory.path}/empty.txt');
     await file.create();
-    expect(() => repository.importDocument(sourcePath: file.path, displayName: 'empty.txt'), throwsA(isA<FormatException>()));
+    expect(
+      () => repository.importDocument(
+        sourcePath: file.path,
+        displayName: 'empty.txt',
+      ),
+      throwsA(isA<FormatException>()),
+    );
   });
 }
