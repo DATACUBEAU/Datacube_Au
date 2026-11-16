@@ -2,13 +2,14 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import { getQuotaPolicy } from '../tier/policy';
 import { computeResetWindow, getLimitCap, type ApprovedLimitKey } from '../limits/plan-limit-model';
+import { buildChatTrackingPayload, buildFeatureUsageIncrements } from './usage-tracking';
+import { normalizeMetricIncrements } from '../../../shared/usage-metrics';
+
 type VpsTicketOperation = {
   requestFeature: string;
   featureKey: string;
   gatewayRoute: string;
 };
-import { buildChatTrackingPayload, buildFeatureUsageIncrements } from './usage-tracking';
-import { normalizeMetricIncrements } from '../../../shared/usage-metrics';
 
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._:-]{12,160}$/;
 const CHAT_MIN_RESERVED_TOKENS = 768;
