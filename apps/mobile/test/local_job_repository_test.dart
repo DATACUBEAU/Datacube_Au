@@ -58,7 +58,14 @@ void main() {
       await jobs.enqueue(id: 'job-4', kind: 'import', metadata: {});
       await jobs.markRunning('job-4');
 
-      expect(await jobs.recoverInterruptedJobs(), 1);
+      // A recently started job must not be recovered as interrupted.
+      expect(await jobs.recoverInterruptedJobs(), 0);
+
+      // Zero staleness simulates a job whose last checkpoint is already stale.
+      expect(
+        await jobs.recoverInterruptedJobs(staleAfter: Duration.zero),
+        1,
+      );
       final recoverable = await jobs.recoverableJobs();
 
       expect(recoverable.single['id'], 'job-4');
