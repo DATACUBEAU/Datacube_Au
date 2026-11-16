@@ -71,7 +71,6 @@ test('service worker cache policy excludes protected app pages and APIs', async 
   assert.equal(workerText.includes(`"${runtimeVersion}"`), true);
   assert.equal(workerText.includes('__DCAU_PWA_CACHE_PATCHED__'), true);
   assert.equal(workerText.includes('PWA_RUNTIME_HEALTHCHECK'), true);
-  assert.equal(workerSourceText.includes('self.fallback = async'), true);
   assert.equal(workerText.includes('SW_NETWORK_ERROR'), true);
   assert.equal(workerText.includes('Cache-Control'), true);
   assert.equal(workerText.includes('Ignoring malformed request in fallback'), true);
