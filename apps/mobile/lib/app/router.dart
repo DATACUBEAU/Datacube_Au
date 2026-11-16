@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:go_router/go_router.dart';
+import '../features/documents/documents_page.dart';
 
 final GoRouter appRouter = GoRouter(
   initialLocation: '/',
@@ -34,12 +35,7 @@ class _MobileShellState extends State<MobileShell> {
   Widget build(BuildContext context) {
     final pages = [
       const MobileHomePage(),
-      const FeaturePlaceholderPage(
-        title: 'My Documents',
-        description:
-            'Your documents will be imported and processed on this device.',
-        icon: Icons.folder_open_rounded,
-      ),
+      const DocumentsPage(),
       const FeaturePlaceholderPage(
         title: 'Study Space',
         description:
