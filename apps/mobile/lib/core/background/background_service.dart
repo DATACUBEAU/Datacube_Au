@@ -18,9 +18,8 @@ void callbackDispatcher() {
     try {
       switch (task) {
         case localMaintenanceTask:
-          // Database is the source of truth; notification text contains no
-          // document names, extracted text, prompts or other user content.
-          await LocalJobRepository.instance.recoverInterruptedJobs();
+          // Maintenance is intentionally non-destructive until a lease/heartbeat
+          // executor is installed; it must not reset jobs another isolate owns.
           return true;
         case localIngestionTask:
           final jobId = inputData?['jobId'];
