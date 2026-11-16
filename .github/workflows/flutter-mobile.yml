@@ -99,7 +99,10 @@ jobs:
               return source[:closing].rstrip() + "\n" + inserted + "\n" + close_indent + source[closing:]
 
           text = add_to_block(text, "compileOptions", compile_setting)
-          text = add_to_block(text, "dependencies", dependency)
+          if re.search(r"\bdependencies\s*\{", text):
+              text = add_to_block(text, "dependencies", dependency)
+          else:
+              text += "\n\ndependencies {\n    " + dependency + "\n}\n"
           path.write_text(text)
           print(f"Configured core library desugaring in {path}")
           PY
