@@ -1,8 +1,8 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../lib/core/database/local_database.dart';
-import '../lib/core/database/local_job_repository.dart';
+import 'package:datacube_au/core/database/local_database.dart';
+import 'package:datacube_au/core/database/local_job_repository.dart';
 
 void main() {
   late LocalDatabase database;
