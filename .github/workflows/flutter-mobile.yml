@@ -15,9 +15,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: flutter-mobile-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   android-foundation:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: apps/mobile
@@ -40,10 +45,90 @@ jobs:
           if [ ! -d android ]; then
             flutter create --platforms=android --org com.datacubeau --project-name datacube_au .
           fi
+      - name: Configure Android core library desugaring
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          kotlin = Path("android/app/build.gradle.kts")
+          groovy = Path("android/app/build.gradle")
+          if kotlin.exists():
+              path = kotlin
+              compile_setting = "isCoreLibraryDesugaringEnabled = true"
+              dependency = 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
+          elif groovy.exists():
+              path = groovy
+              compile_setting = "coreLibraryDesugaringEnabled true"
+              dependency = "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'"
+          else:
+              raise SystemExit("Flutter Android app Gradle file was not generated")
+
+          text = path.read_text()
+
+          def add_to_block(source: str, name: str, statement: str) -> str:
+              match = re.search(r"\b" + re.escape(name) + r"\s*\{", source)
+              if not match and name == "compileOptions":
+                  nested_block = (
+                      "compileOptions {\n"
+                      "    " + compile_setting + "\n"
+                      "}"
+                  )
+                  return add_to_block(source, "android", nested_block)
+              if not match:
+                  raise SystemExit(f"Could not find {name} block in {path}")
+              opening = source.find("{", match.start())
+              depth = 0
+              closing = -1
+              for index in range(opening, len(source)):
+                  if source[index] == "{":
+                      depth += 1
+                  elif source[index] == "}":
+                      depth -= 1
+                      if depth == 0:
+                          closing = index
+                          break
+              if closing < 0:
+                  raise SystemExit(f"Could not parse {name} block in {path}")
+              if statement in source[opening:closing]:
+                  return source
+              line_start = source.rfind("\n", 0, closing) + 1
+              close_indent = re.match(r"[ \t]*", source[line_start:closing]).group(0)
+              indent = close_indent + "    "
+              inserted = "\n".join(indent + line for line in statement.splitlines())
+              return source[:closing].rstrip() + "\n" + inserted + "\n" + close_indent + source[closing:]
+
+          text = add_to_block(text, "compileOptions", compile_setting)
+          if re.search(r"\bdependencies\s*\{", text):
+              text = add_to_block(text, "dependencies", dependency)
+          else:
+              text += "\n\ndependencies {\n    " + dependency + "\n}\n"
+          path.write_text(text)
+          print(f"Configured core library desugaring in {path}")
+          PY
       - name: Resolve dependencies
         run: flutter pub get
       - name: Generate Drift database code
-        run: dart run build_runner build --delete-conflicting-outputs
+        run: dart run build_runner build
+      - name: Apply Dart formatting
+        run: dart format lib test
+      - name: Commit formatted Dart sources to the working branch
+        if: >-
+          ${{ github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository }}
+        working-directory: .
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/mobile/lib apps/mobile/test apps/mobile/pubspec.yaml apps/mobile/pubspec.lock
+          if ! git diff --cached --quiet; then
+            git commit -m "style(mobile): apply Dart formatter"
+            git push origin "HEAD:${TARGET_BRANCH}"
+          else
+            echo "Dart sources are already formatted."
+          fi
       - name: Format check
         run: dart format --output=none --set-exit-if-changed lib test
       - name: Static analysis

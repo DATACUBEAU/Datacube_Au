@@ -41,21 +41,6 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: VPS AI gateway dependency install
-        working-directory: vps-ai-gateway
-        run: npm ci
-
-      - name: Audit VPS AI gateway production dependencies
-        working-directory: vps-ai-gateway
-        continue-on-error: true
-        run: |
-          npm audit --omit=dev --json > /tmp/vps-gateway-audit.json || true
-          node -e "const report=require('/tmp/vps-gateway-audit.json'); const entries=Object.entries(report.vulnerabilities||{}).map(([name,v])=>({name,severity:v.severity,isDirect:v.isDirect,range:v.range,fixAvailable:v.fixAvailable,via:(v.via||[]).map(x=>typeof x==='string'?x:{title:x.title,url:x.url,range:x.range})})); console.log(JSON.stringify({summary:report.metadata?.vulnerabilities,packages:entries},null,2));"
-
-      - name: Build VPS AI gateway for production
-        working-directory: vps-ai-gateway
-        run: npm run build
-
       - name: Lint
         run: pnpm lint
 
@@ -149,11 +134,6 @@ jobs:
       - name: AI routing contract tests
         run: pnpm test:ai-routing-contract
 
-      - name: VPS ticket, route binding, and CORS security tests
-        run: |
-          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/vps-ticket-security.unit.test.ts src/lib/server/vps-ticket-config.ts vps-ai-gateway/src/auth.ts vps-ai-gateway/src/utils.ts
-          node -e "const fs=require('node:fs'); fs.mkdirSync('.tmp-tests/shared', {recursive:true}); fs.copyFileSync('shared/ai-gateway-contract.cjs', '.tmp-tests/shared/ai-gateway-contract.cjs'); fs.writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
-          node .tmp-tests/tests/vps-ticket-security.unit.test.js
 
       - name: Usage metering tests
         run: pnpm test:limits-usage

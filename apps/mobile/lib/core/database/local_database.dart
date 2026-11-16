@@ -37,27 +37,27 @@ class LocalDatabase extends _$LocalDatabase {
   LocalDatabase() : super(driftDatabase(name: 'datacube_au'));
 
   /// In-memory executor for deterministic repository tests.
-  LocalDatabase.forTesting(QueryExecutor executor) : super(executor);
+  LocalDatabase.forTesting(super.executor);
 
   @override
   int get schemaVersion => 1;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (m) async {
-          await m.createAll();
-          await customStatement(
-            'CREATE INDEX idx_local_jobs_status_created '
-            'ON local_jobs (status, created_at)',
-          );
-        },
-        onUpgrade: (m, from, to) async {
-          // Add forward-only migrations here. Never drop user document data.
-        },
-        beforeOpen: (details) async {
-          await customStatement('PRAGMA foreign_keys = ON');
-          await customStatement('PRAGMA journal_mode = WAL');
-          await customStatement('PRAGMA synchronous = NORMAL');
-        },
+    onCreate: (m) async {
+      await m.createAll();
+      await customStatement(
+        'CREATE INDEX idx_local_jobs_status_created '
+        'ON local_jobs (status, created_at)',
       );
+    },
+    onUpgrade: (m, from, to) async {
+      // Add forward-only migrations here. Never drop user document data.
+    },
+    beforeOpen: (details) async {
+      await customStatement('PRAGMA foreign_keys = ON');
+      await customStatement('PRAGMA journal_mode = WAL');
+      await customStatement('PRAGMA synchronous = NORMAL');
+    },
+  );
 }

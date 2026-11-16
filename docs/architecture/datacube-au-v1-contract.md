@@ -44,3 +44,18 @@ Flutter -> Auth -> AU Home -> AU Documents -> local import/parser/OCR
 - Preserve accounts, payments, subscriptions, entitlements, admin, support, model routing and security/audit records.
 - Never grant admin from editable user metadata.
 - No direct-to-main writes or automatic merges.
+
+
+## Usage, subscriptions and future reward-system contract
+
+These are required integration boundaries for later implementation; they do not authorize enabling ads or changing billing in the mobile-foundation work.
+
+- Preserve the existing Paystack Pro subscription intervals and canonical plan keys: `pro_weekly` and `pro_monthly`. Do not collapse weekly and monthly into one plan, rename either key, change their Paystack plan codes, or replace their existing billing/renewal behavior.
+- Existing subscription state and effective entitlements remain the authority for paid access. Future usage caps may differ by plan, but neither plan grants unlimited usage.
+- Future rewarded access is a separate, server-verified feature-unlock ledger. Reward unlocks must never mint, top up, or extend cloud credits/allowances and must not mutate subscription status.
+- Reward verification, idempotency, replay prevention, per-user caps and unlock expiry are server-authoritative. A client-side ad-completion callback alone must never grant access.
+- Time-window limits use server-authoritative timestamps and deterministic UTC storage. User-facing reset times are rendered using the account's validated IANA time-zone preference, with a safe UTC fallback; daylight-saving transitions must not change quota correctness.
+- Usage limits are defined per feature and plan, with explicit reset policy/interval (including hourly, daily, weekly or monthly where configured). All limits fail closed when authoritative usage state cannot be checked.
+- Local inference and local voice sessions do not consume cloud allowances. Cloud voice remains disabled by default and is independently controllable from the admin portal. Local voice, local Smart Mode and local predictions may later support reward-based access without affecting cloud accounting.
+- Cloud fallback may use a compatible local model when cloud is unavailable or a cloud cap is reached; it must never retry through cloud in a way that bypasses the cap. The app must clearly identify the active execution mode.
+- Admin controls must independently govern cloud model availability, cloud voice availability, feature availability and relevant limits. Client UI flags are not authorization; server-side enforcement remains mandatory.

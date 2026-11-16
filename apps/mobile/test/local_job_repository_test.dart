@@ -1,8 +1,8 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../lib/core/database/local_database.dart';
-import '../lib/core/database/local_job_repository.dart';
+import 'package:datacube_au/core/database/local_database.dart';
+import 'package:datacube_au/core/database/local_job_repository.dart';
 
 void main() {
   late LocalDatabase database;
@@ -52,16 +52,23 @@ void main() {
     expect(job?['progress'], 1);
   });
 
-  test('interrupted running jobs become retryable for restart recovery', () async {
-    await jobs.enqueue(id: 'job-4', kind: 'import', metadata: {});
-    await jobs.markRunning('job-4');
+  test(
+    'interrupted running jobs become retryable for restart recovery',
+    () async {
+      await jobs.enqueue(id: 'job-4', kind: 'import', metadata: {});
+      await jobs.markRunning('job-4');
 
-    expect(await jobs.recoverInterruptedJobs(), 1);
-    final recoverable = await jobs.recoverableJobs();
+      // A recently started job must not be recovered as interrupted.
+      expect(await jobs.recoverInterruptedJobs(), 0);
 
-    expect(recoverable.single['id'], 'job-4');
-    expect(recoverable.single['status'], 'retryable');
-  });
+      // Zero staleness simulates a job whose last checkpoint is already stale.
+      expect(await jobs.recoverInterruptedJobs(staleAfter: Duration.zero), 1);
+      final recoverable = await jobs.recoverableJobs();
+
+      expect(recoverable.single['id'], 'job-4');
+      expect(recoverable.single['status'], 'retryable');
+    },
+  );
 
   test('rejects invalid progress', () async {
     await jobs.enqueue(id: 'job-5', kind: 'import', metadata: {});

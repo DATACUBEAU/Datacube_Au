@@ -4,7 +4,6 @@ import 'package:flutter/widgets.dart';
 import 'package:workmanager/workmanager.dart';
 
 import '../database/local_job_repository.dart';
-import '../notifications/notification_service.dart';
 
 const localMaintenanceTask = 'au.local.maintenance';
 const localIngestionTask = 'au.local.ingestion';
@@ -55,7 +54,7 @@ abstract final class BackgroundService {
         localMaintenanceTask,
         frequency: const Duration(hours: 12),
         constraints: Constraints(
-          networkType: NetworkType.not_required,
+          networkType: NetworkType.notRequired,
           requiresBatteryNotLow: true,
         ),
         existingWorkPolicy: ExistingPeriodicWorkPolicy.keep,
@@ -72,7 +71,7 @@ abstract final class BackgroundService {
       localIngestionTask,
       inputData: <String, dynamic>{'jobId': jobId},
       constraints: Constraints(
-        networkType: NetworkType.not_required,
+        networkType: NetworkType.notRequired,
         requiresBatteryNotLow: true,
       ),
       existingWorkPolicy: ExistingWorkPolicy.keep,
