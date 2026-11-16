@@ -36,6 +36,9 @@ class AppKv extends Table {
 class LocalDatabase extends _$LocalDatabase {
   LocalDatabase() : super(driftDatabase(name: 'datacube_au'));
 
+  /// In-memory executor for deterministic repository tests.
+  LocalDatabase.forTesting(QueryExecutor executor) : super(executor);
+
   @override
   int get schemaVersion => 1;
 
