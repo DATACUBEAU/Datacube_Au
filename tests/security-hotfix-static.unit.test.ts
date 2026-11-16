@@ -216,3 +216,22 @@ test('retired document upload route returns a fixed safe response without provid
 });
 
 
+
+test('production profile ACL migrations revoke all browser privilege escalation paths', () => {
+  const initialAcl = readRepoFile(
+    'supabase',
+    'migrations',
+    '20261116094720_protect_profile_privileged_columns.sql',
+  );
+  const finalAcl = readRepoFile(
+    'supabase',
+    'migrations',
+    '20261116094903_restrict_profile_username_updates.sql',
+  );
+
+  assert.match(initialAcl, /REVOKE ALL PRIVILEGES ON TABLE public\\.au_user_profiles FROM PUBLIC, anon, authenticated/i);
+  assert.match(initialAcl, /GRANT SELECT ON TABLE public\\.au_user_profiles TO authenticated/i);
+  assert.match(initialAcl, /GRANT UPDATE \\(full_name, avatar_url, username\\)/i);
+  assert.match(finalAcl, /REVOKE UPDATE \\(username\\) ON TABLE public\\.au_user_profiles FROM authenticated/i);
+  assert.doesNotMatch(finalAcl, /GRANT UPDATE/i);
+});
