@@ -16,9 +16,6 @@ class LocalJobs extends Table {
 
   @override
   Set<Column<Object>> get primaryKey => {id};
-
-  @override
-  List<Set<Column<Object>>> get uniqueKeys => [];
 }
 
 class AppKv extends Table {
@@ -30,17 +27,30 @@ class AppKv extends Table {
   Set<Column<Object>> get primaryKey => {key};
 }
 
-/// Device-local database. drift_flutter chooses a durable app-private location
-/// and supports opening the same database from background isolates.
-@DriftDatabase(tables: [LocalJobs, AppKv])
+class LocalDocuments extends Table {
+  TextColumn get id => text()();
+  TextColumn get name => text()();
+  TextColumn get extension => text()();
+  TextColumn get mimeType => text()();
+  IntColumn get sizeBytes => integer()();
+  TextColumn get storagePath => text()();
+  TextColumn get status => text().withDefault(const Constant('imported'))();
+  DateTimeColumn get createdAt => dateTime()();
+  DateTimeColumn get updatedAt => dateTime()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {id};
+}
+
+/// Device-local database. Document content is never stored in Supabase.
+@DriftDatabase(tables: [LocalJobs, AppKv, LocalDocuments])
 class LocalDatabase extends _$LocalDatabase {
   LocalDatabase() : super(driftDatabase(name: 'datacube_au'));
 
-  /// In-memory executor for deterministic repository tests.
   LocalDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -50,9 +60,19 @@ class LocalDatabase extends _$LocalDatabase {
         'CREATE INDEX idx_local_jobs_status_created '
         'ON local_jobs (status, created_at)',
       );
+      await customStatement(
+        'CREATE INDEX idx_local_documents_created '
+        'ON local_documents (created_at)',
+      );
     },
     onUpgrade: (m, from, to) async {
-      // Add forward-only migrations here. Never drop user document data.
+      if (from < 2) {
+        await m.createTable(localDocuments);
+        await customStatement(
+          'CREATE INDEX idx_local_documents_created '
+          'ON local_documents (created_at)',
+        );
+      }
     },
     beforeOpen: (details) async {
       await customStatement('PRAGMA foreign_keys = ON');

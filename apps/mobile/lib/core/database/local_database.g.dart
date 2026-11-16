@@ -822,16 +822,580 @@ class AppKvCompanion extends UpdateCompanion<AppKvData> {
   }
 }
 
+class $LocalDocumentsTable extends LocalDocuments
+    with TableInfo<$LocalDocumentsTable, LocalDocument> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $LocalDocumentsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _nameMeta = const VerificationMeta('name');
+  @override
+  late final GeneratedColumn<String> name = GeneratedColumn<String>(
+    'name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _extensionMeta = const VerificationMeta(
+    'extension',
+  );
+  @override
+  late final GeneratedColumn<String> extension = GeneratedColumn<String>(
+    'extension',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _mimeTypeMeta = const VerificationMeta(
+    'mimeType',
+  );
+  @override
+  late final GeneratedColumn<String> mimeType = GeneratedColumn<String>(
+    'mime_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sizeBytesMeta = const VerificationMeta(
+    'sizeBytes',
+  );
+  @override
+  late final GeneratedColumn<int> sizeBytes = GeneratedColumn<int>(
+    'size_bytes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _storagePathMeta = const VerificationMeta(
+    'storagePath',
+  );
+  @override
+  late final GeneratedColumn<String> storagePath = GeneratedColumn<String>(
+    'storage_path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _statusMeta = const VerificationMeta('status');
+  @override
+  late final GeneratedColumn<String> status = GeneratedColumn<String>(
+    'status',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('imported'),
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> createdAt = GeneratedColumn<DateTime>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<DateTime> updatedAt = GeneratedColumn<DateTime>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.dateTime,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    name,
+    extension,
+    mimeType,
+    sizeBytes,
+    storagePath,
+    status,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_documents';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LocalDocument> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('name')) {
+      context.handle(
+        _nameMeta,
+        name.isAcceptableOrUnknown(data['name']!, _nameMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_nameMeta);
+    }
+    if (data.containsKey('extension')) {
+      context.handle(
+        _extensionMeta,
+        extension.isAcceptableOrUnknown(data['extension']!, _extensionMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_extensionMeta);
+    }
+    if (data.containsKey('mime_type')) {
+      context.handle(
+        _mimeTypeMeta,
+        mimeType.isAcceptableOrUnknown(data['mime_type']!, _mimeTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_mimeTypeMeta);
+    }
+    if (data.containsKey('size_bytes')) {
+      context.handle(
+        _sizeBytesMeta,
+        sizeBytes.isAcceptableOrUnknown(data['size_bytes']!, _sizeBytesMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_sizeBytesMeta);
+    }
+    if (data.containsKey('storage_path')) {
+      context.handle(
+        _storagePathMeta,
+        storagePath.isAcceptableOrUnknown(
+          data['storage_path']!,
+          _storagePathMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_storagePathMeta);
+    }
+    if (data.containsKey('status')) {
+      context.handle(
+        _statusMeta,
+        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  LocalDocument map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalDocument(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      name: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}name'],
+      )!,
+      extension: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}extension'],
+      )!,
+      mimeType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}mime_type'],
+      )!,
+      sizeBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}size_bytes'],
+      )!,
+      storagePath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}storage_path'],
+      )!,
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.dateTime,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $LocalDocumentsTable createAlias(String alias) {
+    return $LocalDocumentsTable(attachedDatabase, alias);
+  }
+}
+
+class LocalDocument extends DataClass implements Insertable<LocalDocument> {
+  final String id;
+  final String name;
+  final String extension;
+  final String mimeType;
+  final int sizeBytes;
+  final String storagePath;
+  final String status;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const LocalDocument({
+    required this.id,
+    required this.name,
+    required this.extension,
+    required this.mimeType,
+    required this.sizeBytes,
+    required this.storagePath,
+    required this.status,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['name'] = Variable<String>(name);
+    map['extension'] = Variable<String>(extension);
+    map['mime_type'] = Variable<String>(mimeType);
+    map['size_bytes'] = Variable<int>(sizeBytes);
+    map['storage_path'] = Variable<String>(storagePath);
+    map['status'] = Variable<String>(status);
+    map['created_at'] = Variable<DateTime>(createdAt);
+    map['updated_at'] = Variable<DateTime>(updatedAt);
+    return map;
+  }
+
+  LocalDocumentsCompanion toCompanion(bool nullToAbsent) {
+    return LocalDocumentsCompanion(
+      id: Value(id),
+      name: Value(name),
+      extension: Value(extension),
+      mimeType: Value(mimeType),
+      sizeBytes: Value(sizeBytes),
+      storagePath: Value(storagePath),
+      status: Value(status),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory LocalDocument.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalDocument(
+      id: serializer.fromJson<String>(json['id']),
+      name: serializer.fromJson<String>(json['name']),
+      extension: serializer.fromJson<String>(json['extension']),
+      mimeType: serializer.fromJson<String>(json['mimeType']),
+      sizeBytes: serializer.fromJson<int>(json['sizeBytes']),
+      storagePath: serializer.fromJson<String>(json['storagePath']),
+      status: serializer.fromJson<String>(json['status']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'name': serializer.toJson<String>(name),
+      'extension': serializer.toJson<String>(extension),
+      'mimeType': serializer.toJson<String>(mimeType),
+      'sizeBytes': serializer.toJson<int>(sizeBytes),
+      'storagePath': serializer.toJson<String>(storagePath),
+      'status': serializer.toJson<String>(status),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  LocalDocument copyWith({
+    String? id,
+    String? name,
+    String? extension,
+    String? mimeType,
+    int? sizeBytes,
+    String? storagePath,
+    String? status,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => LocalDocument(
+    id: id ?? this.id,
+    name: name ?? this.name,
+    extension: extension ?? this.extension,
+    mimeType: mimeType ?? this.mimeType,
+    sizeBytes: sizeBytes ?? this.sizeBytes,
+    storagePath: storagePath ?? this.storagePath,
+    status: status ?? this.status,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  LocalDocument copyWithCompanion(LocalDocumentsCompanion data) {
+    return LocalDocument(
+      id: data.id.present ? data.id.value : this.id,
+      name: data.name.present ? data.name.value : this.name,
+      extension: data.extension.present ? data.extension.value : this.extension,
+      mimeType: data.mimeType.present ? data.mimeType.value : this.mimeType,
+      sizeBytes: data.sizeBytes.present ? data.sizeBytes.value : this.sizeBytes,
+      storagePath: data.storagePath.present
+          ? data.storagePath.value
+          : this.storagePath,
+      status: data.status.present ? data.status.value : this.status,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDocument(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('extension: $extension, ')
+          ..write('mimeType: $mimeType, ')
+          ..write('sizeBytes: $sizeBytes, ')
+          ..write('storagePath: $storagePath, ')
+          ..write('status: $status, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    name,
+    extension,
+    mimeType,
+    sizeBytes,
+    storagePath,
+    status,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalDocument &&
+          other.id == this.id &&
+          other.name == this.name &&
+          other.extension == this.extension &&
+          other.mimeType == this.mimeType &&
+          other.sizeBytes == this.sizeBytes &&
+          other.storagePath == this.storagePath &&
+          other.status == this.status &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class LocalDocumentsCompanion extends UpdateCompanion<LocalDocument> {
+  final Value<String> id;
+  final Value<String> name;
+  final Value<String> extension;
+  final Value<String> mimeType;
+  final Value<int> sizeBytes;
+  final Value<String> storagePath;
+  final Value<String> status;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const LocalDocumentsCompanion({
+    this.id = const Value.absent(),
+    this.name = const Value.absent(),
+    this.extension = const Value.absent(),
+    this.mimeType = const Value.absent(),
+    this.sizeBytes = const Value.absent(),
+    this.storagePath = const Value.absent(),
+    this.status = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  LocalDocumentsCompanion.insert({
+    required String id,
+    required String name,
+    required String extension,
+    required String mimeType,
+    required int sizeBytes,
+    required String storagePath,
+    this.status = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       name = Value(name),
+       extension = Value(extension),
+       mimeType = Value(mimeType),
+       sizeBytes = Value(sizeBytes),
+       storagePath = Value(storagePath),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<LocalDocument> custom({
+    Expression<String>? id,
+    Expression<String>? name,
+    Expression<String>? extension,
+    Expression<String>? mimeType,
+    Expression<int>? sizeBytes,
+    Expression<String>? storagePath,
+    Expression<String>? status,
+    Expression<DateTime>? createdAt,
+    Expression<DateTime>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (name != null) 'name': name,
+      if (extension != null) 'extension': extension,
+      if (mimeType != null) 'mime_type': mimeType,
+      if (sizeBytes != null) 'size_bytes': sizeBytes,
+      if (storagePath != null) 'storage_path': storagePath,
+      if (status != null) 'status': status,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  LocalDocumentsCompanion copyWith({
+    Value<String>? id,
+    Value<String>? name,
+    Value<String>? extension,
+    Value<String>? mimeType,
+    Value<int>? sizeBytes,
+    Value<String>? storagePath,
+    Value<String>? status,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return LocalDocumentsCompanion(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      extension: extension ?? this.extension,
+      mimeType: mimeType ?? this.mimeType,
+      sizeBytes: sizeBytes ?? this.sizeBytes,
+      storagePath: storagePath ?? this.storagePath,
+      status: status ?? this.status,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (name.present) {
+      map['name'] = Variable<String>(name.value);
+    }
+    if (extension.present) {
+      map['extension'] = Variable<String>(extension.value);
+    }
+    if (mimeType.present) {
+      map['mime_type'] = Variable<String>(mimeType.value);
+    }
+    if (sizeBytes.present) {
+      map['size_bytes'] = Variable<int>(sizeBytes.value);
+    }
+    if (storagePath.present) {
+      map['storage_path'] = Variable<String>(storagePath.value);
+    }
+    if (status.present) {
+      map['status'] = Variable<String>(status.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<DateTime>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<DateTime>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDocumentsCompanion(')
+          ..write('id: $id, ')
+          ..write('name: $name, ')
+          ..write('extension: $extension, ')
+          ..write('mimeType: $mimeType, ')
+          ..write('sizeBytes: $sizeBytes, ')
+          ..write('storagePath: $storagePath, ')
+          ..write('status: $status, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$LocalDatabase extends GeneratedDatabase {
   _$LocalDatabase(QueryExecutor e) : super(e);
   $LocalDatabaseManager get managers => $LocalDatabaseManager(this);
   late final $LocalJobsTable localJobs = $LocalJobsTable(this);
   late final $AppKvTable appKv = $AppKvTable(this);
+  late final $LocalDocumentsTable localDocuments = $LocalDocumentsTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [localJobs, appKv];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [
+    localJobs,
+    appKv,
+    localDocuments,
+  ];
 }
 
 typedef $$LocalJobsTableCreateCompanionBuilder =
@@ -1283,6 +1847,299 @@ typedef $$AppKvTableProcessedTableManager =
       AppKvData,
       PrefetchHooks Function()
     >;
+typedef $$LocalDocumentsTableCreateCompanionBuilder =
+    LocalDocumentsCompanion Function({
+      required String id,
+      required String name,
+      required String extension,
+      required String mimeType,
+      required int sizeBytes,
+      required String storagePath,
+      Value<String> status,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$LocalDocumentsTableUpdateCompanionBuilder =
+    LocalDocumentsCompanion Function({
+      Value<String> id,
+      Value<String> name,
+      Value<String> extension,
+      Value<String> mimeType,
+      Value<int> sizeBytes,
+      Value<String> storagePath,
+      Value<String> status,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$LocalDocumentsTableFilterComposer
+    extends Composer<_$LocalDatabase, $LocalDocumentsTable> {
+  $$LocalDocumentsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get extension => $composableBuilder(
+    column: $table.extension,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sizeBytes => $composableBuilder(
+    column: $table.sizeBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get storagePath => $composableBuilder(
+    column: $table.storagePath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+}
+
+class $$LocalDocumentsTableOrderingComposer
+    extends Composer<_$LocalDatabase, $LocalDocumentsTable> {
+  $$LocalDocumentsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get name => $composableBuilder(
+    column: $table.name,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get extension => $composableBuilder(
+    column: $table.extension,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get mimeType => $composableBuilder(
+    column: $table.mimeType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sizeBytes => $composableBuilder(
+    column: $table.sizeBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get storagePath => $composableBuilder(
+    column: $table.storagePath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get status => $composableBuilder(
+    column: $table.status,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<DateTime> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$LocalDocumentsTableAnnotationComposer
+    extends Composer<_$LocalDatabase, $LocalDocumentsTable> {
+  $$LocalDocumentsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get name =>
+      $composableBuilder(column: $table.name, builder: (column) => column);
+
+  GeneratedColumn<String> get extension =>
+      $composableBuilder(column: $table.extension, builder: (column) => column);
+
+  GeneratedColumn<String> get mimeType =>
+      $composableBuilder(column: $table.mimeType, builder: (column) => column);
+
+  GeneratedColumn<int> get sizeBytes =>
+      $composableBuilder(column: $table.sizeBytes, builder: (column) => column);
+
+  GeneratedColumn<String> get storagePath => $composableBuilder(
+    column: $table.storagePath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get status =>
+      $composableBuilder(column: $table.status, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumn<DateTime> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$LocalDocumentsTableTableManager
+    extends
+        RootTableManager<
+          _$LocalDatabase,
+          $LocalDocumentsTable,
+          LocalDocument,
+          $$LocalDocumentsTableFilterComposer,
+          $$LocalDocumentsTableOrderingComposer,
+          $$LocalDocumentsTableAnnotationComposer,
+          $$LocalDocumentsTableCreateCompanionBuilder,
+          $$LocalDocumentsTableUpdateCompanionBuilder,
+          (
+            LocalDocument,
+            BaseReferences<
+              _$LocalDatabase,
+              $LocalDocumentsTable,
+              LocalDocument
+            >,
+          ),
+          LocalDocument,
+          PrefetchHooks Function()
+        > {
+  $$LocalDocumentsTableTableManager(
+    _$LocalDatabase db,
+    $LocalDocumentsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$LocalDocumentsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$LocalDocumentsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$LocalDocumentsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> id = const Value.absent(),
+                Value<String> name = const Value.absent(),
+                Value<String> extension = const Value.absent(),
+                Value<String> mimeType = const Value.absent(),
+                Value<int> sizeBytes = const Value.absent(),
+                Value<String> storagePath = const Value.absent(),
+                Value<String> status = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => LocalDocumentsCompanion(
+                id: id,
+                name: name,
+                extension: extension,
+                mimeType: mimeType,
+                sizeBytes: sizeBytes,
+                storagePath: storagePath,
+                status: status,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String id,
+                required String name,
+                required String extension,
+                required String mimeType,
+                required int sizeBytes,
+                required String storagePath,
+                Value<String> status = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => LocalDocumentsCompanion.insert(
+                id: id,
+                name: name,
+                extension: extension,
+                mimeType: mimeType,
+                sizeBytes: sizeBytes,
+                storagePath: storagePath,
+                status: status,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<$LocalDocumentsTable, LocalDocument>(table),
+                  BaseReferences<
+                    _$LocalDatabase,
+                    $LocalDocumentsTable,
+                    LocalDocument
+                  >(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$LocalDocumentsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$LocalDatabase,
+      $LocalDocumentsTable,
+      LocalDocument,
+      $$LocalDocumentsTableFilterComposer,
+      $$LocalDocumentsTableOrderingComposer,
+      $$LocalDocumentsTableAnnotationComposer,
+      $$LocalDocumentsTableCreateCompanionBuilder,
+      $$LocalDocumentsTableUpdateCompanionBuilder,
+      (
+        LocalDocument,
+        BaseReferences<_$LocalDatabase, $LocalDocumentsTable, LocalDocument>,
+      ),
+      LocalDocument,
+      PrefetchHooks Function()
+    >;
 
 class $LocalDatabaseManager {
   final _$LocalDatabase _db;
@@ -1291,4 +2148,6 @@ class $LocalDatabaseManager {
       $$LocalJobsTableTableManager(_db, _db.localJobs);
   $$AppKvTableTableManager get appKv =>
       $$AppKvTableTableManager(_db, _db.appKv);
+  $$LocalDocumentsTableTableManager get localDocuments =>
+      $$LocalDocumentsTableTableManager(_db, _db.localDocuments);
 }
