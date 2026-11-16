@@ -2,7 +2,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import { getQuotaPolicy } from '../tier/policy';
 import { computeResetWindow, getLimitCap, type ApprovedLimitKey } from '../limits/plan-limit-model';
-import type { VpsTicketOperation } from './vps-ticket-config';
+type VpsTicketOperation = {
+  requestFeature: string;
+  featureKey: string;
+  gatewayRoute: string;
+};
 import { buildChatTrackingPayload, buildFeatureUsageIncrements } from './usage-tracking';
 import { normalizeMetricIncrements } from '../../../shared/usage-metrics';
 
