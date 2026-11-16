@@ -63,11 +63,11 @@ class LocalJobRepository {
                       job.status.equals('retryable')),
             ))
             .write(
-              LocalJobsCompanion(
-                status: const Value('running'),
+              LocalJobsCompanion.custom(
+                status: const Constant('running'),
                 attempts: _database.localJobs.attempts + const Constant(1),
-                updatedAt: Value(now),
-                lastError: const Value(null),
+                updatedAt: Variable<DateTime>(now),
+                lastError: const CustomExpression<String>('NULL'),
               ),
             );
     return changed == 1;
