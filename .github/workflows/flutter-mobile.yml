@@ -72,10 +72,15 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -d apps/mobile/android ] && ! git diff --quiet -- apps/mobile/android; then
+          if [ -d apps/mobile/android ]; then
             git add apps/mobile/android
-            git commit -m "Build: add verified Android platform scaffold"
-            git push origin "HEAD:${TARGET_BRANCH}"
+            if ! git diff --cached --quiet -- apps/mobile/android; then
+              git commit -m "Build: add verified Android platform scaffold"
+              git push origin "HEAD:${TARGET_BRANCH}"
+            else
+              echo "Android scaffold is already committed; no changes to push."
+            fi
           else
-            echo "Android scaffold is already committed; no changes to push."
+            echo "Android scaffold directory was not generated."
+            exit 1
           fi
