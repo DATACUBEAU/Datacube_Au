@@ -67,6 +67,13 @@ jobs:
 
           def add_to_block(source: str, name: str, statement: str) -> str:
               match = re.search(r"\\b" + re.escape(name) + r"\\s*\\{", source)
+              if not match and name == "compileOptions":
+                  nested_block = (
+                      "compileOptions {\\n"
+                      "    " + compile_setting + "\\n"
+                      "}"
+                  )
+                  return add_to_block(source, "android", nested_block)
               if not match:
                   raise SystemExit(f"Could not find {name} block in {path}")
               opening = source.find("{", match.start())
@@ -87,7 +94,8 @@ jobs:
               line_start = source.rfind("\\n", 0, closing) + 1
               close_indent = re.match(r"[ \\t]*", source[line_start:closing]).group(0)
               indent = close_indent + "    "
-              return source[:closing].rstrip() + "\\n" + indent + statement + "\\n" + close_indent + source[closing:]
+              inserted = "\\n".join(indent + line for line in statement.splitlines())
+              return source[:closing].rstrip() + "\\n" + inserted + "\\n" + close_indent + source[closing:]
 
           text = add_to_block(text, "compileOptions", compile_setting)
           text = add_to_block(text, "dependencies", dependency)
