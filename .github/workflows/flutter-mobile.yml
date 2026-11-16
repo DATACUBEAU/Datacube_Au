@@ -44,6 +44,25 @@ jobs:
         run: flutter pub get
       - name: Generate Drift database code
         run: dart run build_runner build --delete-conflicting-outputs
+      - name: Apply Dart formatting
+        run: dart format lib test
+      - name: Commit formatted Dart sources to the working branch
+        if: >-
+          ${{ github.event_name == 'pull_request' &&
+              github.event.pull_request.head.repo.full_name == github.repository }}
+        working-directory: .
+        env:
+          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/mobile/lib apps/mobile/test
+          if ! git diff --cached --quiet; then
+            git commit -m "style(mobile): apply Dart formatter"
+            git push origin "HEAD:${TARGET_BRANCH}"
+          else
+            echo "Dart sources are already formatted."
+          fi
       - name: Format check
         run: dart format --output=none --set-exit-if-changed lib test
       - name: Static analysis
