@@ -52,16 +52,19 @@ void main() {
     expect(job?['progress'], 1);
   });
 
-  test('interrupted running jobs become retryable for restart recovery', () async {
-    await jobs.enqueue(id: 'job-4', kind: 'import', metadata: {});
-    await jobs.markRunning('job-4');
+  test(
+    'interrupted running jobs become retryable for restart recovery',
+    () async {
+      await jobs.enqueue(id: 'job-4', kind: 'import', metadata: {});
+      await jobs.markRunning('job-4');
 
-    expect(await jobs.recoverInterruptedJobs(), 1);
-    final recoverable = await jobs.recoverableJobs();
+      expect(await jobs.recoverInterruptedJobs(), 1);
+      final recoverable = await jobs.recoverableJobs();
 
-    expect(recoverable.single['id'], 'job-4');
-    expect(recoverable.single['status'], 'retryable');
-  });
+      expect(recoverable.single['id'], 'job-4');
+      expect(recoverable.single['status'], 'retryable');
+    },
+  );
 
   test('rejects invalid progress', () async {
     await jobs.enqueue(id: 'job-5', kind: 'import', metadata: {});

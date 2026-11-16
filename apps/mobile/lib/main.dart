@@ -23,8 +23,9 @@ Future<void> main() async {
     final id = job['id'];
     if (id is String && job['status'] == 'retryable') {
       final notificationId = id.hashCode & 0x7fffffff;
-      await NotificationService.instance
-          .showInterruptedJob(notificationId: notificationId);
+      await NotificationService.instance.showInterruptedJob(
+        notificationId: notificationId,
+      );
     }
   }
 

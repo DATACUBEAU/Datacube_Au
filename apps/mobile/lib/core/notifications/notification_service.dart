@@ -22,7 +22,8 @@ class NotificationService {
     );
     await _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.createNotificationChannel(channel);
     _ready = true;
   }
@@ -31,7 +32,8 @@ class NotificationService {
     await initialize();
     await _plugin
         .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
+          AndroidFlutterLocalNotificationsPlugin
+        >()
         ?.requestNotificationsPermission();
   }
 
@@ -55,12 +57,11 @@ class NotificationService {
     await _plugin.show(id, title, body, details);
   }
 
-  Future<void> showQueuedJob({required int notificationId}) =>
-      showJobUpdate(
-        id: notificationId,
-        title: 'DataCube AU',
-        body: 'A task is waiting to be processed on this device.',
-      );
+  Future<void> showQueuedJob({required int notificationId}) => showJobUpdate(
+    id: notificationId,
+    title: 'DataCube AU',
+    body: 'A task is waiting to be processed on this device.',
+  );
 
   Future<void> showInterruptedJob({required int notificationId}) =>
       showJobUpdate(

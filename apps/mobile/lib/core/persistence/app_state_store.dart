@@ -8,7 +8,8 @@ class AppStateStore {
   final SharedPreferencesAsync _preferences = SharedPreferencesAsync();
 
   Future<String?> getLastRoute() => _preferences.getString('app.last_route');
-  Future<void> saveLastRoute(String route) => _preferences.setString('app.last_route', route);
+  Future<void> saveLastRoute(String route) =>
+      _preferences.setString('app.last_route', route);
   Future<bool> getOnboardingComplete() async =>
       await _preferences.getBool('app.onboarding_complete') ?? false;
   Future<void> saveOnboardingComplete(bool value) =>
