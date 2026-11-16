@@ -39,7 +39,6 @@ function shouldDeleteStalePwaCacheName(cacheName: string, version: string): bool
 test('service worker cache policy excludes protected app pages and APIs', async () => {
   const nextConfigText = readFileSync(path.join(process.cwd(), 'next.config.ts'), 'utf8');
   const policyText = readFileSync(path.join(process.cwd(), 'shared', 'pwa-cache-policy.js'), 'utf8');
-  const workerSourceText = readFileSync(path.join(process.cwd(), 'worker', 'index.js'), 'utf8');
   const serviceWorkerClientText = readFileSync(path.join(process.cwd(), 'src', 'lib', 'pwa', 'service-worker-client.ts'), 'utf8');
   assert.equal(policyText.includes("'/dashboard'"), true);
   assert.equal(policyText.includes("'/api/entitlements'"), true);
@@ -53,8 +52,7 @@ test('service worker cache policy excludes protected app pages and APIs', async 
   const workerText = readFileSync(path.join(process.cwd(), 'public', workerFileName!), 'utf8');
   const runtimeVersion = readRuntimeVersion();
 
-  assert.equal(workerSourceText.includes('isPwaCacheExcludedPathname(route)'), true);
-  assert.equal(workerSourceText.includes('Cache-Control'), true);
+  assert.equal(policyText.includes('function isPwaCacheExcludedPathname(pathname)'), true);
   assert.equal(swText.includes('/_next/static/chunks/app/dashboard/'), false);
   assert.equal(swText.includes('/_next/static/chunks/app/conex/'), false);
   assert.equal(swText.includes('/_next/static/chunks/app/api/account/'), false);
@@ -75,6 +73,7 @@ test('service worker cache policy excludes protected app pages and APIs', async 
   assert.equal(workerText.includes('PWA_RUNTIME_HEALTHCHECK'), true);
   assert.equal(workerSourceText.includes('self.fallback = async'), true);
   assert.equal(workerText.includes('SW_NETWORK_ERROR'), true);
+  assert.equal(workerText.includes('Cache-Control'), true);
   assert.equal(workerText.includes('Ignoring malformed request in fallback'), true);
   assert.equal(nextConfigText.includes('hasUsableRequestUrl'), false);
   assert.equal(nextConfigText.includes('describeWorkboxRequest'), false);
