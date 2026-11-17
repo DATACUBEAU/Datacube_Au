@@ -54,6 +54,7 @@ yarn-error.log*
 
 # Misc
 .last-run.json
+*.pid
 playwright-report/
 test-results/
 
