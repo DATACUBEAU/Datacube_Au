@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.DataCubeAU" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#0F172A</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/ic_splash_logo</item>
+        <item name="postSplashScreenTheme">@style/Theme.DataCubeAU.Main</item>
+    </style>
+    <style name="Theme.DataCubeAU.Main" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

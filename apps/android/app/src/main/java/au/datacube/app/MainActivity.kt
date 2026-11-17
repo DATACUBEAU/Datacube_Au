@@ -9,47 +9,100 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import au.datacube.app.data.LocalDocumentProcessing
-import au.datacube.app.data.LocalJobStatus
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import au.datacube.app.ui.DataCubeViewModel
+import au.datacube.app.ui.auth.AuthScreen
+import au.datacube.app.ui.auth.AuthViewModel
+import au.datacube.app.ui.chat.ChatScreen
+import au.datacube.app.ui.documents.DocumentsScreen
+import au.datacube.app.ui.home.HomeScreen
+import au.datacube.app.ui.profile.ProfileScreen
+import au.datacube.app.ui.study.StudyScreen
+import au.datacube.app.ui.theme.DataCubeTheme
 import au.datacube.app.work.LocalJobScheduler
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private val viewModel: DataCubeViewModel by viewModels()
+
+    private val authViewModel: AuthViewModel by viewModels()
+    private val documentsViewModel: DataCubeViewModel by viewModels()
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        installSplashScreen()
         super.onCreate(savedInstanceState)
-        setContent { DataCubeTheme { DataCubeRoot(viewModel) } }
+
+        // Recover any locally interrupted jobs on startup.
         lifecycleScope.launch {
             runCatching { LocalJobScheduler(applicationContext).enqueueRecoverable() }
         }
+
+        setContent {
+            DataCubeTheme {
+                DataCubeRoot(authViewModel, documentsViewModel)
+            }
+        }
     }
+
+    // Make lifecycleScope accessible from companion/lambda
+    private val lifecycleScope get() = (this as ComponentActivity).lifecycleScope
 }
 
-private enum class Tab(val title: String) {
-    Home("Home"), Documents("Documents"), Study("Study"), Chat("AU Chat"), Profile("Profile")
+// ── Navigation destinations ───────────────────────────────────────────────────
+
+private sealed class Screen(val route: String) {
+    object Auth : Screen("auth")
+    object Home : Screen("home")
+    object Documents : Screen("documents")
+    object Study : Screen("study")
+    object Chat : Screen("chat")
+    object Profile : Screen("profile")
 }
+
+private data class BottomNavItem(
+    val screen: Screen,
+    val label: String,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+private val bottomNavItems = listOf(
+    BottomNavItem(Screen.Home, "Home", Icons.Outlined.Home),
+    BottomNavItem(Screen.Documents, "Documents", Icons.Outlined.Folder),
+    BottomNavItem(Screen.Study, "Study", Icons.Outlined.School),
+    BottomNavItem(Screen.Chat, "AU Chat", Icons.Outlined.Chat),
+    BottomNavItem(Screen.Profile, "Profile", Icons.Outlined.Person)
+)
+
+// ── Root composable ───────────────────────────────────────────────────────────
 
 @Composable
-private fun DataCubeRoot(viewModel: DataCubeViewModel) {
-    var selected by remember { mutableIntStateOf(0) }
-    val documents by viewModel.documents.collectAsState()
-    val context = LocalContext.current
+private fun DataCubeRoot(
+    authViewModel: AuthViewModel,
+    documentsViewModel: DataCubeViewModel
+) {
+    val authState by authViewModel.state.collectAsStateWithLifecycle()
+    val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
+    val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    // Document picker
     val mimeTypes = arrayOf(
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -62,202 +115,89 @@ private fun DataCubeRoot(viewModel: DataCubeViewModel) {
             )?.use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             } ?: "Imported document"
-            viewModel.import(uri, name) { result ->
+            documentsViewModel.import(uri, name) { result ->
                 scope.launch {
                     snackbar.showSnackbar(
-                        result.exceptionOrNull()?.message ?: "Document saved privately. Local processing has been queued."
+                        result.exceptionOrNull()?.message
+                            ?: "Document saved. Local processing has been queued."
                     )
                 }
             }
         }
     }
 
+    // Loading / session-restore gate
+    if (!authState.sessionRestored) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    // If not authenticated, show auth screen
+    if (authState.user == null) {
+        AuthScreen(viewModel = authViewModel)
+        return
+    }
+
+    // Main app scaffold with Navigation Compose
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
+            val navBackStackEntry by navController.currentBackStackEntryAsState()
+            val current = navBackStackEntry?.destination
             NavigationBar {
-                Tab.entries.forEachIndexed { index, tab ->
-                    val icon = when (tab) {
-                        Tab.Home -> Icons.Outlined.Home
-                        Tab.Documents -> Icons.Outlined.Folder
-                        Tab.Study -> Icons.Outlined.School
-                        Tab.Chat -> Icons.Outlined.Chat
-                        Tab.Profile -> Icons.Outlined.Person
-                    }
+                bottomNavItems.forEach { item ->
                     NavigationBarItem(
-                        selected = selected == index,
-                        onClick = { selected = index },
-                        icon = { Icon(icon, contentDescription = tab.title) },
-                        label = { Text(tab.title) }
+                        selected = current?.hierarchy?.any { it.route == item.screen.route } == true,
+                        onClick = {
+                            navController.navigate(item.screen.route) {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        icon = { Icon(item.icon, contentDescription = item.label) },
+                        label = { Text(item.label) }
                     )
                 }
             }
         }
     ) { padding ->
-        when (Tab.entries[selected]) {
-            Tab.Home -> HomeScreen(Modifier.padding(padding)) { picker.launch(mimeTypes) }
-            Tab.Documents -> DocumentsScreen(
-                Modifier.padding(padding), documents, { picker.launch(mimeTypes) }, viewModel::delete
-            )
-            Tab.Study -> FeatureScreen(
-                Modifier.padding(padding), "Study Space",
-                "Smart Notes, practice exams and topic predictions."
-            )
-            Tab.Chat -> FeatureScreen(
-                Modifier.padding(padding), "AU Chat",
-                "Ask questions about your materials. Local inference is the default; cloud inference requires explicit permission."
-            )
-            Tab.Profile -> FeatureScreen(
-                Modifier.padding(padding), "Your Profile",
-                "Account, subscription, model preferences and privacy controls."
-            )
-        }
-    }
-}
-
-@Composable
-private fun HomeScreen(modifier: Modifier, onImport: () -> Unit) {
-    LazyColumn(modifier.fillMaxSize().padding(20.dp)) {
-        item {
-            Text("DATACUBE AU", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-            Text("Your learning workspace")
-            Spacer(Modifier.height(28.dp))
-            Text("Good to have you here.", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-            Text("Your documents, AI tools and study sessions in one place.")
-            Spacer(Modifier.height(22.dp))
-        }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)) {
-                Column(Modifier.padding(20.dp)) {
-                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null, tint = Color.White)
-                    Spacer(Modifier.height(12.dp))
-                    Text("Learn from your own materials", style = MaterialTheme.typography.titleLarge, color = Color.White, fontWeight = FontWeight.Bold)
-                    Text("Import a document to build your private, on-device study workspace.", color = Color.White)
-                    Spacer(Modifier.height(14.dp))
-                    Button(
-                        onClick = onImport,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Icon(Icons.Outlined.Add, contentDescription = null)
-                        Text("Add a document")
-                    }
-                }
+        NavHost(
+            navController = navController,
+            startDestination = Screen.Home.route,
+            modifier = Modifier.padding(padding)
+        ) {
+            composable(Screen.Home.route) {
+                HomeScreen(
+                    user = authState.user,
+                    recentDocuments = documents,
+                    onImportDocument = { picker.launch(mimeTypes) },
+                    onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
+                    onNavigateToStudy = { navController.navigate(Screen.Study.route) },
+                    onNavigateToChat = { navController.navigate(Screen.Chat.route) }
+                )
             }
-            Spacer(Modifier.height(24.dp))
-            Text("Your workspace", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        }
-        items(listOf(
-            "My Documents" to "Import and organise learning materials",
-            "AU Chat" to "Ask questions about your materials",
-            "Smart Notes" to "Turn materials into study notes",
-            "Practice & Predictions" to "Prepare with focused study tools"
-        )) { (title, subtitle) ->
-            ListItem(
-                headlineContent = { Text(title, fontWeight = FontWeight.SemiBold) },
-                supportingContent = { Text(subtitle) },
-                trailingContent = { Icon(Icons.Outlined.ChevronRight, contentDescription = null) }
-            )
-        }
-        item {
-            Text(
-                "Local processing is the foundation. Cloud features remain optional and subject to account limits.",
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-    }
-}
-
-@Composable
-private fun DocumentsScreen(
-    modifier: Modifier,
-    documents: List<LocalDocumentProcessing>,
-    onImport: () -> Unit,
-    onDelete: (String) -> Unit
-) {
-    Column(modifier.fillMaxSize().padding(18.dp)) {
-        Text("My Documents", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Files are copied into app-private storage. Document content is not uploaded.")
-        Spacer(Modifier.height(14.dp))
-        Button(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Outlined.Add, contentDescription = null)
-            Text("Import a document")
-        }
-        if (documents.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(44.dp))
-                    Text("Your library is empty", fontWeight = FontWeight.Bold)
-                    Text("Import PDF, DOCX, TXT, RTF or Markdown.")
-                }
+            composable(Screen.Documents.route) {
+                DocumentsScreen(
+                    documents = documents,
+                    onImport = { picker.launch(mimeTypes) },
+                    onDelete = documentsViewModel::delete
+                )
             }
-        } else {
-            LazyColumn {
-                items(documents, key = { it.document.id }) { item ->
-                    val document = item.document
-                    val integrityStatus =
-                        if (document.sha256 == null) "Local check pending" else "Verified locally"
-                    val extractionStatus = when (item.extractionStatus) {
-                        LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Text extraction queued"
-                        LocalJobStatus.RUNNING -> "Extracting text…"
-                        LocalJobStatus.COMPLETED -> "Text ready on device"
-                        LocalJobStatus.FAILED -> item.extractionError ?: "Text extraction failed"
-                        LocalJobStatus.CANCELLED -> "Text extraction cancelled"
-                        null -> if (document.extension in setOf("txt", "md")) {
-                            "Text extraction pending"
-                        } else {
-                            "Text extraction not yet supported"
-                        }
-                        else -> "Text extraction status unavailable"
-                    }
-                    ListItem(
-                        leadingContent = {
-                            Icon(
-                                if (document.extension == "pdf") Icons.Outlined.PictureAsPdf else Icons.Outlined.Description,
-                                contentDescription = null
-                            )
-                        },
-                        headlineContent = { Text(document.name, maxLines = 2) },
-                        supportingContent = {
-                            Text(
-                                "${document.extension.uppercase()} • ${document.sizeBytes / 1024} KB • " +
-                                    "$integrityStatus • $extractionStatus"
-                            )
-                        },
-                        trailingContent = {
-                            IconButton(onClick = { onDelete(document.id) }) {
-                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Delete")
-                            }
-                        }
-                    )
-                    HorizontalDivider()
-                }
+            composable(Screen.Study.route) {
+                StudyScreen()
+            }
+            composable(Screen.Chat.route) {
+                ChatScreen()
+            }
+            composable(Screen.Profile.route) {
+                ProfileScreen(
+                    user = authState.user,
+                    onSignOut = { authViewModel.signOut() }
+                )
             }
         }
     }
-}
-
-@Composable
-private fun FeatureScreen(modifier: Modifier, title: String, description: String) {
-    Box(modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            Text(description)
-            Spacer(Modifier.height(14.dp))
-            Text("Feature migration in progress", fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
-private fun DataCubeTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(0xFF2183E3),
-            onPrimary = Color.White,
-            background = Color(0xFFF7F9FC),
-            surface = Color.White
-        ),
-        content = content
-    )
 }
