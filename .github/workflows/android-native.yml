@@ -21,6 +21,6 @@ jobs:
           gradle-version: "8.9"
       - uses: android-actions/setup-android@v3
         with:
-          packages: "platforms;android-35,build-tools;35.0.0"
+          packages: |\n            platforms;android-35\n            build-tools;35.0.0
       - name: Build debug APK
         run: gradle -p apps/android :app:assembleDebug --no-daemon
