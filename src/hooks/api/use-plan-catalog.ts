@@ -73,7 +73,7 @@ export function usePlanCatalog() {
         const res = await fetch('/api/public/plan-catalog', {
           method: 'GET',
           credentials: 'include',
-          cache: 'no-store',
+          cache: 'default',
         });
         const payload = await res.json().catch(() => null);
         if (!res.ok || !payload?.ok) {
