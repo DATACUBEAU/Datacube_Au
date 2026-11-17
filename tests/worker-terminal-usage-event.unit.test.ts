@@ -14,12 +14,20 @@ const indexedChunkMigrationPath = path.join(
   process.cwd(),
   'supabase/migrations/20260903164000_meter_indexed_ingestion_chunks.sql',
 );
-const workerPath = path.join(process.cwd(), 'rag-worker/src/worker.ts');
 
 const sql = fs.readFileSync(migrationPath, 'utf8');
 const planSql = fs.readFileSync(planAttributionMigrationPath, 'utf8');
 const indexedChunkSql = fs.readFileSync(indexedChunkMigrationPath, 'utf8');
-const worker = fs.readFileSync(workerPath, 'utf8');
+
+ // The remote RAG worker was retired. Keep these SQL checks as historical
+ // production-schema safeguards without requiring the removed runtime source.
+ for (const retiredPath of ['rag-worker', 'backend/rag-worker']) {
+   assert.equal(
+     fs.existsSync(path.join(process.cwd(), retiredPath)),
+     false,
+     `Retired RAG worker directory must stay absent: ${retiredPath}`,
+   );
+ }
 
 assert.match(
   sql,
@@ -155,76 +163,4 @@ assert.doesNotMatch(
   'indexed chunk metering must not create a parallel mutable compatibility counter',
 );
 
-// Compatibility remains explicit until worker-side direct counter writes can be
-// removed safely. This prevents accidental claims that the legacy projection is
-// already gone while the worker still writes it.
-assert.match(
-  worker,
-  /incrementUsageCounters[\s\S]*jobs_completed\s*:\s*1/i,
-  'worker completion still maintains the compatibility snapshot during rollout',
-);
-assert.match(
-  worker,
-  /incrementUsageCounters[\s\S]*jobs_failed\s*:\s*1/i,
-  'worker failure still maintains the compatibility snapshot during rollout',
-);
-
-// Failed-job compatibility accounting must never get ahead of durable terminal
-// persistence. A failed au_worker_jobs update means the terminal usage-event
-// trigger did not fire, so the legacy snapshot must also stay unchanged.
-assert.match(
-  worker,
-  /private\s+async\s+markJobFailed\([\s\S]*\):\s*Promise<Error\s*\|\s*null>[\s\S]*return\s+error;/i,
-  'markJobFailed must surface terminal persistence failure to its caller',
-);
-assert.match(
-  worker,
-  /const\s+failurePersistError\s*=\s*await\s+this\.markJobFailed\([\s\S]*await\s+this\.markDocumentFailed\([\s\S]*if\s*\(!failurePersistError\)\s*\{[\s\S]*jobs_failed\s*:\s*1/i,
-  'legacy jobs_failed usage must only advance after the durable failed state persists',
-);
-assert.match(
-  worker,
-  /Skipping failed-job compatibility usage because terminal state did not persist/i,
-  'failed terminal persistence should remain observable without creating phantom usage',
-);
-
-// Ingestion retention must consume the same authoritative entitlement boundary
-// as the rest of the SaaS. Do not recreate plan/billing resolution inside the
-// worker or silently assign a default lifetime when the authoritative RPC fails.
-assert.match(
-  worker,
-  /if\s*\(!inheritedParentExpiryMs\)\s*\{[\s\S]*this\.supabase\.rpc\(\s*'get_effective_entitlements'\s*,\s*\{\s*p_user_id:\s*ownerId\s*\}/i,
-  'non-inherited document retention must use the authoritative effective-entitlements RPC',
-);
-assert.match(
-  worker,
-  /rawRetentionDays\s*=\s*Number\([\s\S]*retention_days[\s\S]*Number\.isFinite\(rawRetentionDays\)[\s\S]*rawRetentionDays\s*<=\s*0[\s\S]*entitlement_resolution_invalid/i,
-  'worker must reject invalid authoritative retention values instead of inventing a fallback',
-);
-assert.match(
-  worker,
-  /entitlementError[\s\S]*createRecoverableJobError\([\s\S]*entitlement_resolution_failed[\s\S]*entitlement_resolution_failed/i,
-  'authoritative entitlement lookup failure must remain recoverable and observable',
-);
-assert.match(
-  worker,
-  /recoverableReason\s*=\s*isRecoverable[\s\S]*processErr\s+as\s+any\)\?\.recoverableReason[\s\S]*transient_worker_error/i,
-  'worker must preserve the specific recoverable reason for entitlement failures',
-);
-assert.match(
-  worker,
-  /inheritedParentExpiryMs[\s\S]*parent_textbook[\s\S]*effective_entitlements/i,
-  'past/exam document parent-expiry inheritance must remain distinct from policy-based retention',
-);
-assert.doesNotMatch(
-  worker,
-  /from\('au_user_profiles'\)[\s\S]{0,1200}retentionDays/i,
-  'worker retention must not fall back to the legacy profile-tier resolver',
-);
-assert.doesNotMatch(
-  worker,
-  /isPaidPro\s*\?\s*30\s*:\s*14/i,
-  'worker must not keep a parallel Pro-only retention policy',
-);
-
-console.log('worker terminal usage-event, authoritative-retention, persistence-gating, plan-attribution, and indexed-chunk metering regression passed');
+console.log('historical worker usage-event migrations remain idempotent, service-role-only, and compatible with the retired runtime');
