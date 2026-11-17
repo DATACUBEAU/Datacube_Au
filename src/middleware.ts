@@ -265,11 +265,12 @@ export async function middleware(req: NextRequest) {
     if (!decision.allowed) return forbiddenResponse(req, decision);
     return applyProtectedHeaders(NextResponse.next());
   } catch (error: any) {
-    console.error('[middleware:authz] Failed to evaluate protected access:', {
+    const requestId = createSafeRequestId();
+    console.error('[middleware:authz] Failed to evaluate protected access', {
       pathname,
       routeId: rule.id,
-      message: String(error?.message || error),
-      code: error?.code || null,
+      code: typeof error?.code === 'string' ? error.code : null,
+      requestId,
     });
     const decision = evaluateAccess(
       {

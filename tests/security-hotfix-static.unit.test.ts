@@ -121,6 +121,16 @@ test('auth and worker diagnostics do not log token or document text previews', (
   assert.doesNotMatch(ingestion, /textPreview/);
 });
 
+test('middleware authorization diagnostics do not log raw backend error messages', () => {
+  const middleware = readRepoFile('src', 'middleware.ts');
+  const catchBlock = middleware.match(/catch \(error: any\) \{([\s\S]*?)const decision = evaluateAccess/)?.[1] || '';
+  assert.match(catchBlock, /requestId/);
+  assert.match(catchBlock, /code:/);
+  assert.doesNotMatch(catchBlock, /error\?\.message/);
+  assert.doesNotMatch(catchBlock, /String\(error/);
+  assert.doesNotMatch(catchBlock, /message:/);
+});
+
 test('source cleanup is owner and path bound with bounded attempts', () => {
   const cleanup = readRepoFile('rag-worker', 'src', 'source-cleanup.ts');
   const worker = readRepoFile('rag-worker', 'src', 'worker.ts');
