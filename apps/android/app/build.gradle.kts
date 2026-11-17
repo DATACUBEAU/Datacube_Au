@@ -32,5 +32,6 @@ dependencies {
  implementation(libs.room.ktx)
  implementation(libs.work.runtime)
  kapt(libs.room.compiler)
+ testImplementation("junit:junit:4.13.2")
  debugImplementation(libs.compose.tooling)
 }

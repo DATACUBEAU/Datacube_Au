@@ -41,18 +41,19 @@ class PlainTextDocumentExtractor : DocumentTextExtractor {
         if (!source.isFile || source.length() <= 0L) {
             throw TextExtractionRejectedException("The private document file is unavailable.")
         }
-        if (source.length() > MAX_SOURCE_BYTES) {
+        val sourceBytes = source.length()
+        if (sourceBytes > MAX_SOURCE_BYTES) {
             throw TextExtractionRejectedException(
                 "Text files larger than 20 MB are not extracted on this device."
             )
         }
 
         val parent = destination.parentFile
-        if (parent != null && !parent.exists() && !parent.mkdirs()) {
+            ?: throw IOException("The private extraction destination is invalid.")
+        if (!parent.exists() && !parent.mkdirs()) {
             throw IOException("Could not create the private extraction directory.")
         }
-        val temporary = File(destination.parentFile, destination.name + ".tmp")
-        temporary.delete()
+        val temporary = File(parent, destination.name + ".tmp")
 
         try {
             val decoder = StandardCharsets.UTF_8.newDecoder()
@@ -62,60 +63,65 @@ class PlainTextDocumentExtractor : DocumentTextExtractor {
             var charactersRead = 0L
             var lastProgressAt = 0L
 
-            BufferedReader(InputStreamReader(FileInputStream(source), decoder)).use { reader ->
-                BufferedWriter(
-                    OutputStreamWriter(FileOutputStream(temporary), StandardCharsets.UTF_8)
-                ).use { writer ->
-                    val buffer = CharArray(BUFFER_SIZE)
-                    var firstCharacter = true
-                    var pendingCarriageReturn = false
+            FileInputStream(source).use { input ->
+                BufferedReader(InputStreamReader(input, decoder)).use { reader ->
+                    BufferedWriter(
+                        OutputStreamWriter(FileOutputStream(temporary), StandardCharsets.UTF_8)
+                    ).use { writer ->
+                        val buffer = CharArray(BUFFER_SIZE)
+                        var firstCharacter = true
+                        var pendingCarriageReturn = false
 
-                    fun writeCharacter(character: Char) {
-                        writer.write(character.code)
-                        charactersWritten += 1
-                    }
+                        fun writeCharacter(character: Char) {
+                            writer.write(character.code)
+                            charactersWritten += 1
+                        }
 
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val count = reader.read(buffer)
-                        if (count < 0) break
-                        charactersRead += count
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val count = reader.read(buffer)
+                            if (count < 0) break
+                            charactersRead += count
 
-                        for (index in 0 until count) {
-                            val character = buffer[index]
-                            if (firstCharacter) {
-                                firstCharacter = false
-                                if (character == '\uFEFF') continue
+                            for (index in 0 until count) {
+                                val character = buffer[index]
+                                if (firstCharacter) {
+                                    firstCharacter = false
+                                    if (character == '\uFEFF') continue
+                                }
+                                if (character == '\u0000') {
+                                    throw TextExtractionRejectedException(
+                                        "The selected file is not plain UTF-8 text."
+                                    )
+                                }
+
+                                if (pendingCarriageReturn) {
+                                    writeCharacter('\n')
+                                    pendingCarriageReturn = false
+                                    if (character == '\n') continue
+                                }
+
+                                if (character == '\r') {
+                                    pendingCarriageReturn = true
+                                } else {
+                                    writeCharacter(character)
+                                }
                             }
-                            if (character == '\u0000') {
-                                throw TextExtractionRejectedException(
-                                    "The selected file is not plain UTF-8 text."
-                                )
-                            }
 
-                            if (pendingCarriageReturn) {
-                                writeCharacter('\n')
-                                pendingCarriageReturn = false
-                                if (character == '\n') continue
-                            }
-
-                            if (character == '\r') {
-                                pendingCarriageReturn = true
-                            } else {
-                                writeCharacter(character)
+                            if (charactersRead - lastProgressAt >= PROGRESS_INTERVAL_CHARS) {
+                                // Count bytes consumed by the UTF-8 decoder. Character counts
+                                // under-report progress for multi-byte text.
+                                val bytesRead = input.channel.position()
+                                val progress = (bytesRead.toDouble() / sourceBytes.toDouble())
+                                    .coerceIn(0.0, 0.95)
+                                onProgress(progress)
+                                lastProgressAt = charactersRead
                             }
                         }
 
-                        if (charactersRead - lastProgressAt >= PROGRESS_INTERVAL_CHARS) {
-                            val progress = (charactersRead.toDouble() / source.length().toDouble())
-                                .coerceIn(0.0, 0.95)
-                            onProgress(progress)
-                            lastProgressAt = charactersRead
-                        }
+                        if (pendingCarriageReturn) writeCharacter('\n')
+                        writer.flush()
                     }
-
-                    if (pendingCarriageReturn) writeCharacter('\n')
-                    writer.flush()
                 }
             }
 
