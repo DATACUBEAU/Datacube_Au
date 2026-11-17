@@ -342,8 +342,8 @@ const withPWA = withPWAInit({
           if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
           if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
           // Exclude protected/session-scoped APIs. Entitlement, billing, admin,
-          // upload, chat, and generated-output reads must never be served stale.
-          if (/\/api\/health$/i.test(url.pathname)) return false;
+          // upload, chat, generated-output, liveness, and readiness reads must never be served stale.
+          if (/\/api\/health(?:\/ready)?$/i.test(url.pathname)) return false;
           if (/\/api\/(account|admin|au|auth|billing|chat|entitlements|feedback|limits|payments)(\/|$)/i.test(url.pathname)) return false;
           if (/\/api\/feature-output$/i.test(url.pathname)) return false;
           if (/\/api\/feature-flags$/i.test(url.pathname)) return false;
@@ -469,22 +469,6 @@ const withPWA = withPWAInit({
                 }),
             },
           ],
-        },
-      },
-      {
-        urlPattern: ({ request, url }) => {
-          const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
-          if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
-          if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-          return request.method === 'GET' && /manifest\.webmanifest$/i.test(url.pathname);
-        },
-        handler: 'StaleWhileRevalidate',
-        options: {
-          cacheName: PWA_RUNTIME_CACHE_NAMES['manifest-cache'],
-          expiration: {
-            maxEntries: 1,
-            maxAgeSeconds: 24 * 60 * 60,
-          },
         },
       },
       {
