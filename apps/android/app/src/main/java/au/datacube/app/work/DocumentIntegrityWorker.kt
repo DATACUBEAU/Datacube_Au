@@ -38,6 +38,12 @@ class DocumentIntegrityWorker(
             return Result.success()
         }
 
+        // WorkManager unique work prevents concurrent workers for the same job.
+        // RUNNING is accepted so a persisted job can resume after process death.
+        if (database.jobs().claim(jobId, System.currentTimeMillis()) != 1) {
+            return Result.success()
+        }
+
         if (job.kind != LocalJobKind.DOCUMENT_INTEGRITY_CHECK) {
             database.jobs().markFailed(
                 jobId,
@@ -45,12 +51,6 @@ class DocumentIntegrityWorker(
                 System.currentTimeMillis()
             )
             return Result.failure()
-        }
-
-        // WorkManager unique work prevents concurrent workers for the same job.
-        // RUNNING is accepted so a persisted job can resume after process death.
-        if (database.jobs().claim(jobId, System.currentTimeMillis()) != 1) {
-            return Result.success()
         }
 
         return try {

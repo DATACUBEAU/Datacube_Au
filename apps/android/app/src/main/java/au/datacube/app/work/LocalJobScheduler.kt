@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
+import au.datacube.app.data.LocalJobKind
 import java.util.concurrent.TimeUnit
 
 class LocalJobScheduler(context: Context) {
@@ -41,9 +42,9 @@ class LocalJobScheduler(context: Context) {
     }
 
     suspend fun enqueueRecoverable() {
-        database.jobs().findRecoverable().forEach { job ->
-            enqueue(job.id)
-        }
+        database.jobs().findRecoverable()
+            .filter { job -> job.kind == LocalJobKind.DOCUMENT_INTEGRITY_CHECK }
+            .forEach { job -> enqueue(job.id) }
     }
 
     companion object {

@@ -14,7 +14,7 @@ interface LocalJobDao {
     suspend fun find(id: String): LocalJob?
 
     @Query(
-        "SELECT * FROM local_jobs WHERE status IN ('queued', 'retryable') " +
+        "SELECT * FROM local_jobs WHERE status IN ('queued', 'retryable', 'running') " +
             "ORDER BY createdAtEpochMs ASC"
     )
     suspend fun findRecoverable(): List<LocalJob>

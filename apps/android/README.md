@@ -12,7 +12,7 @@ Kotlin + Jetpack Compose Android application. The Flutter project in `apps/mobil
 - A durable Room job is committed in the same transaction as each imported document.
 - WorkManager receives only the durable job ID; its worker reloads the document reference from Room.
 - Local document integrity verification using streaming SHA-256; the fingerprint is stored as metadata.
-- Unique work, retry/backoff, resumable RUNNING state and generic completion notifications.
+- Unique work, retry/backoff, recoverable queued/running jobs and generic completion notifications.
 - No document bytes, extracted text, prompts or embeddings are sent to a server by this pipeline.
 
 ## Target architecture

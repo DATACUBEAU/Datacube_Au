@@ -201,7 +201,7 @@ private fun DocumentsScreen(
                         },
                         headlineContent = { Text(document.name, maxLines = 2) },
                         supportingContent = {
-                            Text("${document.extension.uppercase()} • ${document.sizeBytes / 1024} KB • ${if (document.sha256 == null) "Verifying locally" else "Verified locally"}")
+                            Text("${document.extension.uppercase()} • ${document.sizeBytes / 1024} KB • ${if (document.sha256 == null) "Local check pending" else "Verified locally"}")
                         },
                         trailingContent = {
                             IconButton(onClick = { onDelete(document.id) }) {
