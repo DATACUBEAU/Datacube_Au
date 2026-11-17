@@ -1,171 +1,28 @@
-name: Flutter mobile foundation
+# Flutter mobile — RETIRED
+#
+# Flutter was the previous mobile implementation.
+# It has been superseded by the native Kotlin/Compose Android application
+# at apps/android/. This workflow will never trigger.
+#
+# Retained as a historical reference only.
+# See: apps/android/ and .github/workflows/android-native.yml
+
+name: Flutter mobile (retired)
 
 on:
-  pull_request:
-    paths:
-      - "apps/mobile/**"
-      - ".github/workflows/flutter-mobile.yml"
-  push:
-    branches: [main]
-    paths:
-      - "apps/mobile/**"
-      - ".github/workflows/flutter-mobile.yml"
   workflow_dispatch:
-
-permissions:
-  contents: write
-
-concurrency:
-  group: flutter-mobile-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+    inputs:
+      confirm:
+        description: "This workflow is retired. It will not build anything."
+        required: false
 
 jobs:
-  android-foundation:
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    defaults:
-      run:
-        working-directory: apps/mobile
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
-          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
-          token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-      - name: Generate Android platform scaffold
+      - name: Flutter is retired
         run: |
-          if [ ! -d android ]; then
-            flutter create --platforms=android --org com.datacubeau --project-name datacube_au .
-          fi
-      - name: Configure Android core library desugaring
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-
-          kotlin = Path("android/app/build.gradle.kts")
-          groovy = Path("android/app/build.gradle")
-          if kotlin.exists():
-              path = kotlin
-              compile_setting = "isCoreLibraryDesugaringEnabled = true"
-              dependency = 'coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")'
-          elif groovy.exists():
-              path = groovy
-              compile_setting = "coreLibraryDesugaringEnabled true"
-              dependency = "coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'"
-          else:
-              raise SystemExit("Flutter Android app Gradle file was not generated")
-
-          text = path.read_text()
-
-          def add_to_block(source: str, name: str, statement: str) -> str:
-              match = re.search(r"\b" + re.escape(name) + r"\s*\{", source)
-              if not match and name == "compileOptions":
-                  nested_block = (
-                      "compileOptions {\n"
-                      "    " + compile_setting + "\n"
-                      "}"
-                  )
-                  return add_to_block(source, "android", nested_block)
-              if not match:
-                  raise SystemExit(f"Could not find {name} block in {path}")
-              opening = source.find("{", match.start())
-              depth = 0
-              closing = -1
-              for index in range(opening, len(source)):
-                  if source[index] == "{":
-                      depth += 1
-                  elif source[index] == "}":
-                      depth -= 1
-                      if depth == 0:
-                          closing = index
-                          break
-              if closing < 0:
-                  raise SystemExit(f"Could not parse {name} block in {path}")
-              if statement in source[opening:closing]:
-                  return source
-              line_start = source.rfind("\n", 0, closing) + 1
-              close_indent = re.match(r"[ \t]*", source[line_start:closing]).group(0)
-              indent = close_indent + "    "
-              inserted = "\n".join(indent + line for line in statement.splitlines())
-              return source[:closing].rstrip() + "\n" + inserted + "\n" + close_indent + source[closing:]
-
-          text = add_to_block(text, "compileOptions", compile_setting)
-          if re.search(r"\bdependencies\s*\{", text):
-              text = add_to_block(text, "dependencies", dependency)
-          else:
-              text += "\n\ndependencies {\n    " + dependency + "\n}\n"
-          path.write_text(text)
-          print(f"Configured core library desugaring in {path}")
-          PY
-      - name: Resolve dependencies
-        run: flutter pub get
-      - name: Generate Drift database code
-        run: dart run build_runner build
-      - name: Apply Dart formatting
-        run: dart format lib test
-      - name: Commit formatted Dart sources to the working branch
-        if: >-
-          ${{ github.event_name == 'pull_request' &&
-              github.event.pull_request.head.repo.full_name == github.repository }}
-        working-directory: .
-        env:
-          TARGET_BRANCH: ${{ github.event.pull_request.head.ref }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add apps/mobile/lib apps/mobile/test apps/mobile/pubspec.yaml apps/mobile/pubspec.lock
-          if ! git diff --cached --quiet; then
-            git commit -m "style(mobile): apply Dart formatter"
-            git push origin "HEAD:${TARGET_BRANCH}"
-          else
-            echo "Dart sources are already formatted."
-          fi
-      - name: Format check
-        run: dart format --output=none --set-exit-if-changed lib test
-      - name: Static analysis
-        run: flutter analyze --fatal-infos
-      - name: Unit and widget tests
-        run: flutter test
-      - name: Build debug APK
-        run: flutter build apk --debug
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: datacube-au-android-debug
-          path: apps/mobile/build/app/outputs/flutter-apk/app-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-      - name: Commit verified Android scaffold to the working branch
-        if: >-
-          ${{ success() &&
-              (github.event_name == 'workflow_dispatch' ||
-               (github.event_name == 'pull_request' &&
-                github.event.pull_request.head.repo.full_name == github.repository)) }}
-        working-directory: .
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TARGET_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -d apps/mobile/android ]; then
-            git add apps/mobile/android
-            if ! git diff --cached --quiet -- apps/mobile/android; then
-              git commit -m "Build: add verified Android platform scaffold"
-              git push origin "HEAD:${TARGET_BRANCH}"
-            else
-              echo "Android scaffold is already committed; no changes to push."
-            fi
-          else
-            echo "Android scaffold directory was not generated."
-            exit 1
-          fi
+          echo "Flutter was the previous mobile implementation."
+          echo "The active application is the native Kotlin/Compose app at apps/android/."
+          echo "See .github/workflows/android-native.yml for the current CI workflow."
+          exit 0
