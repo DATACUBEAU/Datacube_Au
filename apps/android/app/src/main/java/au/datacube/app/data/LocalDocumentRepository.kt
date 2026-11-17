@@ -14,7 +14,7 @@ class LocalDocumentRepository(private val dao: LocalDocumentDao, private val fil
   require(ext in setOf("pdf","docx","txt","rtf","md")) { "Unsupported document type." }
   val id = UUID.randomUUID().toString()
   val folder = File(filesDir, "documents").apply { mkdirs() }
-  val target = File(folder, "$$id.$$ext")
+  val target = File(folder, "$id.$ext")
   try {
    resolver.openInputStream(uri)?.use { input -> target.outputStream().use { output ->
     val buffer = ByteArray(8192); var total = 0L
