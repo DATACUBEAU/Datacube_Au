@@ -23,6 +23,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.DataCubeViewModel
+import au.datacube.app.work.LocalJobScheduler
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -30,6 +32,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { DataCubeTheme { DataCubeRoot(viewModel) } }
+        lifecycleScope.launch {
+            runCatching { LocalJobScheduler(applicationContext).enqueueRecoverable() }
+        }
     }
 }
 
@@ -59,7 +64,7 @@ private fun DataCubeRoot(viewModel: DataCubeViewModel) {
             viewModel.import(uri, name) { result ->
                 scope.launch {
                     snackbar.showSnackbar(
-                        result.exceptionOrNull()?.message ?: "Document saved privately on this device."
+                        result.exceptionOrNull()?.message ?: "Document saved privately. Local verification has been queued."
                     )
                 }
             }
@@ -196,7 +201,7 @@ private fun DocumentsScreen(
                         },
                         headlineContent = { Text(document.name, maxLines = 2) },
                         supportingContent = {
-                            Text("${document.extension.uppercase()} • ${document.sizeBytes / 1024} KB • Stored on device")
+                            Text("${document.extension.uppercase()} • ${document.sizeBytes / 1024} KB • ${if (document.sha256 == null) "Verifying locally" else "Verified locally"}")
                         },
                         trailingContent = {
                             IconButton(onClick = { onDelete(document.id) }) {
