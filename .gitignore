@@ -47,15 +47,16 @@ yarn-error.log*
 *.mov
 *.iso
 
-# Backend (Ignored for Vercel/Frontend Repo)
-.dockerignore
-!rag-worker/docker-compose.yml
-!rag-worker/Dockerfile
-
 # Misc
 .last-run.json
 playwright-report/
 test-results/
 
-# PowerShell Deployment Scripts
-deploy-rag-worker.ps1
+# Android
+apps/android/local.properties
+apps/android/.gradle/
+apps/android/app/build/
+apps/android/build/
+apps/android/**/*.jks
+apps/android/**/*.keystore
+apps/android/.idea/
