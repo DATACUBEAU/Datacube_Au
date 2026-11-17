@@ -53,6 +53,19 @@ async function main() {
     assert.match(login, /Account created/);
   });
 
+  await run('Google OAuth starts without artificial delay or blocking animation dependencies', () => {
+    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
+    assert.match(login, /await signInWithGoogle\(safeRedirectPath\)/);
+    assert.doesNotMatch(login, /setTimeout\s*\(/);
+    assert.doesNotMatch(login, /new Promise\s*\([^)]*setTimeout/);
+    assert.doesNotMatch(login, /from ['"]framer-motion['"]/);
+    assert.doesNotMatch(login, /<Dialog|<AlertDialog|showAuthPopup|showAuthCancelConfirm/);
+    assert.match(login, /Opening Google/);
+    assert.match(login, /Opening your workspace/);
+    assert.match(login, /aria-live="polite"/);
+    assert.match(login, /aria-busy="true"/);
+  });
+
   await run('OAuth uses a public callback route instead of redirecting directly to protected pages', () => {
     const smartAuth = readRepoFile('src', 'hooks', 'use-smart-auth.tsx');
     assert.match(smartAuth, /\/auth\/callback\?next=\$\{encodeURIComponent\(safePath\)\}/);
