@@ -35,7 +35,7 @@ import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useUploadJobs } from '@/components/upload/upload-jobs-provider';
 import type { UploadJobStatus } from '@/lib/upload/types';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
-import { DashboardPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
@@ -79,7 +79,6 @@ const quickAccessItems = [
   },
 ];
 
-
 export default function DashboardPage() {
   const [user] = useSupabaseUser();
   const { isOnline } = useNetworkStatus();
@@ -100,9 +99,7 @@ export default function DashboardPage() {
     markToastShown: markDashboardLimitToastShown,
     dismissAlert: dismissDashboardLimitAlert,
     clearLimitError: clearDashboardLimitError,
-  } = useLimitationsAgent({
-    route: 'dashboard',
-  });
+  } = useLimitationsAgent({ route: 'dashboard' });
   const promoContent = useMemo(
     () => normalizePromoContentConfig(entitlements.promoContentConfig || {}),
     [entitlements.promoContentConfig],
@@ -170,16 +167,10 @@ export default function DashboardPage() {
       .slice(0, 5);
   }, [documents, jobs, user]);
 
-  if (documentsLoading && showSkeleton && documents.length === 0) {
-    return <DashboardPageSkeleton />;
-  }
-
   function statusToBadge(status: string) {
     switch (status) {
       case 'completed':
-        return (
-          <Badge className="shrink-0 bg-green-600 hover:bg-green-700">Completed</Badge>
-        );
+        return <Badge className="shrink-0 bg-green-600 hover:bg-green-700">Completed</Badge>;
       case 'processing':
         return <Badge variant="secondary" className="shrink-0">Processing</Badge>;
       case 'failed':
@@ -205,9 +196,7 @@ export default function DashboardPage() {
           alert={dashboardLimitAlert}
           onDismiss={(alertId) => {
             dismissDashboardLimitAlert(alertId);
-            if (alertId.startsWith('server:')) {
-              clearDashboardLimitError();
-            }
+            if (alertId.startsWith('server:')) clearDashboardLimitError();
           }}
         />
       ) : null}
@@ -224,7 +213,7 @@ export default function DashboardPage() {
           Welcome, {(user?.user_metadata?.full_name as string | undefined) || (user?.user_metadata?.name as string | undefined) || 'User'}!
         </h1>
       </div>
-      
+
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {quickAccessItems.map((item) => (
           <Card key={item.title} className="hover:shadow-lg transition-shadow">
@@ -243,15 +232,13 @@ export default function DashboardPage() {
           </Card>
         ))}
       </div>
-      
+
       <div className="grid grid-cols-1 gap-4 md:gap-8">
         <Card>
-          <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="grid gap-2">
               <CardTitle className="font-headline">Recent Documents</CardTitle>
-              <CardDescription>
-                Your latest uploads and their status.
-              </CardDescription>
+              <CardDescription>Your latest uploads and their status.</CardDescription>
             </div>
             <Link href="/dashboard/documents" className="ml-auto">
               <Button size="sm" className="gap-1 w-full sm:w-auto">
@@ -260,14 +247,28 @@ export default function DashboardPage() {
               </Button>
             </Link>
           </CardHeader>
-          <CardContent>
+          <CardContent aria-busy={documentsLoading} aria-live="polite">
             {documentsLoading ? (
-              <div className="flex h-24 items-center justify-center">
-                <div className="inline-flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  Loading...
+              showSkeleton ? (
+                <div className="space-y-3" aria-label="Loading recent documents">
+                  {[0, 1, 2].map((item) => (
+                    <div key={item} className="flex items-center gap-3 rounded-lg border border-border/60 p-3">
+                      <div className="h-4 w-4 shrink-0 animate-pulse rounded bg-muted" />
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="h-3 w-2/3 animate-pulse rounded bg-muted" />
+                        <div className="h-3 w-1/3 animate-pulse rounded bg-muted" />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
+              ) : (
+                <div className="flex h-24 items-center justify-center text-sm text-muted-foreground">
+                  <div className="inline-flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    Loading recent documents…
+                  </div>
+                </div>
+              )
             ) : recentDocuments.length > 0 ? (
               <>
                 <div className="space-y-3 md:hidden">
@@ -306,11 +307,8 @@ export default function DashboardPage() {
                         <TableRow key={doc.id} className="group cursor-default">
                           <TableCell className="min-w-0 font-medium">
                             <div className="flex min-w-0 items-center gap-2">
-                              <FileTextIcon className="h-4 w-4 shrink-0 text-primary opacity-70 transition-opacity group-hover:opacity-100" />
-                              <FileNameText
-                                text={doc.file_name}
-                                className="group-hover:text-primary transition-colors"
-                              />
+                              <FileTextIcon className="h-4 w-4 shrink-0 text-primary opacity-70 transition-opacity group-hover:opacity-100" aria-hidden="true" />
+                              <FileNameText text={doc.file_name} className="group-hover:text-primary transition-colors" />
                             </div>
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-muted-foreground transition-colors group-hover:text-foreground">
