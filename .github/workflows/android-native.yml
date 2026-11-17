@@ -26,3 +26,10 @@ jobs:
           ls "$ANDROID_HOME/build-tools"
       - name: Build debug APK
         run: gradle -p apps/android :app:assembleDebug --no-daemon
+      - name: Upload Room schemas
+        uses: actions/upload-artifact@v4
+        with:
+          name: room-schemas
+          path: apps/android/app/schemas/
+          if-no-files-found: error
+          retention-days: 7
