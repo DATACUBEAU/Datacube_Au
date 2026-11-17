@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 
 data class ImportedDocument(
     val document: LocalDocument,
-    val jobId: String
+    val jobs: List<LocalJob>
 )
 
 class LocalDocumentRepository(
@@ -33,7 +33,6 @@ class LocalDocumentRepository(
         }
 
         val id = UUID.randomUUID().toString()
-        val jobId = UUID.randomUUID().toString()
         val folder = File(filesDir, "documents").apply { mkdirs() }
         val target = File(folder, id + "." + extension)
 
@@ -70,23 +69,42 @@ class LocalDocumentRepository(
                 privatePath = target.absolutePath,
                 createdAtEpochMs = now
             )
-            // The document receipt and its durable job are committed together.
+            val jobs = buildList {
+                add(
+                    LocalJob(
+                        id = UUID.randomUUID().toString(),
+                        kind = LocalJobKind.DOCUMENT_INTEGRITY_CHECK,
+                        status = LocalJobStatus.QUEUED,
+                        payloadJson = JSONObject().put("documentId", id).toString(),
+                        progress = 0.0,
+                        attempts = 0,
+                        createdAtEpochMs = now,
+                        updatedAtEpochMs = now
+                    )
+                )
+                if (extension in TEXT_EXTRACTION_EXTENSIONS) {
+                    add(
+                        LocalJob(
+                            id = "text-extract-$id",
+                            kind = LocalJobKind.DOCUMENT_TEXT_EXTRACTION,
+                            status = LocalJobStatus.QUEUED,
+                            payloadJson = JSONObject().put("documentId", id).toString(),
+                            progress = 0.0,
+                            attempts = 0,
+                            createdAtEpochMs = now,
+                            updatedAtEpochMs = now
+                        )
+                    )
+                }
+            }
+
+            // The document receipt and every initial processing job commit together.
             // WorkManager is scheduled only after this transaction succeeds.
-            val job = LocalJob(
-                id = jobId,
-                kind = LocalJobKind.DOCUMENT_INTEGRITY_CHECK,
-                status = LocalJobStatus.QUEUED,
-                payloadJson = JSONObject().put("documentId", id).toString(),
-                progress = 0.0,
-                attempts = 0,
-                createdAtEpochMs = now,
-                updatedAtEpochMs = now
-            )
             database.withTransaction {
                 database.documents().insert(document)
-                database.jobs().insert(job)
+                jobs.forEach { database.jobs().insert(it) }
             }
-            ImportedDocument(document, jobId)
+            ImportedDocument(document, jobs)
         } catch (error: Throwable) {
             target.delete()
             throw error
@@ -97,11 +115,13 @@ class LocalDocumentRepository(
         database.documents().find(id)?.let { document ->
             database.documents().delete(id)
             File(document.privatePath).delete()
+            ExtractedTextStore.fileFor(filesDir, id).delete()
         }
     }
 
     companion object {
         private const val MAX_DOCUMENT_BYTES = 100L * 1024L * 1024L
         private val SUPPORTED_EXTENSIONS = setOf("pdf", "docx", "txt", "rtf", "md")
+        private val TEXT_EXTRACTION_EXTENSIONS = setOf("txt", "md")
     }
 }

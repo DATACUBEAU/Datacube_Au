@@ -22,6 +22,7 @@ data class LocalJob(
 
 object LocalJobKind {
     const val DOCUMENT_INTEGRITY_CHECK = "document.integrity_check"
+    const val DOCUMENT_TEXT_EXTRACTION = "document.text_extraction"
 }
 
 object LocalJobStatus {

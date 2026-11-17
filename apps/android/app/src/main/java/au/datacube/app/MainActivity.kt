@@ -21,7 +21,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import au.datacube.app.data.LocalDocument
+import au.datacube.app.data.LocalDocumentProcessing
+import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.ui.DataCubeViewModel
 import au.datacube.app.work.LocalJobScheduler
 import androidx.lifecycle.lifecycleScope
@@ -64,7 +65,7 @@ private fun DataCubeRoot(viewModel: DataCubeViewModel) {
             viewModel.import(uri, name) { result ->
                 scope.launch {
                     snackbar.showSnackbar(
-                        result.exceptionOrNull()?.message ?: "Document saved privately. Local verification has been queued."
+                        result.exceptionOrNull()?.message ?: "Document saved privately. Local processing has been queued."
                     )
                 }
             }
@@ -169,7 +170,7 @@ private fun HomeScreen(modifier: Modifier, onImport: () -> Unit) {
 @Composable
 private fun DocumentsScreen(
     modifier: Modifier,
-    documents: List<LocalDocument>,
+    documents: List<LocalDocumentProcessing>,
     onImport: () -> Unit,
     onDelete: (String) -> Unit
 ) {
@@ -191,7 +192,23 @@ private fun DocumentsScreen(
             }
         } else {
             LazyColumn {
-                items(documents, key = { it.id }) { document ->
+                items(documents, key = { it.document.id }) { item ->
+                    val document = item.document
+                    val integrityStatus =
+                        if (document.sha256 == null) "Local check pending" else "Verified locally"
+                    val extractionStatus = when (item.extractionStatus) {
+                        LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Text extraction queued"
+                        LocalJobStatus.RUNNING -> "Extracting text…"
+                        LocalJobStatus.COMPLETED -> "Text ready on device"
+                        LocalJobStatus.FAILED -> item.extractionError ?: "Text extraction failed"
+                        LocalJobStatus.CANCELLED -> "Text extraction cancelled"
+                        null -> if (document.extension in setOf("txt", "md")) {
+                            "Text extraction pending"
+                        } else {
+                            "Text extraction not yet supported"
+                        }
+                        else -> "Text extraction status unavailable"
+                    }
                     ListItem(
                         leadingContent = {
                             Icon(
@@ -201,7 +218,10 @@ private fun DocumentsScreen(
                         },
                         headlineContent = { Text(document.name, maxLines = 2) },
                         supportingContent = {
-                            Text("${document.extension.uppercase()} • ${document.sizeBytes / 1024} KB • ${if (document.sha256 == null) "Local check pending" else "Verified locally"}")
+                            Text(
+                                "${document.extension.uppercase()} • ${document.sizeBytes / 1024} KB • " +
+                                    "$integrityStatus • $extractionStatus"
+                            )
                         },
                         trailingContent = {
                             IconButton(onClick = { onDelete(document.id) }) {

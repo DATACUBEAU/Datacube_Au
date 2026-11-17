@@ -11,6 +11,32 @@ interface LocalDocumentDao {
     @Query("SELECT * FROM local_documents ORDER BY createdAtEpochMs DESC")
     fun observeAll(): Flow<List<LocalDocument>>
 
+    @Query(
+        """
+        SELECT d.*,
+               j.status AS extractionStatus,
+               j.progress AS extractionProgress,
+               j.lastError AS extractionError
+        FROM local_documents AS d
+        LEFT JOIN local_jobs AS j ON j.id = 'text-extract-' || d.id
+        ORDER BY d.createdAtEpochMs DESC
+        """
+    )
+    fun observeAllWithProcessing(): Flow<List<LocalDocumentProcessing>>
+
+    @Query(
+        """
+        SELECT d.* FROM local_documents AS d
+        WHERE lower(d.extension) IN ('txt', 'md')
+          AND NOT EXISTS (
+              SELECT 1 FROM local_jobs AS j
+              WHERE j.id = 'text-extract-' || d.id
+          )
+        ORDER BY d.createdAtEpochMs ASC
+        """
+    )
+    suspend fun findTextDocumentsMissingExtraction(): List<LocalDocument>
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(item: LocalDocument)
 

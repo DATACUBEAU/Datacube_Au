@@ -10,6 +10,9 @@ interface LocalJobDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insert(job: LocalJob)
 
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(job: LocalJob): Long
+
     @Query("SELECT * FROM local_jobs WHERE id = :id LIMIT 1")
     suspend fun find(id: String): LocalJob?
 

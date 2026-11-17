@@ -17,7 +17,7 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
     private val repository = LocalDocumentRepository(database, app.filesDir)
     private val jobScheduler = LocalJobScheduler(app)
 
-    val documents = database.documents().observeAll().stateIn(
+    val documents = database.documents().observeAllWithProcessing().stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5_000),
         emptyList()
@@ -31,7 +31,7 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
                     getApplication<Application>().contentResolver,
                     name
                 )
-                jobScheduler.enqueue(imported.jobId)
+                imported.jobs.forEach { job -> jobScheduler.enqueue(job.id, job.kind) }
                 done(Result.success(Unit))
             } catch (cancelled: CancellationException) {
                 throw cancelled
