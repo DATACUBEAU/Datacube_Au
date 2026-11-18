@@ -46,6 +46,7 @@ async function main() {
   await run('OAuth uses a public callback route instead of redirecting directly to protected pages', () => {
     const smartAuth = readRepoFile('src', 'hooks', 'use-smart-auth.tsx');
     assert.match(smartAuth, /\/auth\/callback\?next=\$\{encodeURIComponent\(safePath\)\}/);
+    assert.match(smartAuth, /queryParams: \{ prompt: 'select_account' \}/);
     assert.doesNotMatch(smartAuth, /window\.location\.origin\}\$\{safePath\}/);
   });
 
