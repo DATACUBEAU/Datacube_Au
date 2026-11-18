@@ -71,7 +71,7 @@ async function main() {
     assert.match(middleware, /sanitizeLocalRedirectPath\(req\.nextUrl\.searchParams\.get\('next'\)\)/);
     assert.match(middleware, /searchParams\.set\('reason', 'session_expired'\)/);
     assert.match(login, /wasSessionExpired/);
-    assert.match(login, /Your session expired\. Please sign in again to continue\./);
+    assert.match(login, /Your session expired\. Continue securely with Google\./);
     assert.doesNotMatch(middleware, /'\/session-expired',/);
   });;
 
