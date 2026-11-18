@@ -10,13 +10,13 @@ ALTER POLICY "No access for public" ON public.au_api_keys TO authenticated;
 ALTER POLICY "Admin access only" ON public.au_debug_logs TO authenticated;
 ALTER POLICY "Admin access only" ON public.au_feedback TO authenticated;
 
-DO $
+DO $$
 BEGIN
   IF to_regclass('public.au_auth_mappings') IS NOT NULL THEN
     EXECUTE 'ALTER POLICY "Users can view their own auth mappings" ON public.au_auth_mappings TO authenticated';
   END IF;
 END
-$;
+$$;
 ALTER POLICY "Users can view their own events" ON public.au_events TO authenticated;
 ALTER POLICY "Anyone can insert feedback" ON public.au_feedback TO authenticated;
 
