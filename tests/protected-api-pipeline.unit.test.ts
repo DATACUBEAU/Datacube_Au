@@ -112,18 +112,20 @@ async function main() {
     assert.equal(source.includes("source: 'useAuChat.sendMessage'"), false);
   });
 
-  await run('AI ticket requests suppress global 401 expiry and preserve structured error handling', () => {
+  await run('retired browser AI helpers fail closed with the native-app-required contract', () => {
     const chat = readRepoFile('src/lib/api/chat.ts');
     const exams = readRepoFile('src/lib/api/exams.ts');
     const store = readRepoFile('src/hooks/use-store.ts');
+    const retiredHelper = readRepoFile('src/lib/api/mobile-app-required.ts');
 
-    assert.match(chat, /throwResponseApiError/);
-    assert.match(chat, /message:\s*'Sign in required\.'/);
-    assert.match(chat, /suppressAuthError:\s*true/);
-    assert.match(exams, /message:\s*'Sign in required\.'/);
-    assert.match(exams, /suppressAuthError:\s*true/);
-    assert.match(store, /message:\s*'Sign in required\.'/);
-    assert.match(store, /suppressAuthError:\s*true/);
+    assert.match(chat, /throwMobileAppRequired/);
+    assert.match(exams, /throwMobileAppRequired/);
+    assert.match(store, /notifyNativeAppRequired/);
+    assert.match(retiredHelper, /code: 'MOBILE_APP_REQUIRED'/);
+    assert.match(retiredHelper, /status: 410/);
+    assert.doesNotMatch(chat, /\\/api\\/au\\/vps-ticket/);
+    assert.doesNotMatch(exams, /\\/api\\/au\\/vps-ticket/);
+    assert.doesNotMatch(store, /\\/api\\/au\\/vps-ticket/);
   });
 
   await run('support escalation uses configured public email and does not hardcode the deployment domain', () => {
@@ -273,22 +275,19 @@ async function main() {
     assert.equal(routeSource.includes('model:'), false);
   });
 
-  await run('generation flows pass document IDs/idempotency keys and use shared user-facing error messaging', () => {
+  await run('browser generation actions are retired and direct users to native processing', () => {
     const storeSource = readRepoFile('src/hooks/use-store.ts');
-    const examsHook = readRepoFile('src/hooks/api/use-au-exams.ts');
+    const chatApi = readRepoFile('src/lib/api/chat.ts');
     const examsApi = readRepoFile('src/lib/api/exams.ts');
-    assert.match(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET/);
-    assert.match(storeSource, /PREDICTION_PAST_QUESTIONS_BUDGET/);
-    assert.match(storeSource, /describeApiErrorForUser/);
-    assert.doesNotMatch(examsHook, /getAuDocumentChunksText/);
-    assert.match(examsHook, /generatePracticeExam\(\s*['"]{2},\s*['"]{2}/);
-    assert.match(examsHook, /describeApiErrorForUser/);
-    assert.match(examsApi, /createAiIdempotencyKey\('practice_exam'\)/);
-    assert.match(examsApi, /createAiIdempotencyKey\('exam_predictions'\)/);
-    assert.match(examsApi, /feature:\s*'generate-practice-exam'/);
-    assert.match(examsApi, /feature:\s*'generate-exam-predictions'/);
-    assert.match(examsApi, /hasDocId \? undefined : \(documentContent \|\| undefined\)/);
-    assert.match(examsApi, /hasPqIds \? undefined : \(pastQuestionsContent \|\| undefined\)/);
+    const retiredHelper = readRepoFile('src/lib/api/mobile-app-required.ts');
+
+    assert.match(storeSource, /notifyNativeAppRequired/);
+    assert.match(chatApi, /throwMobileAppRequired/);
+    assert.match(examsApi, /throwMobileAppRequired/);
+    assert.match(retiredHelper, /MOBILE_APP_REQUIRED/);
+    assert.doesNotMatch(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET|PREDICTION_PAST_QUESTIONS_BUDGET/);
+    assert.doesNotMatch(chatApi, /fetch\\(|safeFetch|\\/api\\/au\\/vps-ticket/);
+    assert.doesNotMatch(examsApi, /fetch\\(|safeFetch|\\/api\\/au\\/vps-ticket/);
   });
 
   await run('dashboard activity heartbeat is throttled so it cannot chatter every minute', () => {
@@ -329,7 +328,7 @@ async function main() {
     assert.match(globalChatPage, /Restoring session\.\.\./);
   });
 
-  await run('legacy AI proxy wrappers were removed in favor of the VPS ticket path', () => {
+  await run('legacy browser AI proxy routes stay removed and compatibility actions fail closed', () => {
     assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/_proxy-forward.ts')), false);
     for (const file of [
       'src/app/api/chat/route.ts',
@@ -340,12 +339,15 @@ async function main() {
     ]) {
       assert.equal(fs.existsSync(path.join(repoRoot, file)), false, file);
     }
+    const actions = readRepoFile('src/app/actions.ts');
     const chat = readRepoFile('src/lib/api/chat.ts');
     const exams = readRepoFile('src/lib/api/exams.ts');
-    const store = readRepoFile('src/hooks/use-store.ts');
-    assert.match(chat, /\/api\/au\/vps-ticket/);
-    assert.match(exams, /\/api\/au\/vps-ticket/);
-    assert.match(store, /\/api\/au\/vps-ticket/);
+    assert.match(actions, /throwMobileAppRequired/);
+    assert.match(chat, /throwMobileAppRequired/);
+    assert.match(exams, /throwMobileAppRequired/);
+    assert.doesNotMatch(actions, /vps|gateway|ticket/i);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/au/vps-ticket/route.ts')), false);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/lib/server/vps-ticket-config.ts')), false);
   });
 
   await run('chat history route uses canonical request auth and RLS client helpers', () => {
