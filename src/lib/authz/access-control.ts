@@ -78,6 +78,16 @@ export const ACCESS_NO_STORE_HEADERS = {
 
 export const PROTECTED_PAGE_RULES: readonly AccessRule[] = [
   {
+    id: 'checkout',
+    surface: 'page',
+    pathname: '/checkout',
+    match: 'exact',
+    requirement: 'auth',
+    labels: ['AUTH', 'BILLING', 'CACHE_SENSITIVE'],
+    description: 'Subscription checkout and payment initiation.',
+    noStore: true,
+  },
+  {
     id: 'dashboard.global_chat',
     surface: 'page',
     pathname: '/dashboard/global-chat',
