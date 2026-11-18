@@ -194,7 +194,8 @@ export default function LoginPage() {
           }
 
           if (res.status === 403) {
-            router.replace('/403');
+            toast({ title: 'Admin access required', description: 'This account does not have access to Conex Admin.', variant: 'destructive' });
+            router.replace('/checkout');
             return;
           }
 
@@ -203,7 +204,7 @@ export default function LoginPage() {
             return;
           }
 
-          router.replace('/dashboard');
+          router.replace('/checkout');
           return;
         }
 
@@ -234,7 +235,7 @@ export default function LoginPage() {
 
     try {
       await signInWithGoogle(safeRedirectPath);
-      // No need to manually push to dashboard, useEffect will handle it when user state updates
+      // No need to manually route; the auth effect sends signed-in users to their permitted browser destination.
     } catch (error: any) {
       setShowAuthPopup(false);
       toast({
@@ -332,7 +333,7 @@ export default function LoginPage() {
         if (data.session?.access_token) {
           syncServerAuthSessionCookie(data.session);
           await saveUsernameForSession(normalizedUsername, data.session.access_token);
-          toast({ title: 'Account created', description: 'Taking you to your dashboard.' });
+          toast({ title: 'Account created', description: 'Taking you to subscription checkout.' });
           router.replace(safeRedirectPath);
           return;
         }
