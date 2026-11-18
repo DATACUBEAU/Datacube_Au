@@ -366,16 +366,17 @@ async function main() {
     assert.doesNotMatch(proxyAuth, /Authorization:\s*authorization/);
   });
 
-  await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
-    const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
-    assert.match(source, /requireEntitlement/);
-    assert.match(source, /isAccessControlError/);
-    assert.match(source, /buildApiErrorBody/);
-    assert.match(source, /correlationId/);
-    assert.match(source, /reserveAiUsage/);
-    assert.match(source, /AI_USAGE_RESERVATION_FAILED/);
-    assert.match(source, /route:\s*operation\.gatewayRoute/);
-    assert.doesNotMatch(source, /console\.log\([^)]*Authorization/);
+  await run('retired browser AI workspace fails closed without restoring a remote gateway route', () => {
+    const middleware = readRepoFile('src/middleware.ts');
+    const chat = readRepoFile('src/lib/api/chat.ts');
+    const exams = readRepoFile('src/lib/api/exams.ts');
+    const actions = readRepoFile('src/app/actions.ts');
+    assert.match(middleware, /isRetiredWebProductPath/);
+    assert.doesNotMatch(chat, /\/api\/au\/vps-ticket/);
+    assert.doesNotMatch(exams, /\/api\/au\/vps-ticket/);
+    assert.doesNotMatch(actions, /\/api\/au\/vps-ticket/);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/au/vps-ticket/route.ts')), false);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/lib/server/vps-ticket-config.ts')), false);
   });
 
   await run('middleware API denials include safe opaque request IDs for correlation', () => {
