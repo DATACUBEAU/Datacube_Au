@@ -83,10 +83,10 @@ assert.match(websiteLogin, /signInWithGoogle/);
 assert.match(websiteCallback, /exchangeCodeForSession\(code\)/);
 assert.match(websiteCallback, /syncServerAuthSessionCookie\(session\)/);
 
-assert.match(androidTheme, /0xFF0B1F3A/);
-assert.match(androidTheme, /0xFF69B7FF/);
+assert.match(androidTheme, /0xFF101B2D/);
+assert.match(androidTheme, /0xFF0866F5/);
 assert.match(androidTheme, /0xFFFFFFFF/);
-assert.match(androidTheme, /0xFF000000/);
+assert.match(androidTheme, /0xFF080D16/);
 assert.match(androidLogo, /pathData/);
 assert.match(middleware, /isRetiredWebProductPath/);
 assert.match(middleware, /\/mobile-app-required/);
