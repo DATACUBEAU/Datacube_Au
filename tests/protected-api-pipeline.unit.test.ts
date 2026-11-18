@@ -286,7 +286,8 @@ async function main() {
     assert.match(examsApi, /throwMobileAppRequired/);
     assert.match(retiredHelper, /MOBILE_APP_REQUIRED/);
     assert.doesNotMatch(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET|PREDICTION_PAST_QUESTIONS_BUDGET/);
-    assert.doesNotMatch(chatApi, /fetch\\(|safeFetch/);\n    assert.equal(chatApi.includes('/api/au/vps-ticket'), false);
+    assert.doesNotMatch(chatApi, /fetch\\(|safeFetch/);
+    assert.equal(chatApi.includes('/api/au/vps-ticket'), false);
     assert.doesNotMatch(examsApi, /fetch\\(|safeFetch/);\n    assert.equal(examsApi.includes('/api/au/vps-ticket'), false);
   });
 
