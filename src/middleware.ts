@@ -231,21 +231,48 @@ async function loadMiddlewareSubject(
 }
 
 function isRetiredWebProductPath(pathname: string): boolean {
-  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
-    // Account, subscription, billing and usage settings remain web-managed.
-    return !(pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/'));
-  }
+  // The web product workspace is retired completely. Document management,
+  // study tools, account settings and usage views now belong to Android.
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) return true;
 
-  const retiredPrefixes = ['/documents', '/guide-preview', '/test', '/offline', '/~offline'];
-  return retiredPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  const retiredPrefixes = [
+    '/',
+    '/documents',
+    '/guide-preview',
+    '/test',
+    '/offline',
+    '/~offline',
+    '/about',
+    '/features',
+    '/policy',
+    '/mobile-app-required',
+    '/session-expired',
+    '/403',
+  ];
+  return retiredPrefixes.some((prefix) =>
+    prefix === '/'
+      ? pathname === '/'
+      : pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+
+  // Keep one authentication entry point and one subscription checkout entry.
+  if (pathname === '/signup') {
+    const loginUrl = new URL('/login', req.url);
+    loginUrl.searchParams.set('mode', 'signup');
+    return applyProtectedHeaders(NextResponse.redirect(loginUrl));
+  }
+  if (pathname === '/pricing') {
+    return applyProtectedHeaders(NextResponse.redirect(new URL('/checkout', req.url)));
+  }
+
   if (isRetiredWebProductPath(pathname)) {
-    return applyProtectedHeaders(
-      NextResponse.redirect(new URL('/mobile-app-required', req.url)),
-    );
+    const loginUrl = new URL('/login', req.url);
+    loginUrl.searchParams.set('notice', 'mobile_app_required');
+    return applyProtectedHeaders(NextResponse.redirect(loginUrl));
   }
   const rule = findApiAccessRule(pathname) || findPageAccessRule(pathname);
 
