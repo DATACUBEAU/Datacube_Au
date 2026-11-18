@@ -69,7 +69,8 @@ class AuthRepository(
             .toString()
     }
 
-    suspend fun completeWebsiteAuthentication(code: String, state: String): AuthResult = try {
+    suspend fun completeWebsiteAuthentication(code: String, state: String): AuthResult {
+        return try {
         val pending = pendingAuthStore.load(state)
             ?: return AuthResult.Error("This sign-in request expired. Please sign in again.")
 
@@ -112,6 +113,7 @@ class AuthRepository(
     } catch (e: Exception) {
         Log.e(TAG, "Website authentication handoff failed", e)
         AuthResult.Error("Could not complete sign-in. Check your connection and try again.")
+        }
     }
 
     suspend fun signOut(): AuthResult = try {
