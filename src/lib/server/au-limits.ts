@@ -39,6 +39,7 @@ import { LARGE_FILE_DISABLED_MESSAGE } from '@/lib/upload/large-file-gating';
 import { safeSelectDocuments, type DocumentUsageRow } from '@/lib/server/document-usage-query';
 import { loadUsageCounterSnapshots, resolveUsageMetricForRule } from '@/lib/server/usage-tracking';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
+import { countTrulyActiveWorkerJobs } from '@/lib/server/worker-job-concurrency';
 
 const ONE_MB_BYTES = 1024 * 1024;
 
@@ -1235,7 +1236,7 @@ export async function buildUsageSnapshotForUser(
 
   const [
     documentRows,
-    runningJobs,
+    runningJobsResult,
     legacyChatsCount,
     legacyTokensUsed,
     predictionWindowCount,
@@ -1247,10 +1248,10 @@ export async function buildUsageSnapshotForUser(
     trackedSnapshots,
   ] = await Promise.all([
     safeSelectDocuments(supabase, userId),
-    safeExactCount(supabase, 'au_worker_jobs', {
-      userId,
-      ownerOrUser: true,
-      statuses: ['queued', 'uploaded', 'processing'],
+    countTrulyActiveWorkerJobs({
+      supabase,
+      ownerId: userId,
+      nowIso: snapshotAt.toISOString(),
     }),
     safeExactCount(supabase, 'au_messages', {
       userId,
@@ -1296,6 +1297,12 @@ export async function buildUsageSnapshotForUser(
     }),
     loadUsageCounterSnapshots(supabase, userId, snapshotAt).catch(() => ({ today: {}, total: {} })),
   ]);
+
+  if (runningJobsResult.error) {
+    // Never silently grant extra ingestion capacity when active lease state cannot be verified.
+    throw runningJobsResult.error;
+  }
+  const runningJobs = runningJobsResult.count;
 
   const currentUploads = countCurrentDocuments(documentRows);
   const windowUploads = countDocumentsWithinWindow(documentRows, uploadWindow);
