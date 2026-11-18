@@ -11,7 +11,7 @@ export function isPublicAuthPath(pathname: string | null | undefined): boolean {
 
 export function sanitizeLocalRedirectPath(
   value: string | null | undefined,
-  fallback = '/mobile-app-required',
+  fallback = '/checkout',
 ): string {
   const candidate = normalizeCandidatePath(value);
   if (!candidate || !candidate.startsWith('/') || candidate.startsWith('//')) return fallback;
@@ -20,9 +20,20 @@ export function sanitizeLocalRedirectPath(
   try {
     const parsed = new URL(candidate, 'https://datacube.local');
     if (parsed.origin !== 'https://datacube.local') return fallback;
-    const nextPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
-    if (isPublicAuthPath(parsed.pathname)) return fallback;
-    return nextPath || fallback;
+    const pathname = parsed.pathname.replace(/\/$/, '') || '/';
+    if (isPublicAuthPath(pathname)) return fallback;
+
+    // Browser navigation is restricted to the checkout, admin console and the
+    // short-lived website-to-native authentication handoff.
+    const allowed =
+      pathname === '/checkout' ||
+      pathname === '/conex' ||
+      pathname.startsWith('/conex/') ||
+      pathname === '/mobile-auth/complete' ||
+      pathname === '/mobile-auth/install';
+    if (!allowed) return fallback;
+
+    return `${pathname}${parsed.search}${parsed.hash}`;
   } catch {
     return fallback;
   }
