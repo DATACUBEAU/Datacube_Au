@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { AlertCircle, ArrowRight, CheckCircle2, Loader2, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -49,7 +49,7 @@ function makeIdempotencyKey(prefix: string, seed: string): string {
   return normalized;
 }
 
-export default function CheckoutPage() {
+function CheckoutPageContent() {
   const [user, , isUserLoading] = useSupabaseUser();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -400,5 +400,23 @@ export default function CheckoutPage() {
         )}
       </div>
     </main>
+  );
+}
+
+
+export default function CheckoutPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto flex min-h-dvh max-w-3xl items-center justify-center px-4">
+          <div className="flex items-center gap-3 text-sm text-muted-foreground">
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Loading subscription checkout…
+          </div>
+        </main>
+      }
+    >
+      <CheckoutPageContent />
+    </Suspense>
   );
 }
