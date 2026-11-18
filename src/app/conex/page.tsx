@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Shield, Lock, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, Send, UserMinus, Search, Menu, FolderTree, Crown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -2515,7 +2516,16 @@ export default function ConexPage() {
                   <CardTitle>Billing & Monetization</CardTitle>
                   <CardDescription>Manage Stripe integration and premium features.</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border/70 p-3">
+                    <div>
+                      <p className="text-sm font-medium">Plan limits</p>
+                      <p className="text-xs text-muted-foreground">Manage usage caps, upload limits, and plan-specific rules.</p>
+                    </div>
+                    <Button asChild type="button" size="sm" variant="outline">
+                      <Link href="/conex/plan-limits">Manage plan limits</Link>
+                    </Button>
+                  </div>
                   <AdminBilling />
                 </CardContent>
               </Card>
