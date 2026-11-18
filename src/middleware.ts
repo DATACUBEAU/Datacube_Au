@@ -70,7 +70,12 @@ function loginRedirect(req: NextRequest): NextResponse {
 }
 
 function forbiddenRedirect(req: NextRequest): NextResponse {
-  return applyProtectedHeaders(NextResponse.redirect(new URL('/403', req.url)));
+  const pathname = req.nextUrl.pathname;
+  const destination =
+    pathname === '/conex' || pathname.startsWith('/conex/')
+      ? '/checkout'
+      : '/403';
+  return applyProtectedHeaders(NextResponse.redirect(new URL(destination, req.url)));
 }
 
 function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse {
