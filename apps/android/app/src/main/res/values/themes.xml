@@ -2,7 +2,7 @@
 <resources>
     <style name="Theme.DataCubeAU" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">@color/datacube_navy</item>
-        <item name="windowSplashScreenAnimatedIcon">@drawable/datacube_logo</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/datacube_app_icon</item>
         <item name="postSplashScreenTheme">@style/Theme.DataCubeAU.Main</item>
     </style>
     <style name="Theme.DataCubeAU.Main" parent="android:Theme.Material.Light.NoActionBar">
