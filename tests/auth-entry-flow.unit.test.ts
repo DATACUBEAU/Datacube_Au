@@ -22,35 +22,24 @@ async function run(name: string, fn: AsyncTest) {
 }
 
 async function main() {
-  await run('no session or restoring auth does not remove login/signup entry actions', () => {
+  await run('website authentication exposes Google OAuth only', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /signInWithPassword/);
-    assert.match(login, /signUp/);
-    assert.match(login, /TabsTrigger value="login"/);
-    assert.match(login, /TabsTrigger value="signup"/);
-    assert.match(login, /disabled=\{isLoadingEmail \|\| !email\.trim\(\) \|\| !password \|\| \(authMode === 'signup' && !username\.trim\(\)\)\}/);
-    assert.match(login, /validateUsername\(username\)/);
-    assert.match(login, /disabled=\{isLoadingGoogle\}/);
-    assert.doesNotMatch(login, /disabled=\{[^}]*isSmartLoading/);
-    assert.doesNotMatch(login, /if \(isUserLoading \|\| isResolvingRedirect\)/);
-    assert.match(login, /isResolvingRedirect \|\| \(isUserLoading && Boolean\(user\)\)/);
+    assert.match(login, /signInWithGoogle/);
+    assert.match(login, /Icons\\.google/);
+    assert.match(login, /Continue with Google/);
+    assert.match(login, /disabled=\\{isLoadingGoogle\\}/);
+    assert.doesNotMatch(login, /signInWithPassword|signUp|PasswordInput|type="password"|<form|<Input|TabsTrigger|Create an account|Sign Up/);
   });
 
-  await run('login success syncs server auth cookie and redirects to dashboard target', () => {
+  await run('Google OAuth restores the server session and preserves protected redirect targets', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /supabase\.auth\.signInWithPassword/);
-    assert.match(login, /syncServerAuthSessionCookie\(data\.session\)/);
-    assert.match(login, /router\.replace\(safeRedirectPath\)/);
-    assert.match(login, /Email or password is incorrect\./);
-  });
-
-  await run('signup success redirects or shows a clear email confirmation message', () => {
-    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /supabase\.auth\.signUp/);
-    assert.match(login, /emailRedirectTo/);
-    assert.match(login, /\/auth\/callback\?next=/);
-    assert.match(login, /Check your email to confirm your account, then sign in\./);
-    assert.match(login, /Account created/);
+    assert.match(login, /syncServerAuthSessionCookie\\(activeSession\\)/);
+    assert.match(login, /router\\.replace\\(safeRedirectPath\\)/);
+    assert.match(login, /fetch\\('\\/conex\\/users\\?mode=access'/);
+    assert.match(login, /safeRedirectPath === '\\/conex'/);
+    assert.match(login, /mobile-auth/);
+    assert.doesNotMatch(login, /signInWithPassword|signUp/);
+    assert.match(login, /isResolvingRedirect \\|\\| \\(isUserLoading && Boolean\\(user\\)\\)/);
   });
 
   await run('OAuth uses a public callback route instead of redirecting directly to protected pages', () => {
