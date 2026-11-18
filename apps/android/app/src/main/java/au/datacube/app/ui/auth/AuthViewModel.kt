@@ -9,6 +9,7 @@ import io.github.jan.supabase.auth.user.UserInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class AuthState(
@@ -62,6 +63,9 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
         }
 
         viewModelScope.launch {
+            // The initial Supabase SDK session restore and the incoming mobile
+            // handoff must not mutate the same auth client concurrently.
+            _state.first { it.sessionRestored }
             _state.value = _state.value.copy(isLoading = true, error = null)
             when (val result = repository.completeWebsiteAuthentication(code, state)) {
                 is AuthRepository.AuthResult.Success -> {

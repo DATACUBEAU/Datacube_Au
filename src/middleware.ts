@@ -236,7 +236,7 @@ function isRetiredWebProductPath(pathname: string): boolean {
     return !(pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/'));
   }
 
-  const retiredPrefixes = ['/documents', '/guide-preview', '/test'];
+  const retiredPrefixes = ['/documents', '/guide-preview', '/test', '/offline', '/~offline'];
   return retiredPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 

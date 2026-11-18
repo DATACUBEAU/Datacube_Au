@@ -109,23 +109,42 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
     const state = typeof body.state === 'string' ? body.state : '';
     const codeChallenge = typeof body.codeChallenge === 'string' ? body.codeChallenge : '';
-    const refreshToken = typeof body.refreshToken === 'string' ? body.refreshToken : '';
 
-    if (!VALUE_PATTERN.test(state) || !CHALLENGE_PATTERN.test(codeChallenge) || refreshToken.length < 20 || refreshToken.length > 2_048) {
+    if (!VALUE_PATTERN.test(state) || !CHALLENGE_PATTERN.test(codeChallenge) || !auth.email) {
       return json({ ok: false, code: 'INVALID_REQUEST', message: 'The mobile sign-in request is invalid.' }, 400);
     }
 
-    // Validate and rotate the exact refresh token supplied by the authenticated
-    // website session. This also verifies that the refresh token belongs to the
-    // same Supabase user as the validated access token.
-    const validator = createSessionValidator();
-    const { data: refreshed, error: refreshError } = await validator.auth.refreshSession({
-      refresh_token: refreshToken,
+    // Create an independent Supabase session for Android. Do not copy or rotate
+    // the browser's refresh token: sharing one refresh-token chain between
+    // browser and native clients creates refresh races and cross-device coupling.
+    const { data: generated, error: generateError } = await admin.auth.admin.generateLink({
+      type: 'magiclink',
+      email: auth.email,
     });
-    const session = refreshed.session;
+    const tokenHash = generated?.properties?.hashed_token;
+    if (generateError || !tokenHash || generated.user?.id !== auth.userId) {
+      return json({
+        ok: false,
+        code: 'MOBILE_SESSION_CREATE_FAILED',
+        message: 'Your website session is valid, but a separate app session could not be created.',
+      }, 503);
+    }
 
-    if (refreshError || !session?.access_token || !session.refresh_token || session.user?.id !== auth.userId) {
-      return json({ ok: false, code: 'SESSION_VALIDATION_FAILED', message: 'Your website session could not be transferred. Please sign in again.' }, 401);
+    // The admin-generated magic-link hash is immediately redeemed server-side
+    // with the public client. Supabase returns a fresh, independent mobile session;
+    // the magic-link token itself is never sent to the browser or Android.
+    const validator = createSessionValidator();
+    const { data: verified, error: verifyError } = await validator.auth.verifyOtp({
+      token_hash: tokenHash,
+      type: 'email',
+    });
+    const mobileSession = verified.session;
+    if (verifyError || !mobileSession?.refresh_token || verified.user?.id !== auth.userId) {
+      return json({
+        ok: false,
+        code: 'MOBILE_SESSION_VERIFY_FAILED',
+        message: 'The app session could not be prepared. Please try again.',
+      }, 503);
     }
 
     const now = new Date();
@@ -140,31 +159,22 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       code_hash: sha256(handoffCode),
       state_hash: sha256(state),
       code_challenge: codeChallenge,
-      refresh_token_ciphertext: encryptRefreshToken(session.refresh_token),
+      refresh_token_ciphertext: encryptRefreshToken(mobileSession.refresh_token),
       expires_at: expiresAt,
     });
 
-    const updatedBrowserSession = {
-      access_token: session.access_token,
-      refresh_token: session.refresh_token,
-    };
-
     if (insertError) {
-      // The refresh token has been rotated already. Return the fresh pair so
-      // the website can update its own session even when persistence fails.
+      // The newly-created mobile session is independent of the website session.
+      // Revoke it if persistence fails so an orphaned session is not left active.
+      await validator.auth.signOut().catch(() => undefined);
       return json({
         ok: false,
         code: 'HANDOFF_STORAGE_FAILED',
         message: 'The secure app handoff could not be prepared. Please try again.',
-        session: updatedBrowserSession,
       }, 503);
     }
 
-    return json({
-      ok: true,
-      handoffCode,
-      session: updatedBrowserSession,
-    });
+    return json({ ok: true, handoffCode });
   }
 
   if (body.action === 'exchange') {

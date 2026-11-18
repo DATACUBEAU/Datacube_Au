@@ -4,7 +4,6 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-client/client';
-import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 
 function MobileAuthCompletion() {
   const searchParams = useSearchParams();
@@ -29,7 +28,7 @@ function MobileAuthCompletion() {
         if (sessionError) throw sessionError;
         const browserSession = current.session;
 
-        if (!browserSession?.access_token || !browserSession.refresh_token || !browserSession.user?.id) {
+        if (!browserSession?.access_token || !browserSession.user?.id) {
           const redirectTo = `/mobile-auth/complete?state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}`;
           window.location.replace(`/login?mode=login&redirectTo=${encodeURIComponent(redirectTo)}`);
           return;
@@ -48,23 +47,10 @@ function MobileAuthCompletion() {
             action: 'issue',
             state,
             codeChallenge,
-            refreshToken: browserSession.refresh_token,
           }),
         });
 
         const payload = await response.json().catch(() => ({}));
-
-        // The server rotates the refresh token to prove the session pair belongs
-        // to the authenticated browser user. Keep the website SDK synchronized
-        // even when creating the handoff row fails.
-        if (payload?.session?.access_token && payload?.session?.refresh_token) {
-          const { data: updated, error: setSessionError } = await supabase.auth.setSession({
-            access_token: payload.session.access_token,
-            refresh_token: payload.session.refresh_token,
-          });
-          if (setSessionError) throw setSessionError;
-          if (updated.session) syncServerAuthSessionCookie(updated.session);
-        }
 
         if (!response.ok || payload?.ok !== true || typeof payload?.handoffCode !== 'string') {
           throw new Error(payload?.message || 'The secure app handoff could not be prepared.');
@@ -77,7 +63,7 @@ function MobileAuthCompletion() {
           state,
           createdAt: Date.now(),
         }));
-        const fallbackUrl = new URL('/mobile-auth/install', window.location.origin).toString();
+        const fallbackUrl = new URL('/mobile-auth/install?app=missing', window.location.origin).toString();
         const deepLink = `intent://auth-callback?code=${encodeURIComponent(payload.handoffCode)}&state=${encodeURIComponent(state)}#Intent;scheme=datacube;package=au.datacube.app;S.browser_fallback_url=${encodeURIComponent(fallbackUrl)};end`;
 
         if (cancelled) return;

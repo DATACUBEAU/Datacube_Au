@@ -94,7 +94,7 @@ fun HomeScreen(
                     Text(
                         "Documents, AI tools and study sessions — private by default.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = DataCubeColors.LightBlue
                     )
                     Spacer(Modifier.height(20.dp))
                     Button(

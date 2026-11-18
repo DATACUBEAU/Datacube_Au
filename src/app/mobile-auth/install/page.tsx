@@ -1,15 +1,25 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 
 const HANDOFF_KEY = 'datacube.au.mobile.handoff.v1';
 const VALUE_PATTERN = /^[A-Za-z0-9_-]{40,64}$/;
 
-export default function MobileAuthInstallPage() {
+function MobileAuthInstallContent() {
+  const searchParams = useSearchParams();
+  const appMissing = searchParams.get('app') === 'missing';
   const [intentUrl, setIntentUrl] = useState<string | null>(null);
 
   useEffect(() => {
+    if (appMissing) {
+      // The browser explicitly told us Android could not resolve the app package.
+      // Discard the unused one-time handoff; the next app sign-in creates a fresh one.
+      sessionStorage.removeItem(HANDOFF_KEY);
+      return;
+    }
+
     try {
       const raw = sessionStorage.getItem(HANDOFF_KEY);
       if (!raw) return;
@@ -32,7 +42,7 @@ export default function MobileAuthInstallPage() {
     } catch {
       sessionStorage.removeItem(HANDOFF_KEY);
     }
-  }, []);
+  }, [appMissing]);
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-5 py-12 text-center">
@@ -40,11 +50,11 @@ export default function MobileAuthInstallPage() {
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">DataCube AU</p>
         <h1 className="text-3xl font-bold">Authentication successful</h1>
         <p className="text-muted-foreground">
-          Your website sign-in was successful. Open DataCube AU on this Android device to continue.
-          If the app is not installed, install it first, then start Sign In from the app to connect
-          this device to your account.
+          {appMissing
+            ? 'Your account is authenticated on the website, but the DataCube AU Android app is not installed or could not be opened. Install the app, open it, and select Sign In to connect this device to your account.'
+            : 'Your website sign-in was successful. Open DataCube AU on this Android device to continue.'}
         </p>
-        {intentUrl ? (
+        {intentUrl && !appMissing ? (
           <a href={intentUrl} className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground">
             Open DataCube AU
           </a>
@@ -56,5 +66,13 @@ export default function MobileAuthInstallPage() {
         </div>
       </div>
     </main>
+  );
+}
+
+export default function MobileAuthInstallPage() {
+  return (
+    <Suspense fallback={<main className="flex min-h-dvh items-center justify-center">DataCube AU</main>}>
+      <MobileAuthInstallContent />
+    </Suspense>
   );
 }
