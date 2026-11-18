@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
  alias(libs.plugins.android.application)
  alias(libs.plugins.kotlin.android)
@@ -19,7 +21,7 @@ android {
      // in Android binaries; authorization remains enforced by Supabase Auth + RLS.
      // Local properties, Gradle properties, or environment variables can override
      // the production defaults without requiring CI secrets.
-     val androidLocalProperties = java.util.Properties().apply {
+     val androidLocalProperties = Properties().apply {
          val propertiesFile = rootProject.file("local.properties")
          if (propertiesFile.isFile) {
              propertiesFile.inputStream().use { input -> load(input) }
