@@ -192,7 +192,7 @@ function buildCheckoutCapability(input: {
 }
 
 function paystackCallbackUrl(origin: string): string {
-  return `${resolvePublicOrigin(origin).replace(/\/$/, '')}/dashboard/settings/subscription`;
+  return `${resolvePublicOrigin(origin).replace(/\/$/, '')}/checkout`;
 }
 
 function resolvePublicOrigin(origin: string): string {
