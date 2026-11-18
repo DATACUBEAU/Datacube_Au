@@ -21,7 +21,7 @@ export function sanitizeLocalRedirectPath(
     const parsed = new URL(candidate, 'https://datacube.local');
     if (parsed.origin !== 'https://datacube.local') return fallback;
     const pathname = parsed.pathname.replace(/\/$/, '') || '/';
-    if (isPublicAuthPath(pathname)) return fallback;
+    if (isPublicAuthPath(parsed.pathname)) return fallback;
 
     // Browser navigation is restricted to the checkout, admin console and the
     // short-lived website-to-native authentication handoff.
