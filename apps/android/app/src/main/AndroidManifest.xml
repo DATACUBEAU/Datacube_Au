@@ -6,12 +6,15 @@
     <application
         android:name=".DataCubeApp"
         android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="DataCube AU"
         android:supportsRtl="true"
         android:theme="@style/Theme.DataCubeAU">
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

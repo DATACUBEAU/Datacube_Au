@@ -19,7 +19,6 @@ data class AuthState(
 )
 
 class AuthViewModel(app: Application) : AndroidViewModel(app) {
-
     private val repository: AuthRepository = (app as DataCubeApp).authRepository
 
     private val _state = MutableStateFlow(AuthState())
@@ -34,40 +33,52 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
             _state.value = _state.value.copy(isLoading = true)
             val restored = repository.restoreSession()
             val user = if (restored) repository.currentUser() else null
-            _state.value = AuthState(isLoading = false, user = user, sessionRestored = true)
+            _state.value = AuthState(
+                isLoading = false,
+                user = user,
+                sessionRestored = true
+            )
         }
     }
 
-    fun signIn(email: String, password: String) {
-        viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            when (val result = repository.signIn(email.trim(), password)) {
-                is AuthRepository.AuthResult.Success -> {
-                    val user = repository.currentUser()
-                    _state.value = AuthState(isLoading = false, user = user, sessionRestored = true)
-                }
-                is AuthRepository.AuthResult.Error -> {
-                    _state.value = _state.value.copy(isLoading = false, error = result.message)
-                }
-            }
-        }
+    fun createWebsiteLoginUrl(mode: String): String? = try {
+        _state.value = _state.value.copy(error = null)
+        repository.createWebsiteLoginUrl(mode)
+    } catch (error: Exception) {
+        _state.value = _state.value.copy(
+            error = error.message ?: "Could not open the DataCube AU sign-in page."
+        )
+        null
     }
 
-    fun signUp(email: String, password: String) {
+    fun completeWebsiteAuthentication(code: String?, state: String?) {
+        if (code.isNullOrBlank() || state.isNullOrBlank()) {
+            _state.value = _state.value.copy(
+                isLoading = false,
+                sessionRestored = true,
+                error = "The sign-in return link is invalid. Please sign in again."
+            )
+            return
+        }
+
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, error = null)
-            when (val result = repository.signUp(email.trim(), password)) {
+            when (val result = repository.completeWebsiteAuthentication(code, state)) {
                 is AuthRepository.AuthResult.Success -> {
                     val user = repository.currentUser()
                     _state.value = AuthState(
                         isLoading = false,
                         user = user,
                         sessionRestored = true,
-                        error = if (user == null) "Check your email to confirm your account." else null
+                        error = if (user == null) "Your session could not be restored. Please sign in again." else null
                     )
                 }
                 is AuthRepository.AuthResult.Error -> {
-                    _state.value = _state.value.copy(isLoading = false, error = result.message)
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        sessionRestored = true,
+                        error = result.message
+                    )
                 }
             }
         }
@@ -79,9 +90,5 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
             repository.signOut()
             _state.value = AuthState(isLoading = false, user = null, sessionRestored = true)
         }
-    }
-
-    fun clearError() {
-        _state.value = _state.value.copy(error = null)
     }
 }

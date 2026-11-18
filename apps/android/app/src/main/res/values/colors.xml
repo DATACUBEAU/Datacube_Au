@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="datacube_navy">#0B1F3A</color>
+    <color name="datacube_light_blue">#69B7FF</color>
+    <color name="datacube_white">#FFFFFF</color>
+    <color name="datacube_black">#000000</color>
+</resources>

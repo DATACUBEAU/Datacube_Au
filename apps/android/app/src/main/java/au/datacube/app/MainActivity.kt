@@ -1,5 +1,6 @@
 package au.datacube.app
 
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
@@ -58,6 +59,27 @@ class MainActivity : ComponentActivity() {
                 DataCubeRoot(authViewModel, documentsViewModel)
             }
         }
+        handleAuthIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAuthIntent(intent)
+    }
+
+    private fun handleAuthIntent(incoming: Intent?) {
+        val uri = incoming?.data ?: return
+        if (incoming.action != Intent.ACTION_VIEW ||
+            uri.scheme != "datacube" ||
+            uri.host != "auth-callback"
+        ) return
+
+        val code = uri.getQueryParameter("code")
+        val state = uri.getQueryParameter("state")
+        // Consume the launch URI so Activity recreation cannot replay the handoff.
+        setIntent(Intent(incoming).apply { data = null })
+        authViewModel.completeWebsiteAuthentication(code, state)
     }
 
 }
@@ -135,7 +157,12 @@ private fun DataCubeRoot(
 
     // If not authenticated, show auth screen
     if (authState.user == null) {
-        AuthScreen(viewModel = authViewModel)
+        AuthScreen(
+            viewModel = authViewModel,
+            onOpenWebsite = { url ->
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            }
+        )
         return
     }
 

@@ -230,8 +230,23 @@ async function loadMiddlewareSubject(
   };
 }
 
+function isRetiredWebProductPath(pathname: string): boolean {
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
+    // Account, subscription, billing and usage settings remain web-managed.
+    return !(pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/'));
+  }
+
+  const retiredPrefixes = ['/documents', '/guide-preview', '/test'];
+  return retiredPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  if (isRetiredWebProductPath(pathname)) {
+    return applyProtectedHeaders(
+      NextResponse.redirect(new URL('/mobile-app-required', req.url)),
+    );
+  }
   const rule = findApiAccessRule(pathname) || findPageAccessRule(pathname);
 
   if (!rule) {

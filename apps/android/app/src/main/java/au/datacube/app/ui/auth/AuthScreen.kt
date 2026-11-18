@@ -1,241 +1,136 @@
 package au.datacube.app.ui.auth
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.*
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import au.datacube.app.R
 
+/** The website owns registration and authentication. Android only starts that flow. */
 @Composable
-fun AuthScreen(viewModel: AuthViewModel) {
+fun AuthScreen(
+    viewModel: AuthViewModel,
+    onOpenWebsite: (String) -> Unit
+) {
     val state by viewModel.state.collectAsState()
-    var mode by remember { mutableStateOf(AuthMode.SIGN_IN) }
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var passwordVisible by remember { mutableStateOf(false) }
-    val focusManager = LocalFocusManager.current
+    val colors = MaterialTheme.colorScheme
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF0F172A),
-                        Color(0xFF1E293B),
-                        Color(0xFF0F172A)
-                    )
-                )
-            )
+            .padding(horizontal = 28.dp, vertical = 36.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 28.dp)
-                .statusBarsPadding()
-                .navigationBarsPadding(),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Image(
+            painter = painterResource(R.drawable.datacube_logo),
+            contentDescription = "DataCube AU",
+            modifier = Modifier.size(104.dp)
+        )
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "DATACUBE AU",
+            style = MaterialTheme.typography.labelLarge,
+            color = colors.primary,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = "Your learning workspace",
+            style = MaterialTheme.typography.headlineMedium,
+            color = colors.onBackground,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "Sign in or create your account using the secure DataCube AU website. Your account and authentication stay connected across the website and app.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(32.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colors.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
         ) {
-            Spacer(Modifier.height(60.dp))
-
-            // Brand mark
-            Icon(
-                Icons.Outlined.DataArray,
-                contentDescription = null,
-                tint = Color(0xFF2183E3),
-                modifier = Modifier.size(52.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "DATACUBE AU",
-                style = MaterialTheme.typography.labelLarge,
-                color = Color(0xFF2183E3),
-                fontWeight = FontWeight.Bold,
-                letterSpacing = androidx.compose.ui.unit.TextUnit(2f, androidx.compose.ui.unit.TextUnitType.Sp)
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                if (mode == AuthMode.SIGN_IN) "Welcome back" else "Create your account",
-                style = MaterialTheme.typography.headlineMedium,
-                color = Color.White,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                if (mode == AuthMode.SIGN_IN)
-                    "Sign in to your learning workspace"
-                else
-                    "Start your private, on-device study workspace",
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF94A3B8)
-            )
-
-            Spacer(Modifier.height(40.dp))
-
-            // Form card
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1E293B)
-                ),
-                elevation = CardDefaults.cardElevation(0.dp),
-                shape = MaterialTheme.shapes.large
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(Modifier.padding(24.dp)) {
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { email = it; viewModel.clearError() },
-                        label = { Text("Email address") },
-                        leadingIcon = { Icon(Icons.Outlined.Email, null) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Email,
-                            imeAction = ImeAction.Next
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onNext = { focusManager.moveFocus(FocusDirection.Down) }
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = authFieldColors()
+                Button(
+                    onClick = {
+                        viewModel.createWebsiteLoginUrl("login")?.let(onOpenWebsite)
+                    },
+                    enabled = !state.isLoading,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.primary,
+                        contentColor = colors.onPrimary
                     )
+                ) {
+                    Text("Sign In", fontWeight = FontWeight.SemiBold)
+                }
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = {
+                        viewModel.createWebsiteLoginUrl("signup")?.let(onOpenWebsite)
+                    },
+                    enabled = !state.isLoading,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = colors.primary
+                    )
+                ) {
+                    Text("Create Account", fontWeight = FontWeight.SemiBold)
+                }
+                if (state.isLoading) {
                     Spacer(Modifier.height(16.dp))
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { password = it; viewModel.clearError() },
-                        label = { Text("Password") },
-                        leadingIcon = { Icon(Icons.Outlined.Lock, null) },
-                        trailingIcon = {
-                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                Icon(
-                                    if (passwordVisible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                                    if (passwordVisible) "Hide password" else "Show password"
-                                )
-                            }
-                        },
-                        visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Password,
-                            imeAction = ImeAction.Done
-                        ),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                focusManager.clearFocus()
-                                if (mode == AuthMode.SIGN_IN) viewModel.signIn(email, password)
-                                else viewModel.signUp(email, password)
-                            }
-                        ),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = authFieldColors()
+                    Text(
+                        "Completing secure sign-in…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
                     )
-
-                    // Error banner
-                    AnimatedVisibility(state.error != null) {
-                        state.error?.let { msg ->
-                            Spacer(Modifier.height(12.dp))
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(
-                                        Color(0xFFEF4444).copy(alpha = 0.12f),
-                                        MaterialTheme.shapes.small
-                                    )
-                                    .padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Outlined.ErrorOutline, null, tint = Color(0xFFEF4444))
-                                Spacer(Modifier.width(8.dp))
-                                Text(msg, color = Color(0xFFEF4444), style = MaterialTheme.typography.bodySmall)
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(24.dp))
-
-                    Button(
-                        onClick = {
-                            focusManager.clearFocus()
-                            if (mode == AuthMode.SIGN_IN) viewModel.signIn(email, password)
-                            else viewModel.signUp(email, password)
-                        },
-                        enabled = !state.isLoading && email.isNotBlank() && password.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth().height(50.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2183E3))
-                    ) {
-                        if (state.isLoading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Text(
-                                if (mode == AuthMode.SIGN_IN) "Sign in" else "Create account",
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
+                }
+                state.error?.let { message ->
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurface,
+                        textAlign = TextAlign.Center
+                    )
                 }
             }
-
-            Spacer(Modifier.height(20.dp))
-
-            TextButton(
-                onClick = {
-                    mode = if (mode == AuthMode.SIGN_IN) AuthMode.SIGN_UP else AuthMode.SIGN_IN
-                    viewModel.clearError()
-                }
-            ) {
-                Text(
-                    if (mode == AuthMode.SIGN_IN)
-                        "Don't have an account? Create one"
-                    else
-                        "Already have an account? Sign in",
-                    color = Color(0xFF94A3B8)
-                )
-            }
-
-            Spacer(Modifier.height(32.dp))
-
-            Text(
-                "Your documents are processed privately on-device. Cloud features are optional.",
-                style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF475569),
-                modifier = Modifier.padding(horizontal = 8.dp)
-            )
-            Spacer(Modifier.height(24.dp))
         }
+        Spacer(Modifier.height(24.dp))
+        Text(
+            text = "After authentication, you will return here automatically when the app is installed.",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
     }
 }
-
-private enum class AuthMode { SIGN_IN, SIGN_UP }
-
-@Composable
-private fun authFieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedBorderColor = Color(0xFF2183E3),
-    unfocusedBorderColor = Color(0xFF334155),
-    focusedLabelColor = Color(0xFF2183E3),
-    unfocusedLabelColor = Color(0xFF64748B),
-    cursorColor = Color(0xFF2183E3),
-    focusedTextColor = Color.White,
-    unfocusedTextColor = Color(0xFFCBD5E1),
-    focusedLeadingIconColor = Color(0xFF2183E3),
-    unfocusedLeadingIconColor = Color(0xFF475569),
-    focusedTrailingIconColor = Color(0xFF2183E3),
-    unfocusedTrailingIconColor = Color(0xFF475569)
-)

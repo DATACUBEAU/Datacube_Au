@@ -6,55 +6,48 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-// ── Brand colours ────────────────────────────────────────────────────────────
-private val Blue500 = Color(0xFF2183E3)
-private val Blue600 = Color(0xFF1A6DC2)
-private val Blue700 = Color(0xFF155BA3)
-private val Blue100 = Color(0xFFD6EAFC)
+/** DataCube AU's complete primary palette: navy, light blue, white and black. */
+object DataCubeColors {
+    val Navy = Color(0xFF0B1F3A)
+    val LightBlue = Color(0xFF69B7FF)
+    val White = Color(0xFFFFFFFF)
+    val Black = Color(0xFF000000)
+}
 
-private val Indigo900 = Color(0xFF0F172A)
-private val Indigo800 = Color(0xFF1E293B)
-private val Indigo700 = Color(0xFF334155)
-private val Indigo100 = Color(0xFFE2E8F0)
-
-private val Success = Color(0xFF22C55E)
-private val Warning = Color(0xFFF59E0B)
-private val Error   = Color(0xFFEF4444)
-
-// ── Light scheme ─────────────────────────────────────────────────────────────
 private val LightColors = lightColorScheme(
-    primary            = Blue500,
-    onPrimary          = Color.White,
-    primaryContainer   = Blue100,
-    onPrimaryContainer = Blue700,
-    secondary          = Indigo700,
-    onSecondary        = Color.White,
-    background         = Color(0xFFF7F9FC),
-    onBackground       = Indigo900,
-    surface            = Color.White,
-    onSurface          = Indigo900,
-    surfaceVariant     = Indigo100,
-    onSurfaceVariant   = Indigo700,
-    error              = Error,
-    onError            = Color.White,
+    primary = DataCubeColors.Navy,
+    onPrimary = DataCubeColors.White,
+    primaryContainer = DataCubeColors.LightBlue,
+    onPrimaryContainer = DataCubeColors.Navy,
+    secondary = DataCubeColors.Navy,
+    onSecondary = DataCubeColors.White,
+    background = DataCubeColors.White,
+    onBackground = DataCubeColors.Black,
+    surface = DataCubeColors.White,
+    onSurface = DataCubeColors.Black,
+    surfaceVariant = DataCubeColors.LightBlue,
+    onSurfaceVariant = DataCubeColors.Navy,
+    outline = DataCubeColors.Navy,
+    error = DataCubeColors.Navy,
+    onError = DataCubeColors.White
 )
 
-// ── Dark scheme ──────────────────────────────────────────────────────────────
 private val DarkColors = darkColorScheme(
-    primary            = Blue500,
-    onPrimary          = Color.White,
-    primaryContainer   = Blue700,
-    onPrimaryContainer = Blue100,
-    secondary          = Indigo100,
-    onSecondary        = Indigo900,
-    background         = Indigo900,
-    onBackground       = Color(0xFFE2E8F0),
-    surface            = Indigo800,
-    onSurface          = Color(0xFFE2E8F0),
-    surfaceVariant     = Indigo700,
-    onSurfaceVariant   = Indigo100,
-    error              = Error,
-    onError            = Color.White,
+    primary = DataCubeColors.LightBlue,
+    onPrimary = DataCubeColors.Navy,
+    primaryContainer = DataCubeColors.Navy,
+    onPrimaryContainer = DataCubeColors.LightBlue,
+    secondary = DataCubeColors.LightBlue,
+    onSecondary = DataCubeColors.Navy,
+    background = DataCubeColors.Navy,
+    onBackground = DataCubeColors.White,
+    surface = DataCubeColors.Navy,
+    onSurface = DataCubeColors.White,
+    surfaceVariant = DataCubeColors.Navy,
+    onSurfaceVariant = DataCubeColors.LightBlue,
+    outline = DataCubeColors.LightBlue,
+    error = DataCubeColors.LightBlue,
+    onError = DataCubeColors.Navy
 )
 
 @Composable
