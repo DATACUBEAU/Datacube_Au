@@ -1,175 +1,31 @@
 package au.datacube.app.ui.documents
-
-import android.net.Uri
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.data.LocalJobStatus
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DocumentsScreen(
-    modifier: Modifier = Modifier,
-    documents: List<LocalDocumentProcessing>,
-    onImport: () -> Unit,
-    onDelete: (String) -> Unit
-) {
-    var deleteTarget by remember { mutableStateOf<String?>(null) }
-
-    // Delete confirmation dialog
-    deleteTarget?.let { docId ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            icon = { Icon(Icons.Outlined.DeleteOutline, null) },
-            title = { Text("Remove document?") },
-            text = { Text("The document and its locally extracted text will be permanently deleted from this device.") },
-            confirmButton = {
-                TextButton(
-                    onClick = { onDelete(docId); deleteTarget = null },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
-            }
-        )
-    }
-
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("My Documents", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Stored privately on-device",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                actions = {
-                    FilledTonalIconButton(onClick = onImport) {
-                        Icon(Icons.Outlined.Add, "Import document")
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        if (documents.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(32.dp)
-                ) {
-                    Icon(
-                        Icons.Outlined.FolderOpen,
-                        null,
-                        modifier = Modifier.size(64.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "No documents yet",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Import PDF, DOCX, TXT, RTF or Markdown files.\nAll content is processed privately on this device.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(24.dp))
-                    Button(onClick = onImport) {
-                        Icon(Icons.Outlined.Add, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Import a document")
-                    }
-                }
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentPadding = PaddingValues(bottom = 16.dp)
-            ) {
-                items(documents, key = { it.document.id }) { item ->
-                    val doc = item.document
-                    val extractionLabel = when (item.extractionStatus) {
-                        LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Extraction queued"
-                        LocalJobStatus.RUNNING -> "Extracting text…"
-                        LocalJobStatus.COMPLETED -> "Text ready"
-                        LocalJobStatus.FAILED -> item.extractionError ?: "Extraction failed"
-                        LocalJobStatus.CANCELLED -> "Extraction cancelled"
-                        null -> if (doc.extension in setOf("pdf", "txt", "md")) {
-                            "Pending extraction"
-                        } else {
-                            "Format support coming"
-                        }
-                        else -> "Unknown"
-                    }
-                    val verificationLabel = if (doc.sha256 == null) "Integrity check pending" else "Verified on-device"
-
-                    ListItem(
-                        leadingContent = {
-                            Icon(
-                                when (doc.extension) {
-                                    "pdf" -> Icons.Outlined.PictureAsPdf
-                                    "docx" -> Icons.Outlined.Description
-                                    else -> Icons.Outlined.Article
-                                },
-                                null,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        },
-                        headlineContent = { Text(doc.name, maxLines = 2, fontWeight = FontWeight.Medium) },
-                        supportingContent = {
-                            Column {
-                                Text(
-                                    "${doc.extension.uppercase()} · ${doc.sizeBytes / 1024} KB · $verificationLabel",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                Text(
-                                    extractionLabel,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = when (item.extractionStatus) {
-                                        LocalJobStatus.COMPLETED -> MaterialTheme.colorScheme.primary
-                                        LocalJobStatus.FAILED -> MaterialTheme.colorScheme.error
-                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                                    }
-                                )
-                            }
-                        },
-                        trailingContent = {
-                            IconButton(onClick = { deleteTarget = doc.id }) {
-                                Icon(
-                                    Icons.Outlined.DeleteOutline,
-                                    "Delete",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    )
-                    HorizontalDivider()
-                }
-            }
-        }
-    }
+import au.datacube.app.ui.theme.DataCubeColors
+@Composable fun DocumentsScreen(modifier:Modifier=Modifier,documents:List<LocalDocumentProcessing>,onImport:()->Unit,onDelete:(String)->Unit){
+ var deleteTarget by remember{mutableStateOf<String?>(null)}
+ deleteTarget?.let{id->AlertDialog(onDismissRequest={deleteTarget=null},title={Text("Remove document?")},text={Text("The document and extracted text will be deleted from this device.")},confirmButton={TextButton(onClick={onDelete(id);deleteTarget=null}){Text("Delete")}},dismissButton={TextButton(onClick={deleteTarget=null}){Text("Cancel")}})}
+ Column(modifier.fillMaxSize().background(DataCubeColors.BluePale)){
+  androidx.compose.foundation.lazy.LazyColumn(contentPadding=PaddingValues(18.dp),verticalArrangement=Arrangement.spacedBy(18.dp)){
+   item{Column{Text("Documents",style=MaterialTheme.typography.headlineLarge,fontWeight=FontWeight.Bold,color=DataCubeColors.Navy);Spacer(Modifier.height(5.dp));Text("Upload files or create collections to organize your documents.",color=DataCubeColors.TextSecondary,style=MaterialTheme.typography.bodyLarge)}}
+   item{Button(onClick=onImport,modifier=Modifier.fillMaxWidth().height(76.dp),shape=RoundedCornerShape(18.dp)){Icon(Icons.Outlined.AddCircle,null,modifier=Modifier.size(28.dp));Spacer(Modifier.width(12.dp));Column{Text("Upload Documents",fontWeight=FontWeight.Bold);Text("Add one or multiple files",style=MaterialTheme.typography.bodySmall)}}}
+   item{Column{Row(verticalAlignment=Alignment.CenterVertically){Text("Collections",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=DataCubeColors.Navy);Spacer(Modifier.weight(1f));Text("View All →",color=DataCubeColors.Blue)};Spacer(Modifier.height(9.dp));Surface(shape=RoundedCornerShape(19.dp),color=Color.White,border=BorderStroke(1.dp,DataCubeColors.Divider)){Column(Modifier.fillMaxWidth().padding(20.dp),horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Outlined.FolderOpen,null,tint=DataCubeColors.Blue,modifier=Modifier.size(40.dp));Text("No collections yet",fontWeight=FontWeight.Bold,color=DataCubeColors.Navy);Text("Collection creation is not connected yet.",color=DataCubeColors.TextSecondary)}}}}
+   item{Row(verticalAlignment=Alignment.CenterVertically){Text("Recent Documents",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.Bold,color=DataCubeColors.Navy);Spacer(Modifier.weight(1f));Text(documents.size.toString()+" files",color=DataCubeColors.TextSecondary)}}
+   if(documents.isEmpty())item{Surface(shape=RoundedCornerShape(18.dp),color=Color.White,border=BorderStroke(1.dp,DataCubeColors.Divider)){Column(Modifier.fillMaxWidth().padding(22.dp),horizontalAlignment=Alignment.CenterHorizontally){Text("Your documents will appear here",color=DataCubeColors.TextSecondary);Button(onClick=onImport){Text("Upload a document")}}}}
+   else item{Surface(shape=RoundedCornerShape(19.dp),color=Color.White,border=BorderStroke(1.dp,DataCubeColors.Divider)){Column{documents.forEachIndexed{index,item->val d=item.document;val status=when(item.extractionStatus){LocalJobStatus.QUEUED,LocalJobStatus.RETRYABLE->"Processing queued";LocalJobStatus.RUNNING->"Processing…";LocalJobStatus.COMPLETED->"Ready";LocalJobStatus.FAILED->item.extractionError?:"Processing failed";LocalJobStatus.CANCELLED->"Cancelled";else->"Imported"};Row(Modifier.fillMaxWidth().padding(12.dp),verticalAlignment=Alignment.CenterVertically){val ext=d.extension.lowercase();val tint=when(ext){"pdf"->Color(0xFFE5484D);"docx"->DataCubeColors.Blue;else->Color(0xFF20A866)};Box(Modifier.size(48.dp).background(tint.copy(alpha=.12f),RoundedCornerShape(13.dp)),contentAlignment=Alignment.Center){Text(ext.uppercase().take(3),color=tint,fontWeight=FontWeight.Bold)};Spacer(Modifier.width(12.dp));Column(Modifier.weight(1f)){Text(d.name,fontWeight=FontWeight.SemiBold,color=DataCubeColors.Navy,maxLines=1);Text(status+" • "+(d.sizeBytes/1024)+" KB",style=MaterialTheme.typography.bodySmall,color=DataCubeColors.TextSecondary)};IconButton(onClick={deleteTarget=d.id}){Icon(Icons.Outlined.MoreVert,"Document actions")}};if(index!=documents.lastIndex)HorizontalDivider(color=DataCubeColors.Divider)}}}}
+  }
+ }
 }
