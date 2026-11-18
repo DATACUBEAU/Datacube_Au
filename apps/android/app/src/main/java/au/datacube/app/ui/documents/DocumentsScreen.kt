@@ -118,7 +118,11 @@ fun DocumentsScreen(
                         LocalJobStatus.COMPLETED -> "Text ready"
                         LocalJobStatus.FAILED -> item.extractionError ?: "Extraction failed"
                         LocalJobStatus.CANCELLED -> "Extraction cancelled"
-                        null -> if (doc.extension in setOf("txt", "md")) "Pending extraction" else "Format support coming"
+                        null -> if (doc.extension in setOf("pdf", "txt", "md")) {
+                            "Pending extraction"
+                        } else {
+                            "Format support coming"
+                        }
                         else -> "Unknown"
                     }
                     val verificationLabel = if (doc.sha256 == null) "Integrity check pending" else "Verified on-device"

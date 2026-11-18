@@ -122,6 +122,6 @@ class LocalDocumentRepository(
     companion object {
         private const val MAX_DOCUMENT_BYTES = 100L * 1024L * 1024L
         private val SUPPORTED_EXTENSIONS = setOf("pdf", "docx", "txt", "rtf", "md")
-        private val TEXT_EXTRACTION_EXTENSIONS = setOf("txt", "md")
+        private val TEXT_EXTRACTION_EXTENSIONS = setOf("pdf", "txt", "md")
     }
 }

@@ -5,9 +5,11 @@ import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import au.datacube.app.data.DataCubeDatabase
+import au.datacube.app.data.DocumentTextExtractor
 import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.data.LocalJobKind
 import au.datacube.app.data.LocalJobStatus
+import au.datacube.app.data.PdfDocumentTextExtractor
 import au.datacube.app.data.PlainTextDocumentExtractor
 import au.datacube.app.data.TextExtractionRejectedException
 import java.io.File
@@ -52,7 +54,11 @@ class DocumentTextExtractionWorker(
                 ?: throw TextExtractionRejectedException("The document reference is missing.")
             val document = database.documents().find(documentId)
                 ?: throw TextExtractionRejectedException("The imported document no longer exists.")
-            if (document.extension.lowercase() !in SUPPORTED_EXTENSIONS) {
+            val extractor: DocumentTextExtractor = when (document.extension.lowercase()) {
+                "pdf" -> PdfDocumentTextExtractor()
+                "txt", "md" -> PlainTextDocumentExtractor()
+                else -> null
+            } ?: run {
                 throw TextExtractionRejectedException(
                     "Text extraction is not yet supported for this file type."
                 )
@@ -64,7 +70,7 @@ class DocumentTextExtractionWorker(
             }
 
             val destination = ExtractedTextStore.fileFor(applicationContext.filesDir, documentId)
-            PlainTextDocumentExtractor().extract(source, destination) { progress ->
+            extractor.extract(source, destination) { progress ->
                 database.jobs().updateProgress(
                     jobId,
                     progress.coerceIn(0.0, 0.95),
@@ -126,6 +132,5 @@ class DocumentTextExtractionWorker(
     companion object {
         const val KEY_JOB_ID = "job_id"
         private const val MAX_RETRIES = 3
-        private val SUPPORTED_EXTENSIONS = setOf("txt", "md")
     }
 }

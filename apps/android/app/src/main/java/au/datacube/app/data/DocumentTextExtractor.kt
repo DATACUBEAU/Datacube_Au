@@ -1,5 +1,6 @@
 package au.datacube.app.data
 
+import android.os.ParcelFileDescriptor
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
@@ -14,6 +15,8 @@ import java.nio.charset.StandardCharsets
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import io.legere.pdfiumandroid.PdfPasswordException
+import io.legere.pdfiumandroid.suspend.PdfiumCoreKt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -164,7 +167,145 @@ class PlainTextDocumentExtractor : DocumentTextExtractor {
     }
 }
 
-class TextExtractionRejectedException(message: String) : Exception(message)
+class PdfDocumentTextExtractor : DocumentTextExtractor {
+    override suspend fun extract(
+        source: File,
+        destination: File,
+        onProgress: suspend (Double) -> Unit
+    ): ExtractedDocumentText = withContext(Dispatchers.IO) {
+        if (!source.isFile || source.length() <= 0L) {
+            throw TextExtractionRejectedException("The private PDF file is unavailable.")
+        }
+        if (source.length() > MAX_SOURCE_BYTES) {
+            throw TextExtractionRejectedException(
+                "PDF files larger than 100 MB are not extracted on this device."
+            )
+        }
+
+        val parent = destination.parentFile
+            ?: throw IOException("The private extraction destination is invalid.")
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw IOException("Could not create the private extraction directory.")
+        }
+        val temporary = File(parent, destination.name + ".tmp")
+        val descriptor = ParcelFileDescriptor.open(source, ParcelFileDescriptor.MODE_READ_ONLY)
+
+        try {
+            descriptor.use { fileDescriptor ->
+                val document = openDocument(fileDescriptor)
+                document.use { pdf ->
+                    val pageCount = pdf.getPageCount()
+                    if (pageCount <= 0) {
+                        throw TextExtractionRejectedException("The PDF contains no pages.")
+                    }
+
+                    var charactersWritten = 0L
+                    var hasSelectableText = false
+                    BufferedWriter(
+                        OutputStreamWriter(FileOutputStream(temporary), StandardCharsets.UTF_8)
+                    ).use { writer ->
+                        for (pageIndex in 0 until pageCount) {
+                            currentCoroutineContext().ensureActive()
+                            val pageHeader = "----- Page ${pageIndex + 1} -----\n"
+                            val pageText = pdf.openPage(pageIndex).use { page ->
+                                page.openTextPage().use { textPage ->
+                                    val characterCount = textPage.textPageCountChars()
+                                    if (characterCount < 0 ||
+                                        characterCount > MAX_EXTRACTED_TEXT_CHARACTERS
+                                    ) {
+                                        throw TextExtractionRejectedException(
+                                            "The PDF page contains too much text to extract safely."
+                                        )
+                                    }
+                                    if (characterCount == 0) {
+                                        ""
+                                    } else {
+                                        textPage.textPageGetText(0, characterCount)
+                                            ?.replace("\u0000", "")
+                                            ?: throw TextExtractionRejectedException(
+                                                "Text could not be read from PDF page ${pageIndex + 1}."
+                                            )
+                                    }
+                                }
+                            }
+                            currentCoroutineContext().ensureActive()
+
+                            val pageSeparator = if (pageIndex < pageCount - 1) "\n\n" else ""
+                            val pageCharacters = pageHeader.length.toLong() +
+                                pageText.length + pageSeparator.length
+                            if (charactersWritten + pageCharacters > MAX_EXTRACTED_TEXT_CHARACTERS) {
+                                throw TextExtractionRejectedException(
+                                    "The PDF contains too much text to extract safely."
+                                )
+                            }
+
+                            writer.write(pageHeader)
+                            writer.write(pageText)
+                            writer.write(pageSeparator)
+                            charactersWritten += pageCharacters
+                            hasSelectableText = hasSelectableText ||
+                                pageText.any { !it.isWhitespace() }
+                            onProgress(
+                                ((pageIndex + 1).toDouble() / pageCount).coerceIn(0.0, 0.95)
+                            )
+                        }
+                        writer.flush()
+                    }
+
+                    if (!hasSelectableText) {
+                        throw TextExtractionRejectedException(
+                            "This PDF has no selectable text. OCR is not yet available."
+                        )
+                    }
+                    currentCoroutineContext().ensureActive()
+
+                    try {
+                        Files.move(
+                            temporary.toPath(),
+                            destination.toPath(),
+                            StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING
+                        )
+                    } catch (unsupported: AtomicMoveNotSupportedException) {
+                        Files.move(
+                            temporary.toPath(),
+                            destination.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING
+                        )
+                    }
+
+                    ExtractedDocumentText(
+                        bytesWritten = destination.length(),
+                        charactersWritten = charactersWritten
+                    )
+                }
+            }
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private suspend fun openDocument(descriptor: ParcelFileDescriptor) = try {
+        PdfiumCoreKt(Dispatchers.IO).newDocument(descriptor)
+    } catch (error: PdfPasswordException) {
+        throw TextExtractionRejectedException(
+            "This PDF is password-protected and cannot be extracted.",
+            error
+        )
+    } catch (error: IOException) {
+        throw TextExtractionRejectedException("This PDF is malformed or unreadable.", error)
+    } catch (error: IllegalArgumentException) {
+        throw TextExtractionRejectedException("This PDF is malformed or unreadable.", error)
+    }
+
+    companion object {
+        private const val MAX_SOURCE_BYTES = 100L * 1024L * 1024L
+        private const val MAX_EXTRACTED_TEXT_CHARACTERS = 20L * 1024L * 1024L
+    }
+}
+
+class TextExtractionRejectedException(message: String, cause: Throwable? = null) :
+    Exception(message, cause)
 
 object ExtractedTextStore {
     fun fileFor(filesDir: File, documentId: String): File =

@@ -27,7 +27,7 @@ interface LocalDocumentDao {
     @Query(
         """
         SELECT d.* FROM local_documents AS d
-        WHERE lower(d.extension) IN ('txt', 'md')
+        WHERE lower(d.extension) IN ('pdf', 'txt', 'md')
           AND NOT EXISTS (
               SELECT 1 FROM local_jobs AS j
               WHERE j.id = 'text-extract-' || d.id

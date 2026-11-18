@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
@@ -59,8 +60,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Make lifecycleScope accessible from companion/lambda
-    private val lifecycleScope get() = (this as ComponentActivity).lifecycleScope
 }
 
 // ── Navigation destinations ───────────────────────────────────────────────────
