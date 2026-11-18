@@ -123,9 +123,9 @@ async function main() {
     assert.match(store, /notifyNativeAppRequired/);
     assert.match(retiredHelper, /code: 'MOBILE_APP_REQUIRED'/);
     assert.match(retiredHelper, /status: 410/);
-    assert.doesNotMatch(chat, /\\/api\\/au\\/vps-ticket/);
-    assert.doesNotMatch(exams, /\\/api\\/au\\/vps-ticket/);
-    assert.doesNotMatch(store, /\\/api\\/au\\/vps-ticket/);
+    assert.equal(chat.includes('/api/au/vps-ticket'), false);
+    assert.equal(exams.includes('/api/au/vps-ticket'), false);
+    assert.equal(store.includes('/api/au/vps-ticket'), false);
   });
 
   await run('support escalation uses configured public email and does not hardcode the deployment domain', () => {
@@ -286,8 +286,8 @@ async function main() {
     assert.match(examsApi, /throwMobileAppRequired/);
     assert.match(retiredHelper, /MOBILE_APP_REQUIRED/);
     assert.doesNotMatch(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET|PREDICTION_PAST_QUESTIONS_BUDGET/);
-    assert.doesNotMatch(chatApi, /fetch\\(|safeFetch|\\/api\\/au\\/vps-ticket/);
-    assert.doesNotMatch(examsApi, /fetch\\(|safeFetch|\\/api\\/au\\/vps-ticket/);
+    assert.doesNotMatch(chatApi, /fetch\\(|safeFetch/);\n    assert.equal(chatApi.includes('/api/au/vps-ticket'), false);
+    assert.doesNotMatch(examsApi, /fetch\\(|safeFetch/);\n    assert.equal(examsApi.includes('/api/au/vps-ticket'), false);
   });
 
   await run('dashboard activity heartbeat is throttled so it cannot chatter every minute', () => {
