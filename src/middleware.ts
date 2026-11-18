@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 import { hasConexAccess } from '@/lib/conex-rbac';
+import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 import {
   ACCESS_NO_STORE_HEADERS,
   evaluateAccess,
@@ -246,7 +247,6 @@ function isRetiredWebProductPath(pathname: string): boolean {
     '/features',
     '/policy',
     '/mobile-app-required',
-    '/session-expired',
     '/403',
   ];
   return retiredPrefixes.some((prefix) =>
@@ -267,6 +267,17 @@ export async function middleware(req: NextRequest) {
   }
   if (pathname === '/pricing') {
     return applyProtectedHeaders(NextResponse.redirect(new URL('/checkout', req.url)));
+  }
+
+  // Session reauthentication stays on the two-page browser surface.
+  if (pathname === '/session-expired') {
+    const loginUrl = new URL('/login', req.url);
+    loginUrl.searchParams.set(
+      'redirectTo',
+      sanitizeLocalRedirectPath(req.nextUrl.searchParams.get('next')),
+    );
+    loginUrl.searchParams.set('reason', 'session_expired');
+    return applyProtectedHeaders(NextResponse.redirect(loginUrl));
   }
 
   if (isRetiredWebProductPath(pathname)) {
