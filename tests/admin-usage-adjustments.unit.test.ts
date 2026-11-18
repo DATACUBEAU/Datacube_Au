@@ -203,7 +203,7 @@ async function main() {
     assert.match(adminPage, /label: 'Users'/);
     assert.match(adminPage, /label: 'System Health'/);
     assert.match(planLimitsPage, /APPROVED_LIMIT_KEYS/);
-    assert.match(planLimitsPage, /Plan limits/);
+    assert.match(planLimitsPage, /Plan Limits/);
   });
 
   if (failed > 0) process.exit(1);
