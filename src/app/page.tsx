@@ -41,7 +41,7 @@ export default function LandingPage() {
             </nav>
             <div className="flex items-center justify-end gap-2 sm:gap-4">
               <Button asChild className="hidden md:flex">
-                <Link href="/dashboard">Go to Dashboard</Link>
+                <Link href="/mobile-app-required">Use the Android app</Link>
               </Button>
               <div className="md:hidden">
                 <DropdownMenu>
@@ -61,8 +61,8 @@ export default function LandingPage() {
                       </DropdownMenuItem>
                     ))}
                      <DropdownMenuItem asChild>
-                        <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
-                          Go to Dashboard
+                        <Link href="/mobile-app-required" className="flex items-center gap-2 font-semibold">
+                          Use the Android app
                         </Link>
                       </DropdownMenuItem>
                   </DropdownMenuContent>
@@ -89,8 +89,8 @@ export default function LandingPage() {
                   </p>
                   <div className="flex justify-center md:justify-start">
                     <Button asChild size="lg">
-                      <Link href="/dashboard">
-                          Get Started
+                      <Link href="/mobile-app-required">
+                          Use the Android app
                       </Link>
                     </Button>
                   </div>

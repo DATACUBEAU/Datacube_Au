@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocumentProcessing
+import au.datacube.app.ui.theme.DataCubeColors
 import io.github.jan.supabase.auth.user.UserInfo
 
 @Composable
@@ -44,7 +45,7 @@ fun HomeScreen(
                     .fillMaxWidth()
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(Color(0xFF0F172A), Color(0xFF1E3A5F))
+                            colors = listOf(DataCubeColors.Navy, DataCubeColors.Navy)
                         )
                     )
                     .padding(horizontal = 24.dp, vertical = 32.dp)
@@ -55,7 +56,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .size(40.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF2183E3)),
+                                .background(DataCubeColors.LightBlue),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -70,7 +71,7 @@ fun HomeScreen(
                             Text(
                                 "DATACUBE AU",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF2183E3),
+                                color = DataCubeColors.LightBlue,
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = androidx.compose.ui.unit.TextUnit(1.5f, androidx.compose.ui.unit.TextUnitType.Sp)
                             )
@@ -93,12 +94,12 @@ fun HomeScreen(
                     Text(
                         "Documents, AI tools and study sessions — private by default.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color(0xFF94A3B8)
+                        color = DataCubeColors.LightBlue
                     )
                     Spacer(Modifier.height(20.dp))
                     Button(
                         onClick = onImportDocument,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2183E3))
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Icon(Icons.Outlined.Add, null, modifier = Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
@@ -128,21 +129,21 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Outlined.Chat,
                     label = "AU Chat",
-                    tint = Color(0xFF8B5CF6),
+                    tint = MaterialTheme.colorScheme.primary,
                     onClick = onNavigateToChat
                 )
                 QuickActionCard(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Outlined.School,
                     label = "Study",
-                    tint = Color(0xFF10B981),
+                    tint = MaterialTheme.colorScheme.primary,
                     onClick = onNavigateToStudy
                 )
                 QuickActionCard(
                     modifier = Modifier.weight(1f),
                     icon = Icons.Outlined.Folder,
                     label = "Documents",
-                    tint = Color(0xFFF59E0B),
+                    tint = MaterialTheme.colorScheme.primary,
                     onClick = onNavigateToDocuments
                 )
             }

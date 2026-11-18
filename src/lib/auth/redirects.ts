@@ -11,7 +11,7 @@ export function isPublicAuthPath(pathname: string | null | undefined): boolean {
 
 export function sanitizeLocalRedirectPath(
   value: string | null | undefined,
-  fallback = '/dashboard',
+  fallback = '/mobile-app-required',
 ): string {
   const candidate = normalizeCandidatePath(value);
   if (!candidate || !candidate.startsWith('/') || candidate.startsWith('//')) return fallback;

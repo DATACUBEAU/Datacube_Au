@@ -18,8 +18,10 @@ android {
      // Supabase project values — injected from local.properties or CI secrets
      val supabaseUrl = project.findProperty("SUPABASE_URL") as String? ?: ""
      val supabaseAnonKey = project.findProperty("SUPABASE_ANON_KEY") as String? ?: ""
+     val authWebsiteUrl = project.findProperty("AUTH_WEBSITE_URL") as String? ?: "https://datacube-au.vercel.app"
      buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
      buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
+     buildConfigField("String", "AUTH_WEBSITE_URL", "\"$authWebsiteUrl\"")
  }
  buildFeatures {
      compose = true

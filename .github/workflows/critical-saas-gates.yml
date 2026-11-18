@@ -62,6 +62,9 @@ jobs:
       - name: Auth callback flow tests
         run: pnpm test:auth-callback-flow
 
+      - name: Mobile website-auth handoff and retired web routes tests
+        run: pnpm test:mobile-auth-handoff
+
       - name: Auth runtime and refresh tests
         run: pnpm test:auth-runtime
 

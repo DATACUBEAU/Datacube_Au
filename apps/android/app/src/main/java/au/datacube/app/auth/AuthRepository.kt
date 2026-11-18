@@ -5,8 +5,6 @@ import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.exception.AuthRestException
 import io.github.jan.supabase.auth.providers.builtin.Email
 
-private const val TAG = "AuthRepository"
-
 /**
  * Authentication operations backed by the Supabase Auth SDK.
  *
