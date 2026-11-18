@@ -135,7 +135,7 @@ export default function CheckoutPage() {
     return () => {
       cancelled = true;
     };
-  }, [isUserLoading, loadBillingStatus, router, user?.id]);
+  }, [isUserLoading, loadBillingStatus, router, user]);
 
   const verifyPaymentReturn = useCallback(async () => {
     const target = returnState.verificationTarget;
