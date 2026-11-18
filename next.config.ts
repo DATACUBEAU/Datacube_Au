@@ -201,6 +201,7 @@ const matchNextDataRoute = ({ request, url }: { request: Request; url: URL }) =>
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/checkout',
   ];
   return !excludedPrefixes.some((prefix) => {
     return matchedRoute === prefix || matchedRoute.startsWith(`${prefix}/`);
@@ -227,6 +228,7 @@ const matchPrefetchedRscRoute = ({
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/checkout',
   ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
@@ -252,6 +254,7 @@ const matchRscRoute = ({
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/checkout',
   ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
@@ -277,6 +280,7 @@ const matchNavigationRoute = ({
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/checkout',
   ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
@@ -284,6 +288,7 @@ const matchNavigationRoute = ({
 };
 
 const PWA_PROTECTED_PRECACHE_PREFIXES = [
+  '/_next/static/chunks/app/checkout/',
   '/_next/static/chunks/app/dashboard/',
   '/_next/static/chunks/app/conex/',
   '/_next/static/chunks/app/api/account/',
@@ -322,7 +327,9 @@ const withPWA = withPWAInit({
       /\/_next\/static\/chunks\/app\/dashboard\//,
       /^_next\/static\/chunks\/app\/dashboard\//,
       /\/_next\/static\/chunks\/app\/conex\//,
+      /\/_next\/static\/chunks\/app\/checkout\//,
       /^_next\/static\/chunks\/app\/conex\//,
+      /^_next\/static\/chunks\/app\/checkout\//,
       /\/_next\/static\/chunks\/app\/api\/(account|admin|au|auth|billing|chat|entitlements|feature-output|feedback|limits|payments)\//,
       /^_next\/static\/chunks\/app\/api\/(account|admin|au|auth|billing|chat|entitlements|feature-output|feedback|limits|payments)\//,
       /\/dashboard$/,
