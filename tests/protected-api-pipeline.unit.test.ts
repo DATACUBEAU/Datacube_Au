@@ -409,7 +409,7 @@ async function main() {
     assert.match(accessControl, /return Boolean\(subject\.adminOverride\);/);
     assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+profileTier\)\s*===\s*'admin'/);
     assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+plan\)\s*===\s*'admin'/);
-    assert.match(conexRbac, /return isProtectedOwnerUserId\(userId\);/);
+    assert.match(conexRbac, /return isProtectedOwnerUserId\(userId\) && normalizedEmail === CONEX_ROOT_ADMIN_EMAIL;/);
     assert.match(conexRbac, /export function hasConexAccess/);
     assert.match(conexRbac, /return isRootConexAdmin\(subject\.userId, subject\.email\);/);
   });
