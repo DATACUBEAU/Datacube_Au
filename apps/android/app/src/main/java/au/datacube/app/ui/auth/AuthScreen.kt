@@ -46,7 +46,7 @@ fun AuthScreen(
         verticalArrangement = Arrangement.Center
     ) {
         Image(
-            painter = painterResource(R.drawable.datacube_logo),
+            painter = painterResource(R.drawable.datacube_app_icon),
             contentDescription = "DataCube AU",
             modifier = Modifier.size(104.dp)
         )
