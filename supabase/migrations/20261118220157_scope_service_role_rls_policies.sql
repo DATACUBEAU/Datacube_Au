@@ -19,7 +19,7 @@ CREATE POLICY "Service role full access activity"
   USING (true)
   WITH CHECK (true);
 
-DO $
+DO $$
 BEGIN
   IF to_regclass('public.au_auth_mappings') IS NOT NULL THEN
     EXECUTE 'DROP POLICY IF EXISTS "Service role can manage all auth mappings" ON public.au_auth_mappings';
@@ -31,7 +31,7 @@ BEGIN
       WITH CHECK (true)';
   END IF;
 END
-$;
+$$;
 
 DROP POLICY IF EXISTS "Service role full access conex config" ON public.au_conex_config;
 CREATE POLICY "Service role full access conex config"
