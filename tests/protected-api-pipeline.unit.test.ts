@@ -189,16 +189,13 @@ async function main() {
     assert.match(source, /docTextInFlightRequests/);
   });
 
-  await run('available chat models are server-routed and prompt starters use the VPS ticket path', () => {
+  await run('browser model discovery is retired and does not expose a remote inference route', () => {
     const source = readRepoFile('src/lib/api/chat.ts');
     assert.match(source, /getAvailableModels\(\): Promise<string\[\]>/);
-    assert.match(source, /return DEFAULT_MODEL_IDS/);
-    assert.match(source, /createAiIdempotencyKey\('prompt_starters'\)/);
-    assert.match(source, /feature:\s*'generate-prompt-starters'/);
-    assert.match(source, /hasDocId \? undefined : documentContent/);
-    assert.match(source, /\/api\/au\/vps-ticket/);
-    assert.equal(source.includes('AVAILABLE_MODELS_CACHE_TTL_MS'), false);
-    assert.equal(source.includes('availableModelsInFlight'), false);
+    assert.match(source, /return \[\]/);
+    assert.match(source, /throwMobileAppRequired/);
+    assert.doesNotMatch(source, /\/api\/au\/vps-ticket/);
+    assert.equal(source.includes('VPS_AI_GATEWAY_URL'), false);
   });
 
   await run('chat duplicate sends are blocked while the same prompt is already in flight', () => {
