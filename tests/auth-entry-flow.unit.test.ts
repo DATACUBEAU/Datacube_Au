@@ -84,6 +84,12 @@ async function main() {
     assert.match(signup, /export \{ default \} from '..\/login\/page'/);
   });
 
+  await run('non-admin Conex visits are returned to the normal-user checkout surface', () => {
+    const middleware = readRepoFile('src', 'middleware.ts');
+    assert.match(middleware, /pathname === '\/conex' \|\| pathname\.startsWith\('\/conex\/'\)/);
+    assert.match(middleware, /\? '\/checkout'\s*: '\/403'/);
+  });
+
   await run('safeFetch and service worker recovery do not own login/signup submit state', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
     const swRegister = readRepoFile('src', 'components', 'service-worker-register.tsx');
