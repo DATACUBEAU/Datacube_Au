@@ -28,6 +28,7 @@ assert.match(androidRepository, /code_challenge/);
 assert.match(androidRepository, /\/api\/auth\/mobile-handoff/);
 assert.match(androidRepository, /refreshSession\(refreshToken\)/);
 assert.match(androidRepository, /actualUserId != expectedUserId/);
+assert.match(androidRepository, /importSession/);
 assert.doesNotMatch(androidRepository, /signInWith\(Email\)|signUpWith\(Email\)/);
 assert.match(pendingStore, /AndroidKeyStore/);
 assert.match(pendingStore, /AES\/GCM\/NoPadding/);
