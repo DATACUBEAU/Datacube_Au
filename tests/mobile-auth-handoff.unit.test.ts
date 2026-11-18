@@ -30,7 +30,6 @@ assert.doesNotMatch(androidAuthScreen, /OutlinedTextField|PasswordVisualTransfor
 assert.match(androidRepository, /BuildConfig\.AUTH_WEBSITE_URL/);
 assert.match(androidRepository, /code_challenge/);
 assert.match(androidRepository, /\/api\/auth\/mobile-handoff/);
-assert.match(androidRepository, /refreshSession\(refreshToken\)/);
 assert.match(androidRepository, /actualUserId != expectedUserId/);
 assert.match(androidRepository, /refreshSession\(refreshToken = refreshToken\)/);
 assert.doesNotMatch(androidRepository, /signInWith\(Email\)|signUpWith\(Email\)/);
