@@ -39,7 +39,7 @@ async function main() {
     assert.equal(login.includes('router.replace(safeRedirectPath)'), true);
     assert.equal(login.includes("fetch('/conex/users?mode=access'"), true);
     assert.equal(login.includes("safeRedirectPath === '/conex'"), true);
-    assert.equal(login.includes('/mobile-auth/complete'), true);
+    assert.equal(login.includes('signInWithGoogle(safeRedirectPath)'), true);
     assert.equal(login.includes('isResolvingRedirect || (isUserLoading && Boolean(user))'), true);
   });
 
