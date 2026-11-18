@@ -1,9 +1,8 @@
 package au.datacube.app.ui.chat
-
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -13,160 +12,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-
-/**
- * AU Chat screen.
- *
- * The retired remote RAG worker is NOT restored here.
- * Conversation history and local document grounding are
- * the responsibility of a future local inference integration.
- */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ChatScreen(modifier: Modifier = Modifier) {
-    var inputText by remember { mutableStateOf("") }
-    val listState = rememberLazyListState()
-
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("AU Chat", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Document-grounded conversations",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = {}) {
-                        Icon(Icons.Outlined.MoreVert, "Options")
-                    }
-                }
-            )
-        },
-        bottomBar = {
-            Surface(
-                tonalElevation = 3.dp,
-                modifier = Modifier.navigationBarsPadding()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.Bottom
-                ) {
-                    OutlinedTextField(
-                        value = inputText,
-                        onValueChange = { inputText = it },
-                        placeholder = { Text("Ask about your documents…") },
-                        modifier = Modifier.weight(1f),
-                        maxLines = 4,
-                        shape = RoundedCornerShape(24.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    FilledIconButton(
-                        onClick = { /* future: send message */ },
-                        enabled = inputText.isNotBlank()
-                    ) {
-                        Icon(Icons.Outlined.Send, "Send")
-                    }
-                }
-            }
-        }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            state = listState,
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp)
-        ) {
-            item {
-                // Welcome state
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            Icons.Outlined.Chat,
-                            null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            "Start a conversation",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            "Import documents and ask questions about them.\nAll processing happens privately on this device.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(24.dp))
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer
-                            )
-                        ) {
-                            Column(Modifier.padding(16.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Outlined.Lock,
-                                        null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        "Local inference — coming soon",
-                                        fontWeight = FontWeight.SemiBold,
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                }
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    "On-device inference will power document Q&A and grounded answers without sending your documents to the cloud.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(16.dp))
-                        Card(
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surfaceVariant
-                            )
-                        ) {
-                            Column(Modifier.padding(16.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Outlined.Cloud,
-                                        null,
-                                        tint = MaterialTheme.colorScheme.secondary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(
-                                        "Cloud AI — optional",
-                                        fontWeight = FontWeight.SemiBold,
-                                        style = MaterialTheme.typography.labelLarge
-                                    )
-                                }
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    "Cloud inference requires explicit consent and an active DataCube AU subscription. Provider credentials remain server-side.",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+import au.datacube.app.ui.theme.DataCubeColors
+@Composable fun ChatScreen(modifier:Modifier=Modifier){
+ var text by remember{mutableStateOf("")};var selected by remember{mutableStateOf("All documents")};var docMenu by remember{mutableStateOf(false)};var modelMenu by remember{mutableStateOf(false)}
+ Column(modifier.fillMaxSize().background(DataCubeColors.BluePale)){
+  Row(Modifier.fillMaxWidth().padding(horizontal=18.dp,vertical=14.dp),verticalAlignment=Alignment.CenterVertically){Column(Modifier.weight(1f)){Text("AU Chat",style=MaterialTheme.typography.headlineMedium,fontWeight=FontWeight.Bold,color=DataCubeColors.Navy);Text("Ask questions and explore your documents",color=DataCubeColors.TextSecondary,style=MaterialTheme.typography.bodySmall)};IconButton(onClick={}){Icon(Icons.Outlined.Settings,"Chat settings",tint=DataCubeColors.Navy)}}
+  Row(Modifier.fillMaxWidth().padding(horizontal=18.dp),verticalAlignment=Alignment.CenterVertically){Text("Searching in",color=DataCubeColors.TextSecondary);Spacer(Modifier.width(8.dp));Box{OutlinedButton(onClick={docMenu=true},shape=RoundedCornerShape(22.dp)){Icon(Icons.Outlined.Description,null,tint=DataCubeColors.Blue);Spacer(Modifier.width(6.dp));Text(selected,color=DataCubeColors.Navy);Icon(Icons.Outlined.ArrowDropDown,null)};DropdownMenu(expanded=docMenu,onDismissRequest={docMenu=false}){DropdownMenuItem(text={Text("All documents")},onClick={selected="All documents";docMenu=false})}}}
+  Box(Modifier.weight(1f).fillMaxWidth(),contentAlignment=Alignment.Center){Column(horizontalAlignment=Alignment.CenterHorizontally,modifier=Modifier.padding(28.dp)){Icon(Icons.Outlined.ChatBubbleOutline,null,tint=DataCubeColors.Blue,modifier=Modifier.size(48.dp));Spacer(Modifier.height(14.dp));Text("Ask anything about your document…",fontWeight=FontWeight.SemiBold,color=DataCubeColors.Navy);Spacer(Modifier.height(6.dp));Text("Choose a document and ask AU to explain, summarize or find information.",color=DataCubeColors.TextSecondary)}}
+  Surface(color=MaterialTheme.colorScheme.surface,shape=RoundedCornerShape(topStart=24.dp,topEnd=24.dp),border=BorderStroke(1.dp,DataCubeColors.Divider),tonalElevation=2.dp){Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp)){OutlinedTextField(value=text,onValueChange={text=it},placeholder={Text("Ask AU about this document…")},modifier=Modifier.fillMaxWidth(),maxLines=4,shape=RoundedCornerShape(18.dp));Spacer(Modifier.height(8.dp));Row(verticalAlignment=Alignment.CenterVertically){IconButton(onClick={}){Icon(Icons.Outlined.Add,"Attach document")};Box{OutlinedButton(onClick={modelMenu=true},shape=RoundedCornerShape(22.dp)){Icon(Icons.Outlined.Cube,null,tint=DataCubeColors.Blue);Spacer(Modifier.width(5.dp));Text("Gemma",color=DataCubeColors.Navy);Icon(Icons.Outlined.ArrowDropDown,null)};DropdownMenu(expanded=modelMenu,onDismissRequest={modelMenu=false}){DropdownMenuItem(text={Text("Gemma (local)")},onClick={modelMenu=false)}}};Spacer(Modifier.weight(1f));IconButton(onClick={}){Icon(Icons.Outlined.Mic,"Voice input")};FilledIconButton(onClick={},enabled=text.isNotBlank()){Icon(Icons.Outlined.Send,"Send")}}}}
+ }
 }
