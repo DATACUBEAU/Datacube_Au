@@ -176,7 +176,7 @@ async function validateAccessToken(token: string): Promise<{ userId: string; ema
   const { data, error } = await supabase.auth.getUser(token);
   if (error || !data.user?.id) {
     // Enhanced diagnostic logging
-    console.warn('[proxy] validateAccessToken failed:', {
+    console.warn('[proxy] credential validation failed:', {
       error: error?.message || 'missing_user_id',
       errorCode: (error as any)?.code || (error as any)?.status || 'unknown',
       hasData: !!data,
@@ -207,7 +207,7 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
   if (cookieToken) candidates.push({ token: cookieToken, source: 'cookie' });
 
   if (candidates.length === 0) {
-    console.warn('[proxy] no auth tokens found in request', {
+    console.warn('[proxy] no credentials found in request', {
       hasCookie: diagnostics.hasAuthCookie,
       hasAuthHeader: diagnostics.hasAuthorizationHeader,
     });
@@ -248,7 +248,7 @@ export async function requireUserFromRequest(req: NextRequest): Promise<RequestA
   }
 
   // Token was present but invalid/expired
-  console.warn('[proxy] all provided tokens failed validation', {
+  console.warn('[proxy] all provided credentials failed validation', {
     candidateCount: candidates.length,
     sources: candidates.map(c => c.source),
     debug: debugMessage
