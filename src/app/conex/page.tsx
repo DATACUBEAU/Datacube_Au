@@ -3322,16 +3322,10 @@ export default function ConexPage() {
 
   const navItems = [
     { value: 'access', label: 'Access', icon: Shield },
-    { value: 'usage', label: 'Usage', icon: LayoutDashboard },
     { value: 'billing', label: 'Billing', icon: Crown },
-    { value: 'registry', label: 'Registry', icon: Database },
+    { value: 'registry', label: 'AI Models', icon: Database },
     { value: 'users', label: 'Users', icon: Users },
-    { value: 'activity', label: 'Activity', icon: Activity },
-    { value: 'feedback', label: 'Feedback', icon: Star },
-    { value: 'alerts', label: 'Alerts', icon: Mail },
-    { value: 'health', label: 'Health', icon: HeartPulse },
-    { value: 'analytics', label: 'Analytics', icon: Activity },
-    { value: 'logs', label: 'Logs', icon: Terminal },
+    { value: 'health', label: 'System Health', icon: HeartPulse },
   ];
 
   if (isUserLoading || isCheckingConexAccess) {
@@ -3414,7 +3408,7 @@ export default function ConexPage() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="hidden md:grid w-full grid-cols-11 mb-8">
+            <TabsList className="hidden md:grid w-full grid-cols-5 mb-8">
                 {navItems.map((item) => (
                     <TabsTrigger key={item.value} value={item.value} className="gap-2">
                         <item.icon className="h-4 w-4" /> {item.label}
@@ -3424,18 +3418,6 @@ export default function ConexPage() {
 
             <TabsContent value="access">
               <ConexAccessControl />
-            </TabsContent>
-            
-            <TabsContent value="usage">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Model Usage</CardTitle>
-                  <CardDescription>Recent API calls and token consumption.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <AdminUsage />
-                </CardContent>
-              </Card>
             </TabsContent>
 
             <TabsContent value="billing">
@@ -3474,42 +3456,6 @@ export default function ConexPage() {
               </Card>
             </TabsContent>
 
-            <TabsContent value="activity">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Live Activity</CardTitle>
-                  <CardDescription>Real-time view of user interactions.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <AdminActivity />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="feedback">
-              <Card>
-                <CardHeader>
-                  <CardTitle>User Feedback</CardTitle>
-                  <CardDescription>View ratings and comments from users.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <AdminFeedback />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="alerts">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Email Alerts</CardTitle>
-                  <CardDescription>Configure automatic notifications for system events.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <AdminAlerts />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
             <TabsContent value="health">
               <Card>
                 <CardHeader>
@@ -3518,30 +3464,6 @@ export default function ConexPage() {
                 </CardHeader>
                 <CardContent>
                   <AdminHealth />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="analytics">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Database Analytics</CardTitle>
-                  <CardDescription>Visual insights into system usage and performance.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <AdminAnalytics />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="logs">
-              <Card>
-                <CardHeader>
-                  <CardTitle>System Logs</CardTitle>
-                  <CardDescription>Detailed debug logs from the AU backend.</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <AdminLogs />
                 </CardContent>
               </Card>
             </TabsContent>
