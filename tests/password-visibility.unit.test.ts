@@ -30,12 +30,11 @@ async function main() {
     assert.match(component, /pr-11/);
   });
 
-  await run('login and signup password field use PasswordInput and correct autocomplete', () => {
+  await run('website login no longer exposes password fields and uses Google OAuth only', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /import \{ PasswordInput \}/);
-    assert.match(login, /<PasswordInput/);
-    assert.match(login, /authMode === 'signup' \? 'new-password' : 'current-password'/);
-    assert.doesNotMatch(login, /type="password"[\s\S]*id="password"/);
+    assert.match(login, /signInWithGoogle/);
+    assert.match(login, /Icons\.google/);
+    assert.doesNotMatch(login, /PasswordInput|signInWithPassword|signUp|type="password"|<form/);
   });
 
   await run('admin-created user password uses PasswordInput without making provider keys visible', () => {
