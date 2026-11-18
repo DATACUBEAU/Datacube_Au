@@ -319,7 +319,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       redirectPath.startsWith('/') &&
       !redirectPath.startsWith('//')
         ? redirectPath
-        : '/dashboard';
+        : '/checkout';
     const redirectTo =
       typeof window !== 'undefined'
         ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(safePath)}`
