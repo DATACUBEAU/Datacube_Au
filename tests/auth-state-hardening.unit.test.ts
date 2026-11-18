@@ -21,14 +21,6 @@ function readRepoFile(...segments: string[]): string {
   return readFileSync(path.join(process.cwd(), ...segments), 'utf8');
 }
 
-function assertRequiresTokenBeforeTicket(source: string, functionName: string) {
-  const functionIndex = source.indexOf(`function ${functionName}`);
-  assert.notEqual(functionIndex, -1, `missing ${functionName}`);
-  const tokenIndex = source.indexOf('requireAiAccessToken', functionIndex + 1);
-  const ticketIndex = source.indexOf("'/api/au/vps-ticket'", functionIndex);
-  assert.ok(tokenIndex > functionIndex, `${functionName} must require a token`);
-  assert.ok(ticketIndex > tokenIndex, `${functionName} must require token before requesting a VPS ticket`);
-}
 
 async function main() {
   await run('401 restore with no session moves to UNAUTHENTICATED, not AUTHENTICATED', () => {
@@ -66,16 +58,20 @@ async function main() {
     assert.doesNotMatch(source, /expiresAt:/);
   });
 
-  await run('AI ticket callers require access token before requesting VPS ticket', () => {
+  await run('retired browser AI callers fail closed and never request VPS tickets', () => {
     const chat = readRepoFile('src', 'lib', 'api', 'chat.ts');
     const exams = readRepoFile('src', 'lib', 'api', 'exams.ts');
     const store = readRepoFile('src', 'hooks', 'use-store.ts');
-    assertRequiresTokenBeforeTicket(chat, 'sendChatMessage');
-    assertRequiresTokenBeforeTicket(chat, 'sendChatMessageStream');
-    assertRequiresTokenBeforeTicket(chat, 'generatePromptStarters');
-    assertRequiresTokenBeforeTicket(exams, 'generatePracticeExam');
-    assertRequiresTokenBeforeTicket(exams, 'generatePredictions');
-    assert.match(store, /requireAiAccessToken\(options\?\.accessToken\)/);
+    const retiredHelper = readRepoFile('src', 'lib', 'api', 'mobile-app-required.ts');
+
+    assert.match(chat, /throwMobileAppRequired/);
+    assert.match(exams, /throwMobileAppRequired/);
+    assert.match(store, /notifyNativeAppRequired/);
+    assert.match(retiredHelper, /code: 'MOBILE_APP_REQUIRED'/);
+    assert.match(retiredHelper, /status: 410/);
+    assert.doesNotMatch(chat, /\/api\/au\/vps-ticket|VPS_AI_GATEWAY_URL/);
+    assert.doesNotMatch(exams, /\/api\/au\/vps-ticket|VPS_AI_GATEWAY_URL/);
+    assert.doesNotMatch(store, /\/api\/au\/vps-ticket|VPS_AI_GATEWAY_URL/);
     assert.doesNotMatch(readRepoFile('src', 'hooks', 'api', 'use-au-chat.ts'), /__cookie_session__/);
     assert.doesNotMatch(readRepoFile('src', 'hooks', 'api', 'use-au-exams.ts'), /__cookie_session__/);
     assert.doesNotMatch(readRepoFile('src', 'lib', 'supabase-client', 'client.ts'), /__cookie_session__/);
