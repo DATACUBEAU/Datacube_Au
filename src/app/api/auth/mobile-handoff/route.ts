@@ -136,7 +136,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const validator = createSessionValidator();
     const { data: verified, error: verifyError } = await validator.auth.verifyOtp({
       token_hash: tokenHash,
-      type: 'email',
+      type: 'magiclink',
     });
     const mobileSession = verified.session;
     if (verifyError || !mobileSession?.refresh_token || verified.user?.id !== auth.userId) {
