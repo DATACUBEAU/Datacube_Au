@@ -24,22 +24,23 @@ async function run(name: string, fn: AsyncTest) {
 async function main() {
   await run('website authentication exposes Google OAuth only', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /signInWithGoogle/);
-    assert.match(login, /Icons\\.google/);
-    assert.match(login, /Continue with Google/);
-    assert.match(login, /disabled=\\{isLoadingGoogle\\}/);
-    assert.doesNotMatch(login, /signInWithPassword|signUp|PasswordInput|type="password"|<form|<Input|TabsTrigger|Create an account|Sign Up/);
+    assert.equal(login.includes('signInWithGoogle'), true);
+    assert.equal(login.includes('Icons.google'), true);
+    assert.equal(login.includes('Continue with Google'), true);
+    assert.equal(login.includes('disabled={isLoadingGoogle}'), true);
+    for (const retiredControl of ['signInWithPassword', 'signUp', 'PasswordInput', 'type="password"', '<form', '<Input', 'TabsTrigger', 'Create an account', 'Sign Up']) {
+      assert.equal(login.includes(retiredControl), false, `retired credential control found: ${retiredControl}`);
+    }
   });
 
   await run('Google OAuth restores the server session and preserves protected redirect targets', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /syncServerAuthSessionCookie\\(activeSession\\)/);
-    assert.match(login, /router\\.replace\\(safeRedirectPath\\)/);
-    assert.match(login, /fetch\\('\\/conex\\/users\\?mode=access'/);
-    assert.match(login, /safeRedirectPath === '\\/conex'/);
-    assert.match(login, /mobile-auth/);
-    assert.doesNotMatch(login, /signInWithPassword|signUp/);
-    assert.match(login, /isResolvingRedirect \\|\\| \\(isUserLoading && Boolean\\(user\\)\\)/);
+    assert.equal(login.includes('syncServerAuthSessionCookie(activeSession)'), true);
+    assert.equal(login.includes('router.replace(safeRedirectPath)'), true);
+    assert.equal(login.includes("fetch('/conex/users?mode=access'"), true);
+    assert.equal(login.includes("safeRedirectPath === '/conex'"), true);
+    assert.equal(login.includes('/mobile-auth/complete'), true);
+    assert.equal(login.includes('isResolvingRedirect || (isUserLoading && Boolean(user))'), true);
   });
 
   await run('OAuth uses a public callback route instead of redirecting directly to protected pages', () => {
