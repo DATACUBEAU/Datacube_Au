@@ -40,11 +40,8 @@ jobs:
         with:
           gradle-version: wrapper
 
-      - name: Write local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" >> local.properties
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> local.properties
-          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> local.properties
+      - name: Write Android SDK location
+        run: echo "sdk.dir=$ANDROID_HOME" >> local.properties
 
       - name: Run unit tests
         run: bash ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --no-daemon
