@@ -9,8 +9,8 @@ import io.github.jan.supabase.postgrest.Postgrest
  * Singleton Supabase client.
  *
  * Project URL and publishable key are injected at build time via BuildConfig.
- * Publishable keys are public client identifiers; the service-role/secret key
- * the service-role key is never present in the app.
+ * Publishable keys are public client identifiers. The service-role/secret key
+ * is never present in the app.
  */
 object SupabaseClient {
 
