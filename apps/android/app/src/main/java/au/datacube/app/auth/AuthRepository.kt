@@ -71,48 +71,52 @@ class AuthRepository(
 
     suspend fun completeWebsiteAuthentication(code: String, state: String): AuthResult {
         return try {
-        val pending = pendingAuthStore.load(state)
-            ?: return AuthResult.Error("This sign-in request expired. Please sign in again.")
+            val pending = pendingAuthStore.load(state)
+                ?: return AuthResult.Error("This sign-in request expired. Please sign in again.")
 
-        val response = httpClient.post("${BuildConfig.AUTH_WEBSITE_URL.trimEnd('/')}/api/auth/mobile-handoff") {
-            contentType(ContentType.Application.Json)
-            header("Accept", "application/json")
-            setBody(
-                """{"action":"exchange","code":"${jsonEscape(code)}","state":"${jsonEscape(state)}","codeVerifier":"${jsonEscape(pending.verifier)}"}"""
-            )
-        }
-        val payload = json.parseToJsonElement(response.bodyAsText()).jsonObject
-        if (payload["ok"]?.jsonPrimitive?.content != "true") {
-            val message = payload["message"]?.jsonPrimitive?.content
-                ?: "The sign-in link expired or was already used. Please sign in again."
+            val response = httpClient.post("${BuildConfig.AUTH_WEBSITE_URL.trimEnd('/')}/api/auth/mobile-handoff") {
+                contentType(ContentType.Application.Json)
+                header("Accept", "application/json")
+                setBody(
+                    """{"action":"exchange","code":"${jsonEscape(code)}","state":"${jsonEscape(state)}","codeVerifier":"${jsonEscape(pending.verifier)}"}"""
+                )
+            }
+            val payload = json.parseToJsonElement(response.bodyAsText()).jsonObject
+            if (payload["ok"]?.jsonPrimitive?.content != "true") {
+                val message = payload["message"]?.jsonPrimitive?.content
+                    ?: "The sign-in link expired or was already used. Please sign in again."
+                pendingAuthStore.clear()
+                return AuthResult.Error(message)
+            }
+
+            val refreshToken = payload["refreshToken"]?.jsonPrimitive?.content
+            val expectedUserId = payload["userId"]?.jsonPrimitive?.content
+            if (refreshToken.isNullOrBlank() || expectedUserId.isNullOrBlank()) {
+                pendingAuthStore.clear()
+                return AuthResult.Error("The secure app session was incomplete. Please sign in again.")
+            }
+
+            // Supabase SDK performs the refresh-token exchange and persists the
+            // resulting native session using its configured session manager.
+            SupabaseClient.auth.refreshSession(refreshToken = refreshToken)
+            val user = SupabaseClient.auth.currentUserOrNull()
+            if (user?.id != expectedUserId) {
+                SupabaseClient.auth.signOut()
+                pendingAuthStore.clear()
+                return AuthResult.Error("The returned account could not be verified. Please sign in again.")
+            }
+
+            sessionStore.persist(user)
             pendingAuthStore.clear()
-            return AuthResult.Error(message)
-        }
-
-        val refreshToken = payload["refreshToken"]?.jsonPrimitive?.content
-            ?: return AuthResult.Error("The secure app session was incomplete. Please sign in again.")
-        val expectedUserId = payload["userId"]?.jsonPrimitive?.content
-            ?: return AuthResult.Error("The secure app session was incomplete. Please sign in again.")
-
-        // Supabase SDK performs the refresh-token exchange and persists the
-        // resulting native session using its configured session manager.
-        SupabaseClient.auth.refreshSession(refreshToken = refreshToken)
-        val actualUserId = SupabaseClient.auth.currentUserOrNull()?.id
-        if (actualUserId != expectedUserId) {
-            SupabaseClient.auth.signOut()
+            AuthResult.Success
+        } catch (e: AuthRestException) {
             pendingAuthStore.clear()
-            return AuthResult.Error("The returned account could not be verified. Please sign in again.")
-        }
-
-        sessionStore.persist(SupabaseClient.auth.currentUserOrNull())
-        pendingAuthStore.clear()
-        AuthResult.Success
-    } catch (e: AuthRestException) {
-        Log.w(TAG, "Website handoff exchange failed: ${e.message}")
-        AuthResult.Error("The sign-in link expired or could not be verified. Please sign in again.")
-    } catch (e: Exception) {
-        Log.e(TAG, "Website authentication handoff failed", e)
-        AuthResult.Error("Could not complete sign-in. Check your connection and try again.")
+            Log.w(TAG, "Website handoff exchange failed: ${e.message}")
+            AuthResult.Error("The sign-in link expired or could not be verified. Please sign in again.")
+        } catch (e: Exception) {
+            pendingAuthStore.clear()
+            Log.e(TAG, "Website authentication handoff failed", e)
+            AuthResult.Error("Could not complete sign-in. Check your connection and try again.")
         }
     }
 
