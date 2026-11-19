@@ -107,12 +107,12 @@ fun DocumentsScreen(
                 Button(onClick = onImport, modifier = Modifier.weight(1f).heightIn(min = 76.dp), shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(10.dp)) {
                     Icon(Icons.Outlined.AddCircle, null)
                     Spacer(Modifier.width(7.dp))
-                    Column { Text("Upload Documents", fontWeight = FontWeight.Bold, maxLines = 1); Text("Add one or more files", style = MaterialTheme.typography.labelSmall) }
+                    Column { Text("Upload Documents", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis); Text("Add one or more files", style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
                 OutlinedButton(onClick = { createDialog = true }, modifier = Modifier.weight(1f).heightIn(min = 76.dp), shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(10.dp)) {
                     Icon(Icons.Outlined.CreateNewFolder, null, tint = DataCubeColors.Blue)
                     Spacer(Modifier.width(7.dp))
-                    Column { Text("Create Collection", fontWeight = FontWeight.Bold, maxLines = 1); Text("Group related files", style = MaterialTheme.typography.labelSmall) }
+                    Column { Text("Create Collection", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis); Text("Group related files", style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }
                 }
             }
         }
