@@ -2,6 +2,7 @@ package au.datacube.app.data
 
 import androidx.room.Entity
 import androidx.room.Index
+import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "local_collections", indices = [Index("createdAtEpochMs")])
@@ -16,6 +17,10 @@ data class LocalCollection(
 @Entity(
     tableName = "local_collection_documents",
     primaryKeys = ["collectionId", "documentId"],
+    foreignKeys = [
+        ForeignKey(entity = LocalCollection::class, parentColumns = ["id"], childColumns = ["collectionId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = LocalDocument::class, parentColumns = ["id"], childColumns = ["documentId"], onDelete = ForeignKey.CASCADE)
+    ],
     indices = [Index("documentId")]
 )
 data class LocalCollectionDocument(
