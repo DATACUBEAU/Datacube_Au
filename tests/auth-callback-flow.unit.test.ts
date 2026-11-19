@@ -73,7 +73,7 @@ async function main() {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
     assert.match(stateTest, /UNAUTHENTICATED/);
     assert.match(login, /Continue with Google/);
-    assert.doesNotMatch(login, /signInWithPassword|signUp\\(/);
+    assert.doesNotMatch(login, /signInWithPassword|signUp\(/);
   });
 
   if (failed > 0) {
