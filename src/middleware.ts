@@ -237,6 +237,13 @@ async function loadMiddlewareSubject(
 }
 
 function isRetiredWebProductPath(pathname: string): boolean {
+  // This non-production harness is only used by Playwright CI to exercise
+  // subscription-state race handling. It must remain reachable under
+  // `next dev`, but is always retired from production customer traffic.
+  if (pathname === '/test/billing-refresh') {
+    return process.env.NODE_ENV === 'production';
+  }
+
   // The web product workspace is retired completely. Document management,
   // study tools, account settings and usage views now belong to Android.
   if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) return true;
