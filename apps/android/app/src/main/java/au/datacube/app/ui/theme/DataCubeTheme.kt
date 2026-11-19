@@ -2,6 +2,8 @@ package au.datacube.app.ui.theme
 
 import androidx.compose.foundation.background
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -11,6 +13,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 object DataCubeColors {
     val Blue = Color(0xFF0866F5)
@@ -23,11 +29,46 @@ object DataCubeColors {
     val Black = Color(0xFF080D16)
     val Divider = Color(0xFFE1EAF7)
 
-    // Semantic document/file accents from the approved UI references.
-    val PdfRed = Color(0xFFE5484D)
-    val SuccessGreen = Color(0xFF20A866)
     val HighlightBlue = Color(0xFFBFD9FF)
 }
+
+/**
+ * DataCube AU's Compose design tokens. Screens should use these shared values
+ * instead of introducing one-off colors, corner radii or type scales.
+ */
+object DataCubeSpacing {
+    val XSmall = 4.dp
+    val Small = 8.dp
+    val Medium = 12.dp
+    val Large = 16.dp
+    val XLarge = 20.dp
+    val XXLarge = 28.dp
+}
+
+private val DataCubeShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(16.dp),
+    large = RoundedCornerShape(20.dp),
+    extraLarge = RoundedCornerShape(28.dp)
+)
+
+private val DataCubeTypography = Typography().copy(
+    displayLarge = Typography().displayLarge.copy(fontWeight = FontWeight.Bold),
+    displayMedium = Typography().displayMedium.copy(fontWeight = FontWeight.Bold),
+    displaySmall = Typography().displaySmall.copy(fontWeight = FontWeight.Bold),
+    headlineLarge = Typography().headlineLarge.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold),
+    headlineMedium = Typography().headlineMedium.copy(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold),
+    headlineSmall = Typography().headlineSmall.copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
+    titleLarge = Typography().titleLarge.copy(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
+    titleMedium = Typography().titleMedium.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
+    bodyLarge = Typography().bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = Typography().bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
+    bodySmall = Typography().bodySmall.copy(fontSize = 12.sp, lineHeight = 18.sp),
+    labelLarge = Typography().labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+    labelMedium = Typography().labelMedium.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
+    labelSmall = Typography().labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium)
+)
 
 private val LightColors = lightColorScheme(
     primary = DataCubeColors.Blue,
@@ -67,6 +108,8 @@ private val DarkColors = darkColorScheme(
 fun DataCubeTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) {
     MaterialTheme(
         colorScheme = if (darkTheme) DarkColors else LightColors,
+        typography = DataCubeTypography,
+        shapes = DataCubeShapes,
         content = content
     )
 }
