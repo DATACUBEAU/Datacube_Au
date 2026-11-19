@@ -22,6 +22,7 @@ import au.datacube.app.data.LocalCollectionWithCount
 import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.ui.theme.DataCubeColors
+import au.datacube.app.ui.theme.dataCubeBackdrop
 
 @Composable
 fun DocumentsScreen(
@@ -83,7 +84,7 @@ fun DocumentsScreen(
     }
 
     LazyColumn(
-        modifier = modifier.fillMaxSize().background(DataCubeColors.BluePale),
+        modifier = modifier.fillMaxSize().dataCubeBackdrop(),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
