@@ -227,6 +227,17 @@ fun ProfileScreen(
                                     style = MaterialTheme.typography.labelLarge
                                 )
                                 val progress = modelBackupProgress
+                                val progressDetail = listOfNotNull(
+                                    progress?.currentModel,
+                                    progress?.currentFile
+                                ).joinToString(" • ")
+                                if (progressDetail.isNotBlank()) {
+                                    Text(
+                                        progressDetail,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                                 if (progress != null && progress.totalBytes > 0L) {
                                     LinearProgressIndicator(
                                         progress = progress.fraction,
