@@ -276,7 +276,7 @@ fun DocumentChatWorkspace(
                             prompt = ""
                         }
                     },
-                    enabled = prompt.isNotBlank() && !textPreview.isNullOrBlank(), Modifier.size(52.dp)
+                    enabled = prompt.isNotBlank() && !textPreview.isNullOrBlank(), modifier = Modifier.size(52.dp)
                 ) { Icon(Icons.Outlined.Send, contentDescription = "Search document") }
             }
         }
@@ -499,7 +499,7 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     OutlinedButton(
                         onClick = { currentIndex = (currentIndex - 1).coerceAtLeast(0); showReference = false },
-                        enabled = currentIndex > 0, Modifier.weight(1f)
+                        enabled = currentIndex > 0, modifier = Modifier.weight(1f)
                     ) { Text("Previous") }
                     Button(
                         onClick = {
@@ -618,7 +618,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                             else speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
                         },
                         enabled = speechReady && summary.isNotBlank(),
-                        Modifier.weight(1f).heightIn(min = 50.dp)
+                        modifier = Modifier.weight(1f).heightIn(min = 50.dp)
                     ) {
                         Icon(if (speaking) Icons.Outlined.Stop else Icons.Outlined.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(7.dp)); Text(if (speaking) "Stop narration" else "Play summary")
