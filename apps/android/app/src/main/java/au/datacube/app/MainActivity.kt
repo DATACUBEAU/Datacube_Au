@@ -155,8 +155,8 @@ private fun DataCubeRoot(
         if (destination != null && !modelOperationBusy) {
             modelOperationBusy = true
             modelBackupProgress = ModelBackupProgress(phase = "Starting model backup")
-                modelOperationJob = scope.launch {
-                    try {
+            modelOperationJob = scope.launch {
+                try {
                         val summary = ModelBackupManager(context).exportBackup(destination) { progress ->
                             scope.launch { modelBackupProgress = progress }
                         }
@@ -173,7 +173,6 @@ private fun DataCubeRoot(
                         modelBackupProgress = null
                     }
                 }
-            }
         }
     }
 
@@ -197,6 +196,7 @@ private fun DataCubeRoot(
                     snackbar.showSnackbar(error.message ?: "Could not restore the model backup.")
                 } finally {
                     modelOperationJob = null
+                    modelOperationBusy = false
                     modelBackupProgress = null
                 }
             }
