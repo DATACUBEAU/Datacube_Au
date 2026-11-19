@@ -244,7 +244,9 @@ private fun DataCubeRoot(
                     onImportDocument = { picker.launch(mimeTypes) },
                     onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
                     onNavigateToStudy = { navController.navigate(Screen.Study.route) },
-                    onNavigateToChat = { navController.navigate(Screen.Chat.route) }
+                    onNavigateToChat = { navController.navigate(Screen.Chat.route) },
+                    onOpenDocument = { id -> navController.navigate("document/$id") },
+                    onNavigateSettings = { navController.navigate(Screen.Profile.route) }
                 )
             }
             composable(Screen.Documents.route) {
@@ -253,6 +255,7 @@ private fun DataCubeRoot(
                     collections = collections,
                     onImport = { picker.launch(mimeTypes) },
                     onNavigateHome = { navController.navigate(Screen.Home.route) },
+                    onNavigateSettings = { navController.navigate(Screen.Profile.route) },
                     onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
                     onOpenCollection = { id -> navController.navigate("collection/$id") },
                     onDeleteCollection = documentsViewModel::deleteCollection,
