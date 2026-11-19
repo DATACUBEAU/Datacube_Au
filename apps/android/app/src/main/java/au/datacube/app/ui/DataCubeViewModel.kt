@@ -71,12 +71,15 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val cleanName = name.trim()
                 require(cleanName.isNotEmpty()) { "Enter a collection name." }
+                require(cleanName.length <= 60) { "Collection names can contain up to 60 characters." }
                 val now = System.currentTimeMillis()
                 val id = UUID.randomUUID().toString()
                 database.collections().insert(
                     LocalCollection(id, cleanName, description.trim(), now, now)
                 )
                 done(Result.success(id))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (error: Exception) {
                 done(Result.failure(error))
             }
