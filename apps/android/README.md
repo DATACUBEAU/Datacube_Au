@@ -31,10 +31,10 @@ Imported document bytes and extracted text remain inside app-private storage. Ro
 
 - Installed model artifacts use the app-private location `files/models/installed/<model-id>/`.
 - Temporary downloads must stay outside that installed directory. Only complete model folders in the installed directory are exported.
-- Profile settings provides **Export model backup** and **Restore from backup** actions.
+- Profile settings provides **Export model backup** and **Restore from backup** actions, with visible phase/file/byte progress and a cancellation control.
 - Export creates one portable ZIP file through Android's Storage Access Framework. The user chooses the destination, including Documents, an SD card, USB storage or a connected cloud document provider.
 - The archive includes every installed model file plus a versioned manifest containing file sizes and SHA-256 checksums. Partial `.part` and `.tmp` files are excluded.
-- Restore verifies the manifest, paths, file sizes and checksums before installing any model. It rejects unsafe paths, duplicate entries, incomplete archives and attempts to overwrite an installed model.
+- Restore verifies the manifest, paths, file sizes and checksums before installing any model. Work runs off the main thread, checks cancellation during file streaming, and removes incomplete export documents where the storage provider permits it. It rejects unsafe paths, duplicate entries, incomplete archives and attempts to overwrite an installed model.
 - Model data is copied into app-private installed storage after verification; the exported ZIP remains in the user-selected external location and can be selected again after reinstalling the app.
 - This backup foundation does not yet implement model discovery, Hugging Face downloads, model inference, or model activation. The future model download manager must install into the documented directory and write only complete model folders there.
 
