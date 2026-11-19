@@ -189,7 +189,8 @@ export function createBrowserSupabaseClient(): SupabaseClient {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      // The callback page performs the PKCE exchange explicitly; avoid a competing auto-exchange.
+      detectSessionInUrl: false,
       flowType: 'pkce',
     },
   });
