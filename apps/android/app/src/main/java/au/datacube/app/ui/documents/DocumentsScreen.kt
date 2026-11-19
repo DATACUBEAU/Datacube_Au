@@ -30,6 +30,7 @@ fun DocumentsScreen(
     collections: List<LocalCollectionWithCount>,
     onImport: () -> Unit,
     onNavigateHome: () -> Unit,
+    onNavigateSettings: () -> Unit,
     onCreateCollection: (String, (Result<String>) -> Unit) -> Unit,
     onOpenCollection: (String) -> Unit,
     onDeleteCollection: (String) -> Unit,
@@ -92,7 +93,7 @@ fun DocumentsScreen(
                     SegmentedButton(selected = false, onClick = onNavigateHome, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("AU") }
                     SegmentedButton(selected = true, onClick = {}, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Document") }
                 }
-                IconButton(onClick = {}) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
+                IconButton(onClick = onNavigateSettings) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
             }
         }
         item {
