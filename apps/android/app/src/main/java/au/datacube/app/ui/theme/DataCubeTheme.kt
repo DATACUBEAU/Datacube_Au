@@ -87,7 +87,7 @@ private val LightColors = lightColorScheme(
     onSurfaceVariant = DataCubeColors.TextSecondary,
     outline = Color(0xFFB9D2F5),
     outlineVariant = DataCubeColors.Divider,
-    error = Color(0xFFB42318),
+    error = DataCubeColors.BlueDark,
     onError = DataCubeColors.White
 )
 
@@ -103,7 +103,9 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = Color(0xFF183052),
     onSurfaceVariant = DataCubeColors.BlueLight,
     outline = Color(0xFF477CB9),
-    outlineVariant = Color(0xFF29486D)
+    outlineVariant = Color(0xFF29486D),
+    error = Color(0xFF79B5FF),
+    onError = DataCubeColors.Navy
 )
 
 @Composable
