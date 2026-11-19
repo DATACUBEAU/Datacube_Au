@@ -16,7 +16,7 @@ object SupabaseClient {
 
     val client = createSupabaseClient(
         supabaseUrl = au.datacube.app.BuildConfig.SUPABASE_URL,
-        supabaseKey = au.datacube.app.BuildConfig.SUPABASE_PUBLISHABLE_KEY
+        supabaseKey = au.datacube.app.BuildConfig.SUPABASE_ANON_KEY
     ) {
         install(Auth) {
             scheme = "datacube"
