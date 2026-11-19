@@ -48,6 +48,7 @@ class AppResponsiveUiTest {
                         documents = emptyList(),
                         collections = emptyList(),
                         onImport = {},
+                        onNavigateHome = {},
                         onCreateCollection = { _, done -> done(Result.success("collection-test")) },
                         onOpenCollection = {},
                         onDeleteCollection = {},
