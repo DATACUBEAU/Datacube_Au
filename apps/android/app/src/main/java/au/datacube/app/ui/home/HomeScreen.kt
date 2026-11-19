@@ -37,6 +37,15 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
+                    SegmentedButton(selected = true, onClick = {}, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("AU") }
+                    SegmentedButton(selected = false, onClick = onNavigateToDocuments, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Document") }
+                }
+                IconButton(onClick = {}) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
+            }
+        }
+        item {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
