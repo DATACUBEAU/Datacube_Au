@@ -22,8 +22,12 @@ const websiteLogin = read('src', 'app', 'login', 'page.tsx');
 const websiteCallback = read('src', 'app', 'auth', 'callback', 'page.tsx');
 const middleware = read('src', 'middleware.ts');
 
-assert.match(androidAuthScreen, /Sign In/);
-assert.match(androidAuthScreen, /Create Account/);
+assert.match(androidAuthScreen, /Continue with Google/);
+assert.match(androidAuthScreen, /Create account/);
+assert.match(androidAuthScreen, /rememberInfiniteTransition/);
+assert.match(androidAuthScreen, /Brush\.radialGradient/);
+assert.match(androidAuthScreen, /Color\.Transparent/);
+assert.doesNotMatch(androidAuthScreen, /Card\(|secure sign-in page|account and authentication stay connected/);
 assert.match(androidAuthScreen, /onOpenWebsite/);
 assert.doesNotMatch(androidAuthScreen, /OutlinedTextField|PasswordVisualTransformation|signIn\(|signUp\(/);
 
