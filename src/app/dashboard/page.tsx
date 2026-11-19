@@ -90,7 +90,6 @@ export default function DashboardPage() {
   const {
     documents,
     loading: documentsLoading,
-    refresh,
     isUsingCachedData,
   } = useAuDocuments();
   const { jobs } = useUploadJobs();
