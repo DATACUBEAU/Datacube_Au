@@ -3,7 +3,6 @@ package au.datacube.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -100,7 +99,7 @@ private sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Documents : Screen("documents")
     object Collection : Screen("collection/{id}")
-    object Document : Screen("document/{id}")
+    object Document : Screen("document/{id}?prompt={prompt}")
     object Study : Screen("study")
     object Chat : Screen("chat")
     object Profile : Screen("profile")
@@ -136,40 +135,35 @@ private fun DataCubeRoot(
     val context = LocalContext.current
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
 
-    // Document picker
+    // Multi-select document picker. Imports are copied sequentially and scheduled locally.
     val mimeTypes = arrayOf(
         "application/pdf",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "text/plain", "application/rtf", "text/markdown"
     )
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) {
-            val name = context.contentResolver.query(
-                uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
-            } ?: "Imported document"
-            documentsViewModel.import(uri, name) { result ->
-                scope.launch {
-                    snackbar.showSnackbar(
-                        result.exceptionOrNull()?.message
-                            ?: "Document saved. Local processing has been queued."
-                    )
-                }
-            }
-        }
-    }
 
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val targetCollection = collectionPickerTarget
         collectionPickerTarget = null
-        if (targetCollection != null && uris.isNotEmpty()) {
-            documentsViewModel.importManyToCollection(uris, targetCollection) { result ->
-                scope.launch {
-                    result.onSuccess { count ->
-                        snackbar.showSnackbar("$count document(s) added to collection.")
-                    }.onFailure { error ->
-                        snackbar.showSnackbar(error.message ?: "Could not finish importing documents.")
+        if (uris.isNotEmpty()) {
+            if (targetCollection != null) {
+                documentsViewModel.importManyToCollection(uris, targetCollection) { result ->
+                    scope.launch {
+                        result.onSuccess { count ->
+                            snackbar.showSnackbar("$count document(s) added to collection.")
+                        }.onFailure { error ->
+                            snackbar.showSnackbar(error.message ?: "Could not finish importing documents.")
+                        }
+                    }
+                }
+            } else {
+                documentsViewModel.importMany(uris) { result ->
+                    scope.launch {
+                        result.onSuccess { count ->
+                            snackbar.showSnackbar("$count document(s) imported. Local processing has been queued.")
+                        }.onFailure { error ->
+                            snackbar.showSnackbar(error.message ?: "Could not import the selected documents.")
+                        }
                     }
                 }
             }
@@ -241,11 +235,14 @@ private fun DataCubeRoot(
                 HomeScreen(
                     user = authState.user,
                     recentDocuments = documents,
-                    onImportDocument = { picker.launch(mimeTypes) },
+                    onImportDocument = { multiPicker.launch(mimeTypes) },
                     onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
                     onNavigateToStudy = { navController.navigate(Screen.Study.route) },
                     onNavigateToChat = { navController.navigate(Screen.Chat.route) },
                     onOpenDocument = { id -> navController.navigate("document/$id") },
+                    onSendPromptToDocument = { id, prompt ->
+                        navController.navigate("document/$id?prompt=" + Uri.encode(prompt))
+                    },
                     onNavigateSettings = { navController.navigate(Screen.Profile.route) }
                 )
             }
@@ -253,7 +250,7 @@ private fun DataCubeRoot(
                 DocumentsScreen(
                     documents = documents,
                     collections = collections,
-                    onImport = { picker.launch(mimeTypes) },
+                    onImport = { multiPicker.launch(mimeTypes) },
                     onNavigateHome = { navController.navigate(Screen.Home.route) },
                     onNavigateSettings = { navController.navigate(Screen.Profile.route) },
                     onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
@@ -284,8 +281,15 @@ private fun DataCubeRoot(
                     onOpenDocument = { id -> navController.navigate("document/$id") }
                 )
             }
-            composable(Screen.Document.route) { entry ->
+            composable(
+                Screen.Document.route,
+                arguments = listOf(androidx.navigation.navArgument("prompt") {
+                    type = androidx.navigation.NavType.StringType
+                    defaultValue = ""
+                })
+            ) { entry ->
                 val documentId = entry.arguments?.getString("id").orEmpty()
+                val initialPrompt = entry.arguments?.getString("prompt")
                 val selectedProcessing = documents.firstOrNull { it.document.id == documentId }
                 val selectedDocument = selectedProcessing?.document
                 var textPreview by remember(documentId) { mutableStateOf<String?>(null) }
@@ -311,6 +315,7 @@ private fun DataCubeRoot(
                 if (selectedDocument != null) {
                     DocumentWorkspaceScreen(
                         document = selectedDocument,
+                        initialPrompt = initialPrompt,
                         extractionStatus = selectedProcessing?.extractionStatus,
                         extractionProgress = selectedProcessing?.extractionProgress,
                         extractionError = selectedProcessing?.extractionError,
