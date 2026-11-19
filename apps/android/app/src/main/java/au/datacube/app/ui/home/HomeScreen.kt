@@ -206,7 +206,7 @@ fun HomeScreen(
                     IconButton(onClick = onImportDocument) {
                         Icon(Icons.Outlined.Add, contentDescription = "Upload documents", tint = DataCubeColors.Navy)
                     }
-                    AssistChip(onClick = {}, label = { Text("Local document search") })
+                    AssistChip(onClick = {}, enabled = false, label = { Text("Local document search") })
                     Spacer(Modifier.weight(1f))
                     FilledIconButton(
                         onClick = {
