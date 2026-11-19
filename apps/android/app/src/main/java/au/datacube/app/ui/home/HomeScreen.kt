@@ -29,7 +29,9 @@ fun HomeScreen(
     onImportDocument: () -> Unit,
     onNavigateToDocuments: () -> Unit,
     onNavigateToStudy: () -> Unit,
-    onNavigateToChat: () -> Unit
+    onNavigateToChat: () -> Unit,
+    onOpenDocument: (String) -> Unit,
+    onNavigateSettings: () -> Unit
 ) {
     LazyColumn(
         modifier = modifier.fillMaxSize().background(DataCubeColors.BluePale),
@@ -42,7 +44,7 @@ fun HomeScreen(
                     SegmentedButton(selected = true, onClick = {}, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("AU") }
                     SegmentedButton(selected = false, onClick = onNavigateToDocuments, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Document") }
                 }
-                IconButton(onClick = {}) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
+                IconButton(onClick = onNavigateSettings) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
             }
         }
         item {
@@ -92,7 +94,7 @@ fun HomeScreen(
                 val doc = entry.document
                 val ext = doc.extension.lowercase()
                 val tint = when (ext) { "pdf" -> Color(0xFFE5484D); "docx" -> DataCubeColors.Blue; else -> Color(0xFF20A866) }
-                Surface(shape = RoundedCornerShape(17.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                Surface(onClick = { onOpenDocument(doc.id) }, shape = RoundedCornerShape(17.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
                     Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(tint.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                             Text(ext.uppercase().take(3), color = tint, fontWeight = FontWeight.Bold)
