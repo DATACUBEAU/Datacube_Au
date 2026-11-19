@@ -24,7 +24,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-data class LocalDocumentTextPreview(val text: String, val truncated: Boolean)\n\nclass DataCubeViewModel(app: Application) : AndroidViewModel(app) {\n    private companion object {\n        const val MAX_DOCUMENT_PREVIEW_CHARS = 48_000\n    }
+data class LocalDocumentTextPreview(val text: String, val truncated: Boolean)
+
+class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
+    private companion object {
+        const val MAX_DOCUMENT_PREVIEW_CHARS = 48_000
+    }
     private val database: DataCubeDatabase = (app as DataCubeApp).database
     private val repository = LocalDocumentRepository(database, app.filesDir)
     private val jobScheduler = LocalJobScheduler(app)
