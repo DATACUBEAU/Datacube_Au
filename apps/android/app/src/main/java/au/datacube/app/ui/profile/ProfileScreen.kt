@@ -14,6 +14,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.jan.supabase.auth.user.UserInfo
+import au.datacube.app.models.ModelBackupProgress
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,7 +23,10 @@ fun ProfileScreen(
     user: UserInfo?,
     onSignOut: () -> Unit,
     onBackupModels: () -> Unit,
-    onRestoreModels: () -> Unit
+    onRestoreModels: () -> Unit,
+    modelOperationBusy: Boolean,
+    modelBackupProgress: ModelBackupProgress?,
+    onCancelModelOperation: () -> Unit
 ) {
     val email = user?.email ?: "—"
     val displayName = email.substringBefore('@')
@@ -175,14 +179,44 @@ fun ProfileScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (modelOperationBusy) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    modelBackupProgress?.phase ?: "Processing model backup",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                val progress = modelBackupProgress
+                                if (progress != null && progress.totalBytes > 0L) {
+                                    LinearProgressIndicator(
+                                        progress = progress.fraction,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(
+                                        "${formatBackupBytes(progress.completedBytes)} of ${formatBackupBytes(progress.totalBytes)} • ${progress.completedFiles.coerceAtMost(progress.totalFiles)} / ${progress.totalFiles} files",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                }
+                                OutlinedButton(
+                                    onClick = onCancelModelOperation,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Cancel operation")
+                                }
+                            }
+                        }
                         Button(
                             onClick = onBackupModels,
+                            enabled = !modelOperationBusy,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Export model backup")
+                            Text(if (modelOperationBusy) "Processing…" else "Export model backup")
                         }
                         OutlinedButton(
                             onClick = onRestoreModels,
+                            enabled = !modelOperationBusy,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Restore from backup")
@@ -236,4 +270,15 @@ private fun ProfileRow(
         )
     }
     HorizontalDivider()
+}
+
+
+private fun formatBackupBytes(bytes: Long): String {
+    if (bytes < 1024L) return "${bytes} B"
+    val kib = bytes / 1024.0
+    if (kib < 1024.0) return String.format(java.util.Locale.US, "%.1f KB", kib)
+    val mib = kib / 1024.0
+    if (mib < 1024.0) return String.format(java.util.Locale.US, "%.1f MB", mib)
+    val gib = mib / 1024.0
+    return String.format(java.util.Locale.US, "%.2f GB", gib)
 }
