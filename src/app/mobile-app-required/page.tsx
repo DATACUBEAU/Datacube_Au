@@ -1,23 +1,54 @@
+import Image from 'next/image';
 import Link from 'next/link';
+import { ArrowRight, BookOpen, FileText, MessageCircle } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
 export default function MobileAppRequiredPage() {
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center px-5 py-12 text-center">
-      <div className="w-full max-w-lg space-y-5">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">DataCube AU</p>
-        <h1 className="text-3xl font-bold">Continue in the Android app</h1>
-        <p className="text-muted-foreground">
-          The browser-based product workspace has been retired. Documents, study tools and AU Chat
-          are available in the DataCube AU Android app. Install and open the app, then choose Sign In
-          or Create Account. Authentication will continue through the existing secure website login.
-        </p>
-        <p className="text-sm text-muted-foreground">
-          Account, subscription, billing and Conex Admin services remain available on the website.
-        </p>
-        <Link href="/" className="inline-flex min-h-11 items-center justify-center rounded-md border border-border px-5 py-2 text-sm font-semibold">
-          Website home
-        </Link>
+    <main className="dcau-auth-stage relative flex min-h-dvh items-center justify-center overflow-hidden px-5 py-12">
+      <div className="dcau-auth-scene" aria-hidden="true">
+        <div className="dcau-auth-scene__grid" />
+        <div className="dcau-auth-scene__orb" />
+        <div className="dcau-auth-scene__ring dcau-auth-scene__ring--one" />
+        <div className="dcau-auth-scene__ring dcau-auth-scene__ring--two" />
       </div>
+
+      <section className="relative z-10 w-full max-w-md text-center">
+        <div className="dcau-auth-mark mx-auto mb-7">
+          <span className="dcau-auth-mark__halo" />
+          <span className="dcau-auth-mark__ring" />
+          <Image src="/icon.png" alt="DataCube AU" width={104} height={104} priority className="dcau-auth-mark__image" />
+        </div>
+
+        <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-primary">DataCube AU</p>
+        <h1 className="font-headline text-3xl font-bold tracking-tight sm:text-4xl">
+          Make more of what you know.
+        </h1>
+        <p className="mx-auto mt-4 max-w-sm text-sm leading-6 text-muted-foreground">
+          Get the app for a smarter way to explore your documents, study and chat with AU.
+        </p>
+
+        <div className="mx-auto mt-8 grid max-w-sm grid-cols-3 gap-3">
+          <div className="rounded-2xl border border-white/10 bg-background/55 px-2 py-4 backdrop-blur">
+            <FileText className="mx-auto mb-2 h-5 w-5 text-primary" />
+            <span className="text-xs text-muted-foreground">Documents</span>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-background/55 px-2 py-4 backdrop-blur">
+            <BookOpen className="mx-auto mb-2 h-5 w-5 text-primary" />
+            <span className="text-xs text-muted-foreground">Study</span>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-background/55 px-2 py-4 backdrop-blur">
+            <MessageCircle className="mx-auto mb-2 h-5 w-5 text-primary" />
+            <span className="text-xs text-muted-foreground">AU Chat</span>
+          </div>
+        </div>
+
+        <Button asChild className="mt-8 h-12 rounded-xl px-6">
+          <Link href="/login">
+            Continue <ArrowRight className="ml-2 h-4 w-4" />
+          </Link>
+        </Button>
+      </section>
     </main>
   );
 }
