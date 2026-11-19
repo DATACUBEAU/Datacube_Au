@@ -32,11 +32,20 @@ fun HomeScreen(
     onNavigateToStudy: () -> Unit,
     onNavigateToChat: () -> Unit,
     onOpenDocument: (String) -> Unit,
-    onNavigateSettings: () -> Unit
+    onNavigateSettings: () -> Unit,
+    onSendPromptToDocument: (String, String) -> Unit = { _, _ -> }
 ) {
+    var quickPrompt by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var selectedDocumentId by androidx.compose.runtime.remember(recentDocuments) {
+        androidx.compose.runtime.mutableStateOf(recentDocuments.firstOrNull()?.document?.id)
+    }
+    var documentMenuExpanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    val selectedDocument = recentDocuments.firstOrNull { it.document.id == selectedDocumentId }
+
+    Box(modifier.fillMaxSize()) {
     LazyColumn(
-        modifier = modifier.fillMaxSize().dataCubeBackdrop(),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
+        modifier = Modifier.fillMaxSize().dataCubeBackdrop(),
+        contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 190.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         item {
@@ -122,6 +131,86 @@ fun HomeScreen(
                     Text("Keep your documents organized and open AU Chat whenever you are ready to explore them.", color = DataCubeColors.TextSecondary)
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(onClick = onNavigateToDocuments, modifier = Modifier.fillMaxWidth()) { Text("Open Documents") }
+                }
+            }
+        }
+    }
+
+    if (recentDocuments.isNotEmpty()) {
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 8.dp)
+                .navigationBarsPadding(),
+            shape = RoundedCornerShape(24.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, DataCubeColors.Divider),
+            shadowElevation = 5.dp
+        ) {
+            Column(Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Searching in", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.width(8.dp))
+                    Box {
+                        OutlinedButton(
+                            onClick = { documentMenuExpanded = true },
+                            shape = RoundedCornerShape(20.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Icon(Icons.Outlined.Description, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(17.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                selectedDocument?.document?.name ?: "Choose a document",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = DataCubeColors.Navy,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Choose document")
+                        }
+                        DropdownMenu(expanded = documentMenuExpanded, onDismissRequest = { documentMenuExpanded = false }) {
+                            recentDocuments.forEach { entry ->
+                                DropdownMenuItem(
+                                    text = { Text(entry.document.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    onClick = {
+                                        selectedDocumentId = entry.document.id
+                                        documentMenuExpanded = false
+                                    },
+                                    leadingIcon = { Icon(Icons.Outlined.Description, contentDescription = null) }
+                                )
+                            }
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = quickPrompt,
+                    onValueChange = { quickPrompt = it.take(500) },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Ask anything about your document…") },
+                    shape = RoundedCornerShape(18.dp),
+                    maxLines = 3
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onImportDocument) {
+                        Icon(Icons.Outlined.Add, contentDescription = "Upload documents", tint = DataCubeColors.Navy)
+                    }
+                    AssistChip(onClick = {}, label = { Text("Local document search") })
+                    Spacer(Modifier.weight(1f))
+                    FilledIconButton(
+                        onClick = {
+                            val target = selectedDocument
+                            val question = quickPrompt.trim()
+                            if (target != null && question.isNotEmpty()) {
+                                onSendPromptToDocument(target.document.id, question)
+                                quickPrompt = ""
+                            }
+                        },
+                        enabled = selectedDocument != null && quickPrompt.isNotBlank()
+                    ) {
+                        Icon(Icons.Outlined.Send, contentDescription = "Ask about selected document")
+                    }
                 }
             }
         }
