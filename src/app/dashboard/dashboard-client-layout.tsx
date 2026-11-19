@@ -252,15 +252,6 @@ const SidebarFooterMenu = ({
         </div>
       </SidebarMenuItem>
 
-      {!isOnline && (
-        <SidebarMenuItem>
-          <SidebarMenuButton className="pointer-events-none text-yellow-500 bg-yellow-500/10" tooltip={{ children: 'You are currently offline.' }}>
-            <WifiOff className="text-yellow-500" />
-            <span className="group-data-[collapsible=icon]:sr-only">Offline</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      )}
-
       {/* User Avatar */}
       <SidebarMenuItem>
         <SidebarMenuButton asChild size="lg" className="h-auto py-2">
@@ -394,7 +385,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   );
 
   const planStatusLabel = useMemo(() => {
-    if (!hasResolvedPlanState) return 'Syncing...';
+    if (!hasResolvedPlanState) return 'Plan';
     if (entitlements.plan === 'admin') return 'Admin';
     if (entitlements.plan === 'premium') return 'Premium';
     if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo Pro';
