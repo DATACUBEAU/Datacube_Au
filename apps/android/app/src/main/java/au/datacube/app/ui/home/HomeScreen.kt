@@ -38,11 +38,18 @@ fun HomeScreen(
     onSendPromptToDocument: (String, String) -> Unit = { _, _ -> }
 ) {
     var quickPrompt by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
-    var selectedDocumentId by androidx.compose.runtime.remember(recentDocuments) {
-        androidx.compose.runtime.mutableStateOf(recentDocuments.firstOrNull()?.document?.id)
+    var selectedDocumentId by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<String?>(null)
     }
     var documentMenuExpanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val selectedDocument = recentDocuments.firstOrNull { it.document.id == selectedDocumentId }
+        ?: recentDocuments.firstOrNull()
+
+    androidx.compose.runtime.LaunchedEffect(recentDocuments) {
+        if (recentDocuments.none { it.document.id == selectedDocumentId }) {
+            selectedDocumentId = recentDocuments.firstOrNull()?.document?.id
+        }
+    }
 
     Box(modifier.fillMaxSize()) {
     LazyColumn(
