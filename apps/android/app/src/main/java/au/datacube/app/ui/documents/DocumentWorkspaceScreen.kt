@@ -89,10 +89,11 @@ fun DocumentWorkspaceScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         val icon = when (index) {
-                            0 -> Icons.Outlined.ChatBubbleOutline
-                            1 -> Icons.Outlined.Notes
-                            2 -> Icons.Outlined.BarChart
-                            3 -> Icons.Outlined.Layers
+                            0 -> Icons.Outlined.Description
+                            1 -> Icons.Outlined.ChatBubbleOutline
+                            2 -> Icons.Outlined.Notes
+                            3 -> Icons.Outlined.BarChart
+                            4 -> Icons.Outlined.Layers
                             else -> Icons.Outlined.Headphones
                         }
                         Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(19.dp))
