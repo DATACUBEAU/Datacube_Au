@@ -60,8 +60,7 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          working-directory: apps/android
-          script: bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
+          script: cd apps/android && bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
 
       - name: Build release bundle (unsigned preflight)
         run: bash ./gradlew :app:bundleRelease --no-daemon
