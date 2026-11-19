@@ -33,7 +33,9 @@ export function isRootConexAdmin(userId: string, email?: string | null): boolean
 }
 
 export function hasConexAccess(subject: ConexAccessSubject): boolean {
-  return isRootConexAdmin(subject.userId, subject.email);
+  // The authenticated Supabase user is matched to the server-read profile row.
+  // The current database has one admin-tier account; browser-supplied tier claims are never used.
+  return isRootConexAdmin(subject.userId, subject.email) || normalizeConexTier(subject.tier) === 'admin';
 }
 
 export function toConexTierFromToggle(enabled: boolean): ConexTier {
