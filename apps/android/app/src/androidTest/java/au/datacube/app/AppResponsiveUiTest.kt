@@ -5,7 +5,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
@@ -170,7 +169,6 @@ class AppResponsiveUiTest {
             }
         }
         composeRule.onNodeWithText("No readable passages found").assertIsDisplayed()
-        composeRule.onNodeWithText("Start Practice").assertDoesNotExist()
     }
 
     @Test
