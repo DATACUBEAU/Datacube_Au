@@ -428,6 +428,15 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
 
     ToolPage("Practice", "Test your understanding with questions based on this document.") {
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null)
+        else if (questions.isEmpty()) {
+            ToolCard {
+                Text("No readable passages found", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Text(
+                    "There is not enough readable extracted text to create practice questions. Check the document extraction status or choose a document with readable text.",
+                    color = DataCubeColors.TextSecondary
+                )
+            }
+        }
         else if (!started) {
             ToolCard {
                 Text("Practice setup", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
