@@ -29,6 +29,7 @@ fun DocumentsScreen(
     documents: List<LocalDocumentProcessing>,
     collections: List<LocalCollectionWithCount>,
     onImport: () -> Unit,
+    onNavigateHome: () -> Unit,
     onCreateCollection: (String, (Result<String>) -> Unit) -> Unit,
     onOpenCollection: (String) -> Unit,
     onDeleteCollection: (String) -> Unit,
@@ -85,6 +86,15 @@ fun DocumentsScreen(
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
+                    SegmentedButton(selected = false, onClick = onNavigateHome, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("AU") }
+                    SegmentedButton(selected = true, onClick = {}, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Document") }
+                }
+                IconButton(onClick = {}) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
+            }
+        }
         item {
             Column {
                 Text("Documents", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
