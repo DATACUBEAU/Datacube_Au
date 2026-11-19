@@ -77,6 +77,7 @@ class AppResponsiveUiTest {
                         collections = emptyList(),
                         onImport = {},
                         onNavigateHome = {},
+                        onNavigateSettings = {},
                         onCreateCollection = { _, done -> done(Result.success("collection-test")) },
                         onOpenCollection = {},
                         onDeleteCollection = {},
@@ -88,6 +89,6 @@ class AppResponsiveUiTest {
         }
         composeRule.onNodeWithText("Documents").assertIsDisplayed()
         composeRule.onNodeWithText("Collections").assertIsDisplayed()
-        composeRule.onNodeWithText("Recent Documents").assertIsDisplayed()
+        composeRule.onNodeWithText("Recent Documents").performScrollTo().assertIsDisplayed()
     }
 }
