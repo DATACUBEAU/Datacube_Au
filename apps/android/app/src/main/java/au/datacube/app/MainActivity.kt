@@ -41,6 +41,7 @@ import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.data.LocalDocument
+import au.datacube.app.models.ModelBackupManager
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.study.StudyScreen
@@ -141,6 +142,42 @@ private fun DataCubeRoot(
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "text/plain", "application/rtf", "text/markdown"
     )
+
+    val modelBackupLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ModelBackupManager.BACKUP_MIME_TYPE)
+    ) { destination ->
+        if (destination != null) {
+            scope.launch {
+                runCatching { ModelBackupManager(context).exportBackup(destination) }
+                    .onSuccess { summary ->
+                        snackbar.showSnackbar(
+                            "Backed up ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
+                        )
+                    }
+                    .onFailure { error ->
+                        snackbar.showSnackbar(error.message ?: "Could not create the model backup.")
+                    }
+            }
+        }
+    }
+
+    val modelRestoreLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { source ->
+        if (source != null) {
+            scope.launch {
+                runCatching { ModelBackupManager(context).restoreBackup(source) }
+                    .onSuccess { summary ->
+                        snackbar.showSnackbar(
+                            "Restored ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
+                        )
+                    }
+                    .onFailure { error ->
+                        snackbar.showSnackbar(error.message ?: "Could not restore the model backup.")
+                    }
+            }
+        }
+    }
 
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val targetCollection = collectionPickerTarget
@@ -356,7 +393,15 @@ private fun DataCubeRoot(
             composable(Screen.Profile.route) {
                 ProfileScreen(
                     user = authState.user,
-                    onSignOut = { authViewModel.signOut() }
+                    onSignOut = { authViewModel.signOut() },
+                    onBackupModels = {
+                        modelBackupLauncher.launch(
+                            "${ModelBackupManager.BACKUP_FILE_PREFIX}-${System.currentTimeMillis()}.zip"
+                        )
+                    },
+                    onRestoreModels = {
+                        modelRestoreLauncher.launch(arrayOf(ModelBackupManager.BACKUP_MIME_TYPE))
+                    }
                 )
             }
         }
