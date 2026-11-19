@@ -68,6 +68,7 @@ dependencies {
  androidTestImplementation(libs.androidx.test.core)
  androidTestImplementation(libs.androidx.test.runner)
  androidTestImplementation(libs.androidx.test.ext.junit)
+ androidTestImplementation(platform(libs.compose.bom))
  androidTestImplementation(libs.compose.ui.test)
  androidTestImplementation(libs.junit)
  androidTestImplementation(libs.pdfbox.android)
