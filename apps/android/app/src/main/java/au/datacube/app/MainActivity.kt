@@ -278,6 +278,9 @@ private fun DataCubeRoot(
                         collectionPickerTarget = collectionId
                         multiPicker.launch(mimeTypes)
                     },
+                    onRemoveDocument = { id ->
+                        documentsViewModel.removeDocumentFromCollection(collectionId, id)
+                    },
                     onOpenDocument = { id -> navController.navigate("document/$id") }
                 )
             }
