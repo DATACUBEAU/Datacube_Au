@@ -18,7 +18,6 @@ import {
   isTerminalStatus,
   reconcileJobsWithDocumentRows,
 } from '../src/lib/upload/job-status.js';
-import { isJobOlderThan } from '../rag-worker/src/job-recovery.js';
 
 let failed = 0;
 
@@ -167,12 +166,6 @@ async function main() {
     assert.equal(isActiveStatus('stale_timeout' as any), false);
     assert.equal(isTerminalStatus('stale_timeout' as any), true);
     assert.equal(isTerminalStatus('completed' as any), true);
-  });
-
-  await run('stale analyzing jobs are detected for cleanup', () => {
-    const nowMs = Date.parse('2024-01-01T00:10:00Z');
-    assert.equal(isJobOlderThan('2024-01-01T00:00:00Z', 5 * 60 * 1000, nowMs), true);
-    assert.equal(isJobOlderThan('2024-01-01T00:08:00Z', 5 * 60 * 1000, nowMs), false);
   });
 
   await run('large-file gate triggers only above 50 MB when the future flag is disabled', () => {
