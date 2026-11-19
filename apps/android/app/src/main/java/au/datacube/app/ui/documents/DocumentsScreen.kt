@@ -42,6 +42,7 @@ fun DocumentsScreen(
     var creating by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var deleteCollection by remember { mutableStateOf<String?>(null) }
+    var deleteDocument by remember { mutableStateOf<String?>(null) }
 
     if (createDialog) {
         AlertDialog(
@@ -80,6 +81,29 @@ fun DocumentsScreen(
             text = { Text("Documents remain in your library; only this collection grouping is deleted.") },
             confirmButton = { TextButton(onClick = { onDeleteCollection(id); deleteCollection = null }) { Text("Delete") } },
             dismissButton = { TextButton(onClick = { deleteCollection = null }) { Text("Cancel") } }
+        )
+    }
+
+    deleteDocument?.let { id ->
+        val target = documents.firstOrNull { it.document.id == id }?.document
+        AlertDialog(
+            onDismissRequest = { deleteDocument = null },
+            title = { Text("Delete document?") },
+            text = {
+                Text(
+                    (target?.name ?: "This document") +
+                        " and its locally stored extracted text will be removed from this device. This cannot be undone."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onDelete(id)
+                    deleteDocument = null
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteDocument = null }) { Text("Cancel") }
+            }
         )
     }
 
@@ -193,7 +217,7 @@ fun DocumentsScreen(
                             Text(document.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text("$status  ·  ${document.sizeBytes / 1024} KB", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        IconButton(onClick = { onDelete(document.id) }) { Icon(Icons.Outlined.DeleteOutline, "Delete document") }
+                        IconButton(onClick = { deleteDocument = document.id }) { Icon(Icons.Outlined.DeleteOutline, "Delete document") }
                     }
                 }
             }
