@@ -96,6 +96,12 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun removeDocumentFromCollection(collectionId: String, documentId: String) {
+        viewModelScope.launch {
+            database.collections().removeDocument(collectionId, documentId)
+        }
+    }
+
     fun deleteCollection(id: String) {
         viewModelScope.launch { database.collections().delete(id) }
     }
