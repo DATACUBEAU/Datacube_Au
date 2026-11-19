@@ -48,11 +48,11 @@ function MobileAuthInstallContent() {
     <main className="flex min-h-dvh flex-col items-center justify-center px-5 py-12 text-center">
       <div className="w-full max-w-lg space-y-5">
         <p className="text-sm font-semibold uppercase tracking-[0.18em] text-primary">DataCube AU</p>
-        <h1 className="text-3xl font-bold">Authentication successful</h1>
+        <h1 className="text-3xl font-bold">{appMissing ? 'One more step' : 'You’re all set'}</h1>
         <p className="text-muted-foreground">
           {appMissing
-            ? 'Your account is authenticated on the website, but the DataCube AU Android app is not installed or could not be opened. Install the app, open it, and select Sign In to connect this device to your account.'
-            : 'Your website sign-in was successful. Open DataCube AU on this Android device to continue.'}
+            ? 'Install DataCube AU on your Android device, then open the app to continue.'
+            : 'Open DataCube AU on this device to continue.'}
         </p>
         {intentUrl && !appMissing ? (
           <a href={intentUrl} className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground">
