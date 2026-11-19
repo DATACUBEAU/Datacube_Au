@@ -99,7 +99,7 @@ private sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Documents : Screen("documents")
     object Collection : Screen("collection/{id}")
-    object Document : Screen("document/{id}?prompt={prompt}")
+    object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
     object Study : Screen("study")
     object Chat : Screen("chat")
     object Profile : Screen("profile")
@@ -241,7 +241,7 @@ private fun DataCubeRoot(
                     onNavigateToChat = { navController.navigate(Screen.Chat.route) },
                     onOpenDocument = { id -> navController.navigate("document/$id") },
                     onSendPromptToDocument = { id, prompt ->
-                        navController.navigate("document/$id?prompt=" + Uri.encode(prompt))
+                        navController.navigate("document/$id?prompt=" + Uri.encode(prompt) + "&tab=0")
                     },
                     onNavigateSettings = { navController.navigate(Screen.Profile.route) }
                 )
@@ -283,13 +283,20 @@ private fun DataCubeRoot(
             }
             composable(
                 Screen.Document.route,
-                arguments = listOf(androidx.navigation.navArgument("prompt") {
-                    type = androidx.navigation.NavType.StringType
-                    defaultValue = ""
-                })
+                arguments = listOf(
+                    androidx.navigation.navArgument("prompt") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = ""
+                    },
+                    androidx.navigation.navArgument("tab") {
+                        type = androidx.navigation.NavType.IntType
+                        defaultValue = 0
+                    }
+                )
             ) { entry ->
                 val documentId = entry.arguments?.getString("id").orEmpty()
                 val initialPrompt = entry.arguments?.getString("prompt")
+                val initialTab = entry.arguments?.getInt("tab") ?: 0
                 val selectedProcessing = documents.firstOrNull { it.document.id == documentId }
                 val selectedDocument = selectedProcessing?.document
                 var textPreview by remember(documentId) { mutableStateOf<String?>(null) }
@@ -316,6 +323,7 @@ private fun DataCubeRoot(
                     DocumentWorkspaceScreen(
                         document = selectedDocument,
                         initialPrompt = initialPrompt,
+                        initialTab = initialTab,
                         extractionStatus = selectedProcessing?.extractionStatus,
                         extractionProgress = selectedProcessing?.extractionProgress,
                         extractionError = selectedProcessing?.extractionError,
@@ -332,10 +340,18 @@ private fun DataCubeRoot(
                 }
             }
             composable(Screen.Study.route) {
-                StudyScreen()
+                StudyScreen(
+                    documents = documents,
+                    onOpenDocument = { id, tab -> navController.navigate("document/$id?prompt=&tab=$tab") },
+                    onImport = { multiPicker.launch(mimeTypes) }
+                )
             }
             composable(Screen.Chat.route) {
-                ChatScreen()
+                ChatScreen(
+                    documents = documents,
+                    onOpenDocument = { id -> navController.navigate("document/$id?prompt=&tab=0") },
+                    onImport = { multiPicker.launch(mimeTypes) }
+                )
             }
             composable(Screen.Profile.route) {
                 ProfileScreen(
