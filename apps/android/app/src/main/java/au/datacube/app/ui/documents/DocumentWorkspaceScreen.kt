@@ -1,8 +1,10 @@
 package au.datacube.app.ui.documents
 
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,17 +47,53 @@ fun DocumentWorkspaceScreen(document: LocalDocument, onBack: () -> Unit) {
             }
             IconButton(onClick = {}) { Icon(Icons.Outlined.MoreVert, "Document actions") }
         }
-        ScrollableTabRow(selectedTabIndex = selectedTab, edgePadding = 8.dp, containerColor = Color.White) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 7.dp)
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             workspaceTabs.forEachIndexed { index, title ->
-                Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title, maxLines = 1) }, icon = {
-                    when (index) {
-                        0 -> Icon(Icons.Outlined.ChatBubbleOutline, null)
-                        1 -> Icon(Icons.Outlined.Notes, null)
-                        2 -> Icon(Icons.Outlined.BarChart, null)
-                        3 -> Icon(Icons.Outlined.Layers, null)
-                        else -> Icon(Icons.Outlined.Headphones, null)
+                val selected = selectedTab == index
+                val container by animateColorAsState(
+                    targetValue = if (selected) DataCubeColors.Blue else Color.White.copy(alpha = 0.78f),
+                    label = "document-tab-container"
+                )
+                val foreground by animateColorAsState(
+                    targetValue = if (selected) Color.White else DataCubeColors.Navy,
+                    label = "document-tab-content"
+                )
+                Surface(
+                    onClick = { selectedTab = index },
+                    shape = RoundedCornerShape(24.dp),
+                    color = container,
+                    border = if (selected) null else BorderStroke(1.dp, DataCubeColors.Divider),
+                    shadowElevation = if (selected) 3.dp else 0.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val icon = when (index) {
+                            0 -> Icons.Outlined.ChatBubbleOutline
+                            1 -> Icons.Outlined.Notes
+                            2 -> Icons.Outlined.BarChart
+                            3 -> Icons.Outlined.Layers
+                            else -> Icons.Outlined.Headphones
+                        }
+                        Icon(icon, contentDescription = null, tint = foreground, modifier = Modifier.size(19.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text(
+                            title,
+                            maxLines = 1,
+                            color = foreground,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            style = MaterialTheme.typography.labelLarge
+                        )
                     }
-                })
+                }
             }
         }
         when (selectedTab) {
