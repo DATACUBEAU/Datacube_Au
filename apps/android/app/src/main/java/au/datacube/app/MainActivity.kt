@@ -34,6 +34,7 @@ import au.datacube.app.ui.auth.AuthViewModel
 import au.datacube.app.ui.chat.ChatScreen
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
+import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.home.HomeScreen
@@ -94,6 +95,7 @@ private sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Documents : Screen("documents")
     object Collection : Screen("collection/{id}")
+    object Document : Screen("document/{id}")
     object Collection : Screen("collection/{id}")
     object Study : Screen("study")
     object Chat : Screen("chat")
@@ -253,7 +255,7 @@ private fun DataCubeRoot(
                     onCreateCollection = documentsViewModel::createCollection,
                     onOpenCollection = { id -> navController.navigate("collection/$id") },
                     onDeleteCollection = documentsViewModel::deleteCollection,
-                    onOpenDocument = { navController.navigate(Screen.Chat.route) },
+                    onOpenDocument = { id -> navController.navigate("document/$id") },
                     onDelete = documentsViewModel::delete
                 )
             }
@@ -270,8 +272,19 @@ private fun DataCubeRoot(
                         collectionPickerTarget = collectionId
                         multiPicker.launch(mimeTypes)
                     },
-                    onOpenDocument = { navController.navigate(Screen.Chat.route) }
+                    onOpenDocument = { id -> navController.navigate("document/$id") }
                 )
+            }
+            composable(Screen.Document.route) { entry ->
+                val documentId = entry.arguments?.getString("id").orEmpty()
+                val selectedDocument = documents.firstOrNull { it.document.id == documentId }?.document
+                if (selectedDocument != null) {
+                    DocumentWorkspaceScreen(document = selectedDocument, onBack = { navController.popBackStack() })
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Document is unavailable. Return to your library and refresh.")
+                    }
+                }
             }
             composable(Screen.Study.route) {
                 StudyScreen()
