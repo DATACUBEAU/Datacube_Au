@@ -6,22 +6,23 @@ on:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
   push:
-    branches: [main]
+    branches: ["**"]
     paths:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-native-${{ github.event.pull_request.number || github.ref }}
+  group: android-native-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: apps/android
@@ -40,11 +41,18 @@ jobs:
         with:
           gradle-version: wrapper
 
-      - name: Write local.properties
+      - name: Write Android build properties
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          AUTH_WEBSITE_URL: ${{ vars.AUTH_WEBSITE_URL }}
         run: |
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
-          echo "SUPABASE_URL=${{ secrets.SUPABASE_URL }}" >> local.properties
-          echo "SUPABASE_ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}" >> local.properties
+          echo "SUPABASE_URL=$SUPABASE_URL" >> local.properties
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> local.properties
+          if [ -n "$AUTH_WEBSITE_URL" ]; then
+            echo "AUTH_WEBSITE_URL=$AUTH_WEBSITE_URL" >> local.properties
+          fi
 
       - name: Run unit tests
         run: bash ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --no-daemon
@@ -54,6 +62,43 @@ jobs:
 
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
+
+      - name: Run Compose UI tests on Android emulator
+        id: android-ui-tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            cd apps/android
+            mkdir -p app/build/diagnostics
+            adb logcat -c
+            set +e
+            bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
+            test_status=$?
+            set -e
+            adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true
+            adb devices -l > app/build/diagnostics/adb-devices.txt || true
+            printf 'connectedDebugAndroidTest_exit_code=%s\\n' "$test_status" > app/build/diagnostics/test-exit-code.txt
+            exit "$test_status"
+
+      - name: Upload emulator UI test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-ui-test-diagnostics
+          path: |
+            apps/android/app/build/diagnostics/**
+            apps/android/app/build/reports/androidTests/connected/**
+            apps/android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Build release bundle (unsigned preflight)
+        run: bash ./gradlew :app:bundleRelease --no-daemon
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -70,3 +115,11 @@ jobs:
           path: apps/android/app/schemas/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload unsigned release bundle preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-release-unsigned
+          path: apps/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14

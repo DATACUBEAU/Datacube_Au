@@ -8,9 +8,9 @@ import io.github.jan.supabase.postgrest.Postgrest
 /**
  * Singleton Supabase client.
  *
- * URL and anon-key are injected at build time via BuildConfig — they come from
- * local.properties (dev) or CI secrets (CI/CD). They are non-secret public values;
- * the service-role key is never present in the app.
+ * Project URL and publishable key are injected at build time via BuildConfig.
+ * Publishable keys are public client identifiers. The service-role/secret key
+ * is never present in the app.
  */
 object SupabaseClient {
 

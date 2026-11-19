@@ -1,130 +1,141 @@
 package au.datacube.app.ui.study
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import au.datacube.app.data.LocalDocumentProcessing
+import au.datacube.app.data.LocalJobStatus
+import au.datacube.app.ui.theme.DataCubeColors
+import au.datacube.app.ui.theme.dataCubeBackdrop
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun StudyScreen(modifier: Modifier = Modifier) {
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text("Study Space", fontWeight = FontWeight.Bold)
-                        Text(
-                            "AI-powered from your documents",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            item {
-                StudyToolCard(
-                    icon = Icons.Outlined.Summarize,
-                    title = "Smart Summaries",
-                    description = "Distil your documents into clear, structured study notes.",
-                    badge = "Coming soon"
-                )
-            }
-            item {
-                StudyToolCard(
-                    icon = Icons.Outlined.Quiz,
-                    title = "Flashcards",
-                    description = "Generate and review spaced-repetition flashcards from your materials.",
-                    badge = "Coming soon"
-                )
-            }
-            item {
-                StudyToolCard(
-                    icon = Icons.Outlined.EditNote,
-                    title = "Practice Quizzes",
-                    description = "Test your knowledge with auto-generated questions from your documents.",
-                    badge = "Coming soon"
-                )
-            }
-            item {
-                StudyToolCard(
-                    icon = Icons.Outlined.Psychology,
-                    title = "Topic Predictions",
-                    description = "Identify likely exam topics based on your document content.",
-                    badge = "Coming soon"
-                )
-            }
-            item {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.Lock,
-                            null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            "Study tools run on-device using your imported documents. No document content is sent to the cloud.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
+private data class StudyTool(
+    val name: String,
+    val description: String,
+    val tabIndex: Int,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector
+)
+
+private val studyTools = listOf(
+    StudyTool("Smart Note", "Review structured notes and a concept map.", 1, Icons.Outlined.Notes),
+    StudyTool("Prediction", "Create revision topics and study prompts.", 2, Icons.Outlined.BarChart),
+    StudyTool("Practice", "Answer questions and check source passages.", 3, Icons.Outlined.Layers),
+    StudyTool("Podcast", "Listen to document passages with text-to-speech.", 4, Icons.Outlined.Headphones)
+)
 
 @Composable
-private fun StudyToolCard(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    title: String,
-    description: String,
-    badge: String? = null
+fun StudyScreen(
+    modifier: Modifier = Modifier,
+    documents: List<LocalDocumentProcessing>,
+    onOpenDocument: (String, Int) -> Unit,
+    onImport: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(2.dp)
+    var selectedTool by remember { mutableIntStateOf(2) }
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize().dataCubeBackdrop(),
+        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Row(Modifier.padding(20.dp), verticalAlignment = Alignment.Top) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
-            Spacer(Modifier.width(16.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                    if (badge != null) {
-                        Spacer(Modifier.width(8.dp))
-                        AssistChip(
-                            onClick = {},
-                            label = { Text(badge, style = MaterialTheme.typography.labelSmall) },
-                            modifier = Modifier.height(24.dp)
-                        )
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("Study Space", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Text("Choose a tool and open one of your documents to begin.", color = DataCubeColors.TextSecondary)
+            }
+        }
+        item {
+            Text("Study tools", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+            Spacer(Modifier.height(8.dp))
+            studyTools.chunked(2).forEach { rowTools ->
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                    rowTools.forEach { tool ->
+                        val selected = selectedTool == tool.tabIndex
+                        Surface(
+                            onClick = { selectedTool = tool.tabIndex },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(17.dp),
+                            color = if (selected) DataCubeColors.BlueLight else Color.White,
+                            border = BorderStroke(1.dp, if (selected) DataCubeColors.Blue else DataCubeColors.Divider)
+                        ) {
+                            Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(tool.icon, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(25.dp))
+                                Text(tool.name, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                                Text(tool.description, style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                    if (rowTools.size == 1) Spacer(Modifier.weight(1f))
+                }
+            }
+        }
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Select a document", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Spacer(Modifier.weight(1f))
+                Text(documents.size.toString() + " files", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        if (documents.isEmpty()) {
+            item {
+                Surface(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, DataCubeColors.Divider)
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Outlined.School, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(42.dp))
+                        Text("Your study library is empty", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                        Text("Upload a PDF or text document. Study tools become available after local text extraction completes.", color = DataCubeColors.TextSecondary)
+                        Button(onClick = onImport) { Icon(Icons.Outlined.Add, contentDescription = null); Spacer(Modifier.width(6.dp)); Text("Upload documents") }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            items(documents, key = { it.document.id }) { processing ->
+                val document = processing.document
+                val status = when (processing.extractionStatus) {
+                    LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Waiting for local extraction"
+                    LocalJobStatus.RUNNING -> "Extracting on this device"
+                    LocalJobStatus.COMPLETED -> "Ready for study"
+                    LocalJobStatus.FAILED -> "Text extraction failed"
+                    LocalJobStatus.CANCELLED -> "Extraction cancelled"
+                    else -> "Imported"
+                }
+                Surface(
+                    onClick = { onOpenDocument(document.id, selectedTool) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(17.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, DataCubeColors.Divider)
+                ) {
+                    Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(shape = RoundedCornerShape(12.dp), color = DataCubeColors.BlueLight) {
+                            Icon(Icons.Outlined.Description, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.padding(10.dp).size(25.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(document.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis, color = DataCubeColors.Navy)
+                            Text(status, style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                        }
+                        Icon(Icons.Outlined.ChevronRight, contentDescription = "Open selected study tool", tint = DataCubeColors.Blue)
+                    }
+                }
             }
         }
     }
