@@ -64,7 +64,7 @@ async function main() {
     const dashboard = readRepoFile('src', 'app', 'dashboard', 'dashboard-client-layout.tsx');
     const settings = readRepoFile('src', 'app', 'dashboard', 'settings', 'page.tsx');
     assert.match(smartAuth, /\/auth\/callback\?next=/);
-    assert.match(dashboard, /\/auth\/callback\?next=/);
+    assert.match(dashboard, /signInWithGoogle\('\/dashboard'\)/);
     assert.match(settings, /\/auth\/callback\?next=/);
   });
 
