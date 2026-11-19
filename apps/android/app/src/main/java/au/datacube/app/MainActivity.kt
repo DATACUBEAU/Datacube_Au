@@ -311,9 +311,9 @@ private fun DataCubeRoot(
                 if (selectedDocument != null) {
                     DocumentWorkspaceScreen(
                         document = selectedDocument,
-                        extractionStatus = selectedProcessing.extractionStatus,
-                        extractionProgress = selectedProcessing.extractionProgress,
-                        extractionError = selectedProcessing.extractionError,
+                        extractionStatus = selectedProcessing?.extractionStatus,
+                        extractionProgress = selectedProcessing?.extractionProgress,
+                        extractionError = selectedProcessing?.extractionError,
                         textPreview = textPreview,
                         previewTruncated = previewTruncated,
                         previewLoading = previewLoading,
