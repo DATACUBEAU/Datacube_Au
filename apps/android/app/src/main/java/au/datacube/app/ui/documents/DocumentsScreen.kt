@@ -170,7 +170,7 @@ fun DocumentsScreen(
             items(documents, key = { it.document.id }) { processing ->
                 val document = processing.document
                 val extension = document.extension.lowercase()
-                val tint = when (extension) { "pdf" -> Color(0xFFE5484D); "docx" -> DataCubeColors.Blue; else -> Color(0xFF20A866) }
+                val tint = DataCubeColors.Blue
                 val status = when (processing.extractionStatus) {
                     LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Processing queued"
                     LocalJobStatus.RUNNING -> "Processing…"
