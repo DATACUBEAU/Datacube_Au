@@ -41,8 +41,18 @@ jobs:
         with:
           gradle-version: wrapper
 
-      - name: Write Android SDK location
-        run: echo "sdk.dir=$ANDROID_HOME" >> local.properties
+      - name: Write Android build properties
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          AUTH_WEBSITE_URL: ${{ vars.AUTH_WEBSITE_URL }}
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" >> local.properties
+          echo "SUPABASE_URL=$SUPABASE_URL" >> local.properties
+          echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> local.properties
+          if [ -n "$AUTH_WEBSITE_URL" ]; then
+            echo "AUTH_WEBSITE_URL=$AUTH_WEBSITE_URL" >> local.properties
+          fi
 
       - name: Run unit tests
         run: bash ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --no-daemon
