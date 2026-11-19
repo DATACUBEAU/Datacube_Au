@@ -41,7 +41,7 @@ run('hasConexAccess uses the verified Supabase profile tier and denies ordinary 
   assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: null }), false);
 });
 
-run('missing protected owner configuration fails closed', () => {
+run('database admin profile remains authorized without the protected-owner fallback', () => {
   const previous = process.env.DATACUBE_OWNER_ADMIN_USER_ID;
   delete process.env.DATACUBE_OWNER_ADMIN_USER_ID;
   try {
