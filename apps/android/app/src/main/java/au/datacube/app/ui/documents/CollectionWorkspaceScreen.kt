@@ -26,8 +26,31 @@ fun CollectionWorkspaceScreen(
     documents: List<LocalDocument>,
     onBack: () -> Unit,
     onAddDocuments: () -> Unit,
+    onRemoveDocument: (String) -> Unit,
     onOpenDocument: (String) -> Unit
 ) {
+    var removeDocumentId by remember { mutableStateOf<String?>(null) }
+
+    removeDocumentId?.let { documentId ->
+        val selectedDocument = documents.firstOrNull { it.id == documentId }
+        AlertDialog(
+            onDismissRequest = { removeDocumentId = null },
+            title = { Text("Remove from collection?") },
+            text = {
+                Text("${selectedDocument?.name ?: "This document"} will stay in your library. Only its collection membership will be removed.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRemoveDocument(documentId)
+                    removeDocumentId = null
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeDocumentId = null }) { Text("Cancel") }
+            }
+        )
+    }
+
     Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back to documents") }
@@ -113,6 +136,9 @@ fun CollectionWorkspaceScreen(
                             Column(Modifier.weight(1f)) {
                                 Text(document.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 Text("${document.extension.uppercase()} · ${document.sizeBytes / 1024} KB", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            }
+                            IconButton(onClick = { removeDocumentId = document.id }) {
+                                Icon(Icons.Outlined.RemoveCircleOutline, "Remove from collection", tint = DataCubeColors.TextSecondary)
                             }
                             Icon(Icons.Outlined.ChevronRight, null, tint = DataCubeColors.TextSecondary)
                         }
