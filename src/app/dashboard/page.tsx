@@ -37,7 +37,7 @@ import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useUploadJobs } from '@/components/upload/upload-jobs-provider';
 import type { UploadJobStatus } from '@/lib/upload/types';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
-import { DashboardPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { DashboardPageSkeleton } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
@@ -94,7 +94,7 @@ export default function DashboardPage() {
     isUsingCachedData,
   } = useAuDocuments();
   const { jobs } = useUploadJobs();
-  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(documentsLoading);
+  const { showSkeleton } = useDelayedLoadingState(documentsLoading);
   const {
     primaryAlert: dashboardLimitAlert,
     toastCandidate: dashboardLimitToast,
@@ -195,7 +195,6 @@ export default function DashboardPage() {
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
       <LimitToast alert={dashboardLimitToast} onShown={markDashboardLimitToastShown} />
-      {showSlowNotice && documentsLoading ? <SlowNetworkNotice onRetry={() => void refresh()} /> : null}
       {isUsingCachedData && !isOnline ? (
         <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300" role="status">
           <WifiOff className="h-3 w-3" aria-hidden="true" />
