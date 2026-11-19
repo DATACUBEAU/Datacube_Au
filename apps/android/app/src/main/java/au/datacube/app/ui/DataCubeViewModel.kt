@@ -166,10 +166,19 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
                 // Copy and enqueue sequentially: large batches never fan out dozens
                 // of simultaneous file streams or database writes on the UI thread.
                 for (uri in uris) {
-                    val displayName = getApplication<Application>().contentResolver
-                        .query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-                        ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-                        ?: "Imported document"
+                    val displayName = withContext(Dispatchers.IO) {
+                        getApplication<Application>().contentResolver
+                            .query(
+                                uri,
+                                arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                                null,
+                                null,
+                                null
+                            )
+                            ?.use { cursor ->
+                                if (cursor.moveToFirst()) cursor.getString(0) else null
+                            } ?: "Imported document"
+                    }
                     val imported = repository.import(
                         uri,
                         getApplication<Application>().contentResolver,
