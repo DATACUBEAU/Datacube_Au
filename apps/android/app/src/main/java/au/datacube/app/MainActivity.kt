@@ -262,8 +262,10 @@ private fun DataCubeRoot(
             composable(Screen.Collection.route) { entry ->
                 val collectionId = entry.arguments?.getString("id").orEmpty()
                 val collection = collections.firstOrNull { it.id == collectionId }
-                val collectionDocuments by documentsViewModel.observeCollectionDocuments(collectionId)
-                    .collectAsStateWithLifecycle(initialValue = emptyList())
+                val collectionDocumentsFlow = remember(collectionId) {
+                    documentsViewModel.observeCollectionDocuments(collectionId)
+                }
+                val collectionDocuments by collectionDocumentsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
                 CollectionWorkspaceScreen(
                     name = collection?.name ?: "Collection",
                     documents = collectionDocuments,
