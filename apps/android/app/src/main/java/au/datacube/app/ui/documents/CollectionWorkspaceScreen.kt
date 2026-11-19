@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.theme.DataCubeColors
+import au.datacube.app.ui.theme.dataCubeBackdrop
 
 @Composable
 fun CollectionWorkspaceScreen(
@@ -28,7 +29,7 @@ fun CollectionWorkspaceScreen(
     onAddDocuments: () -> Unit,
     onOpenDocument: (String) -> Unit
 ) {
-    Column(Modifier.fillMaxSize().background(DataCubeColors.BluePale)) {
+    Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back to documents") }
             Column(Modifier.weight(1f)) {
