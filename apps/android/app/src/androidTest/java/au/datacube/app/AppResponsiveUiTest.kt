@@ -8,6 +8,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollTo
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.theme.DataCubeTheme
@@ -60,7 +61,7 @@ class AppResponsiveUiTest {
         }
         composeRule.onNodeWithText("Documents").assertIsDisplayed()
         composeRule.onNodeWithText("Collections").assertIsDisplayed()
-        composeRule.onNodeWithText("Recent Documents").assertIsDisplayed()
+        composeRule.onNodeWithText("Recent Documents").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -72,6 +73,7 @@ class AppResponsiveUiTest {
                         documents = emptyList(),
                         collections = emptyList(),
                         onImport = {},
+                        onNavigateHome = {},
                         onCreateCollection = { _, done -> done(Result.success("collection-test")) },
                         onOpenCollection = {},
                         onDeleteCollection = {},
