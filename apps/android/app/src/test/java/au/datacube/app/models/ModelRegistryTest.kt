@@ -43,6 +43,12 @@ class ModelRegistryTest {
         assertEquals("MIT", reloaded?.manifest?.licenseId)
         assertEquals("main", reloaded?.manifest?.sourceRevision)
         assertEquals(1, registry.listInstalled().size)
+
+        registry.validateStagedDirectory(installed.directory, "e5-small")
+        modelFile.writeText("tampered after installation")
+        assertThrows(IllegalArgumentException::class.java) {
+            registry.validateStagedDirectory(installed.directory, "e5-small")
+        }
     }
 
     @Test
