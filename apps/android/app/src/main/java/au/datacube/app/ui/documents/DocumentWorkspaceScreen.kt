@@ -333,7 +333,7 @@ private fun SmartNoteWorkspace(documentName: String, mode: Int, onModeChange: (I
             Box(Modifier.fillMaxWidth().height(26.dp), contentAlignment = Alignment.Center) { Box(Modifier.width(1.dp).fillMaxHeight().background(DataCubeColors.Blue)) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf("Key idea 1", "Key idea 2", "Key idea 3").forEachIndexed { index, label ->
-                    Surface(Modifier.weight(1f), shape = RoundedCornerShape(13.dp), color = if (index == 1) Color(0xFFE7F8F1) else DataCubeColors.BlueLight, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                    Surface(Modifier.weight(1f), shape = RoundedCornerShape(13.dp), color = DataCubeColors.BlueLight, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
                         Text(label, modifier = Modifier.padding(vertical = 16.dp, horizontal = 5.dp), color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodySmall)
                     }
                 }
