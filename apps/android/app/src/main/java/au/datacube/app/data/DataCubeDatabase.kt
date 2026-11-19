@@ -15,6 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 abstract class DataCubeDatabase : RoomDatabase() {
     abstract fun documents(): LocalDocumentDao
     abstract fun jobs(): LocalJobDao
+    abstract fun collections(): LocalCollectionDao
 
     companion object {
         private val MIGRATION_1_2 = object : Migration(1, 2) {
