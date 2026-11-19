@@ -34,6 +34,7 @@ import au.datacube.app.ui.auth.AuthViewModel
 import au.datacube.app.ui.chat.ChatScreen
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
+import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.profile.ProfileScreen
@@ -93,6 +94,7 @@ private sealed class Screen(val route: String) {
     object Home : Screen("home")
     object Documents : Screen("documents")
     object Collection : Screen("collection/{id}")
+    object Collection : Screen("collection/{id}")
     object Study : Screen("study")
     object Chat : Screen("chat")
     object Profile : Screen("profile")
@@ -121,6 +123,8 @@ private fun DataCubeRoot(
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
+    val collections by documentsViewModel.collections.collectAsStateWithLifecycle()
+    var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -161,6 +165,23 @@ private fun DataCubeRoot(
                 } ?: "Imported document"
                 documentsViewModel.importToCollection(uri, name, targetCollection) { result ->
                     scope.launch { result.exceptionOrNull()?.let { snackbar.showSnackbar(it.message ?: "Could not add document.") } }
+                }
+            }
+        }
+    }
+
+    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val targetId = collectionPickerTarget
+        collectionPickerTarget = null
+        if (targetId != null) {
+            uris.forEach { uri ->
+                val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: "Imported document"
+                documentsViewModel.importToCollection(uri, name, targetId) { result ->
+                    scope.launch {
+                        result.exceptionOrNull()?.let { snackbar.showSnackbar(it.message ?: "Could not add document.") }
+                    }
                 }
             }
         }
@@ -227,8 +248,29 @@ private fun DataCubeRoot(
             composable(Screen.Documents.route) {
                 DocumentsScreen(
                     documents = documents,
+                    collections = collections,
                     onImport = { picker.launch(mimeTypes) },
+                    onCreateCollection = documentsViewModel::createCollection,
+                    onOpenCollection = { id -> navController.navigate("collection/$id") },
+                    onDeleteCollection = documentsViewModel::deleteCollection,
+                    onOpenDocument = { navController.navigate(Screen.Chat.route) },
                     onDelete = documentsViewModel::delete
+                )
+            }
+            composable(Screen.Collection.route) { entry ->
+                val collectionId = entry.arguments?.getString("id").orEmpty()
+                val collection = collections.firstOrNull { it.id == collectionId }
+                val collectionDocuments by documentsViewModel.observeCollectionDocuments(collectionId)
+                    .collectAsStateWithLifecycle(initialValue = emptyList())
+                CollectionWorkspaceScreen(
+                    name = collection?.name ?: "Collection",
+                    documents = collectionDocuments,
+                    onBack = { navController.popBackStack() },
+                    onAddDocuments = {
+                        collectionPickerTarget = collectionId
+                        multiPicker.launch(mimeTypes)
+                    },
+                    onOpenDocument = { navController.navigate(Screen.Chat.route) }
                 )
             }
             composable(Screen.Study.route) {
