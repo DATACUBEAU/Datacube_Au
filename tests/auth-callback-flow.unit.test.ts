@@ -53,7 +53,7 @@ async function main() {
     assert.match(callback, /syncServerAuthSessionCookie\(session\)/);
     assert.match(callback, /markAuthSessionRestored\('auth-callback'\)/);
     assert.match(callback, /\/conex\/users\?mode=access/);
-    assert.match(callback, /const accessResponse = await fetch/);
+    assert.match(callback, /accessResponse = await fetch/);
     assert.match(callback, /router\.replace\('\/conex'\)/);
     assert.match(smartAuth, /fresh_session_detected/);
     assert.match(smartAuth, /window\.location\.pathname\.startsWith\('\/auth\/callback'\)/);
