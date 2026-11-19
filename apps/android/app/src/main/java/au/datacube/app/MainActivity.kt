@@ -252,6 +252,7 @@ private fun DataCubeRoot(
                     documents = documents,
                     collections = collections,
                     onImport = { picker.launch(mimeTypes) },
+                    onNavigateHome = { navController.navigate(Screen.Home.route) },
                     onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
                     onOpenCollection = { id -> navController.navigate("collection/$id") },
                     onDeleteCollection = documentsViewModel::deleteCollection,
