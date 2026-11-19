@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import au.datacube.app.DataCubeApp
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.LocalDocumentProcessing
+import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.work.LocalJobScheduler
 import au.datacube.app.data.LocalDocumentRepository
 import au.datacube.app.data.LocalCollection
@@ -20,8 +21,10 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
+data class LocalDocumentTextPreview(val text: String, val truncated: Boolean)\n\nclass DataCubeViewModel(app: Application) : AndroidViewModel(app) {\n    private companion object {\n        const val MAX_DOCUMENT_PREVIEW_CHARS = 48_000\n    }
     private val database: DataCubeDatabase = (app as DataCubeApp).database
     private val repository = LocalDocumentRepository(database, app.filesDir)
     private val jobScheduler = LocalJobScheduler(app)
@@ -130,6 +133,34 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
     }
+
+    /**
+     * Reads only the device-private extracted text for an existing local document.
+     * The preview is bounded so a large PDF cannot flood Compose memory, and this
+     * content is never uploaded or sent to a cloud service by this method.
+     */
+    suspend fun loadDocumentTextPreview(documentId: String): LocalDocumentTextPreview? =
+        withContext(Dispatchers.IO) {
+            val document = database.documents().find(documentId) ?: return@withContext null
+            val textFile = ExtractedTextStore.fileFor(getApplication<Application>().filesDir, document.id)
+            if (!textFile.isFile) return@withContext null
+
+            val preview = StringBuilder(MAX_DOCUMENT_PREVIEW_CHARS)
+            var truncated = false
+            textFile.bufferedReader(Charsets.UTF_8).use { reader ->
+                val buffer = CharArray(4096)
+                while (preview.length < MAX_DOCUMENT_PREVIEW_CHARS) {
+                    val remaining = MAX_DOCUMENT_PREVIEW_CHARS - preview.length
+                    val count = reader.read(buffer, 0, minOf(buffer.size, remaining))
+                    if (count < 0) break
+                    preview.append(buffer, 0, count)
+                }
+                if (preview.length >= MAX_DOCUMENT_PREVIEW_CHARS) {
+                    truncated = reader.read() != -1
+                }
+            }
+            LocalDocumentTextPreview(preview.toString(), truncated)
+        }
 
     fun delete(id: String) {
         viewModelScope.launch {
