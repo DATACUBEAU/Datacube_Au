@@ -59,7 +59,7 @@ class LocalDocumentRepository(
                 }
             }
 
-            val sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+            val sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
             val mimeType = resolver.getType(uri)
                 ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
                 ?: "application/octet-stream"
