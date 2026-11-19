@@ -45,7 +45,7 @@ class ModelRegistryTest {
         assertEquals(1, registry.listInstalled().size)
 
         registry.validateStagedDirectory(installed.directory, "e5-small")
-        modelFile.writeText("tampered after installation")
+        File(installed.directory, "onnx/model.onnx").writeText("tampered after installation")
         assertThrows(IllegalArgumentException::class.java) {
             registry.validateStagedDirectory(installed.directory, "e5-small")
         }
