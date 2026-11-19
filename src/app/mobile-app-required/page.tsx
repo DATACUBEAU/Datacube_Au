@@ -1,7 +1,6 @@
 import Image from 'next/image';
 import Link from 'next/link';
-import { ArrowRight, BookOpen, FileText, MessageCircle } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { BookOpen, FileText, MessageCircle } from 'lucide-react';
 
 export default function MobileAppRequiredPage() {
   return (
@@ -43,11 +42,12 @@ export default function MobileAppRequiredPage() {
           </div>
         </div>
 
-        <Button asChild className="mt-8 h-12 rounded-xl px-6">
-          <Link href="/login">
-            Continue <ArrowRight className="ml-2 h-4 w-4" />
+        <p className="mt-8 text-sm text-muted-foreground">
+          Already have the app?{' '}
+          <Link href="/login" className="font-semibold text-primary underline-offset-4 hover:underline">
+            Sign in
           </Link>
-        </Button>
+        </p>
       </section>
     </main>
   );
