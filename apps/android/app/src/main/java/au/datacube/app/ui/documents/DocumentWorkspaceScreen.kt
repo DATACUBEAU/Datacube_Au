@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.theme.DataCubeColors
+import au.datacube.app.ui.theme.dataCubeBackdrop
 
 private val workspaceTabs = listOf("AU Chat", "Smart Note", "Prediction", "Practice", "Podcast")
 
@@ -31,7 +32,7 @@ fun DocumentWorkspaceScreen(document: LocalDocument, onBack: () -> Unit) {
     var questionType by remember(document.id) { mutableStateOf("Mixed") }
     var focusArea by remember(document.id) { mutableStateOf("All Topics") }
 
-    Column(Modifier.fillMaxSize().background(DataCubeColors.BluePale)) {
+    Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back to documents") }
             Surface(shape = RoundedCornerShape(12.dp), color = DataCubeColors.BlueLight) {
