@@ -9,6 +9,10 @@ import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.work.LocalJobScheduler
 import au.datacube.app.data.LocalDocumentRepository
+import au.datacube.app.data.LocalCollection
+import au.datacube.app.data.LocalCollectionDocument
+import au.datacube.app.data.LocalCollectionWithCount
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +47,44 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
                 done(Result.failure(error))
             }
         }
+    }
+
+    val collections: StateFlow<List<LocalCollectionWithCount>> =
+        database.collections().observeAllWithCount().stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5_000),
+            emptyList()
+        )
+
+    fun createCollection(name: String, description: String = "", done: (Result<String>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val cleanName = name.trim()
+                require(cleanName.isNotEmpty()) { "Enter a collection name." }
+                val now = System.currentTimeMillis()
+                val id = UUID.randomUUID().toString()
+                database.collections().insert(
+                    LocalCollection(id, cleanName, description.trim(), now, now)
+                )
+                done(Result.success(id))
+            } catch (error: Exception) {
+                done(Result.failure(error))
+            }
+        }
+    }
+
+    fun addDocumentsToCollection(collectionId: String, documentIds: List<String>) {
+        if (documentIds.isEmpty()) return
+        viewModelScope.launch {
+            val now = System.currentTimeMillis()
+            database.collections().addDocuments(
+                documentIds.distinct().map { LocalCollectionDocument(collectionId, it, now) }
+            )
+        }
+    }
+
+    fun deleteCollection(id: String) {
+        viewModelScope.launch { database.collections().delete(id) }
     }
 
     fun delete(id: String) {
