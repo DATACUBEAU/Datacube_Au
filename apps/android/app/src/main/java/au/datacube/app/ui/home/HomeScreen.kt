@@ -142,7 +142,8 @@ fun HomeScreen(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 8.dp)
-                .navigationBarsPadding(),
+                .navigationBarsPadding()
+                .imePadding(),
             shape = RoundedCornerShape(24.dp),
             color = Color.White,
             border = BorderStroke(1.dp, DataCubeColors.Divider),
