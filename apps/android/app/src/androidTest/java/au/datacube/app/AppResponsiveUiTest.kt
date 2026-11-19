@@ -5,6 +5,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
@@ -15,6 +16,7 @@ import au.datacube.app.data.LocalDocument
 import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
+import au.datacube.app.ui.documents.PracticeWorkspace
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.theme.DataCubeTheme
@@ -152,6 +154,23 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("Study notes.pdf").assertIsDisplayed()
         composeRule.onNodeWithText("AU Chat").assertIsDisplayed()
         composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
+    }
+
+    @Test
+    fun practiceExplainsWhenExtractedTextHasNoReadablePassages() {
+        composeRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 740.dp))) {
+                DataCubeTheme {
+                    PracticeWorkspace(
+                        documentName = "Short notes.pdf",
+                        textPreview = "Short text",
+                        previewLoading = false
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithText("No readable passages found").assertIsDisplayed()
+        composeRule.onNodeWithText("Start Practice").assertDoesNotExist()
     }
 
     @Test
