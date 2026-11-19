@@ -157,22 +157,22 @@ private fun DataCubeRoot(
             modelBackupProgress = ModelBackupProgress(phase = "Starting model backup")
             modelOperationJob = scope.launch {
                 try {
-                        val summary = ModelBackupManager(context).exportBackup(destination) { progress ->
-                            scope.launch { modelBackupProgress = progress }
-                        }
-                        snackbar.showSnackbar(
-                            "Backed up ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
-                        )
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Exception) {
-                        snackbar.showSnackbar(error.message ?: "Could not create the model backup.")
-                    } finally {
-                        modelOperationJob = null
-                        modelOperationBusy = false
-                        modelBackupProgress = null
+                    val summary = ModelBackupManager(context).exportBackup(destination) { progress ->
+                        scope.launch { modelBackupProgress = progress }
                     }
+                    snackbar.showSnackbar(
+                        "Backed up ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    snackbar.showSnackbar(error.message ?: "Could not create the model backup.")
+                } finally {
+                    modelOperationJob = null
+                    modelOperationBusy = false
+                    modelBackupProgress = null
                 }
+            }
         }
     }
 
