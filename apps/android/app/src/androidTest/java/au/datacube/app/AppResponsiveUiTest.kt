@@ -3,7 +3,7 @@ package au.datacube.app
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.DeviceConfigurationOverride
-import androidx.compose.ui.test.WindowSize
+import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -27,7 +27,7 @@ class AppResponsiveUiTest {
     @Test
     fun homeRendersOnCompactPhoneWidth() {
         composeRule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 740.dp))) {
                 DataCubeTheme {
                     HomeScreen(
                         modifier = Modifier.fillMaxSize(),
@@ -51,7 +51,7 @@ class AppResponsiveUiTest {
     @Test
     fun documentsRendersOnCompactPhoneWidth() {
         composeRule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 740.dp))) {
                 DataCubeTheme {
                     DocumentsScreen(
                         modifier = Modifier.fillMaxSize(),
@@ -77,7 +77,7 @@ class AppResponsiveUiTest {
     @Test
     fun documentsRendersOnExpandedWidth() {
         composeRule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(600.dp, 900.dp))) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(600.dp, 900.dp))) {
                 DataCubeTheme {
                     DocumentsScreen(
                         modifier = Modifier.fillMaxSize(),
@@ -103,7 +103,7 @@ class AppResponsiveUiTest {
     @Test
     fun collectionWorkspaceShowsEmptyStateOnCompactWidth() {
         composeRule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 740.dp))) {
                 DataCubeTheme {
                     CollectionWorkspaceScreen(
                         name = "Biology Notes",
@@ -124,7 +124,7 @@ class AppResponsiveUiTest {
     @Test
     fun documentWorkspaceShowsLocalPreviewOnCompactPhoneWidth() {
         composeRule.setContent {
-            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(320.dp, 740.dp))) {
                 DataCubeTheme {
                     DocumentWorkspaceScreen(
                         document = LocalDocument(
