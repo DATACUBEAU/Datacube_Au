@@ -20,13 +20,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocument
+import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.ui.theme.DataCubeColors
 import au.datacube.app.ui.theme.dataCubeBackdrop
 
-private val workspaceTabs = listOf("AU Chat", "Smart Note", "Prediction", "Practice", "Podcast")
+private val workspaceTabs = listOf("Overview", "AU Chat", "Smart Note", "Prediction", "Practice", "Podcast")
 
 @Composable
-fun DocumentWorkspaceScreen(document: LocalDocument, onBack: () -> Unit) {
+fun DocumentWorkspaceScreen(
+    document: LocalDocument,
+    extractionStatus: String?,
+    extractionProgress: Double?,
+    extractionError: String?,
+    textPreview: String?,
+    previewTruncated: Boolean,
+    previewLoading: Boolean,
+    previewError: String?,
+    onBack: () -> Unit
+) {
     var selectedTab by remember(document.id) { mutableIntStateOf(0) }
     var smartNoteMode by remember(document.id) { mutableIntStateOf(0) }
     var question by remember(document.id) { mutableStateOf("") }
@@ -97,11 +108,179 @@ fun DocumentWorkspaceScreen(document: LocalDocument, onBack: () -> Unit) {
             }
         }
         when (selectedTab) {
-            0 -> ChatWorkspace(document.name, question, { question = it })
-            1 -> SmartNoteWorkspace(document.name, smartNoteMode, { smartNoteMode = it })
-            2 -> PredictionWorkspace(document.name)
-            3 -> PracticeWorkspace(document.name, questionCount, { questionCount = it }, questionType, { questionType = it }, focusArea, { focusArea = it })
+            0 -> OverviewWorkspace(
+                document = document,
+                extractionStatus = extractionStatus,
+                extractionProgress = extractionProgress,
+                extractionError = extractionError,
+                textPreview = textPreview,
+                previewTruncated = previewTruncated,
+                previewLoading = previewLoading,
+                previewError = previewError
+            )
+            1 -> ChatWorkspace(document.name, question, { question = it })
+            2 -> SmartNoteWorkspace(document.name, smartNoteMode, { smartNoteMode = it })
+            3 -> PredictionWorkspace(document.name)
+            4 -> PracticeWorkspace(document.name, questionCount, { questionCount = it }, questionType, { questionType = it }, focusArea, { focusArea = it })
             else -> PodcastWorkspace(document.name)
+        }
+    }
+}
+
+@Composable
+private fun OverviewWorkspace(
+    document: LocalDocument,
+    extractionStatus: String?,
+    extractionProgress: Double?,
+    extractionError: String?,
+    textPreview: String?,
+    previewTruncated: Boolean,
+    previewLoading: Boolean,
+    previewError: String?
+) {
+    val extractionLabel = when (extractionStatus) {
+        LocalJobStatus.QUEUED -> "Queued for on-device extraction"
+        LocalJobStatus.RETRYABLE -> "Waiting to retry extraction"
+        LocalJobStatus.RUNNING -> "Extracting on this device"
+        LocalJobStatus.COMPLETED -> "Local text is ready"
+        LocalJobStatus.FAILED -> "Text extraction unavailable"
+        LocalJobStatus.CANCELLED -> "Extraction cancelled"
+        else -> if (document.extension.lowercase() in setOf("pdf", "txt", "md")) {
+            "Waiting for local extraction"
+        } else {
+            "Imported · preview not supported yet"
+        }
+    }
+    val formattedSize = when {
+        document.sizeBytes >= 1024L * 1024L -> String.format("%.1f MB", document.sizeBytes / (1024.0 * 1024.0))
+        else -> "${(document.sizeBytes / 1024L).coerceAtLeast(1L)} KB"
+    }
+
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, DataCubeColors.Divider)
+        ) {
+            Column(Modifier.padding(17.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    WorkspaceIcon(Icons.Outlined.Description)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Document overview", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                        Text(extractionLabel, color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (extractionStatus == LocalJobStatus.RUNNING) {
+                    Spacer(Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { (extractionProgress ?: 0.0).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(color = DataCubeColors.Divider)
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("FILE TYPE", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                        Text(document.extension.uppercase(), color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("FILE SIZE", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                        Text(formattedSize, color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("ADDED", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                        Text(
+                            java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+                                .format(java.util.Date(document.createdAtEpochMs)),
+                            color = DataCubeColors.Navy,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = Color.White,
+            border = BorderStroke(1.dp, DataCubeColors.Divider)
+        ) {
+            Column(Modifier.padding(17.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Extracted text", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                    Spacer(Modifier.weight(1f))
+                    Text("ON DEVICE", style = MaterialTheme.typography.labelSmall, color = DataCubeColors.Blue, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(8.dp))
+                when {
+                    previewLoading -> {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Checking the local text preview…", color = DataCubeColors.TextSecondary)
+                        }
+                    }
+                    previewError != null -> {
+                        Text(previewError, color = DataCubeColors.TextSecondary)
+                        Text("The original file remains stored in your private app storage.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    }
+                    !textPreview.isNullOrBlank() -> {
+                        SelectionContainer {
+                            Text(
+                                textPreview,
+                                color = DataCubeColors.Navy,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                        if (previewTruncated) {
+                            Spacer(Modifier.height(8.dp))
+                            Text("Preview limited to the first 48,000 characters.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                    extractionStatus == LocalJobStatus.FAILED -> {
+                        Text(extractionError ?: "Text could not be extracted from this file.", color = DataCubeColors.TextSecondary)
+                        Text("The original document is still available in your local library.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    }
+                    extractionStatus == LocalJobStatus.QUEUED ||
+                        extractionStatus == LocalJobStatus.RETRYABLE ||
+                        extractionStatus == LocalJobStatus.RUNNING -> {
+                        Text("Your document is being processed locally. The extracted text will appear here when the job completes.", color = DataCubeColors.TextSecondary)
+                    }
+                    document.extension.lowercase() !in setOf("pdf", "txt", "md") -> {
+                        Text("Local text preview currently supports PDF, TXT and Markdown files. This file remains saved on your device.", color = DataCubeColors.TextSecondary)
+                    }
+                    else -> {
+                        Text("No extracted text is available yet. Return to Documents and check the processing status.", color = DataCubeColors.TextSecondary)
+                    }
+                }
+            }
+        }
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(18.dp),
+            color = DataCubeColors.BluePale,
+            border = BorderStroke(1.dp, DataCubeColors.Divider)
+        ) {
+            Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.PhoneAndroid, null, tint = DataCubeColors.Blue)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "Your file and extracted text stay in this app's private on-device storage.",
+                    color = DataCubeColors.Navy,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
         }
     }
 }
@@ -114,7 +293,7 @@ private fun ChatWorkspace(documentName: String, question: String, onQuestionChan
                 WorkspaceIcon(Icons.Outlined.ChatBubbleOutline)
                 Spacer(Modifier.height(12.dp))
                 Text("Ask AU about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                Text("Questions and cited answers will appear here.", color = DataCubeColors.TextSecondary)
+                Text("Document-grounded chat will be available when local retrieval and inference are enabled.", color = DataCubeColors.TextSecondary)
                 Spacer(Modifier.height(5.dp))
                 Text(documentName, color = DataCubeColors.Blue, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
@@ -124,7 +303,7 @@ private fun ChatWorkspace(documentName: String, question: String, onQuestionChan
                 OutlinedTextField(value = question, onValueChange = onQuestionChange, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Ask anything about this document…") }, maxLines = 3, shape = RoundedCornerShape(18.dp))
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Cloud AI connection is planned for the next phase.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+                    Text("Local document chat is not enabled in this build yet.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
                     FilledIconButton(onClick = {}, enabled = false) { Icon(Icons.Outlined.Send, "Send question") }
                 }
             }
@@ -159,7 +338,7 @@ private fun SmartNoteWorkspace(documentName: String, mode: Int, onModeChange: (I
                 }
             }
             Spacer(Modifier.height(14.dp))
-            WorkspaceCard("Ready for generation", "The diagram structure follows your reference design. Document-grounded content will be populated when Cloud AI is enabled.", documentName)
+            WorkspaceCard("Ready for generation", "The diagram structure follows your reference design. Document-grounded content is not generated in this build yet.", documentName)
         } else {
             WorkspaceCard("Key takeaway", "A concise summary of the most important idea in the document.", "Content will be generated from $documentName.")
             Spacer(Modifier.height(12.dp))
@@ -193,7 +372,7 @@ private fun PredictionWorkspace(documentName: String) {
         Spacer(Modifier.height(16.dp))
         Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.AutoAwesome, null); Spacer(Modifier.width(8.dp)); Text("Generate Prediction") }
         Spacer(Modifier.height(18.dp))
-        WorkspaceCard("Prediction results", "Your likely questions and key topics will appear here.", "Cloud AI connection is planned for the next phase.")
+        WorkspaceCard("Prediction results", "Your likely questions and key topics will appear here.", "Local study generation is not enabled in this build yet.")
     }
 }
 
@@ -223,7 +402,7 @@ private fun PracticeWorkspace(
         SelectionField("Focus Area", focusArea, listOf("All Topics", "Key Concepts", "Difficult Topics"), onFocusArea)
         Spacer(Modifier.height(16.dp))
         Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Outlined.PlayArrow, null); Spacer(Modifier.width(8.dp)); Text("Start Practice") }
-        Text("Practice generation will be enabled with Cloud AI.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
+        Text("Practice generation is not enabled in this build yet.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
     }
 }
 
