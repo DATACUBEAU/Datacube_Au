@@ -21,7 +21,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: apps/android
@@ -52,6 +52,20 @@ jobs:
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
 
+      - name: Run Compose UI tests on Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          working-directory: apps/android
+          script: bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
+
+      - name: Build release bundle (unsigned preflight)
+        run: bash ./gradlew :app:bundleRelease --no-daemon
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
@@ -67,3 +81,11 @@ jobs:
           path: apps/android/app/schemas/
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload unsigned release bundle preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-release-unsigned
+          path: apps/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
