@@ -19,6 +19,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.ui.theme.DataCubeColors
+import au.datacube.app.ui.theme.dataCubeBackdrop
 import io.github.jan.supabase.auth.user.UserInfo
 
 @Composable
@@ -34,7 +35,7 @@ fun HomeScreen(
     onNavigateSettings: () -> Unit
 ) {
     LazyColumn(
-        modifier = modifier.fillMaxSize().background(DataCubeColors.BluePale),
+        modifier = modifier.fillMaxSize().dataCubeBackdrop(),
         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
