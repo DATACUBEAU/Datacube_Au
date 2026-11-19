@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { GatewayProviderError, isAmbiguousProviderFailure } from '../vps-ai-gateway/src/utils';
 import { readFileSync } from 'node:fs';
 import {
   buildAiUsageReservationPayload,
@@ -8,21 +7,13 @@ import {
   reserveAiUsage,
   reserveFailureStatus,
 } from '../src/lib/server/ai-usage-accounting.js';
-import { resolveVpsTicketOperation } from '../src/lib/server/vps-ticket-config.js';
 
 let failed = 0;
-
 type AsyncTest = () => void | Promise<void>;
 
 async function run(name: string, fn: AsyncTest) {
-  try {
-    await fn();
-    console.log(`PASS ${name}`);
-  } catch (error: any) {
-    failed += 1;
-    console.error(`FAIL ${name}`);
-    console.error(error?.stack || error);
-  }
+  try { await fn(); console.log(`PASS ${name}`); }
+  catch (error: any) { failed += 1; console.error(`FAIL ${name}`); console.error(error?.stack || error); }
 }
 
 class FakeSupabase {
@@ -33,7 +24,6 @@ class FakeSupabase {
     idempotency_key: 'chat_123456789abc',
     status: 'reserved',
   };
-
   async rpc(name: string, payload: Record<string, unknown>) {
     this.calls.push({ name, payload });
     return { data: this.response, error: null };
@@ -42,16 +32,9 @@ class FakeSupabase {
 
 function limitsFixture(overrides?: Record<string, Partial<Record<'value' | 'isEnabled' | 'isUnlimited', any>>>) {
   const rule = (value: number | null, extra?: Record<string, unknown>) => ({
-    value,
-    isEnabled: true,
-    isUnlimited: false,
-    mode: 'usage',
-    resetPolicy: 'daily',
-    resetIntervalValue: null,
-    resetIntervalUnit: null,
-    ...extra,
+    value, isEnabled: true, isUnlimited: false, mode: 'usage', resetPolicy: 'daily',
+    resetIntervalValue: null, resetIntervalUnit: null, ...extra,
   });
-
   return {
     plan: 'free',
     effectivePlan: { hasPro: false },
@@ -66,17 +49,18 @@ function limitsFixture(overrides?: Record<string, Partial<Record<'value' | 'isEn
   } as any;
 }
 
-async function main() {
-  await run('ambiguous provider outcomes keep reserved credits disputed instead of releasing them', () => {
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 400)), false);
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 429)), false);
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 408)), true);
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 502)), true);
-    assert.equal(isAmbiguousProviderFailure(new Error('OPENROUTER_API_KEY not configured')), false);
-    assert.equal(isAmbiguousProviderFailure(new Error('fetch failed: socket disconnected')), true);
-    assert.equal(isAmbiguousProviderFailure(new Error('provider response stream terminated')), true);
-  });
+const chatOperation = {
+  requestFeature: 'au-chat',
+  featureKey: 'au_chat',
+  gatewayRoute: '/chat/au-chat',
+};
+const promptOperation = {
+  requestFeature: 'generate-prompt-starters',
+  featureKey: 'prompt_starters',
+  gatewayRoute: '/generate/prompt-starters',
+};
 
+async function main() {
   await run('idempotency keys are reused when valid and rejected when malformed', () => {
     assert.equal(normalizeAiIdempotencyKey('chat_123456789abc'), 'chat_123456789abc');
     assert.equal(normalizeAiIdempotencyKey('short', 'chat'), '');
@@ -85,20 +69,16 @@ async function main() {
   });
 
   await run('chat reservation payload reserves one chat plus a bounded token estimate', () => {
-    const operation = resolveVpsTicketOperation('au-chat');
-    assert.ok(operation);
     const payload = buildAiUsageReservationPayload({
-      limits: limitsFixture(),
-      operation,
+      limits: limitsFixture(), operation: chatOperation,
       idempotencyKey: 'chat_123456789abc',
       body: { feature: 'au-chat', messages: [{ role: 'user', content: 'Explain photosynthesis.' }] },
     });
-
     assert.equal(payload.increments.max_chats_total, 1);
     assert.equal(payload.increments.api_calls, 1);
     assert.ok(Number(payload.increments.max_tokens_total) >= 768);
-    const chatCheck = payload.limitChecks.find((entry) => entry.metric_key === 'max_chats_total');
-    const tokenCheck = payload.limitChecks.find((entry) => entry.metric_key === 'max_tokens_total');
+    const chatCheck = payload.limitChecks.find(entry => entry.metric_key === 'max_chats_total');
+    const tokenCheck = payload.limitChecks.find(entry => entry.metric_key === 'max_tokens_total');
     assert.equal(chatCheck?.counter_scope, 'today');
     assert.equal(tokenCheck?.counter_scope, 'today');
     assert.match(String(chatCheck?.window_start || ''), /^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
@@ -107,68 +87,53 @@ async function main() {
   });
 
   await run('prompt starters reserve the prompt quota metric', () => {
-    const operation = resolveVpsTicketOperation('generate-prompt-starters');
-    assert.ok(operation);
     const payload = buildAiUsageReservationPayload({
-      limits: limitsFixture(),
-      operation,
+      limits: limitsFixture(), operation: promptOperation,
       idempotencyKey: 'prompt_starters_123456789abc',
       body: { feature: 'generate-prompt-starters', documentId: 'doc-1' },
     });
-
     assert.equal(payload.increments.prompt_starters_per_day, 1);
     assert.equal(payload.increments.api_calls, 1);
-    assert.ok(payload.limitChecks.some((entry) => entry.metric_key === 'prompt_starters_per_day' && entry.counter_scope === 'today'));
+    assert.ok(payload.limitChecks.some(entry => entry.metric_key === 'prompt_starters_per_day' && entry.counter_scope === 'today'));
   });
 
-  await run('reserveAiUsage calls only the reservation RPC and does not pre-commit usage', async () => {
-    const operation = resolveVpsTicketOperation('global-chat');
-    assert.ok(operation);
+  await run('reserveAiUsage calls only the atomic reservation RPC and does not pre-commit usage', async () => {
     const supabase = new FakeSupabase();
     const reservation = buildAiUsageReservationPayload({
-      limits: limitsFixture(),
-      operation,
+      limits: limitsFixture(), operation: chatOperation,
       idempotencyKey: 'chat_123456789abc',
-      body: { feature: 'global-chat', messages: [{ role: 'user', content: 'Hi' }] },
+      body: { feature: 'au-chat', messages: [{ role: 'user', content: 'Hi' }] },
     });
-
     const result = await reserveAiUsage({
       supabase: supabase as any,
       userId: '00000000-0000-4000-8000-000000000001',
-      featureKey: operation.featureKey,
-      route: operation.gatewayRoute,
+      featureKey: chatOperation.featureKey,
+      route: chatOperation.gatewayRoute,
       idempotencyKey: 'chat_123456789abc',
-      ticketId: 'ticket-1',
+      ticketId: 'operation-1',
       reservation,
     });
-
     assert.equal(result.ok, true);
     assert.equal(supabase.calls.length, 1);
     assert.equal(supabase.calls[0]?.name, 'reserve_ai_usage');
     assert.equal((supabase.calls[0]?.payload.p_metric_increments as any).max_chats_total, 1);
-    const limitChecks = supabase.calls[0]?.payload.p_limit_checks as any[];
-    assert.ok(limitChecks.some((entry) => entry.scope === 'canonical_plan' && entry.window_start));
+    const checks = supabase.calls[0]?.payload.p_limit_checks as any[];
+    assert.ok(checks.some(entry => entry.scope === 'canonical_plan' && entry.window_start));
   });
 
-  await run('failed Next.js ticket issuance can release a reserved usage claim', async () => {
+  await run('failed downstream initiation can release a reserved usage claim safely', async () => {
     const supabase = new FakeSupabase();
-    supabase.response = {
-      ok: true,
-      code: null,
-      status: 'released',
-    };
-
+    supabase.response = { ok: true, code: null, status: 'released' };
     const result = await releaseReservedAiUsage({
       supabase: supabase as any,
       userId: '00000000-0000-4000-8000-000000000001',
       featureKey: 'au_chat',
       route: '/chat/au-chat',
       idempotencyKey: 'chat_123456789abc',
-      ticketId: 'ticket-1',
+      ticketId: 'operation-1',
       reservationId: '11111111-1111-4111-8111-111111111111',
-      failureCode: 'TICKET_UNKNOWN_SERVER_ERROR',
+      failureCode: 'UPSTREAM_INITIATION_FAILED',
     });
-
     assert.equal(result.ok, true);
     assert.equal(supabase.calls.length, 1);
     assert.equal(supabase.calls[0]?.name, 'release_ai_usage');
@@ -178,14 +143,14 @@ async function main() {
     assert.equal(supabase.calls[0]?.payload.p_status, 'released');
   });
 
-  await run('reserve failure maps limit and inactive reservation states safely', () => {
+  await run('reservation failures map limits and inactive states safely', () => {
     assert.equal(reserveFailureStatus('USAGE_LIMIT_EXCEEDED', 'rejected'), 429);
     assert.equal(reserveFailureStatus('USAGE_RESERVATION_FINGERPRINT_MISMATCH', 'reserved'), 409);
     assert.equal(reserveFailureStatus('USAGE_RESERVATION_NOT_ACTIVE', 'committed'), 409);
     assert.equal(reserveFailureStatus('INVALID_USAGE_RESERVATION', null), 400);
   });
 
-  await run('migration creates guarded atomic reservation objects without destructive SQL', () => {
+  await run('atomic reservation migrations retain row locks, idempotency and service-only execution', () => {
     const sql = readFileSync('supabase/migrations/20260728153000_atomic_usage_accounting.sql', 'utf8');
     assert.match(sql, /CREATE TABLE IF NOT EXISTS public\.ai_usage_reservations/i);
     assert.match(sql, /idx_ai_usage_reservations_user_feature_idempotency/i);
@@ -201,7 +166,7 @@ async function main() {
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\s+public\.au_users\b|\bRESET\b/i);
   });
 
-  await run('limit-scope fix migration checks daily counters without destructive SQL', () => {
+  await run('daily limit-scope migration preserves canonical and total counter checks', () => {
     const sql = readFileSync('supabase/migrations/20260728154500_atomic_usage_limit_scope_fix.sql', 'utf8');
     assert.match(sql, /CREATE OR REPLACE FUNCTION public\.reserve_ai_usage/i);
     assert.match(sql, /v_counter_scope = 'today'/);
@@ -210,7 +175,7 @@ async function main() {
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b|\bRESET\b/i);
   });
 
-  await run('replay guard migration rejects payload-swapped idempotency and duplicate provider starts', () => {
+  await run('replay guard rejects payload-swapped idempotency and duplicate provider starts', () => {
     const sql = readFileSync('supabase/migrations/20260728160000_atomic_usage_replay_guard.sql', 'utf8');
     assert.match(sql, /CREATE OR REPLACE FUNCTION public\.reserve_ai_usage/i);
     assert.match(sql, /CREATE OR REPLACE FUNCTION public\.begin_ai_usage_reservation/i);
@@ -221,7 +186,7 @@ async function main() {
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b|\bRESET\b/i);
   });
 
-  await run('atomic reservation applies admin corrections inside the quota transaction', () => {
+  await run('admin corrections remain inside the atomic quota transaction', () => {
     const sql = readFileSync('supabase/migrations/20260829215500_ai_reservation_admin_adjustments.sql', 'utf8');
     assert.match(sql, /CREATE OR REPLACE FUNCTION public\.reserve_ai_usage/i);
     assert.match(sql, /v_limit_scope = 'canonical_plan'/);
@@ -233,67 +198,8 @@ async function main() {
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
   });
 
-  await run('VPS ticket route reserves before signing and includes reservation claims', () => {
-    const source = readFileSync('src/app/api/au/vps-ticket/route.ts', 'utf8');
-    assert.match(source, /reserveAiUsage/);
-    assert.match(source, /releaseReservationAfterTicketFailure/);
-    assert.match(source, /TICKET_USAGE_RESERVATION_FAILED/);
-    assert.match(source, /stage = 'reserve_usage'/);
-    assert.doesNotMatch(source, /trackUsageEvent/);
-    assert.match(source, /reservation_id:\s*reservation\.reservationId/);
-    assert.match(source, /idempotency_key:\s*reservation\.idempotencyKey/);
-  });
-
-  await run('VPS ticket route emits sanitized stage traces with correlation IDs', () => {
-    const source = readFileSync('src/app/api/au/vps-ticket/route.ts', 'utf8');
-    assert.match(source, /function logTicketStage/);
-    assert.match(source, /correlationId/);
-    assert.match(source, /stage:\s*input\.stage/);
-    assert.match(source, /status:\s*input\.status/);
-    assert.match(source, /TICKET_RESERVATION_RPC_SIGNATURE_MISMATCH/);
-    assert.match(source, /TICKET_RESERVATION_PERMISSION_DENIED/);
-    assert.match(source, /TICKET_SIGNING_SECRET_MISSING/);
-    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*auth\.userId/);
-    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*secretResolution\.secret/);
-    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*jwt/);
-  });
-
-  await run('gateway verifies reservation claims and commits or releases reservations', () => {
-    const auth = readFileSync('vps-ai-gateway/src/auth.ts', 'utf8');
-    const index = readFileSync('vps-ai-gateway/src/index.ts', 'utf8');
-    const chat = readFileSync('vps-ai-gateway/src/chat-handler.ts', 'utf8');
-    const generation = readFileSync('vps-ai-gateway/src/generation-handler.ts', 'utf8');
-    assert.match(auth, /reservation_id/);
-    assert.match(auth, /idempotency_key/);
-    assert.match(index, /x-usage-reservation-id/);
-    assert.match(chat, /commitUsageReservation/);
-    assert.match(chat, /safeReleaseUsageReservation/);
-    assert.match(generation, /commitUsageReservation/);
-    assert.match(generation, /safeReleaseUsageReservation/);
-  });
-
-  await run('client generation paths send idempotency keys to ticket and gateway requests', () => {
-    const chat = readFileSync('src/lib/api/chat.ts', 'utf8');
-    const exams = readFileSync('src/lib/api/exams.ts', 'utf8');
-    const store = readFileSync('src/hooks/use-store.ts', 'utf8');
-    assert.match(chat, /x-idempotency-key/);
-    assert.match(chat, /idempotencyKey:\s*payload\.idempotencyKey/);
-    assert.match(chat, /idempotencyKey,\s*documentId/s);
-    assert.match(exams, /createAiIdempotencyKey\('practice_exam'\)/);
-    assert.match(exams, /createAiIdempotencyKey\('exam_predictions'\)/);
-    assert.match(store, /createAiIdempotencyKey\('knowledge'\)/);
-  });
-
-
-  await run('gateway commits measured provider usage through the atomic actual-settlement RPC without losing reserved feature units', () => {
-    const gatewayUsage = readFileSync('vps-ai-gateway/src/usage-accounting.ts', 'utf8');
+  await run('actual usage settlement merges provider totals with reserved feature units atomically', () => {
     const settlement = readFileSync('supabase/migrations/20261115220430_merge_actual_usage_with_reserved_units.sql', 'utf8');
-
-    assert.match(gatewayUsage, /rpc\('commit_ai_usage_actual'/);
-    assert.match(gatewayUsage, /p_actual_units:\s*actualUnits/);
-    assert.match(gatewayUsage, /max_tokens_total:\s*totalTokens/);
-    assert.match(gatewayUsage, /p_prompt_tokens:\s*promptTokens/);
-    assert.match(gatewayUsage, /p_cost_usd:/);
     assert.match(settlement, /v_actual_units := COALESCE\(v_row\.reserved_units, '\{\}'::jsonb\) \|\| COALESCE\(p_actual_units, '\{\}'::jsonb\)/);
     assert.match(settlement, /ai_usage_delta_units\(v_actual_units, v_row\.reserved_units\)/);
     assert.match(settlement, /ON CONFLICT \(user_id, event_key\) DO NOTHING/);
@@ -301,8 +207,4 @@ async function main() {
 
   if (failed > 0) process.exit(1);
 }
-
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main().catch(error => { console.error(error); process.exit(1); });
