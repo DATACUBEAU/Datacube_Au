@@ -53,21 +53,23 @@ private val DataCubeShapes = Shapes(
     extraLarge = RoundedCornerShape(28.dp)
 )
 
-private val DataCubeTypography = Typography().copy(
-    displayLarge = Typography().displayLarge.copy(fontWeight = FontWeight.Bold),
-    displayMedium = Typography().displayMedium.copy(fontWeight = FontWeight.Bold),
-    displaySmall = Typography().displaySmall.copy(fontWeight = FontWeight.Bold),
-    headlineLarge = Typography().headlineLarge.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold),
-    headlineMedium = Typography().headlineMedium.copy(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold),
-    headlineSmall = Typography().headlineSmall.copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
-    titleLarge = Typography().titleLarge.copy(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
-    titleMedium = Typography().titleMedium.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
-    bodyLarge = Typography().bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = Typography().bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
-    bodySmall = Typography().bodySmall.copy(fontSize = 12.sp, lineHeight = 18.sp),
-    labelLarge = Typography().labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-    labelMedium = Typography().labelMedium.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
-    labelSmall = Typography().labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium)
+private val BaseTypography = Typography()
+
+private val DataCubeTypography = BaseTypography.copy(
+    displayLarge = BaseTypography.displayLarge.copy(fontWeight = FontWeight.Bold),
+    displayMedium = BaseTypography.displayMedium.copy(fontWeight = FontWeight.Bold),
+    displaySmall = BaseTypography.displaySmall.copy(fontWeight = FontWeight.Bold),
+    headlineLarge = BaseTypography.headlineLarge.copy(fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold),
+    headlineMedium = BaseTypography.headlineMedium.copy(fontSize = 26.sp, lineHeight = 32.sp, fontWeight = FontWeight.Bold),
+    headlineSmall = BaseTypography.headlineSmall.copy(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold),
+    titleLarge = BaseTypography.titleLarge.copy(fontSize = 20.sp, lineHeight = 26.sp, fontWeight = FontWeight.SemiBold),
+    titleMedium = BaseTypography.titleMedium.copy(fontSize = 16.sp, lineHeight = 22.sp, fontWeight = FontWeight.SemiBold),
+    bodyLarge = BaseTypography.bodyLarge.copy(fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = BaseTypography.bodyMedium.copy(fontSize = 14.sp, lineHeight = 21.sp),
+    bodySmall = BaseTypography.bodySmall.copy(fontSize = 12.sp, lineHeight = 18.sp),
+    labelLarge = BaseTypography.labelLarge.copy(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+    labelMedium = BaseTypography.labelMedium.copy(fontSize = 12.sp, fontWeight = FontWeight.SemiBold),
+    labelSmall = BaseTypography.labelSmall.copy(fontSize = 11.sp, fontWeight = FontWeight.Medium)
 )
 
 private val LightColors = lightColorScheme(
