@@ -16,6 +16,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class ModelBackupSummary(
@@ -23,6 +26,23 @@ data class ModelBackupSummary(
     val fileCount: Int,
     val totalBytes: Long
 )
+
+data class ModelBackupProgress(
+    val phase: String,
+    val currentModel: String? = null,
+    val currentFile: String? = null,
+    val completedBytes: Long = 0L,
+    val totalBytes: Long = 0L,
+    val completedFiles: Int = 0,
+    val totalFiles: Int = 0
+) {
+    val fraction: Float
+        get() = if (totalBytes > 0L) {
+            (completedBytes.toDouble() / totalBytes.toDouble()).coerceIn(0.0, 1.0).toFloat()
+        } else {
+            0f
+        }
+}
 
 /**
  * Exports installed on-device model files to a user-selected document and restores
@@ -40,67 +60,133 @@ class ModelBackupManager(context: Context) {
     private val modelRoot = File(appContext.filesDir, "models/installed")
     private val modelsParent = File(appContext.filesDir, "models")
 
-    suspend fun exportBackup(destination: Uri): ModelBackupSummary = withContext(Dispatchers.IO) {
+    suspend fun exportBackup(
+        destination: Uri,
+        onProgress: (ModelBackupProgress) -> Unit = {}
+    ): ModelBackupSummary = withContext(Dispatchers.IO) {
+        val job = currentCoroutineContext()[Job]
+        onProgress(ModelBackupProgress(phase = "Scanning installed models"))
         val models = installedModelFiles()
         require(models.isNotEmpty()) { "There are no installed models to back up yet." }
 
-        val fileRecords = models.flatMap { model ->
-            model.files.map { file ->
-                val digest = digestFile(file)
-                BackupFileRecord(
-                    modelId = model.id,
-                    relativePath = relativePath(model.directory, file),
-                    size = digest.first,
-                    sha256 = digest.second
+        val allFiles = models.flatMap { model -> model.files.map { model to it } }
+        require(allFiles.size <= MAX_FILES) { "Too many model files for one backup." }
+        val totalBytes = allFiles.sumOf { it.second.length() }
+        require(totalBytes <= MAX_TOTAL_BYTES) { "The installed models exceed the supported backup size." }
+
+        val fileRecords = ArrayList<BackupFileRecord>(allFiles.size)
+        var preparedBytes = 0L
+        allFiles.forEachIndexed { index, (model, file) ->
+            job?.ensureActive()
+            onProgress(
+                ModelBackupProgress(
+                    phase = "Preparing model checksums",
+                    currentModel = model.id,
+                    currentFile = file.name,
+                    completedBytes = preparedBytes,
+                    totalBytes = totalBytes,
+                    completedFiles = index,
+                    totalFiles = allFiles.size
+                )
+            )
+            val digest = digestFile(file) { chunkBytes ->
+                job?.ensureActive()
+                onProgress(
+                    ModelBackupProgress(
+                        phase = "Preparing model checksums",
+                        currentModel = model.id,
+                        currentFile = file.name,
+                        completedBytes = preparedBytes + chunkBytes,
+                        totalBytes = totalBytes,
+                        completedFiles = index,
+                        totalFiles = allFiles.size
+                    )
                 )
             }
+            preparedBytes += digest.first
+            fileRecords += BackupFileRecord(
+                modelId = model.id,
+                relativePath = relativePath(model.directory, file),
+                size = digest.first,
+                sha256 = digest.second
+            )
         }
-        require(fileRecords.size <= MAX_FILES) { "Too many model files for one backup." }
-        val totalBytes = fileRecords.sumOf { it.size }
-        require(totalBytes <= MAX_TOTAL_BYTES) { "The installed models exceed the supported backup size." }
 
         val output = appContext.contentResolver.openOutputStream(destination, "wt")
             ?: error("The selected backup destination could not be opened.")
-
-        output.use { raw ->
-            ZipOutputStream(BufferedOutputStream(raw)).use { zip ->
-                zip.setLevel(Deflater.BEST_SPEED)
-                val manifest = encodeManifest(fileRecords)
-                zip.putNextEntry(ZipEntry(MANIFEST_NAME))
-                zip.write(manifest)
-                zip.closeEntry()
-
-                for (record in fileRecords) {
-                    val modelDirectory = File(modelRoot, record.modelId).canonicalFile
-                    val file = File(modelDirectory, record.relativePath).canonicalFile
-                    require(file.path.startsWith(modelDirectory.path + File.separator)) {
-                        "A model file resolved outside its model directory."
-                    }
-                    require(file.isFile) { "A model file changed during backup. Try again." }
-
-                    val entryName = archivePath(record.modelId, record.relativePath)
-                    zip.putNextEntry(ZipEntry(entryName))
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    var copied = 0L
-                    FileInputStream(file).buffered().use { input ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            zip.write(buffer, 0, count)
-                            digest.update(buffer, 0, count)
-                            copied += count
-                        }
-                    }
+        try {
+            output.use { raw ->
+                ZipOutputStream(BufferedOutputStream(raw)).use { zip ->
+                    zip.setLevel(Deflater.BEST_SPEED)
+                    val manifest = encodeManifest(fileRecords)
+                    zip.putNextEntry(ZipEntry(MANIFEST_NAME))
+                    zip.write(manifest)
                     zip.closeEntry()
-                    require(copied == record.size && digest.toHex() == record.sha256) {
-                        "A model file changed during backup. Try again."
+
+                    var copiedTotal = 0L
+                    fileRecords.forEachIndexed { index, record ->
+                        job?.ensureActive()
+                        val modelDirectory = File(modelRoot, record.modelId).canonicalFile
+                        val file = File(modelDirectory, record.relativePath).canonicalFile
+                        require(file.path.startsWith(modelDirectory.path + File.separator)) {
+                            "A model file resolved outside its model directory."
+                        }
+                        require(file.isFile) { "A model file changed during backup. Try again." }
+
+                        val entryName = archivePath(record.modelId, record.relativePath)
+                        zip.putNextEntry(ZipEntry(entryName))
+                        val digest = MessageDigest.getInstance("SHA-256")
+                        var copied = 0L
+                        var lastReported = 0L
+                        FileInputStream(file).buffered().use { input ->
+                            val buffer = ByteArray(BUFFER_SIZE)
+                            while (true) {
+                                job?.ensureActive()
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                zip.write(buffer, 0, count)
+                                digest.update(buffer, 0, count)
+                                copied += count
+                                if (copied - lastReported >= PROGRESS_INTERVAL_BYTES || copied == record.size) {
+                                    lastReported = copied
+                                    onProgress(
+                                        ModelBackupProgress(
+                                            phase = "Writing external backup",
+                                            currentModel = record.modelId,
+                                            currentFile = file.name,
+                                            completedBytes = copiedTotal + copied,
+                                            totalBytes = totalBytes,
+                                            completedFiles = index,
+                                            totalFiles = fileRecords.size
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        zip.closeEntry()
+                        require(copied == record.size && digest.toHex() == record.sha256) {
+                            "A model file changed during backup. Try again."
+                        }
+                        copiedTotal += copied
                     }
+                    zip.finish()
                 }
-                zip.finish()
             }
+        } catch (error: Exception) {
+            // CreateDocument supplies a fresh destination; remove partial ZIPs on failure/cancel.
+            runCatching { appContext.contentResolver.delete(destination, null, null) }
+            throw error
         }
 
+        onProgress(
+            ModelBackupProgress(
+                phase = "Backup complete",
+                completedBytes = totalBytes,
+                totalBytes = totalBytes,
+                completedFiles = fileRecords.size,
+                totalFiles = fileRecords.size
+            )
+        )
         ModelBackupSummary(
             modelCount = fileRecords.map { it.modelId }.distinct().size,
             fileCount = fileRecords.size,
@@ -108,7 +194,12 @@ class ModelBackupManager(context: Context) {
         )
     }
 
-    suspend fun restoreBackup(source: Uri): ModelBackupSummary = withContext(Dispatchers.IO) {
+    suspend fun restoreBackup(
+        source: Uri,
+        onProgress: (ModelBackupProgress) -> Unit = {}
+    ): ModelBackupSummary = withContext(Dispatchers.IO) {
+        val job = currentCoroutineContext()[Job]
+        onProgress(ModelBackupProgress(phase = "Reading backup manifest"))
         val input = appContext.contentResolver.openInputStream(source)
             ?: error("The selected model backup could not be opened.")
 
@@ -160,9 +251,22 @@ class ModelBackupManager(context: Context) {
                         target.parentFile?.mkdirs()
                         val digest = MessageDigest.getInstance("SHA-256")
                         var copied = 0L
+                        onProgress(
+                            ModelBackupProgress(
+                                phase = "Restoring models",
+                                currentModel = record.modelId,
+                                currentFile = record.relativePath.substringAfterLast('/'),
+                                completedBytes = restoredBytes,
+                                totalBytes = totalExpected,
+                                completedFiles = received.size - 1,
+                                totalFiles = records.size
+                            )
+                        )
+                        var lastReported = 0L
                         FileOutputStream(target).buffered().use { output ->
                             val buffer = ByteArray(BUFFER_SIZE)
                             while (true) {
+                                job?.ensureActive()
                                 val count = zip.read(buffer)
                                 if (count < 0) break
                                 copied += count
@@ -172,6 +276,20 @@ class ModelBackupManager(context: Context) {
                                 }
                                 digest.update(buffer, 0, count)
                                 output.write(buffer, 0, count)
+                                if (copied - lastReported >= PROGRESS_INTERVAL_BYTES || copied == record.size) {
+                                    lastReported = copied
+                                    onProgress(
+                                        ModelBackupProgress(
+                                            phase = "Restoring models",
+                                            currentModel = record.modelId,
+                                            currentFile = record.relativePath.substringAfterLast('/'),
+                                            completedBytes = restoredBytes,
+                                            totalBytes = totalExpected,
+                                            completedFiles = received.size - 1,
+                                            totalFiles = records.size
+                                        )
+                                    )
+                                }
                             }
                         }
                         zip.closeEntry()
@@ -208,6 +326,15 @@ class ModelBackupManager(context: Context) {
                         throw error
                     }
 
+                    onProgress(
+                        ModelBackupProgress(
+                            phase = "Restore complete",
+                            completedBytes = totalExpected,
+                            totalBytes = totalExpected,
+                            completedFiles = records.size,
+                            totalFiles = records.size
+                        )
+                    )
                     ModelBackupSummary(
                         modelCount = modelIds.size,
                         fileCount = records.size,
@@ -322,9 +449,13 @@ class ModelBackupManager(context: Context) {
         return output.toByteArray()
     }
 
-    private fun digestFile(file: File): Pair<Long, String> {
+    private fun digestFile(
+        file: File,
+        onBytesRead: (Long) -> Unit
+    ): Pair<Long, String> {
         val digest = MessageDigest.getInstance("SHA-256")
         var size = 0L
+        var lastReported = 0L
         FileInputStream(file).buffered().use { input ->
             val buffer = ByteArray(BUFFER_SIZE)
             while (true) {
@@ -333,6 +464,10 @@ class ModelBackupManager(context: Context) {
                 size += count
                 require(size <= MAX_FILE_BYTES) { "A model file exceeds the supported backup size." }
                 digest.update(buffer, 0, count)
+                if (size - lastReported >= PROGRESS_INTERVAL_BYTES || size == file.length()) {
+                    lastReported = size
+                    onBytesRead(size)
+                }
             }
         }
         return size to digest.toHex()
@@ -392,6 +527,7 @@ class ModelBackupManager(context: Context) {
         private const val MAX_FILES = 25_000
         private const val MAX_FILE_BYTES = 20L * 1024 * 1024 * 1024
         private const val MAX_TOTAL_BYTES = 100L * 1024 * 1024 * 1024
+        private const val PROGRESS_INTERVAL_BYTES = 1024L * 1024
         private val MODEL_ID = Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
         private val SHA256 = Regex("^[a-f0-9]{64}$")
     }
