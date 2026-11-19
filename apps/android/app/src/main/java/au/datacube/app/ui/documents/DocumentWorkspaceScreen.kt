@@ -39,9 +39,10 @@ fun DocumentWorkspaceScreen(
     previewLoading: Boolean,
     previewError: String?,
     onBack: () -> Unit,
-    initialPrompt: String? = null
+    initialPrompt: String? = null,
+    initialTab: Int = 0
 ) {
-    var selectedTab by remember(document.id) { mutableIntStateOf(0) }
+    var selectedTab by remember(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
 
     Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
         Row(
