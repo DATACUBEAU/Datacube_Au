@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocument
@@ -149,8 +150,61 @@ class AppResponsiveUiTest {
             }
         }
         composeRule.onNodeWithText("Study notes.pdf").assertIsDisplayed()
-        composeRule.onNodeWithText("Overview").assertIsDisplayed()
-        composeRule.onNodeWithText("Extracted text").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("LOCAL PREVIEW CONTENT FOR RESPONSIVE UI TEST").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("AU Chat").assertIsDisplayed()
+        composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
+    }
+
+    @Test
+    fun documentStudyToolsAreInteractiveOnExpandedPhoneWidth() {
+        composeRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(700.dp, 900.dp))) {
+                DataCubeTheme {
+                    DocumentWorkspaceScreen(
+                        document = LocalDocument(
+                            id = "interactive-document",
+                            name = "Lecture_Notes.pdf",
+                            extension = "pdf",
+                            mimeType = "application/pdf",
+                            sizeBytes = 3_400_000L,
+                            privatePath = "/private/interactive-document.pdf",
+                            createdAtEpochMs = 1_700_000_000_000L
+                        ),
+                        extractionStatus = LocalJobStatus.COMPLETED,
+                        extractionProgress = 1.0,
+                        extractionError = null,
+                        textPreview = """
+                            ----- Page 1 -----
+                            Newton's Laws of Motion
+                            Newton's first law describes inertia and the motion of objects.
+                            Newton's second law states that net force equals mass multiplied by acceleration.
+                            ----- Page 2 -----
+                            Newton's third law explains equal and opposite action and reaction forces.
+                            These laws describe how forces affect the movement of objects.
+                        """.trimIndent(),
+                        previewTruncated = false,
+                        previewLoading = false,
+                        previewError = null,
+                        onBack = {}
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithText("Smart Note").performClick()
+        composeRule.onNodeWithText("Study notes").assertIsDisplayed()
+        composeRule.onNodeWithText("Diagram").performClick()
+        composeRule.onNodeWithText("Concept map").assertIsDisplayed()
+
+        composeRule.onNodeWithText("Prediction").performClick()
+        composeRule.onNodeWithText("Generate Study Plan").performClick()
+        composeRule.onNodeWithText("Suggested revision questions").assertIsDisplayed()
+
+        composeRule.onNodeWithText("Practice").performClick()
+        composeRule.onNodeWithText("Start Practice").performClick()
+        composeRule.onNodeWithText("Question 1 of 5").assertIsDisplayed()
+
+        composeRule.onNodeWithText("Podcast").performClick()
+        composeRule.onNodeWithText("Chapters").assertIsDisplayed()
+        composeRule.onNodeWithText("Play summary").assertIsDisplayed()
     }
 }
