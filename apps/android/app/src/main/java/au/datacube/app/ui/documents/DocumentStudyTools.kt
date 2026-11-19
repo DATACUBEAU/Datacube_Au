@@ -183,10 +183,10 @@ private fun SourceUnavailableCard(
 
 @Composable
 fun DocumentChatWorkspace(
-    documentName: String, textPreview: String?, previewLoading: Boolean, previewError: String?,
+    documentName: String, initialPrompt: String? = null, textPreview: String?, previewLoading: Boolean, previewError: String?,
     extractionStatus: String?, extractionProgress: Double?, extractionError: String?
 ) {
-    var prompt by remember(documentName) { mutableStateOf("") }
+    var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
     val messages = remember(documentName) { mutableStateListOf<ChatMessage>() }
 
     Column(Modifier.fillMaxSize()) {
