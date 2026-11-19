@@ -24,7 +24,7 @@ assert.match(smartAuth, /\/auth\/callback\?next=/);
 assert.match(smartAuth, /: '\/'/);
 assert.match(callback, /exchangeCodeForSession\(code\)/);
 assert.match(callback, /fetch\('\/conex\/users\?mode=access'/);
-assert.match(callback, /if \(accessResponse\.ok\)[\s\S]+router\.replace\('\/conex'\)/);
+assert.match(callback, /if \(accessResponse\?\.ok\)[\s\S]+router\.replace\('\/conex'\)/);
 assert.match(dashboardLayout, /signInWithGoogle\('\/dashboard'\)/);
 assert.doesNotMatch(dashboardLayout, /setTimeout\(resolve, 1500\)|Authenticating|Please do not close this window/);
 assert.doesNotMatch(dashboardLayout, /supabase\.auth\.signInWithOAuth/);
