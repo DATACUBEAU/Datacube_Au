@@ -33,6 +33,8 @@ import au.datacube.app.ui.auth.AuthScreen
 import au.datacube.app.ui.auth.AuthViewModel
 import au.datacube.app.ui.chat.ChatScreen
 import au.datacube.app.ui.documents.DocumentsScreen
+import au.datacube.app.ui.documents.CollectionWorkspaceScreen
+import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.study.StudyScreen
@@ -90,6 +92,7 @@ private sealed class Screen(val route: String) {
     object Auth : Screen("auth")
     object Home : Screen("home")
     object Documents : Screen("documents")
+    object Collection : Screen("collection/{id}")
     object Study : Screen("study")
     object Chat : Screen("chat")
     object Profile : Screen("profile")
@@ -122,6 +125,7 @@ private fun DataCubeRoot(
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
 
     // Document picker
     val mimeTypes = arrayOf(
@@ -142,6 +146,21 @@ private fun DataCubeRoot(
                         result.exceptionOrNull()?.message
                             ?: "Document saved. Local processing has been queued."
                     )
+                }
+            }
+        }
+    }
+
+    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val targetCollection = collectionPickerTarget
+        collectionPickerTarget = null
+        if (targetCollection != null) {
+            uris.forEach { uri ->
+                val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: "Imported document"
+                documentsViewModel.importToCollection(uri, name, targetCollection) { result ->
+                    scope.launch { result.exceptionOrNull()?.let { snackbar.showSnackbar(it.message ?: "Could not add document.") } }
                 }
             }
         }
