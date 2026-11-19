@@ -232,7 +232,7 @@ private fun DataCubeRoot(
                     documents = documents,
                     collections = collections,
                     onImport = { picker.launch(mimeTypes) },
-                    onCreateCollection = documentsViewModel::createCollection,
+                    onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
                     onOpenCollection = { id -> navController.navigate("collection/$id") },
                     onDeleteCollection = documentsViewModel::deleteCollection,
                     onOpenDocument = { id -> navController.navigate("document/$id") },
