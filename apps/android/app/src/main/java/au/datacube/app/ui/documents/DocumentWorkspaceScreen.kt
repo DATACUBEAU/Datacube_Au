@@ -3,7 +3,6 @@ package au.datacube.app.ui.documents
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -40,7 +39,6 @@ fun DocumentWorkspaceScreen(
     onBack: () -> Unit
 ) {
     var selectedTab by remember(document.id) { mutableIntStateOf(0) }
-    var smartNoteMode by remember(document.id) { mutableIntStateOf(0) }
 
     Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -53,7 +51,6 @@ fun DocumentWorkspaceScreen(
                 Text(document.name, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                 Text("${document.extension.uppercase()} · ${document.sizeBytes / 1024} KB", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = {}) { Icon(Icons.Outlined.MoreVert, "Document actions") }
         }
         Row(
             modifier = Modifier
@@ -116,11 +113,11 @@ fun DocumentWorkspaceScreen(
                 previewLoading = previewLoading,
                 previewError = previewError
             )
-            1 -> ChatWorkspace(document.name)
-            2 -> SmartNoteWorkspace(document.name, smartNoteMode, { smartNoteMode = it })
-            3 -> PredictionWorkspace(document.name)
-            4 -> PracticeWorkspace(document.name)
-            else -> PodcastWorkspace(document.name)
+            1 -> ChatWorkspace()
+            2 -> SmartNoteWorkspace()
+            3 -> PredictionWorkspace()
+            4 -> PracticeWorkspace()
+            else -> PodcastWorkspace()
         }
     }
 }
@@ -284,7 +281,7 @@ private fun OverviewWorkspace(
 }
 
 @Composable
-private fun ChatWorkspace(documentName: String) {
+private fun ChatWorkspace() {
     FeatureComingSoon(
         icon = Icons.Outlined.ChatBubbleOutline,
         title = "Document chat",
@@ -294,17 +291,17 @@ private fun ChatWorkspace(documentName: String) {
 }
 
 @Composable
-private fun SmartNoteWorkspace(documentName: String, mode: Int, onModeChange: (Int) -> Unit) {
+private fun SmartNoteWorkspace() {
     FeatureComingSoon(
-        icon = if (mode == 0) Icons.Outlined.AccountTree else Icons.Outlined.Notes,
-        title = if (mode == 0) "Concept map" else "Smart notes",
+        icon = Icons.Outlined.Notes,
+        title = "Smart notes",
         description = "Turn the document into structured notes, connected ideas and key takeaways.",
         detail = "Document-grounded note generation is not enabled yet."
     )
 }
 
 @Composable
-private fun PredictionWorkspace(documentName: String) {
+private fun PredictionWorkspace() {
     FeatureComingSoon(
         icon = Icons.Outlined.BarChart,
         title = "Study prediction",
@@ -314,7 +311,7 @@ private fun PredictionWorkspace(documentName: String) {
 }
 
 @Composable
-private fun PracticeWorkspace(documentName: String) {
+private fun PracticeWorkspace() {
     FeatureComingSoon(
         icon = Icons.Outlined.Layers,
         title = "Practice questions",
@@ -324,7 +321,7 @@ private fun PracticeWorkspace(documentName: String) {
 }
 
 @Composable
-private fun PodcastWorkspace(documentName: String) {
+private fun PodcastWorkspace() {
     FeatureComingSoon(
         icon = Icons.Outlined.Headphones,
         title = "Audio summary",
