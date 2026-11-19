@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import {
   ArrowRight,
   BrainCircuit,
@@ -9,6 +10,7 @@ import {
   MessageCircle,
   Loader2,
   FileText as FileTextIcon,
+  WifiOff,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -35,7 +37,7 @@ import { useAuDocuments } from '@/hooks/api/use-au-documents';
 import { useUploadJobs } from '@/components/upload/upload-jobs-provider';
 import type { UploadJobStatus } from '@/lib/upload/types';
 import { useDelayedLoadingState } from '@/hooks/use-delayed-loading-state';
-import { DashboardPageSkeleton, SlowNetworkNotice } from '@/components/skeletons/page-skeletons';
+import { DashboardPageSkeleton } from '@/components/skeletons/page-skeletons';
 import { useNetworkStatus } from '@/components/providers/network-status-provider';
 import { useLimitationsAgent } from '@/hooks/use-limitations-agent';
 import { LimitAlertCard } from '@/components/limits/limit-alert-card';
@@ -51,28 +53,28 @@ import {
 const quickAccessItems = [
   {
     title: 'Upload Document',
-    description: 'Add a new PDF, TXT, or DOCX file.',
+    description: 'Add study files.',
     icon: FilePlus,
     href: '/dashboard/documents',
     color: 'text-blue-500',
   },
   {
     title: 'Start AU Chat',
-    description: 'Ask questions about your data.',
+    description: 'Ask your documents.',
     icon: MessageCircle,
     href: '/dashboard/chat',
     color: 'text-green-500',
   },
   {
     title: 'View Predictions',
-    description: 'See likely exam questions.',
+    description: 'Review likely topics.',
     icon: ClipboardCheck,
     href: '/dashboard/predictions',
     color: 'text-purple-500',
   },
   {
     title: 'Explore Knowledge',
-    description: 'Visualize concepts and summaries.',
+    description: 'Explore your study notes.',
     icon: BrainCircuit,
     href: '/dashboard/knowledge',
     color: 'text-orange-500',
@@ -88,12 +90,10 @@ export default function DashboardPage() {
   const {
     documents,
     loading: documentsLoading,
-    refresh,
     isUsingCachedData,
-    cachedAt,
   } = useAuDocuments();
   const { jobs } = useUploadJobs();
-  const { showSkeleton, showSlowNotice } = useDelayedLoadingState(documentsLoading);
+  const { showSkeleton } = useDelayedLoadingState(documentsLoading);
   const {
     primaryAlert: dashboardLimitAlert,
     toastCandidate: dashboardLimitToast,
@@ -194,10 +194,10 @@ export default function DashboardPage() {
   return (
     <main className="flex flex-1 flex-col gap-4 p-4 md:gap-8 md:p-8">
       <LimitToast alert={dashboardLimitToast} onShown={markDashboardLimitToastShown} />
-      {showSlowNotice && documentsLoading ? <SlowNetworkNotice onRetry={() => void refresh()} /> : null}
       {isUsingCachedData && !isOnline ? (
-        <div className="rounded-lg border border-blue-200 bg-blue-50/80 px-4 py-2 text-xs text-blue-900 dark:border-blue-500/40 dark:bg-blue-950/30 dark:text-blue-100">
-          Offline • showing cached dashboard data{cachedAt ? ` from ${new Date(cachedAt).toLocaleString()}` : ''}.
+        <div className="inline-flex w-fit items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300" role="status">
+          <WifiOff className="h-3 w-3" aria-hidden="true" />
+          Offline · cached data
         </div>
       ) : null}
       {dashboardLimitAlert ? (
@@ -219,11 +219,20 @@ export default function DashboardPage() {
         </div>
       ) : null}
 
-      <div className="flex items-center">
-        <h1 className="font-headline text-2xl font-semibold">
-          Welcome, {(user?.user_metadata?.full_name as string | undefined) || (user?.user_metadata?.name as string | undefined) || 'User'}!
-        </h1>
-      </div>
+      <section className="dcau-dashboard-hero relative isolate flex min-h-[132px] items-center justify-between gap-4 overflow-hidden rounded-2xl border border-primary/15 bg-gradient-to-br from-card via-card to-primary/10 px-5 py-5 md:px-7">
+        <div className="relative z-10 min-w-0">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-primary">DataCube AU</p>
+          <h1 className="font-headline text-2xl font-semibold tracking-tight md:text-3xl">
+            Welcome back, {(user?.user_metadata?.full_name as string | undefined) || (user?.user_metadata?.name as string | undefined) || 'there'}
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">Your workspace. Ready when you are.</p>
+        </div>
+        <div className="dcau-hero-orb relative mr-2 hidden h-28 w-28 shrink-0 items-center justify-center sm:flex md:mr-6" aria-hidden="true">
+          <span className="dcau-hero-orb__halo" />
+          <span className="dcau-hero-orb__ring" />
+          <Image src="/icon.png" alt="" width={88} height={88} priority className="dcau-hero-orb__logo relative z-10 h-[88px] w-[88px] rounded-2xl object-contain" />
+        </div>
+      </section>
       
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {quickAccessItems.map((item) => (
@@ -250,7 +259,7 @@ export default function DashboardPage() {
             <div className="grid gap-2">
               <CardTitle className="font-headline">Recent Documents</CardTitle>
               <CardDescription>
-                Your latest uploads and their status.
+                Latest uploads.
               </CardDescription>
             </div>
             <Link href="/dashboard/documents" className="ml-auto">

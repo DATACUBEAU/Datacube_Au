@@ -22,13 +22,6 @@ import {
   PanelLeftOpen,
 } from 'lucide-react';
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog';
-import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -57,7 +50,6 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Separator } from '@/components/ui/separator';
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import PageLoader from '@/components/page-loader';
 import { useStore } from '@/hooks/use-store';
@@ -65,7 +57,6 @@ import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import HeaderPwaInstallButton from '@/components/header-pwa-install-button';
 import { AnimatePresence, motion } from 'framer-motion';
 import { updateUserActivity } from '@/lib/supabase-client/client';
-import { supabase } from '@/lib/supabase-client/client';
 import { InactivityPolicyBanner } from '@/components/inactivity-policy-banner';
 import { AuChatProvider } from '@/providers/au-chat-provider';
 import { ChatRuntimeProvider } from '@/components/providers/chat-runtime-provider';
@@ -217,9 +208,6 @@ const SidebarFooterMenu = ({
   userDisplayName,
   userEmail,
   planStatusLabel,
-  planStatusBadge,
-  planStatusMeta,
-  isPlanStatusLoading,
   onOpenGuide,
 }: {
   footerItems: Array<any>;
@@ -228,9 +216,6 @@ const SidebarFooterMenu = ({
   userDisplayName: string;
   userEmail: string;
   planStatusLabel: string;
-  planStatusBadge: string;
-  planStatusMeta: string;
-  isPlanStatusLoading: boolean;
   onOpenGuide: () => void;
 }) => (
   <SidebarFooter className="p-2">
@@ -260,42 +245,12 @@ const SidebarFooterMenu = ({
       ))}
 
       <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
-        <div className="rounded-md border border-sidebar-border bg-sidebar-accent/35 px-3 py-2">
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-sidebar-foreground/60">
-            Plan Status
-          </div>
-          <div className="mt-1 flex items-center justify-between gap-2">
-            <span className="text-sm font-semibold text-sidebar-foreground">
-              {isPlanStatusLoading ? 'Updating...' : planStatusLabel}
-            </span>
-            <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
-              {isPlanStatusLoading ? 'Syncing' : planStatusBadge}
-            </Badge>
-          </div>
-          <div className="mt-1 text-[10px] text-sidebar-foreground/65">
-            {planStatusMeta}
-          </div>
+        <div className="flex items-center justify-between gap-2 px-2 py-1">
+          <span className="text-xs text-sidebar-foreground/65">Plan</span>
+          <Badge variant="secondary" className="h-5 px-2 text-[10px]">{planStatusLabel}</Badge>
+          {!isOnline ? <WifiOff className="h-3.5 w-3.5 text-amber-500" aria-label="Offline" /> : null}
         </div>
       </SidebarMenuItem>
-
-      <Separator className="my-2 bg-sidebar-border" />
-
-      <SidebarMenuItem className="group-data-[collapsible=icon]:hidden">
-        <div className="rounded-md border border-sidebar-border/80 bg-sidebar-accent/20 px-3 py-2 text-[10px] leading-relaxed text-sidebar-foreground/70">
-          <p className="font-semibold text-sidebar-foreground">Datacube AU</p>
-          <p>Built by Zahed Investment Ltd</p>
-          <p>RC 8127949</p>
-        </div>
-      </SidebarMenuItem>
-
-      {!isOnline && (
-        <SidebarMenuItem>
-          <SidebarMenuButton className="pointer-events-none text-yellow-500 bg-yellow-500/10" tooltip={{ children: 'You are currently offline.' }}>
-            <WifiOff className="text-yellow-500" />
-            <span className="group-data-[collapsible=icon]:sr-only">Offline</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
-      )}
 
       {/* User Avatar */}
       <SidebarMenuItem>
@@ -379,12 +334,10 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   const [user, , isUserLoading] = useSupabaseUser();
-  const { isAuthLocked } = useSmartAuth();
+  const { isAuthLocked, signInWithGoogle } = useSmartAuth();
   const [showWhatsappDialog, setShowWhatsappDialog] = useState(false);
   const [showGlobalChatDevDialog, setShowGlobalChatDevDialog] = useState(false);
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
-  const [showAuthPopup, setShowAuthPopup] = useState(false);
-  const [showAuthCancelConfirm, setShowAuthCancelConfirm] = useState(false);
   const [showSignOutPopup, setShowSignOutPopup] = useState(false);
   const [isSigningOut, setIsSigningOut] = useState(false);
   const [isSiteGuideOpen, setIsSiteGuideOpen] = useState(false);
@@ -400,46 +353,25 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     entitlements,
     loading: isPlanStatusLoading,
     isUsingCachedData: isUsingCachedEntitlements,
-    cachedAt: entitlementsCachedAt,
   } = useEffectiveEntitlements();
   const { records: featureFlagRecords } = useFeatureFlags();
 
   const isAuthenticated = !!user;
 
   const handleGoogleSignIn = useCallback(async () => {
+    if (isLoadingGoogle) return;
     setIsLoadingGoogle(true);
-    setShowAuthPopup(true);
-    // Artificial delay for better UX
-    await new Promise(resolve => setTimeout(resolve, 1500));
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent('/dashboard')}`,
-        },
-      });
-      if (error) throw error;
+      await signInWithGoogle('/dashboard');
     } catch (error: any) {
-      setShowAuthPopup(false);
       toast({
         variant: 'destructive',
-        title: 'Sign-in Failed',
-        description: error?.message || 'Could not start Google sign-in.',
+        title: 'Google sign-in failed',
+        description: error?.message || 'Could not start Google sign-in. Please try again.',
       });
-    } finally {
       setIsLoadingGoogle(false);
     }
-  }, [toast]);
-
-  const handleAuthCancelAttempt = () => {
-    setShowAuthCancelConfirm(true);
-  };
-
-  const confirmAuthCancel = () => {
-    setShowAuthCancelConfirm(false);
-    setShowAuthPopup(false);
-    setIsLoadingGoogle(false);
-  };
+  }, [isLoadingGoogle, signInWithGoogle, toast]);
 
   const userDisplayName = (user?.user_metadata?.full_name as string | undefined) ??
       (user?.user_metadata?.name as string | undefined) ??
@@ -453,7 +385,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   );
 
   const planStatusLabel = useMemo(() => {
-    if (!hasResolvedPlanState) return 'Syncing...';
+    if (!hasResolvedPlanState) return 'Plan';
     if (entitlements.plan === 'admin') return 'Admin';
     if (entitlements.plan === 'premium') return 'Premium';
     if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo Pro';
@@ -461,14 +393,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     return 'Free';
   }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive, hasResolvedPlanState]);
 
-  const planStatusBadge = useMemo(() => {
-    if (!hasResolvedPlanState) return 'Syncing';
-    if (entitlements.plan === 'admin') return 'Admin';
-    if (entitlements.plan === 'premium') return 'Premium';
-    if (entitlements.entitlementSource === 'promo' || entitlements.promoActive) return 'Promo';
-    if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) return 'Active';
-    return 'Free';
-  }, [entitlements.entitlementSource, entitlements.hasPro, entitlements.plan, entitlements.promoActive, hasResolvedPlanState]);
+
 
   const isProUnlocked = useMemo(() => {
     if (!hasResolvedPlanState) return false;
@@ -500,60 +425,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     [entitlements, featureFlagRecords],
   );
 
-  const planStatusMeta = useMemo(() => {
-    if (!hasResolvedPlanState) {
-      return 'Restoring your last validated subscription state...';
-    }
-    if (entitlements.promoActive || entitlements.entitlementSource === 'promo') {
-      if (entitlements.promoEndsAtLagos) {
-        const promoEnd = new Date(entitlements.promoEndsAtLagos);
-        if (!Number.isNaN(promoEnd.getTime())) {
-          return `Promo ends: ${promoEnd.toLocaleString('en-US', {
-            timeZone: 'Africa/Lagos',
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit',
-          })} (Africa/Lagos)`;
-        }
-      }
-      return 'Promo mode active: premium unlocked for your account';
-    }
 
-    if (entitlements.entitlementSource === 'paid' && entitlements.entitlementEndsAt) {
-      const expires = new Date(entitlements.entitlementEndsAt);
-      if (!Number.isNaN(expires.getTime())) {
-        return `Renews/Expires: ${expires.toLocaleDateString(undefined, {
-          month: 'short',
-          day: 'numeric',
-          year: 'numeric',
-        })}`;
-      }
-    }
-
-    if (entitlements.entitlementSource === 'paid' && entitlements.hasPro) {
-      return 'Paid Pro entitlement active';
-    }
-
-    if (isUsingCachedEntitlements && !isOnline) {
-      return entitlementsCachedAt
-        ? `Offline safe mode (cached ${new Date(entitlementsCachedAt).toLocaleTimeString()})`
-        : 'Offline safe mode';
-    }
-
-    return 'No active paid entitlement';
-  }, [
-    entitlements.entitlementEndsAt,
-    entitlements.entitlementSource,
-    entitlements.hasPro,
-    entitlements.promoActive,
-    entitlements.promoEndsAtLagos,
-    entitlementsCachedAt,
-    hasResolvedPlanState,
-    isOnline,
-    isUsingCachedEntitlements,
-  ]);
 
   const handleWhatsAppRedirect = () => {
     const phoneNumber = '2349036553377';
@@ -804,78 +676,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   return (
     <>
       <UpgradeModal />
-      {/* Google Auth Popup */}
-      <AnimatePresence>
-        {showAuthPopup && (
-          <Dialog open={showAuthPopup} onOpenChange={handleAuthCancelAttempt}>
-            <DialogContent 
-              className="sm:max-w-[425px] overflow-hidden [&>button]:hidden" 
-              onPointerDownOutside={(e) => e.preventDefault()} 
-              onEscapeKeyDown={(e) => e.preventDefault()}
-            >
-              <DialogHeader>
-                <DialogTitle className="text-center font-headline text-2xl">Authenticating</DialogTitle>
-                <DialogDescription className="text-center text-base">
-                  Connecting to Google to secure your account...
-                </DialogDescription>
-              </DialogHeader>
-              <div className="flex flex-col items-center justify-center py-10 space-y-8">
-                <div className="relative w-28 h-28">
-                  <motion.div
-                    className="absolute inset-0 border-4 border-primary/20 border-t-primary rounded-full"
-                    animate={{ rotate: 360 }}
-                    transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                  />
-                  <motion.div
-                    className="absolute inset-0 flex items-center justify-center"
-                    animate={{ scale: [1, 1.1, 1] }}
-                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-                  >
-                    <Icons.google className="w-12 h-12" />
-                  </motion.div>
-                </div>
-                
-                <motion.div 
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.5 }}
-                  className="flex flex-col items-center gap-3"
-                >
-                  <div className="flex items-center gap-2 text-sm font-semibold text-primary">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Verifying credentials...</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground px-6 text-center">
-                    Please do not close this window until authentication is complete.
-                  </p>
-                </motion.div>
-              </div>
-            </DialogContent>
-          </Dialog>
-        )}
-      </AnimatePresence>
-
-      {/* Auth Cancel Confirmation */}
-      <AlertDialog open={showAuthCancelConfirm} onOpenChange={setShowAuthCancelConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="font-headline text-xl text-destructive">Stop Authentication?</AlertDialogTitle>
-            <AlertDialogDescription className="text-base">
-              Are you sure you want to cancel the authentication process? This will prevent you from saving your progress.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="gap-2 sm:gap-0">
-            <AlertDialogCancel className="font-medium">Continue Auth</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={confirmAuthCancel}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 font-medium"
-            >
-              Stop & Cancel
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
       <AlertDialog open={showSignOutPopup} onOpenChange={(open) => {
         if (!isSigningOut) setShowSignOutPopup(open);
       }}>
@@ -938,9 +738,6 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               userDisplayName={userDisplayName}
               userEmail={userEmail}
               planStatusLabel={planStatusLabel}
-              planStatusBadge={planStatusBadge}
-              planStatusMeta={planStatusMeta}
-              isPlanStatusLoading={isPlanStatusLoading}
               onOpenGuide={() => setIsSiteGuideOpen(true)}
             />
           </Sidebar>

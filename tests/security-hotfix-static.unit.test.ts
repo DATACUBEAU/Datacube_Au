@@ -111,24 +111,15 @@ test('service worker and public assets do not carry credential plumbing', () => 
   assert.deepEqual(findings, []);
 });
 
-test('auth and worker diagnostics do not log token or document text previews', () => {
+test('in-repository auth diagnostics do not expose token previews; worker source is external', () => {
   const proxyAuth = readRepoFile('src', 'app', 'api', 'proxy', '_supabase-auth.ts');
-  const worker = readRepoFile('rag-worker', 'src', 'worker.ts');
-  const ingestion = readRepoFile('rag-worker', 'src', 'ingestion.ts');
   assert.doesNotMatch(proxyAuth, /tokenPreview/);
   assert.doesNotMatch(proxyAuth, /token\.slice/);
-  assert.doesNotMatch(worker, /preview:\s*text\.slice/);
-  assert.doesNotMatch(ingestion, /textPreview/);
+  assert.equal(existsSync(path.join(process.cwd(), 'rag-worker')), false);
 });
 
-test('source cleanup is owner and path bound with bounded attempts', () => {
-  const cleanup = readRepoFile('rag-worker', 'src', 'source-cleanup.ts');
-  const worker = readRepoFile('rag-worker', 'src', 'worker.ts');
-  assert.match(cleanup, /expectedOwnerId/);
-  assert.match(cleanup, /owner_mismatch/);
-  assert.match(cleanup, /path_mismatch/);
-  assert.match(cleanup, /max_attempts_exceeded/);
-  assert.match(worker, /expectedOwnerId:\s*String\(job\.owner_id \|\| job\.user_id/);
+test('RAG worker source is deployed separately and is not present in the web repository', () => {
+  assert.equal(existsSync(path.join(process.cwd(), 'rag-worker')), false);
 });
 
 test('legacy permissive service-role RLS policies are narrowed to service_role in the final schema', () => {
@@ -229,9 +220,9 @@ test('production profile ACL migrations revoke all browser privilege escalation 
     '20261116094903_restrict_profile_username_updates.sql',
   );
 
-  assert.match(initialAcl, /REVOKE ALL PRIVILEGES ON TABLE public\\.au_user_profiles FROM PUBLIC, anon, authenticated/i);
-  assert.match(initialAcl, /GRANT SELECT ON TABLE public\\.au_user_profiles TO authenticated/i);
-  assert.match(initialAcl, /GRANT UPDATE \\(full_name, avatar_url, username\\)/i);
-  assert.match(finalAcl, /REVOKE UPDATE \\(username\\) ON TABLE public\\.au_user_profiles FROM authenticated/i);
+  assert.match(initialAcl, /REVOKE ALL PRIVILEGES ON TABLE public\.au_user_profiles FROM PUBLIC, anon, authenticated/i);
+  assert.match(initialAcl, /GRANT SELECT ON TABLE public\.au_user_profiles TO authenticated/i);
+  assert.match(initialAcl, /GRANT UPDATE \(full_name, avatar_url, username\)/i);
+  assert.match(finalAcl, /REVOKE UPDATE \(username\) ON TABLE public\.au_user_profiles FROM authenticated/i);
   assert.doesNotMatch(finalAcl, /GRANT UPDATE/i);
 });

@@ -23,7 +23,7 @@ async function main() {
   await run('browser Supabase client uses PKCE for code-based callback exchange', () => {
     const client = readRepoFile('src', 'lib', 'supabase-client', 'client.ts');
     assert.match(client, /flowType: 'pkce'/);
-    assert.match(client, /detectSessionInUrl: true/);
+    assert.match(client, /detectSessionInUrl: false/);
   });
 
   await run('callback exchanges only when OAuth code exists', () => {
@@ -40,7 +40,7 @@ async function main() {
     const redirects = readRepoFile('src', 'lib', 'auth', 'redirects.ts');
     assert.match(callback, /searchParams\.get\('error'\)/);
     assert.match(callback, /provider_error/);
-    assert.match(callback, /sanitizeLocalRedirectPath\(searchParams\.get\('next'\)\)/);
+    assert.match(callback, /sanitizeLocalRedirectPath\(searchParams\.get\('next'\), '\/'\)/);
     assert.match(redirects, /!candidate\.startsWith\('\/'\) \|\| candidate\.startsWith\('\/\/'\)/);
     assert.match(redirects, /AUTH_PUBLIC_PREFIXES/);
     assert.match(redirects, /isPublicAuthPath\(parsed\.pathname\)/);
@@ -52,6 +52,9 @@ async function main() {
     const smartAuth = readRepoFile('src', 'hooks', 'use-smart-auth.tsx');
     assert.match(callback, /syncServerAuthSessionCookie\(session\)/);
     assert.match(callback, /markAuthSessionRestored\('auth-callback'\)/);
+    assert.match(callback, /\/conex\/users\?mode=access/);
+    assert.match(callback, /accessResponse = await fetch/);
+    assert.match(callback, /router\.replace\('\/conex'\)/);
     assert.match(smartAuth, /fresh_session_detected/);
     assert.match(smartAuth, /window\.location\.pathname\.startsWith\('\/auth\/callback'\)/);
   });
@@ -61,15 +64,16 @@ async function main() {
     const dashboard = readRepoFile('src', 'app', 'dashboard', 'dashboard-client-layout.tsx');
     const settings = readRepoFile('src', 'app', 'dashboard', 'settings', 'page.tsx');
     assert.match(smartAuth, /\/auth\/callback\?next=/);
-    assert.match(dashboard, /\/auth\/callback\?next=/);
+    assert.match(dashboard, /signInWithGoogle\('\/dashboard'\)/);
     assert.match(settings, /\/auth\/callback\?next=/);
   });
 
-  await run('signed-out restore remains unauthenticated without breaking auth forms', () => {
+  await run('signed-out restore remains unauthenticated while Google-only entry stays available', () => {
     const stateTest = readRepoFile('tests', 'auth-state-hardening.unit.test.ts');
-    const entryTest = readRepoFile('tests', 'auth-entry-flow.unit.test.ts');
+    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
     assert.match(stateTest, /UNAUTHENTICATED/);
-    assert.match(entryTest, /no session or restoring auth does not remove login\/signup entry actions/);
+    assert.match(login, /Continue with Google/);
+    assert.doesNotMatch(login, /signInWithPassword|signUp\\(/);
   });
 
   if (failed > 0) {

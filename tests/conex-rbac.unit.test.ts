@@ -34,18 +34,19 @@ run('isRootConexAdmin allows only the protected owner id', () => {
   assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', 'not-admin@example.com'), false);
 });
 
-run('hasConexAccess allows only the protected owner and ignores browser-visible tier claims', () => {
+run('hasConexAccess uses the verified Supabase profile tier and denies ordinary users', () => {
   assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: 'user@example.com', tier: 'free' }), true);
-  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'admin' }), false);
+  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'admin@example.com', tier: 'admin' }), true);
   assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'free' }), false);
+  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: null }), false);
 });
 
-run('missing protected owner configuration fails closed', () => {
+run('database admin profile remains authorized without the protected-owner fallback', () => {
   const previous = process.env.DATACUBE_OWNER_ADMIN_USER_ID;
   delete process.env.DATACUBE_OWNER_ADMIN_USER_ID;
   try {
     assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, CONEX_ROOT_ADMIN_EMAIL), false);
-    assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), false);
+    assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), true);
   } finally {
     process.env.DATACUBE_OWNER_ADMIN_USER_ID = previous;
   }

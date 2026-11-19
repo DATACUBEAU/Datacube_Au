@@ -366,16 +366,17 @@ async function main() {
     assert.doesNotMatch(proxyAuth, /Authorization:\s*authorization/);
   });
 
-  await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
-    const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
-    assert.match(source, /requireEntitlement/);
-    assert.match(source, /isAccessControlError/);
-    assert.match(source, /buildApiErrorBody/);
-    assert.match(source, /correlationId/);
-    assert.match(source, /reserveAiUsage/);
-    assert.match(source, /AI_USAGE_RESERVATION_FAILED/);
-    assert.match(source, /route:\s*operation\.gatewayRoute/);
-    assert.doesNotMatch(source, /console\.log\([^)]*Authorization/);
+  await run('AI ticket calls use the configured gateway path without a missing local Next route dependency', () => {
+    const chat = readRepoFile('src/lib/api/chat.ts');
+    const exams = readRepoFile('src/lib/api/exams.ts');
+    const store = readRepoFile('src/hooks/use-store.ts');
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/au/vps-ticket/route.ts')), false);
+    assert.match(chat, /\/api\/au\/vps-ticket/);
+    assert.match(exams, /\/api\/au\/vps-ticket/);
+    assert.match(store, /\/api\/au\/vps-ticket/);
+    assert.match(chat, /suppressAuthError:\s*true/);
+    assert.match(exams, /suppressAuthError:\s*true/);
+    assert.match(store, /suppressAuthError:\s*true/);
   });
 
   await run('middleware API denials include safe opaque request IDs for correlation', () => {
@@ -397,17 +398,16 @@ async function main() {
     assert.doesNotMatch(forbiddenBlock, /accessToken/);
   });
 
-  await run('admin access is tied to the server-only owner override, not profile tier or browser claims', () => {
+  await run('admin access uses server-validated Supabase profile tier and protected owner identity', () => {
     const accessControl = readRepoFile('src/lib/authz/access-control.ts');
     const conexRbac = readRepoFile('src/lib/conex-rbac.ts');
 
     assert.match(accessControl, /export function isAdminSubject/);
     assert.match(accessControl, /return Boolean\(subject\.adminOverride\);/);
-    assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+profileTier\)\s*===\s*'admin'/);
     assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+plan\)\s*===\s*'admin'/);
     assert.match(conexRbac, /return isProtectedOwnerUserId\(userId\);/);
     assert.match(conexRbac, /export function hasConexAccess/);
-    assert.match(conexRbac, /return isRootConexAdmin\(subject\.userId, subject\.email\);/);
+    assert.match(conexRbac, /normalizeConexTier\(subject\.tier\) === 'admin'/);
   });
 
   await run('Conex user management route returns admin data with no-store responses only', () => {

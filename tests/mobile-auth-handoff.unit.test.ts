@@ -78,9 +78,8 @@ assert.match(fallback, /Authentication successful/);
 assert.match(fallback, /appMissing/);
 assert.match(fallback, /not installed or could not be opened/);
 
-assert.match(websiteLogin, /supabase\.auth\.signInWithPassword/);
-assert.match(websiteLogin, /supabase\.auth\.signUp/);
 assert.match(websiteLogin, /signInWithGoogle/);
+assert.doesNotMatch(websiteLogin, /signInWithPassword|signUp\(/);
 assert.match(websiteCallback, /exchangeCodeForSession\(code\)/);
 assert.match(websiteCallback, /syncServerAuthSessionCookie\(session\)/);
 
