@@ -1,6 +1,7 @@
 package au.datacube.app.ui.auth
 
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -10,7 +11,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -40,16 +39,15 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import au.datacube.app.R
 
-private val AuthNavy = Color(0xFF071426)
 private val AuthBlue = Color(0xFF318BFF)
 private val AuthCyan = Color(0xFF78D5FF)
 private val AuthMuted = Color(0xFFB8C9DE)
@@ -61,7 +59,6 @@ fun AuthScreen(
     onOpenWebsite: (String) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
-    val colors = MaterialTheme.colorScheme
 
     val motion = rememberInfiniteTransition(label = "auth-background-motion")
     val drift by motion.animateFloat(
@@ -76,9 +73,7 @@ fun AuthScreen(
     val orbit by motion.animateFloat(
         initialValue = 0f,
         targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(26000, easing = androidx.compose.animation.core.LinearEasing)
-        ),
+        animationSpec = infiniteRepeatable(animation = tween(26000, easing = LinearEasing)),
         label = "logo-orbit"
     )
     val breathe by motion.animateFloat(
@@ -124,7 +119,7 @@ fun AuthScreen(
                 center = Offset(w * 0.92f, h * 0.70f)
             )
 
-            // Perspective floor grid: restrained lines create depth without a heavy 3D asset.
+            // Subtle perspective grid adds depth without a heavy 3D asset.
             val horizon = h * 0.58f
             for (index in 0..12) {
                 val x = w * index / 12f
@@ -155,10 +150,7 @@ fun AuthScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Box(
-                modifier = Modifier.size(154.dp),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.size(154.dp), contentAlignment = Alignment.Center) {
                 Box(
                     modifier = Modifier
                         .size(142.dp)
@@ -170,11 +162,7 @@ fun AuthScreen(
                         .drawBehind {
                             drawCircle(
                                 brush = Brush.radialGradient(
-                                    listOf(
-                                        Color(0x66318BFF),
-                                        Color(0x22318BFF),
-                                        Color.Transparent
-                                    )
+                                    listOf(Color(0x66318BFF), Color(0x22318BFF), Color.Transparent)
                                 ),
                                 radius = size.minDimension * 0.50f
                             )
@@ -216,7 +204,7 @@ fun AuthScreen(
                 style = MaterialTheme.typography.labelLarge,
                 color = AuthCyan,
                 fontWeight = FontWeight.Bold,
-                letterSpacing = androidx.compose.ui.unit.TextUnit(3f, androidx.compose.ui.unit.TextUnitType.Sp)
+                letterSpacing = 3.sp
             )
             Spacer(Modifier.height(12.dp))
             Text(
@@ -238,9 +226,7 @@ fun AuthScreen(
             Button(
                 onClick = { viewModel.createWebsiteLoginUrl("login")?.let(onOpenWebsite) },
                 enabled = !state.isLoading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
+                modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF247CEB),
@@ -263,9 +249,7 @@ fun AuthScreen(
             OutlinedButton(
                 onClick = { viewModel.createWebsiteLoginUrl("signup")?.let(onOpenWebsite) },
                 enabled = !state.isLoading,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(54.dp),
+                modifier = Modifier.fillMaxWidth().height(54.dp),
                 shape = RoundedCornerShape(18.dp),
                 border = BorderStroke(1.dp, Color(0x668CBFFF)),
                 colors = ButtonDefaults.outlinedButtonColors(
