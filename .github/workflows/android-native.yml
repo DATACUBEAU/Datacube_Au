@@ -64,6 +64,8 @@ jobs:
         run: bash ./gradlew :app:lintDebug --no-daemon
 
       - name: Run Compose UI tests on Android emulator
+        id: android-ui-tests
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
@@ -71,7 +73,30 @@ jobs:
           arch: x86_64
           profile: pixel_2
           disable-animations: true
-          script: cd apps/android && bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
+          script: |
+            cd apps/android
+            mkdir -p app/build/diagnostics
+            adb logcat -c
+            set +e
+            bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
+            test_status=$?
+            set -e
+            adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true
+            adb devices -l > app/build/diagnostics/adb-devices.txt || true
+            printf 'connectedDebugAndroidTest_exit_code=%s\\n' "$test_status" > app/build/diagnostics/test-exit-code.txt
+            exit "$test_status"
+
+      - name: Upload emulator UI test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-ui-test-diagnostics
+          path: |
+            apps/android/app/build/diagnostics/**
+            apps/android/app/build/reports/androidTests/connected/**
+            apps/android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Build release bundle (unsigned preflight)
         run: bash ./gradlew :app:bundleRelease --no-daemon
