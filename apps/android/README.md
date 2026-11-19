@@ -1,37 +1,58 @@
 # DataCube AU — Native Android
 
-Kotlin + Jetpack Compose Android application. The Flutter project in `apps/mobile` remains a reference until native feature parity is implemented and verified.
+Native Kotlin + Jetpack Compose application. The Flutter project in `apps/mobile` remains a legacy reference and is not the active customer app.
 
 ## Implemented native slices
 
-- Five-tab application shell: Home, Documents, Study, AU Chat, Profile.
-- Compose Material 3 UI.
-- Room-backed document metadata and versioned database migration.
-- Android Storage Access Framework import into app-private storage.
-- PDF, DOCX, TXT, RTF and Markdown import selection with a 100 MB per-file limit.
-- A durable Room job is committed in the same transaction as each imported document.
-- WorkManager receives only durable job IDs; workers reload document references from Room.
-- Local document integrity verification using streaming SHA-256; the fingerprint is stored as metadata.
-- Local UTF-8 text extraction for TXT and Markdown files, with BOM handling and newline normalization.
-- Extracted text is written atomically to app-private storage; it is not stored in Room or uploaded.
-- Unique work, retry/backoff, recoverable queued/running jobs and generic completion notifications.
-- Existing TXT/Markdown documents are backfilled into the extraction queue when the app starts.
-- No document bytes, extracted text, prompts or embeddings are sent to a server by this pipeline.
+- Five-item application navigation: Home, Documents, Study, AU Chat and Profile.
+- Compose Material 3 theme tokens and the black/white/blue visual system.
+- Home dashboard with active documents, recent files and document-scoped quick ask.
+- Multi-file Android Storage Access Framework import into app-private storage.
+- Room-backed document metadata, collections and collection membership with versioned migrations.
+- Durable Room import/extraction jobs scheduled by WorkManager; recovery is attempted at app startup.
+- Streaming SHA-256 integrity verification for imported files.
+- Local UTF-8 text extraction for TXT and Markdown files (up to 20 MB) with BOM/newline handling.
+- Local PDF text extraction using PDFium, preserving page boundaries for citations (up to 100 MB).
+- Extracted text is written atomically to app-private storage, not to Room or cloud storage.
+- Document workspace with AU Chat, Smart Note, Prediction, Practice and Podcast tabs.
+- AU Chat currently performs local lexical matching against extracted text and shows page references; it is not yet semantic RAG or generative AI.
+- Smart Note currently builds extractive notes and a heuristic concept map from detected headings and recurring terms.
+- Prediction currently builds a revision outline and prompts from detected topics; it does not provide probability scores or claim to forecast an exam.
+- Practice currently provides configurable self-study prompts, answer capture and source-passage review; it does not automatically grade answers.
+- Podcast currently uses Android TextToSpeech to narrate extracted passages; it does not create or upload an audio file.
+- Empty, loading and extraction error states are surfaced in the relevant document tools.
+- Compose UI tests cover Home, Documents, collection workspace and document study-tool interactions.
+
+## Local-first data boundary
+
+Imported document bytes and extracted text remain inside app-private storage. Room stores local metadata and job state. The current study helpers operate on the locally extracted preview; they do not upload source text, prompts or generated audio. Do not describe these deterministic local helpers as the production AU AI/RAG runtime.
 
 ## Target architecture
 
-Kotlin, Compose, MVVM, Coroutines/Flow, Room, WorkManager, Android Keystore, local-first document intelligence and provider-independent DIMR. Cloud inference remains optional and consent-based.
+Kotlin, Jetpack Compose, MVVM, Coroutines/Flow, Room, WorkManager, Android Keystore, local-first document intelligence and provider-independent DIMR. Cloud inference should remain optional and consent-based.
 
-## Build
+## Build and verification
 
-JDK 17 + Android SDK 35. From this directory:
+The GitHub Actions workflow uses JDK 21 and Android SDK 35. From this directory:
 
 ```sh
-gradle :app:assembleDebug
+./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleDebug
+./gradlew :app:lintDebug
+./gradlew :app:connectedDebugAndroidTest
+./gradlew :app:bundleRelease
 ```
 
-## Not yet migrated
+The CI release bundle is an unsigned preflight artifact, not a Play Store-ready signed release.
 
-Supabase authentication/session handling, secure browser sign-in callbacks, PDF/DOCX/RTF text extraction and OCR, chunking, embeddings, local vector search, model discovery/runtime, RAG chat, study generation, billing/entitlements, rewarded ads, analytics and production hardening.
+## Remaining migration and product gaps
 
-The SHA-256 worker verifies that a copied file remains readable and stable; it is not document extraction or AI indexing. Text extraction currently supports UTF-8 TXT/Markdown files up to 20 MB. PDF, DOCX and RTF remain import-only until their parsers are added. Notification permission is declared but is not requested automatically. This is still an incremental migration, not complete Flutter feature parity.
+- DOCX/RTF parsing and OCR for scanned PDFs.
+- Chunking, embeddings, local vector indexing and semantic retrieval.
+- Production RAG chat and model gateway integration for document-aware AI.
+- AI-generated Smart Notes, actual exam prediction and generated/streamable podcast audio.
+- Automatic practice grading and durable study-session history.
+- Complete entitlement/billing enforcement and production app configuration.
+- Additional device testing across Android versions, screen sizes, accessibility settings and real hardware.
+
+Authentication, import and local processing have native implementations, but production readiness still requires the full CI gate, real-device verification and review of backend/entitlement boundaries.
