@@ -27,6 +27,17 @@ Native Kotlin + Jetpack Compose application. The Flutter project in `apps/mobile
 
 Imported document bytes and extracted text remain inside app-private storage. Room stores local metadata and job state. The current study helpers operate on the locally extracted preview; they do not upload source text, prompts or generated audio. Do not describe these deterministic local helpers as the production AU AI/RAG runtime.
 
+## Local AI model backup and restore
+
+- Installed model artifacts use the app-private location `files/models/installed/<model-id>/`.
+- Temporary downloads must stay outside that installed directory. Only complete model folders in the installed directory are exported.
+- Profile settings provides **Export model backup** and **Restore from backup** actions.
+- Export creates one portable ZIP file through Android's Storage Access Framework. The user chooses the destination, including Documents, an SD card, USB storage or a connected cloud document provider.
+- The archive includes every installed model file plus a versioned manifest containing file sizes and SHA-256 checksums. Partial `.part` and `.tmp` files are excluded.
+- Restore verifies the manifest, paths, file sizes and checksums before installing any model. It rejects unsafe paths, duplicate entries, incomplete archives and attempts to overwrite an installed model.
+- Model data is copied into app-private installed storage after verification; the exported ZIP remains in the user-selected external location and can be selected again after reinstalling the app.
+- This backup foundation does not yet implement model discovery, Hugging Face downloads, model inference, or model activation. The future model download manager must install into the documented directory and write only complete model folders there.
+
 ## Target architecture
 
 Kotlin, Jetpack Compose, MVVM, Coroutines/Flow, Room, WorkManager, Android Keystore, local-first document intelligence and provider-independent DIMR. Cloud inference should remain optional and consent-based.
