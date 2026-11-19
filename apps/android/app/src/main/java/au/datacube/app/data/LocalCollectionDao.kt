@@ -38,6 +38,9 @@ interface LocalCollectionDao {
     @Query("DELETE FROM local_collection_documents WHERE collectionId = :id")
     suspend fun clearMemberships(id: String)
 
+    @Query("DELETE FROM local_collection_documents WHERE collectionId = :collectionId AND documentId = :documentId")
+    suspend fun removeDocument(collectionId: String, documentId: String)
+
     @Query("DELETE FROM local_collections WHERE id = :id")
     suspend fun delete(id: String)
 }
