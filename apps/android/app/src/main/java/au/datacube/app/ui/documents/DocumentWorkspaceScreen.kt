@@ -38,7 +38,8 @@ fun DocumentWorkspaceScreen(
     previewTruncated: Boolean,
     previewLoading: Boolean,
     previewError: String?,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    initialPrompt: String? = null
 ) {
     var selectedTab by remember(document.id) { mutableIntStateOf(0) }
 
@@ -131,6 +132,7 @@ fun DocumentWorkspaceScreen(
         when (selectedTab) {
             0 -> DocumentChatWorkspace(
                 documentName = document.name,
+                initialPrompt = initialPrompt,
                 textPreview = textPreview,
                 previewLoading = previewLoading,
                 previewError = previewError,
