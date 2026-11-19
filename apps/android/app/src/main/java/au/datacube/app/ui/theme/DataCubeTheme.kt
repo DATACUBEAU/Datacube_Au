@@ -77,8 +77,15 @@ private val LightColors = lightColorScheme(
     onPrimary = DataCubeColors.White,
     primaryContainer = DataCubeColors.BlueLight,
     onPrimaryContainer = DataCubeColors.Navy,
+    inversePrimary = DataCubeColors.BlueDark,
     secondary = DataCubeColors.BlueDark,
     onSecondary = DataCubeColors.White,
+    secondaryContainer = DataCubeColors.BlueLight,
+    onSecondaryContainer = DataCubeColors.Navy,
+    tertiary = DataCubeColors.Blue,
+    onTertiary = DataCubeColors.White,
+    tertiaryContainer = DataCubeColors.BlueLight,
+    onTertiaryContainer = DataCubeColors.Navy,
     background = DataCubeColors.BluePale,
     onBackground = DataCubeColors.Black,
     surface = DataCubeColors.White,
@@ -88,7 +95,11 @@ private val LightColors = lightColorScheme(
     outline = Color(0xFFB9D2F5),
     outlineVariant = DataCubeColors.Divider,
     error = DataCubeColors.BlueDark,
-    onError = DataCubeColors.White
+    onError = DataCubeColors.White,
+    errorContainer = DataCubeColors.BlueLight,
+    onErrorContainer = DataCubeColors.Navy,
+    inverseSurface = DataCubeColors.Navy,
+    inverseOnSurface = DataCubeColors.White
 )
 
 private val DarkColors = darkColorScheme(
@@ -96,6 +107,15 @@ private val DarkColors = darkColorScheme(
     onPrimary = DataCubeColors.Navy,
     primaryContainer = DataCubeColors.Navy,
     onPrimaryContainer = DataCubeColors.BlueLight,
+    inversePrimary = DataCubeColors.Blue,
+    secondary = Color(0xFF79B5FF),
+    onSecondary = DataCubeColors.Navy,
+    secondaryContainer = DataCubeColors.Navy,
+    onSecondaryContainer = DataCubeColors.BlueLight,
+    tertiary = Color(0xFF79B5FF),
+    onTertiary = DataCubeColors.Navy,
+    tertiaryContainer = DataCubeColors.Navy,
+    onTertiaryContainer = DataCubeColors.BlueLight,
     background = Color(0xFF081426),
     onBackground = DataCubeColors.White,
     surface = Color(0xFF10213A),
@@ -105,7 +125,11 @@ private val DarkColors = darkColorScheme(
     outline = Color(0xFF477CB9),
     outlineVariant = Color(0xFF29486D),
     error = Color(0xFF79B5FF),
-    onError = DataCubeColors.Navy
+    onError = DataCubeColors.Navy,
+    errorContainer = DataCubeColors.Navy,
+    onErrorContainer = DataCubeColors.BlueLight,
+    inverseSurface = DataCubeColors.BluePale,
+    inverseOnSurface = DataCubeColors.Black
 )
 
 @Composable
