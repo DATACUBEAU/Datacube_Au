@@ -60,7 +60,7 @@
     "repro:upload-complete": "node scripts/repro-complete-upload.mjs",
     "supabase:db:push": "supabase --workdir . db push",
     "supabase:functions:deploy": "supabase --workdir . functions deploy",
-    "test:mobile-auth-handoff": "pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/mobile-auth-handoff.unit.test.ts && node -e \"require('node:fs').writeFileSync('.tmp-tests/package.json', '{\\\\\\\"type\\\\\\\":\\\\\\\"commonjs\\\\\\\"}')\" && node .tmp-tests/tests/mobile-auth-handoff.unit.test.js"
+    "test:mobile-auth-handoff": "pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/mobile-auth-handoff.unit.test.ts && node -e \"require('node:fs').writeFileSync('.tmp-tests/package.json', '{\\\\\\\"type\\\\\\\":\\\\\\\"commonjs\\\\\\\"}')\" && node .tmp-tests/mobile-auth-handoff.unit.test.js"
   },
   "dependencies": {
     "@ducanh2912/next-pwa": "^10.2.9",
