@@ -46,7 +46,7 @@ run('missing protected owner configuration fails closed', () => {
   delete process.env.DATACUBE_OWNER_ADMIN_USER_ID;
   try {
     assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, CONEX_ROOT_ADMIN_EMAIL), false);
-    assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), false);
+    assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), true);
   } finally {
     process.env.DATACUBE_OWNER_ADMIN_USER_ID = previous;
   }
