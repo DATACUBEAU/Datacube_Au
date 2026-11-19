@@ -22,40 +22,31 @@ async function run(name: string, fn: AsyncTest) {
 }
 
 async function main() {
-  await run('no session or restoring auth does not remove login/signup entry actions', () => {
+  await run('website authentication exposes Google OAuth only', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /signInWithPassword/);
-    assert.match(login, /signUp/);
-    assert.match(login, /TabsTrigger value="login"/);
-    assert.match(login, /TabsTrigger value="signup"/);
-    assert.match(login, /disabled=\{isLoadingEmail \|\| !email\.trim\(\) \|\| !password \|\| \(authMode === 'signup' && !username\.trim\(\)\)\}/);
-    assert.match(login, /validateUsername\(username\)/);
-    assert.match(login, /disabled=\{isLoadingGoogle\}/);
-    assert.doesNotMatch(login, /disabled=\{[^}]*isSmartLoading/);
-    assert.doesNotMatch(login, /if \(isUserLoading \|\| isResolvingRedirect\)/);
-    assert.match(login, /isResolvingRedirect \|\| \(isUserLoading && Boolean\(user\)\)/);
+    assert.equal(login.includes('signInWithGoogle'), true);
+    assert.equal(login.includes('Icons.google'), true);
+    assert.equal(login.includes('Continue with Google'), true);
+    assert.equal(login.includes('disabled={isLoadingGoogle}'), true);
+    for (const retiredControl of ['signInWithPassword', 'signUp', 'PasswordInput', 'type="password"', '<form', '<Input', 'TabsTrigger', 'Create an account', 'Sign Up']) {
+      assert.equal(login.includes(retiredControl), false, `retired credential control found: ${retiredControl}`);
+    }
   });
 
-  await run('login success syncs server auth cookie and redirects to dashboard target', () => {
+  await run('Google OAuth restores the server session and preserves protected redirect targets', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /supabase\.auth\.signInWithPassword/);
-    assert.match(login, /syncServerAuthSessionCookie\(data\.session\)/);
-    assert.match(login, /router\.replace\(safeRedirectPath\)/);
-    assert.match(login, /Email or password is incorrect\./);
-  });
-
-  await run('signup success redirects or shows a clear email confirmation message', () => {
-    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /supabase\.auth\.signUp/);
-    assert.match(login, /emailRedirectTo/);
-    assert.match(login, /\/auth\/callback\?next=/);
-    assert.match(login, /Check your email to confirm your account, then sign in\./);
-    assert.match(login, /Account created/);
+    assert.equal(login.includes('syncServerAuthSessionCookie(activeSession)'), true);
+    assert.equal(login.includes('router.replace(safeRedirectPath)'), true);
+    assert.equal(login.includes("fetch('/conex/users?mode=access'"), true);
+    assert.equal(login.includes("safeRedirectPath === '/conex'"), true);
+    assert.equal(login.includes('signInWithGoogle(safeRedirectPath)'), true);
+    assert.equal(login.includes('isResolvingRedirect || (isUserLoading && Boolean(user))'), true);
   });
 
   await run('OAuth uses a public callback route instead of redirecting directly to protected pages', () => {
     const smartAuth = readRepoFile('src', 'hooks', 'use-smart-auth.tsx');
     assert.match(smartAuth, /\/auth\/callback\?next=\$\{encodeURIComponent\(safePath\)\}/);
+    assert.match(smartAuth, /queryParams: \{ prompt: 'select_account' \}/);
     assert.doesNotMatch(smartAuth, /window\.location\.origin\}\$\{safePath\}/);
   });
 
@@ -92,6 +83,12 @@ async function main() {
     assert.doesNotMatch(accessControl, /pathname: '\/signup'/);
     assert.doesNotMatch(accessControl, /pathname: '\/auth\/callback'/);
     assert.match(signup, /export \{ default \} from '..\/login\/page'/);
+  });
+
+  await run('non-admin Conex visits are returned to the normal-user checkout surface', () => {
+    const middleware = readRepoFile('src', 'middleware.ts');
+    assert.match(middleware, /pathname === '\/conex' \|\| pathname\.startsWith\('\/conex\/'\)/);
+    assert.match(middleware, /\? '\/checkout'\s*: '\/403'/);
   });
 
   await run('safeFetch and service worker recovery do not own login/signup submit state', () => {

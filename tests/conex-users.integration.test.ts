@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 
 const TEST_OWNER_USER_ID = '11111111-1111-4111-8111-111111111111';
-const TEST_OWNER_EMAIL = 'owner@example.test';
 process.env.DATACUBE_OWNER_ADMIN_USER_ID = TEST_OWNER_USER_ID;
-process.env.CONEX_ROOT_ADMIN_EMAIL = TEST_OWNER_EMAIL;
 
 const {
   CONEX_ROOT_ADMIN_EMAIL,

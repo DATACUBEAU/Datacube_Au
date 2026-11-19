@@ -112,18 +112,20 @@ async function main() {
     assert.equal(source.includes("source: 'useAuChat.sendMessage'"), false);
   });
 
-  await run('AI ticket requests suppress global 401 expiry and preserve structured error handling', () => {
+  await run('retired browser AI helpers fail closed with the native-app-required contract', () => {
     const chat = readRepoFile('src/lib/api/chat.ts');
     const exams = readRepoFile('src/lib/api/exams.ts');
     const store = readRepoFile('src/hooks/use-store.ts');
+    const retiredHelper = readRepoFile('src/lib/api/mobile-app-required.ts');
 
-    assert.match(chat, /throwResponseApiError/);
-    assert.match(chat, /message:\s*'Sign in required\.'/);
-    assert.match(chat, /suppressAuthError:\s*true/);
-    assert.match(exams, /message:\s*'Sign in required\.'/);
-    assert.match(exams, /suppressAuthError:\s*true/);
-    assert.match(store, /message:\s*'Sign in required\.'/);
-    assert.match(store, /suppressAuthError:\s*true/);
+    assert.match(chat, /throwMobileAppRequired/);
+    assert.match(exams, /throwMobileAppRequired/);
+    assert.match(store, /notifyNativeAppRequired/);
+    assert.match(retiredHelper, /code: 'MOBILE_APP_REQUIRED'/);
+    assert.match(retiredHelper, /status: 410/);
+    assert.equal(chat.includes('/api/au/vps-ticket'), false);
+    assert.equal(exams.includes('/api/au/vps-ticket'), false);
+    assert.equal(store.includes('/api/au/vps-ticket'), false);
   });
 
   await run('support escalation uses configured public email and does not hardcode the deployment domain', () => {
@@ -189,16 +191,13 @@ async function main() {
     assert.match(source, /docTextInFlightRequests/);
   });
 
-  await run('available chat models are server-routed and prompt starters use the VPS ticket path', () => {
+  await run('browser model discovery is retired and does not expose a remote inference route', () => {
     const source = readRepoFile('src/lib/api/chat.ts');
     assert.match(source, /getAvailableModels\(\): Promise<string\[\]>/);
-    assert.match(source, /return DEFAULT_MODEL_IDS/);
-    assert.match(source, /createAiIdempotencyKey\('prompt_starters'\)/);
-    assert.match(source, /feature:\s*'generate-prompt-starters'/);
-    assert.match(source, /hasDocId \? undefined : documentContent/);
-    assert.match(source, /\/api\/au\/vps-ticket/);
-    assert.equal(source.includes('AVAILABLE_MODELS_CACHE_TTL_MS'), false);
-    assert.equal(source.includes('availableModelsInFlight'), false);
+    assert.match(source, /return \[\]/);
+    assert.match(source, /throwMobileAppRequired/);
+    assert.doesNotMatch(source, /\/api\/au\/vps-ticket/);
+    assert.equal(source.includes('VPS_AI_GATEWAY_URL'), false);
   });
 
   await run('chat duplicate sends are blocked while the same prompt is already in flight', () => {
@@ -276,22 +275,23 @@ async function main() {
     assert.equal(routeSource.includes('model:'), false);
   });
 
-  await run('generation flows pass document IDs/idempotency keys and use shared user-facing error messaging', () => {
+  await run('browser generation actions are retired and direct users to native processing', () => {
     const storeSource = readRepoFile('src/hooks/use-store.ts');
-    const examsHook = readRepoFile('src/hooks/api/use-au-exams.ts');
+    const chatApi = readRepoFile('src/lib/api/chat.ts');
     const examsApi = readRepoFile('src/lib/api/exams.ts');
-    assert.match(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET/);
-    assert.match(storeSource, /PREDICTION_PAST_QUESTIONS_BUDGET/);
-    assert.match(storeSource, /describeApiErrorForUser/);
-    assert.doesNotMatch(examsHook, /getAuDocumentChunksText/);
-    assert.match(examsHook, /generatePracticeExam\(\s*['"]{2},\s*['"]{2}/);
-    assert.match(examsHook, /describeApiErrorForUser/);
-    assert.match(examsApi, /createAiIdempotencyKey\('practice_exam'\)/);
-    assert.match(examsApi, /createAiIdempotencyKey\('exam_predictions'\)/);
-    assert.match(examsApi, /feature:\s*'generate-practice-exam'/);
-    assert.match(examsApi, /feature:\s*'generate-exam-predictions'/);
-    assert.match(examsApi, /hasDocId \? undefined : \(documentContent \|\| undefined\)/);
-    assert.match(examsApi, /hasPqIds \? undefined : \(pastQuestionsContent \|\| undefined\)/);
+    const retiredHelper = readRepoFile('src/lib/api/mobile-app-required.ts');
+
+    assert.match(storeSource, /notifyNativeAppRequired/);
+    assert.match(chatApi, /throwMobileAppRequired/);
+    assert.match(examsApi, /throwMobileAppRequired/);
+    assert.match(retiredHelper, /MOBILE_APP_REQUIRED/);
+    assert.doesNotMatch(storeSource, /KNOWLEDGE_DOCUMENT_BUDGET|PREDICTION_PAST_QUESTIONS_BUDGET/);
+    assert.equal(chatApi.includes('fetch('), false);
+    assert.equal(chatApi.includes('safeFetch'), false);
+    assert.equal(chatApi.includes('/api/au/vps-ticket'), false);
+    assert.equal(examsApi.includes('fetch('), false);
+    assert.equal(examsApi.includes('safeFetch'), false);
+    assert.equal(examsApi.includes('/api/au/vps-ticket'), false);
   });
 
   await run('dashboard activity heartbeat is throttled so it cannot chatter every minute', () => {
@@ -332,7 +332,7 @@ async function main() {
     assert.match(globalChatPage, /Restoring session\.\.\./);
   });
 
-  await run('legacy AI proxy wrappers were removed in favor of the VPS ticket path', () => {
+  await run('legacy browser AI proxy routes stay removed and compatibility actions fail closed', () => {
     assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/_proxy-forward.ts')), false);
     for (const file of [
       'src/app/api/chat/route.ts',
@@ -343,12 +343,15 @@ async function main() {
     ]) {
       assert.equal(fs.existsSync(path.join(repoRoot, file)), false, file);
     }
+    const actions = readRepoFile('src/app/actions.ts');
     const chat = readRepoFile('src/lib/api/chat.ts');
     const exams = readRepoFile('src/lib/api/exams.ts');
-    const store = readRepoFile('src/hooks/use-store.ts');
-    assert.match(chat, /\/api\/au\/vps-ticket/);
-    assert.match(exams, /\/api\/au\/vps-ticket/);
-    assert.match(store, /\/api\/au\/vps-ticket/);
+    assert.match(actions, /throwMobileAppRequired/);
+    assert.match(chat, /throwMobileAppRequired/);
+    assert.match(exams, /throwMobileAppRequired/);
+    assert.doesNotMatch(actions, /vps|gateway|ticket/i);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/au/vps-ticket/route.ts')), false);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/lib/server/vps-ticket-config.ts')), false);
   });
 
   await run('chat history route uses canonical request auth and RLS client helpers', () => {
@@ -366,16 +369,17 @@ async function main() {
     assert.doesNotMatch(proxyAuth, /Authorization:\s*authorization/);
   });
 
-  await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
-    const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
-    assert.match(source, /requireEntitlement/);
-    assert.match(source, /isAccessControlError/);
-    assert.match(source, /buildApiErrorBody/);
-    assert.match(source, /correlationId/);
-    assert.match(source, /reserveAiUsage/);
-    assert.match(source, /AI_USAGE_RESERVATION_FAILED/);
-    assert.match(source, /route:\s*operation\.gatewayRoute/);
-    assert.doesNotMatch(source, /console\.log\([^)]*Authorization/);
+  await run('retired browser AI workspace fails closed without restoring a remote gateway route', () => {
+    const middleware = readRepoFile('src/middleware.ts');
+    const chat = readRepoFile('src/lib/api/chat.ts');
+    const exams = readRepoFile('src/lib/api/exams.ts');
+    const actions = readRepoFile('src/app/actions.ts');
+    assert.match(middleware, /isRetiredWebProductPath/);
+    assert.doesNotMatch(chat, /\/api\/au\/vps-ticket/);
+    assert.doesNotMatch(exams, /\/api\/au\/vps-ticket/);
+    assert.doesNotMatch(actions, /\/api\/au\/vps-ticket/);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/au/vps-ticket/route.ts')), false);
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/lib/server/vps-ticket-config.ts')), false);
   });
 
   await run('middleware API denials include safe opaque request IDs for correlation', () => {
@@ -405,7 +409,7 @@ async function main() {
     assert.match(accessControl, /return Boolean\(subject\.adminOverride\);/);
     assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+profileTier\)\s*===\s*'admin'/);
     assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+plan\)\s*===\s*'admin'/);
-    assert.match(conexRbac, /return isProtectedOwnerUserId\(userId\);/);
+    assert.match(conexRbac, /return isProtectedOwnerUserId\(userId\) && normalizedEmail === CONEX_ROOT_ADMIN_EMAIL;/);
     assert.match(conexRbac, /export function hasConexAccess/);
     assert.match(conexRbac, /return isRootConexAdmin\(subject\.userId, subject\.email\);/);
   });

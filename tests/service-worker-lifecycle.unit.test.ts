@@ -24,26 +24,19 @@ async function main() {
     const nextConfig = readRepoFile('next.config.ts');
     assert.match(nextConfig, /skipWaiting: false/);
     assert.match(nextConfig, /clientsClaim: false/);
+    assert.equal((nextConfig.match(/'\/checkout',/g) || []).length >= 4, true);
+    assert.match(nextConfig, /'\/_next\/static\/chunks\/app\/checkout\//);
   });
 
-  await run('custom worker claims clients only inside activate waitUntil and catches claim errors', () => {
-    const worker = readRepoFile('worker', 'index.js');
-    assert.match(worker, /async function claimActiveClients\(\)/);
-    assert.match(worker, /await self\.clients\.claim\(\)/);
-    assert.match(worker, /catch \{/);
-    assert.match(worker, /self\.addEventListener\("activate", \(event\) => \{/);
-    assert.match(worker, /event\.waitUntil\(\(async \(\) => \{/);
-    const activateIndex = worker.indexOf('self.addEventListener("activate"');
-    const claimCallIndex = worker.indexOf('await claimActiveClients()', activateIndex);
-    assert.ok(claimCallIndex > activateIndex, 'activate handler must call claimActiveClients');
-  });
-
-  await run('SKIP_WAITING message never claims clients directly', () => {
-    const worker = readRepoFile('worker', 'index.js');
-    const messageIndex = worker.indexOf('self.addEventListener("message"');
-    const messageBlock = worker.slice(messageIndex);
+  await run('active Workbox worker only skips waiting and never claims clients', () => {
+    const worker = readRepoFile('public', 'sw.js');
+    const messageStart = worker.indexOf('self.addEventListener("message"');
+    assert.ok(messageStart >= 0, 'active service worker must expose its message handler');
+    const messageEnd = worker.indexOf('),e.precacheAndRoute', messageStart);
+    const messageBlock = worker.slice(messageStart, messageEnd > messageStart ? messageEnd : messageStart + 500);
     assert.match(messageBlock, /self\.skipWaiting\(\)/);
     assert.doesNotMatch(messageBlock, /clients\.claim\(/);
+    assert.doesNotMatch(worker, /clients\.claim\(/);
   });
 
   await run('protected/private responses remain excluded from runtime caching', () => {

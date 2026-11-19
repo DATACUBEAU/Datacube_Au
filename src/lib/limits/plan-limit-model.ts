@@ -103,7 +103,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage'],
     defaultResetPolicy: 'daily',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/au/vps-ticket', 'vps:chat/au-chat', 'vps:chat/global-chat', 'public.au_messages'],
+    enforcedBy: ['public.au_messages'],
   },
   max_uploads_total: {
     key: 'max_uploads_total',
@@ -127,7 +127,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage'],
     defaultResetPolicy: 'daily',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/au/vps-ticket', 'vps:chat/au-chat', 'vps:chat/global-chat', 'public.au_model_usage'],
+    enforcedBy: ['public.au_model_usage'],
   },
   max_file_size_mb: {
     key: 'max_file_size_mb',
@@ -163,7 +163,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage', 'current'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/au/vps-ticket', 'vps:generate/exam-predictions', 'public.au_feature_outputs'],
+    enforcedBy: ['public.au_feature_outputs'],
   },
   max_practice_exams: {
     key: 'max_practice_exams',
@@ -175,7 +175,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['usage', 'current'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/au/vps-ticket', 'vps:generate/practice-exam', 'public.au_feature_outputs'],
+    enforcedBy: ['public.au_feature_outputs'],
   },
   max_knowledge_hub: {
     key: 'max_knowledge_hub',
@@ -187,7 +187,7 @@ export const PLAN_LIMIT_DEFINITIONS: Record<ApprovedLimitKey, PlanLimitDefinitio
     supportedModes: ['current', 'usage'],
     defaultResetPolicy: 'never',
     supportedResetPolicies: ['hourly', 'daily', 'weekly', 'monthly', 'never', 'custom'],
-    enforcedBy: ['/api/au/vps-ticket', 'vps:generate/knowledge', 'public.au_feature_outputs'],
+    enforcedBy: ['public.au_feature_outputs'],
   },
 };
 

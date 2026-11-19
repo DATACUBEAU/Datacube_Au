@@ -8,7 +8,7 @@ import {
 import { isPaidAdminOverridePlan, normalizeAdminOverridePlan, type AdminOverridePlan } from '@/lib/admin/protected-owner';
 
 export type AccessRequirement = 'auth' | 'feature' | 'paid' | 'admin';
-export type AccessSurface = 'page' | 'api' | 'server_action' | 'vps' | 'navigation' | 'worker';
+export type AccessSurface = 'page' | 'api' | 'server_action' | 'navigation' | 'worker';
 export type AccessMatch = 'exact' | 'prefix';
 export type ProtectedLabel =
   | 'AUTH'
@@ -77,6 +77,16 @@ export const ACCESS_NO_STORE_HEADERS = {
 } as const;
 
 export const PROTECTED_PAGE_RULES: readonly AccessRule[] = [
+  {
+    id: 'checkout',
+    surface: 'page',
+    pathname: '/checkout',
+    match: 'exact',
+    requirement: 'auth',
+    labels: ['AUTH', 'BILLING', 'CACHE_SENSITIVE'],
+    description: 'Subscription checkout and payment initiation.',
+    noStore: true,
+  },
   {
     id: 'dashboard.global_chat',
     surface: 'page',
@@ -172,16 +182,6 @@ export const PROTECTED_API_RULES: readonly AccessRule[] = [
     requirement: 'admin',
     labels: ['AUTH', 'ADMIN', 'STAFF', 'INTERNAL', 'CACHE_SENSITIVE'],
     description: 'Conex user-management route handler.',
-    noStore: true,
-  },
-  {
-    id: 'api.vps_ticket',
-    surface: 'api',
-    pathname: '/api/au/vps-ticket',
-    match: 'exact',
-    requirement: 'auth',
-    labels: ['AUTH', 'AI', 'CACHE_SENSITIVE'],
-    description: 'Short-lived VPS ticket minting endpoint.',
     noStore: true,
   },
   {
@@ -383,30 +383,6 @@ const FEATURE_OUTPUT_MAP = {
   practice_exam_generation: 'practice_exam_generation',
 } satisfies Record<string, TierFeatureKey>;
 
-const VPS_TICKET_FEATURE_MAP = {
-  chat: 'au_chat',
-  'au-chat': 'au_chat',
-  au_chat: 'au_chat',
-  'global-chat': 'global_chat',
-  global_chat: 'global_chat',
-  'generate-knowledge': 'knowledge_generation',
-  knowledge: 'knowledge_generation',
-  knowledge_hub: 'knowledge_generation',
-  knowledge_generation: 'knowledge_generation',
-  'exam-generator': 'practice_exam_generation',
-  'generate-practice-exam': 'practice_exam_generation',
-  practice: 'practice_exam_generation',
-  practice_exam_generation: 'practice_exam_generation',
-  'prediction-engine': 'exam_predictions',
-  'generate-exam-predictions': 'exam_predictions',
-  exam_prediction: 'exam_predictions',
-  exam_predictions: 'exam_predictions',
-  'generate-prompt-starters': 'prompt_starters',
-  prompt_starters: 'prompt_starters',
-  'document-upload': 'document_upload',
-  document_upload: 'document_upload',
-} satisfies Record<string, TierFeatureKey>;
-
 function normalizeToken(value: unknown): string {
   return String(value ?? '').trim().toLowerCase();
 }
@@ -444,10 +420,6 @@ export function findApiAccessRule(pathname: string): AccessRule | null {
 
 export function featureFromFeatureOutput(value: unknown): TierFeatureKey | null {
   return FEATURE_OUTPUT_MAP[normalizeToken(value) as keyof typeof FEATURE_OUTPUT_MAP] ?? null;
-}
-
-export function featureFromVpsTicketRequest(value: unknown): TierFeatureKey | null {
-  return VPS_TICKET_FEATURE_MAP[normalizeToken(value) as keyof typeof VPS_TICKET_FEATURE_MAP] ?? null;
 }
 
 export function normalizeAccessPlan(subject: EntitlementSubject | null | undefined): TierId {

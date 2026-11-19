@@ -319,7 +319,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       redirectPath.startsWith('/') &&
       !redirectPath.startsWith('//')
         ? redirectPath
-        : '/dashboard';
+        : '/checkout';
     const redirectTo =
       typeof window !== 'undefined'
         ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(safePath)}`
@@ -327,7 +327,12 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: redirectTo ? { redirectTo } : undefined,
+      options: {
+        ...(redirectTo ? { redirectTo } : {}),
+        // Always show the Google account chooser so restricted admin routes
+        // cannot accidentally bind to a previously selected personal account.
+        queryParams: { prompt: 'select_account' },
+      },
     });
 
     if (error) {

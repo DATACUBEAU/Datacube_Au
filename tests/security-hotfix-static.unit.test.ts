@@ -113,22 +113,37 @@ test('service worker and public assets do not carry credential plumbing', () => 
 
 test('auth and worker diagnostics do not log token or document text previews', () => {
   const proxyAuth = readRepoFile('src', 'app', 'api', 'proxy', '_supabase-auth.ts');
-  const worker = readRepoFile('rag-worker', 'src', 'worker.ts');
-  const ingestion = readRepoFile('rag-worker', 'src', 'ingestion.ts');
+  const extractionWorker = readRepoFile(
+    'apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'work', 'DocumentTextExtractionWorker.kt',
+  );
+  const integrityWorker = readRepoFile(
+    'apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'work', 'DocumentIntegrityWorker.kt',
+  );
   assert.doesNotMatch(proxyAuth, /tokenPreview/);
   assert.doesNotMatch(proxyAuth, /token\.slice/);
-  assert.doesNotMatch(worker, /preview:\s*text\.slice/);
-  assert.doesNotMatch(ingestion, /textPreview/);
+  assert.doesNotMatch(proxyAuth, /console\.(?:log|warn|error)\([^\n]*(?:token|authorization)/i);
+  assert.match(extractionWorker, /File\(document\.privatePath\)/);
+  assert.match(extractionWorker, /MAX_RETRIES = 3/);
+  assert.doesNotMatch(extractionWorker, /Log\.|println\(|console\./);
+  assert.match(integrityWorker, /MessageDigest\.getInstance\("SHA-256"\)/);
+  assert.match(integrityWorker, /document\.sizeBytes/);
+  assert.doesNotMatch(integrityWorker, /Log\.|println\(|console\./);
 });
 
 test('source cleanup is owner and path bound with bounded attempts', () => {
-  const cleanup = readRepoFile('rag-worker', 'src', 'source-cleanup.ts');
-  const worker = readRepoFile('rag-worker', 'src', 'worker.ts');
-  assert.match(cleanup, /expectedOwnerId/);
-  assert.match(cleanup, /owner_mismatch/);
-  assert.match(cleanup, /path_mismatch/);
-  assert.match(cleanup, /max_attempts_exceeded/);
-  assert.match(worker, /expectedOwnerId:\s*String\(job\.owner_id \|\| job\.user_id/);
+  const extractionWorker = readRepoFile(
+    'apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'work', 'DocumentTextExtractionWorker.kt',
+  );
+  const integrityWorker = readRepoFile(
+    'apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'work', 'DocumentIntegrityWorker.kt',
+  );
+  assert.match(extractionWorker, /database\.documents\(\)\.find\(documentId\)/);
+  assert.match(extractionWorker, /File\(document\.privatePath\)/);
+  assert.match(extractionWorker, /source\.length\(\) != document\.sizeBytes/);
+  assert.match(extractionWorker, /runAttemptCount < MAX_RETRIES/);
+  assert.match(integrityWorker, /database\.documents\(\)\.updateSha256/);
+  assert.match(integrityWorker, /file\.length\(\) != document\.sizeBytes/);
+  assert.match(integrityWorker, /CHECKPOINT_BYTES/);
 });
 
 test('legacy permissive service-role RLS policies are narrowed to service_role in the final schema', () => {
@@ -229,9 +244,9 @@ test('production profile ACL migrations revoke all browser privilege escalation 
     '20261116094903_restrict_profile_username_updates.sql',
   );
 
-  assert.match(initialAcl, /REVOKE ALL PRIVILEGES ON TABLE public\\.au_user_profiles FROM PUBLIC, anon, authenticated/i);
-  assert.match(initialAcl, /GRANT SELECT ON TABLE public\\.au_user_profiles TO authenticated/i);
-  assert.match(initialAcl, /GRANT UPDATE \\(full_name, avatar_url, username\\)/i);
-  assert.match(finalAcl, /REVOKE UPDATE \\(username\\) ON TABLE public\\.au_user_profiles FROM authenticated/i);
+  assert.ok(initialAcl.includes('REVOKE ALL PRIVILEGES ON TABLE public.au_user_profiles FROM PUBLIC, anon, authenticated'));
+  assert.ok(initialAcl.includes('GRANT SELECT ON TABLE public.au_user_profiles TO authenticated'));
+  assert.ok(initialAcl.includes('GRANT UPDATE (full_name, avatar_url, username)'));
+  assert.ok(finalAcl.includes('REVOKE UPDATE (username) ON TABLE public.au_user_profiles FROM authenticated'));
   assert.doesNotMatch(finalAcl, /GRANT UPDATE/i);
 });

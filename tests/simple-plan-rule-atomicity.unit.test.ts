@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const routePath = path.join(process.cwd(), 'src/app/api/admin/limits/simple-plan-rule/route.ts');
-const pagePath = path.join(process.cwd(), 'src/app/conex/usage/page.tsx');
+const retiredUsagePagePath = path.join(process.cwd(), 'src/app/conex/usage/page.tsx');
+const planLimitsPagePath = path.join(process.cwd(), 'src/app/conex/plan-limits/page.tsx');
 const source = fs.readFileSync(routePath, 'utf8');
-const page = fs.readFileSync(pagePath, 'utf8');
+const retiredUsagePage = fs.readFileSync(retiredUsagePagePath, 'utf8');
+const planLimitsPage = fs.readFileSync(planLimitsPagePath, 'utf8');
 
 assert.doesNotMatch(
   source,
@@ -142,45 +144,17 @@ assert.match(
 );
 
 assert.match(
-  page,
-  /revision:\s*string;/,
-  'the client-side plan rule must retain the revision returned by the authoritative GET',
+  retiredUsagePage,
+  /redirect\('\/conex'\)/,
+  'the dedicated usage monitor is retired and redirects into the compact Conex admin',
 );
 
 assert.match(
-  page,
-  /revision:\s*editingPlanRule\.revision/,
-  'the simple editor must send the exact revision captured when the rule was opened',
+  planLimitsPage,
+  /fetchAdmin\('\/api\/admin\/plan-limits'/,
+  'plan-wide quotas remain editable in the dedicated Plan Limits console',
 );
-
-assert.match(
-  page,
-  /const \[planUnlimited, setPlanUnlimited\] = useState\(false\);/,
-  'the simple plan editor must keep unlimited as an explicit client state',
-);
-
-assert.match(
-  page,
-  /setPlanUnlimited\(row\.limit === null\);[\s\S]*?setPlanLimit\(row\.limit === null \? '' : String\(row\.limit\)\);/,
-  'opening an unlimited rule must preserve Unlimited instead of pre-filling a zero cap',
-);
-
-assert.match(
-  page,
-  /if \(!planUnlimited && trimmedPlanLimit === ''\) \{[\s\S]*?Enter a plan cap/,
-  'an empty finite cap must be rejected before numeric coercion can turn it into zero',
-);
-
-assert.match(
-  page,
-  /isUnlimited:\s*planUnlimited/,
-  'the client must send explicit unlimited intent to the authoritative plan-rule endpoint',
-);
-
-assert.match(
-  page,
-  /<Select value=\{planUnlimited \? 'unlimited' : 'limited'\}/,
-  'admins must be given an explicit Set a cap versus Unlimited choice',
-);
+assert.match(planLimitsPage, /PLAN_LIMIT_SCOPE_KEYS/);
+assert.match(planLimitsPage, /const saveScope = useCallback/);
 
 console.log('simple plan rule atomicity regression passed');

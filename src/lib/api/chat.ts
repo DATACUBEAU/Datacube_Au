@@ -1,29 +1,8 @@
-import {
-  extractApiError,
-  extractApiErrorMessage,
-  toApiRequestError,
-  unwrapApiSuccess,
-  type ApiErrorShape,
-} from '@/lib/api/api-contract';
 import type { RagBasedQuestionAnsweringOutput } from '@shared/schemas';
-import { safeFetch } from '@/lib/api/safe-fetch';
-// Legacy Edge Function imports removed — VPS ticket path is the sole path.
-import {
-  validateAndNormalizeChatPayload,
-  toLegacyEdgePayload,
-  type AuGuideInput,
-  type CanonicalChatPayload,
-} from '@shared/chat-payload';
+import type { AuGuideInput } from '@shared/chat-payload';
 import type { ChatDocumentContext } from '@shared/document-chat-context';
 import type { GlobalChatNavAction } from '@shared/global-chat-routing';
-import { normalizeAssistantCitations } from '@/lib/chat/assistant-response';
-import { createAiIdempotencyKey } from '@/lib/api/ai-idempotency';
-
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, '');
-
-if (!SUPABASE_URL) {
-  console.error("NEXT_PUBLIC_SUPABASE_URL is not defined in environment variables.");
-}
+import { throwMobileAppRequired } from '@/lib/api/mobile-app-required';
 
 export type ChatMessage = {
   id: string;
@@ -122,292 +101,18 @@ export type ChatRequest = {
   memory?: any; // Legacy simple memory
 };
 
+
 type ChatResponse = RagBasedQuestionAnsweringOutput & {
   thought?: string;
   navAction?: GlobalChatNavAction | null;
   documentContext?: ChatDocumentContext | null;
 };
 
-const DEFAULT_MODEL_IDS: string[] = []; 
-// Legacy model cache and schema outage state removed — no longer needed.
-
-function extractLatestUserInput(request: ChatRequest): string {
-  if (typeof request.user_input === 'string' && request.user_input.trim()) {
-    return request.user_input.trim();
-  }
-  if (Array.isArray(request.messages) && request.messages.length > 0) {
-    const latest = request.messages[request.messages.length - 1];
-    const content = typeof latest?.content === 'string' ? latest.content.trim() : '';
-    if (content) return content;
-  }
-  return '';
-}
-
-// Legacy proxy fallback utilities removed — VPS-first architecture.
-
-function buildAuGuide(request: ChatRequest): AuGuideInput | undefined {
-  if (request.auGuide) return request.auGuide;
-  const guide = typeof request.guide === 'string' ? request.guide.trim() : '';
-  if (!guide) return undefined;
-  return { instructions: guide };
-}
-
-function buildCorrelationId(request: ChatRequest): string {
-  const existing = typeof request.correlationId === 'string' ? request.correlationId.trim() : '';
-  if (existing) return existing;
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return `corr_${Date.now()}`;
-}
-
-function buildIdempotencyKey(request: ChatRequest, opts?: { clientMessageId?: string }): string {
-  const existing = typeof request.idempotencyKey === 'string' ? request.idempotencyKey.trim() : '';
-  if (existing) return existing;
-  const fromClientMessageId = typeof opts?.clientMessageId === 'string' ? opts.clientMessageId.trim() : '';
-  if (fromClientMessageId) return fromClientMessageId;
-  return createAiIdempotencyKey('chat');
-}
-
-function buildCanonicalPayload(
-  request: ChatRequest,
-  isGlobal: boolean,
-  opts?: { clientMessageId?: string },
-): { canonical: CanonicalChatPayload; legacyPayload: Record<string, unknown>; correlationId: string } {
-  const candidateDocIds = Array.isArray(request.activeDocIds)
-    ? request.activeDocIds
-    : [request.doc_id || request.selectedDocId].filter(Boolean) as string[];
-  const activeDocIds = candidateDocIds.filter((value) => String(value || '').trim().toLowerCase() !== 'global');
-  const correlationId = buildCorrelationId(request);
-  const rawPayload: Record<string, unknown> = {
-    messages: request.messages,
-    message: request.user_input,
-    userId: request.userId,
-    sessionId: request.sessionId || request.thread_id,
-    feature: request.feature || (isGlobal ? 'global_chat' : 'doc_chat'),
-    activeDocIds,
-    auGuide: buildAuGuide(request),
-    idempotencyKey: buildIdempotencyKey(request, opts),
-    correlationId,
-  };
-
-  const validated = validateAndNormalizeChatPayload(rawPayload);
-  if (!validated.success) {
-    throw toApiRequestError({
-      status: 400,
-      code: 'INVALID_REQUEST_PAYLOAD',
-      message: 'Invalid request payload.',
-      details: {
-        issues: validated.issues,
-        correlation_id: correlationId,
-      },
-      retryable: false,
-    });
-  }
-
-  const extras: Record<string, unknown> = {
-    action: request.action,
-    summaryMode: request.summaryMode,
-    browsingMode: request.browsingMode,
-    app_context: request.app_context,
-    memory_pack: request.memory_pack,
-    document_context: request.document_context,
-    recent_snippet: request.recent_snippet,
-    secondary_snippet: request.secondary_snippet,
-    retrieval: request.retrieval,
-    au_handoff_hint: request.au_handoff_hint,
-    model: request.model,
-    clientMessageId: opts?.clientMessageId || request.clientMessageId,
-    policyVersion: request.policyVersion,
-    memory: request.memory,
-    correlation_id: correlationId,
-  };
-
-  const legacyPayload = toLegacyEdgePayload(
-    validated.data,
-    isGlobal ? 'global' : 'doc',
-    extras,
-  );
-
-  return {
-    canonical: validated.data,
-    legacyPayload,
-    correlationId,
-  };
-}
-
-// invokeLegacyAuChatFallback removed — dead code that called deleted /api/proxy/chat.
-
-function normalizeChatResponse(data: any): ChatResponse {
-  const payload = unwrapApiSuccess(data);
-  return {
-    answer: String(payload?.answer || ''),
-    thought: typeof payload?.thought === 'string' ? payload.thought : undefined,
-    citations: normalizeAssistantCitations(payload?.citations),
-    navAction:
-      payload?.nav_action && typeof payload.nav_action === 'object'
-        ? (payload.nav_action as GlobalChatNavAction)
-        : payload?.navAction && typeof payload.navAction === 'object'
-          ? (payload.navAction as GlobalChatNavAction)
-          : null,
-    documentContext:
-      payload?.document_context && typeof payload.document_context === 'object'
-        ? (payload.document_context as ChatDocumentContext)
-        : payload?.documentContext && typeof payload.documentContext === 'object'
-          ? (payload.documentContext as ChatDocumentContext)
-          : null,
-  };
-}
-
-function normalizeThrownChatError(error: unknown, fallbackMessage = 'Chat request failed'): ApiErrorShape {
-  return extractApiError(error, fallbackMessage);
-}
-
-function requireAiAccessToken(accessToken: string | null | undefined): string {
-  const token = String(accessToken || '').trim();
-  if (!token) {
-    throw toApiRequestError({
-      code: 'AUTH_REQUIRED',
-      message: 'Sign in required.',
-      status: 401,
-      retryable: false,
-    });
-  }
-  return token;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-async function readResponseErrorPayload(response: Response): Promise<unknown> {
-  const text = await response.text().catch(() => '');
-  if (!text.trim()) return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-async function throwResponseApiError(
-  response: Response,
-  fallbackMessage: string,
-  opts?: { correlationId?: string | null; code?: string },
-): Promise<never> {
-  const payload = await readResponseErrorPayload(response);
-  const retryAfter = response.headers.get('retry-after');
-  const input = isRecord(payload)
-    ? {
-        ...payload,
-        status: response.status,
-        retryAfter,
-        correlationId: (payload as any).correlationId || (payload as any).correlation_id || opts?.correlationId || null,
-      }
-    : {
-        code: opts?.code || (response.status === 401 ? 'AUTH_REQUIRED' : 'AI_REQUEST_FAILED'),
-        message: fallbackMessage,
-        status: response.status,
-        retryAfter,
-        correlationId: opts?.correlationId || null,
-        retryable: response.status >= 500 || response.status === 408 || response.status === 429,
-      };
-
-  const normalized = normalizeThrownChatError(input, fallbackMessage);
-  throw toApiRequestError(
-    {
-      ...normalized,
-      status: response.status,
-      retryAfter,
-      correlationId: normalized.correlationId || opts?.correlationId || null,
-    },
-    fallbackMessage,
-  );
-}
-
-/**
- * Sends a chat request to the au-chat Edge Function.
- */
 export async function sendChatMessage(
-  request: ChatRequest,
-  opts?: { signal?: AbortSignal; clientMessageId?: string; accessToken?: string | null }
+  _request: ChatRequest,
+  _opts?: { signal?: AbortSignal; clientMessageId?: string; accessToken?: string | null }
 ): Promise<ChatResponse> {
-  // ROUTING LOGIC:
-  // 1. Global Chat -> 'global-chat' endpoint
-  // 2. AU Chat (RAG) -> 'au-chat' endpoint
-  
-  let endpoint = 'au-chat'; 
-  const isGlobal = request.selectedDocId === 'global' || request.chat_type === 'global';
-  
-  if (isGlobal) {
-      endpoint = 'global-chat';
-  }
-
-  // Legacy schema outage bypass removed — VPS is the sole path.
-
-  const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
-    clientMessageId: opts?.clientMessageId,
-  });
-  const accessToken = requireAiAccessToken(opts?.accessToken);
-
-  
-  const ticketRes = await safeFetch('/api/au/vps-ticket', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-idempotency-key': String(legacyPayload.idempotencyKey || ''),
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ ...legacyPayload, feature: endpoint, idempotencyKey: legacyPayload.idempotencyKey }),
-    authIntent: 'interactive',
-    suppressAuthError: true,
-  });
-
-  if (!ticketRes.ok) {
-    await throwResponseApiError(ticketRes, 'AI ticket request failed.', {
-      correlationId,
-      code: 'VPS_TICKET_FAILED',
-    });
-  }
-
-  const ticketData = await ticketRes.json();
-  const { ticket, vpsUrl } = ticketData.data || ticketData;
-
-  const res = await fetch(`${vpsUrl}/chat/${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${ticket}`,
-      'x-correlation-id': correlationId,
-    },
-    body: JSON.stringify(legacyPayload),
-  });
-
-  let data: any = null;
-  let error: any = null;
-
-  if (!res.ok) {
-    await throwResponseApiError(res, 'Chat request failed.', {
-      correlationId,
-      code: 'CHAT_REQUEST_FAILED',
-    });
-  } else {
-    data = await res.json();
-  }
-
-
-  if (error) {
-    throw error;
-  }
-  if (!data) {
-    throw toApiRequestError({
-      code: 'CHAT_REQUEST_FAILED',
-      message: 'Chat request failed.',
-      status: 500,
-      retryable: true,
-    });
-  }
-  return normalizeChatResponse(data);
+  return throwMobileAppRequired('AU Chat');
 }
 
 export type ChatStreamDeltaEvent = { type: 'delta'; text: string };
@@ -420,253 +125,37 @@ export type ChatStreamDoneEvent = {
   navAction?: GlobalChatNavAction | null;
   documentContext?: ChatDocumentContext | null;
 };
-export type ChatStreamErrorEvent = { type: 'error'; error: unknown; details?: any; isThrottled?: boolean; requestId?: string };
+export type ChatStreamErrorEvent = {
+  type: 'error';
+  error: unknown;
+  details?: any;
+  isThrottled?: boolean;
+  requestId?: string;
+};
 export type ChatStreamEvent = ChatStreamDeltaEvent | ChatStreamDoneEvent | ChatStreamErrorEvent;
 
 export async function sendChatMessageStream(
-  request: ChatRequest,
-  handlers: {
-    onEvent: (event: ChatStreamEvent) => void;
-  },
-  opts?: { signal?: AbortSignal; accessToken?: string | null }
+  _request: ChatRequest,
+  _handlers: { onEvent: (event: ChatStreamEvent) => void },
+  _opts?: { signal?: AbortSignal; accessToken?: string | null }
 ): Promise<ChatStreamDoneEvent> {
-  const isGlobal = request.selectedDocId === 'global' || request.chat_type === 'global';
-  const endpoint = isGlobal ? 'global-chat' : 'au-chat';
-
-  // Legacy schema outage bypass removed — VPS is the sole path.
-
-  const { legacyPayload, correlationId } = buildCanonicalPayload(request, isGlobal, {
-    clientMessageId: request.clientMessageId,
-  });
-  const payload: Record<string, unknown> = {
-    ...legacyPayload,
-    stream: true,
-  };
-  const accessToken = requireAiAccessToken(opts?.accessToken);
-
-  
-  const ticketRes = await safeFetch('/api/au/vps-ticket', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-idempotency-key': String(payload.idempotencyKey || ''),
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ ...payload, feature: endpoint, idempotencyKey: payload.idempotencyKey }),
-    authIntent: 'interactive',
-    suppressAuthError: true,
-  });
-
-  if (!ticketRes.ok) {
-    await throwResponseApiError(ticketRes, 'AI ticket request failed.', {
-      correlationId,
-      code: 'VPS_TICKET_FAILED',
-    });
-  }
-
-  const ticketData = await ticketRes.json();
-  const { ticket, vpsUrl } = ticketData.data || ticketData;
-
-  const res = await fetch(`${vpsUrl}/chat/${endpoint}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${ticket}`,
-      'Accept': 'text/event-stream',
-      'x-correlation-id': correlationId,
-    },
-    body: JSON.stringify(payload),
-    signal: opts?.signal,
-  });
-
-
-  if (!res.ok) {
-    await throwResponseApiError(res, 'Chat stream failed.', {
-      correlationId,
-      code: 'CHAT_STREAM_FAILED',
-    });
-  }
-
-  const responseContentType = String(res.headers.get('content-type') || '').toLowerCase();
-  if (!responseContentType.includes('text/event-stream')) {
-    const json = await res.json().catch(() => null);
-    if (!json) {
-      throw toApiRequestError({
-        code: 'INVALID_CHAT_RESPONSE',
-        message: 'Chat stream returned an unexpected non-stream response.',
-        status: res.status,
-        retryable: false,
-      });
-    }
-    const normalized = normalizeChatResponse(json);
-    const doneEvent: ChatStreamDoneEvent = {
-      type: 'done',
-      answer: normalized.answer,
-      thought: normalized.thought,
-      citations: normalized.citations,
-      navAction: normalized.navAction,
-      documentContext: normalized.documentContext,
-    };
-    handlers.onEvent(doneEvent);
-    return doneEvent;
-  }
-
-  if (!res.body) {
-    throw toApiRequestError({
-      code: 'MISSING_RESPONSE_BODY',
-      message: 'Chat stream response body was empty.',
-      status: res.status,
-      retryable: true,
-    });
-  }
-  // Legacy schema outage tracking removed.
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let finalDone: ChatStreamDoneEvent | null = null;
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop() ?? '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith('data:')) continue;
-      const raw = trimmed.slice(5).trim();
-      if (!raw) continue;
-      let evt: ChatStreamEvent | null = null;
-      try {
-        evt = JSON.parse(raw) as ChatStreamEvent;
-      } catch {
-        continue;
-      }
-
-      if (evt.type === 'done') {
-        const normalized = normalizeChatResponse(evt as any);
-        evt = {
-          type: 'done',
-          answer: normalized.answer,
-          thought: normalized.thought,
-          citations: normalized.citations,
-          requestId: (evt as any).requestId,
-          navAction: normalized.navAction,
-          documentContext: normalized.documentContext,
-        };
-      }
-
-      handlers.onEvent(evt);
-
-      if (evt.type === 'error') {
-        throw toApiRequestError(
-          {
-            ...(typeof evt === 'object' && evt ? (evt as Record<string, unknown>) : {}),
-            message: extractApiErrorMessage(evt, 'Chat stream error'),
-            details: (evt as ChatStreamErrorEvent).details,
-            isThrottled: (evt as ChatStreamErrorEvent).isThrottled,
-            requestId: (evt as ChatStreamErrorEvent).requestId,
-          },
-          'Chat stream error',
-        );
-      }
-
-      if (evt.type === 'done') {
-        finalDone = evt;
-      }
-    }
-  }
-
-  if (!finalDone) {
-    throw toApiRequestError({
-      code: 'CHAT_STREAM_INCOMPLETE',
-      message: 'Chat stream ended before a completion event was received.',
-      retryable: true,
-    });
-  }
-
-  return finalDone;
+  return throwMobileAppRequired('AU Chat');
 }
 
-/**
- * Generates prompt starters for a given document.
- *
- * Payload optimization: when documentId is supplied the proxy hydrates content
- * server-side, so we skip sending the raw text to reduce egress.
- */
 export async function generatePromptStarters(
-  documentTitle: string,
-  documentContent: string,
-  userIdea?: string,
-  opts?: { documentId?: string | null; accessToken?: string | null }
+  _documentTitle: string,
+  _documentContent: string,
+  _userIdea?: string,
+  _opts?: { documentId?: string | null; accessToken?: string | null }
 ): Promise<string[]> {
-  const hasDocId = Boolean(opts?.documentId);
-  const idempotencyKey = createAiIdempotencyKey('prompt_starters');
-  const accessToken = requireAiAccessToken(opts?.accessToken);
-
-  
-  const ticketRes = await safeFetch('/api/au/vps-ticket', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-idempotency-key': idempotencyKey,
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({
-      feature: 'generate-prompt-starters',
-      idempotencyKey,
-      documentId: opts?.documentId || undefined,
-    }),
-    authIntent: 'interactive',
-    suppressAuthError: true,
-  });
-
-  if (!ticketRes.ok) {
-    await throwResponseApiError(ticketRes, 'AI ticket request failed.', {
-      code: 'VPS_TICKET_FAILED',
-    });
-  }
-
-  const ticketData = await ticketRes.json();
-  const { ticket, vpsUrl } = ticketData.data || ticketData;
-
-  const res = await fetch(`${vpsUrl}/generate/prompt-starters`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${ticket}`,
-    },
-    body: JSON.stringify({
-      documentTitle,
-      documentContent: hasDocId ? undefined : documentContent,
-      userIdea,
-      documentId: opts?.documentId || undefined,
-    }),
-  });
-
-  let data, error = null;
-  if (!res.ok) {
-    await throwResponseApiError(res, 'Prompt starter generation failed.', {
-      code: 'PROMPT_STARTERS_FAILED',
-    });
-  } else {
-    data = await res.json();
-  }
-
-
-  if (error) throw error;
-  return (data as any)?.prompts || [];
+  return throwMobileAppRequired('AI prompt starters');
 }
 
 /**
- * Returns the list of available models.
- * Previously fetched from the au-chat Edge Function via proxy; that path was removed.
- * Now returns the default model list. Model routing is handled server-side
- * by the VPS AI Gateway based on the user's plan tier.
+ * Browser-side model discovery is retired with the web product workspace.
+ * Native Android obtains the model configuration through its server-backed
+ * inference policy; no browser gateway URL or ticket is issued here.
  */
 export async function getAvailableModels(): Promise<string[]> {
-  return DEFAULT_MODEL_IDS;
+  return [];
 }

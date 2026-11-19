@@ -27,21 +27,21 @@ async function run(name: string, fn: () => void | Promise<void>) {
 
 async function main() {
   await run('safe local return path is preserved and malicious targets are rejected', () => {
-    assert.equal(sanitizeLocalRedirectPath('/dashboard/chat?doc=abc'), '/dashboard/chat?doc=abc');
-    assert.equal(sanitizeLocalRedirectPath('//evil.example/dashboard'), '/dashboard');
-    assert.equal(sanitizeLocalRedirectPath('https://evil.example/dashboard'), '/dashboard');
-    assert.equal(sanitizeLocalRedirectPath('/login?redirectTo=/dashboard'), '/dashboard');
-    assert.equal(sanitizeLocalRedirectPath('/session-expired?next=/dashboard'), '/dashboard');
+    assert.equal(sanitizeLocalRedirectPath('/dashboard/chat?doc=abc'), '/checkout');
+    assert.equal(sanitizeLocalRedirectPath('//evil.example/dashboard'), '/checkout');
+    assert.equal(sanitizeLocalRedirectPath('https://evil.example/dashboard'), '/checkout');
+    assert.equal(sanitizeLocalRedirectPath('/login?redirectTo=/dashboard'), '/checkout');
+    assert.equal(sanitizeLocalRedirectPath('/session-expired?next=/dashboard'), '/checkout');
   });
 
   await run('expired-session and login URLs carry only safe local paths', () => {
     assert.equal(
       buildSessionExpiredPath('/dashboard/knowledge'),
-      '/session-expired?next=%2Fdashboard%2Fknowledge',
+      '/session-expired?next=%2Fcheckout',
     );
     assert.equal(
       buildLoginReauthPath('/dashboard/knowledge'),
-      '/login?redirectTo=%2Fdashboard%2Fknowledge&reason=session_expired',
+      '/login?redirectTo=%2Fcheckout&reason=session_expired',
     );
   });
 
@@ -64,14 +64,16 @@ async function main() {
     assert.doesNotMatch(overlay, /document\.body\.style\.overflow/);
   });
 
-  await run('expired-session page has required message and reauthenticate action', () => {
-    const page = readRepoFile('src', 'app', 'session-expired', 'page.tsx');
-    assert.match(page, /Your session has expired/);
-    assert.match(page, /For your security, please sign in again to renew your session\./);
-    assert.match(page, /Re-authenticate/);
-    assert.match(page, /Return to home/);
-    assert.match(page, /buildLoginReauthPath/);
-  });
+  await run('expired-session route returns to login with a safe checkout target', () => {
+    const middleware = readRepoFile('src', 'middleware.ts');
+    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
+    assert.match(middleware, /pathname === '\/session-expired'/);
+    assert.match(middleware, /sanitizeLocalRedirectPath\(req\.nextUrl\.searchParams\.get\('next'\)\)/);
+    assert.match(middleware, /searchParams\.set\('reason', 'session_expired'\)/);
+    assert.match(login, /wasSessionExpired/);
+    assert.match(login, /Your session expired\. Continue securely with Google\./);
+    assert.doesNotMatch(middleware, /'\/session-expired',/);
+  });;
 
   if (failed > 0) {
     process.exit(1);

@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 import { hasConexAccess } from '@/lib/conex-rbac';
+import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 import {
   ACCESS_NO_STORE_HEADERS,
   evaluateAccess,
@@ -69,7 +70,12 @@ function loginRedirect(req: NextRequest): NextResponse {
 }
 
 function forbiddenRedirect(req: NextRequest): NextResponse {
-  return applyProtectedHeaders(NextResponse.redirect(new URL('/403', req.url)));
+  const pathname = req.nextUrl.pathname;
+  const destination =
+    pathname === '/conex' || pathname.startsWith('/conex/')
+      ? '/checkout'
+      : '/403';
+  return applyProtectedHeaders(NextResponse.redirect(new URL(destination, req.url)));
 }
 
 function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse {
@@ -231,21 +237,65 @@ async function loadMiddlewareSubject(
 }
 
 function isRetiredWebProductPath(pathname: string): boolean {
-  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
-    // Account, subscription, billing and usage settings remain web-managed.
-    return !(pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/'));
+  // This non-production harness is only used by Playwright CI to exercise
+  // subscription-state race handling. It must remain reachable under
+  // `next dev`, but is always retired from production customer traffic.
+  if (pathname === '/test/billing-refresh') {
+    return process.env.NODE_ENV === 'production';
   }
 
-  const retiredPrefixes = ['/documents', '/guide-preview', '/test', '/offline', '/~offline'];
-  return retiredPrefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+  // The web product workspace is retired completely. Document management,
+  // study tools, account settings and usage views now belong to Android.
+  if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) return true;
+
+  const retiredPrefixes = [
+    '/',
+    '/documents',
+    '/guide-preview',
+    '/test',
+    '/offline',
+    '/~offline',
+    '/about',
+    '/features',
+    '/policy',
+    '/mobile-app-required',
+    '/403',
+  ];
+  return retiredPrefixes.some((prefix) =>
+    prefix === '/'
+      ? pathname === '/'
+      : pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
 }
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
-  if (isRetiredWebProductPath(pathname)) {
-    return applyProtectedHeaders(
-      NextResponse.redirect(new URL('/mobile-app-required', req.url)),
+
+  // Keep one authentication entry point and one subscription checkout entry.
+  if (pathname === '/signup') {
+    const loginUrl = new URL('/login', req.url);
+    loginUrl.searchParams.set('mode', 'signup');
+    return applyProtectedHeaders(NextResponse.redirect(loginUrl));
+  }
+  if (pathname === '/pricing') {
+    return applyProtectedHeaders(NextResponse.redirect(new URL('/checkout', req.url)));
+  }
+
+  // Session reauthentication stays on the two-page browser surface.
+  if (pathname === '/session-expired') {
+    const loginUrl = new URL('/login', req.url);
+    loginUrl.searchParams.set(
+      'redirectTo',
+      sanitizeLocalRedirectPath(req.nextUrl.searchParams.get('next')),
     );
+    loginUrl.searchParams.set('reason', 'session_expired');
+    return applyProtectedHeaders(NextResponse.redirect(loginUrl));
+  }
+
+  if (isRetiredWebProductPath(pathname)) {
+    const loginUrl = new URL('/login', req.url);
+    loginUrl.searchParams.set('notice', 'mobile_app_required');
+    return applyProtectedHeaders(NextResponse.redirect(loginUrl));
   }
   const rule = findApiAccessRule(pathname) || findPageAccessRule(pathname);
 

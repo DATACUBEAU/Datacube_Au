@@ -1,15 +1,8 @@
 import { getProtectedOwnerUserId, isProtectedOwnerUserId } from './admin/protected-owner';
 
-export const CONEX_ROOT_ADMIN_EMAIL = String(
-  process.env.CONEX_ROOT_ADMIN_EMAIL ?? ''
-)
-  .trim()
-  .toLowerCase();
-export const CONEX_ROOT_ADMIN_EMAIL_FALLBACK = String(
-  process.env.CONEX_ROOT_ADMIN_EMAIL_FALLBACK ?? ''
-)
-  .trim()
-  .toLowerCase();
+// The browser UI never grants admin access. The signed-in Supabase identity must
+// match both this verified email and the configured protected owner user ID.
+export const CONEX_ROOT_ADMIN_EMAIL = 'fabiansazzy1214@gmail.com';
 export const CONEX_ROOT_ADMIN_USER_ID = getProtectedOwnerUserId();
 
 export type ConexTier = 'admin' | 'free';
@@ -28,8 +21,8 @@ export function normalizeConexTier(value: unknown): ConexTier | null {
 }
 
 export function isRootConexAdmin(userId: string, email?: string | null): boolean {
-  void email;
-  return isProtectedOwnerUserId(userId);
+  const normalizedEmail = String(email ?? '').trim().toLowerCase();
+  return isProtectedOwnerUserId(userId) && normalizedEmail === CONEX_ROOT_ADMIN_EMAIL;
 }
 
 export function hasConexAccess(subject: ConexAccessSubject): boolean {

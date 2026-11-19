@@ -13,7 +13,7 @@ const {
   PLATFORM_OWNER_USER_ID,
   isProtectedOwnerUserId,
 } = require('../src/lib/admin/protected-owner.js') as typeof import('../src/lib/admin/protected-owner.js');
-const { isRootConexAdmin } = require('../src/lib/conex-rbac.js') as typeof import('../src/lib/conex-rbac.js');
+const { CONEX_ROOT_ADMIN_EMAIL, isRootConexAdmin } = require('../src/lib/conex-rbac.js') as typeof import('../src/lib/conex-rbac.js');
 
 let failed = 0;
 
@@ -37,7 +37,9 @@ function run(name: string, fn: () => void) {
 run('protected owner id is authoritative for admin recognition', () => {
   assert.equal(PLATFORM_OWNER_USER_ID, TEST_OWNER_USER_ID);
   assert.equal(isProtectedOwnerUserId(PLATFORM_OWNER_USER_ID), true);
-  assert.equal(isRootConexAdmin(PLATFORM_OWNER_USER_ID), true);
+  assert.equal(isRootConexAdmin(PLATFORM_OWNER_USER_ID, CONEX_ROOT_ADMIN_EMAIL), true);
+  assert.equal(isRootConexAdmin(PLATFORM_OWNER_USER_ID, 'other-account@gmail.com'), false);
+  assert.equal(isRootConexAdmin(PLATFORM_OWNER_USER_ID), false);
   assert.equal(isProtectedOwnerUserId('22222222-2222-4222-8222-222222222222'), false);
 });
 

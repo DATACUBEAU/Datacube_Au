@@ -6,11 +6,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const fetchCache = 'force-no-store';
 
-const items = [
-  { href: '/conex', label: 'Admin' },
-  { href: '/conex/usage', label: 'User usage' },
-  { href: '/conex/plan-limits', label: 'Plan limits' },
-] as const;
+const items = [{ href: '/conex', label: 'Admin' }] as const;
 
 export default async function ConexLayout({ children }: { children: ReactNode }) {
   await headers();

@@ -65,11 +65,14 @@ async function main() {
     assert.match(settings, /\/auth\/callback\?next=/);
   });
 
-  await run('signed-out restore remains unauthenticated without breaking auth forms', () => {
+  await run('signed-out restore remains unauthenticated while Google-only website sign-in remains available', () => {
     const stateTest = readRepoFile('tests', 'auth-state-hardening.unit.test.ts');
     const entryTest = readRepoFile('tests', 'auth-entry-flow.unit.test.ts');
     assert.match(stateTest, /UNAUTHENTICATED/);
-    assert.match(entryTest, /no session or restoring auth does not remove login\/signup entry actions/);
+    assert.match(entryTest, /website authentication exposes Google OAuth only/);
+    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
+    assert.match(login, /signInWithGoogle/);
+    assert.doesNotMatch(login, /signInWithPassword|signUp|PasswordInput|type="password"/);
   });
 
   if (failed > 0) {

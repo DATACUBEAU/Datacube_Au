@@ -43,6 +43,9 @@ interface LocalDocumentDao {
     @Query("SELECT * FROM local_documents WHERE id = :id LIMIT 1")
     suspend fun find(id: String): LocalDocument?
 
+    @Query("SELECT * FROM local_documents WHERE sha256 = :sha256 AND extension = :extension LIMIT 1")
+    suspend fun findByContentHash(sha256: String, extension: String): LocalDocument?
+
     @Query("UPDATE local_documents SET sha256 = :sha256 WHERE id = :id")
     suspend fun updateSha256(id: String, sha256: String): Int
 

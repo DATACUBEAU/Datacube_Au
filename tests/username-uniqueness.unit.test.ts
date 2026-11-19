@@ -52,14 +52,11 @@ async function main() {
     assert.match(migration, /username_normalized = coalesce\(public\.au_user_profiles\.username_normalized, excluded\.username_normalized\)/i);
   });
 
-  await run('signup requires username and performs availability check before signUp', () => {
+  await run('Google-only website login does not require username/password before OAuth', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
-    assert.match(login, /const \[username, setUsername\]/);
-    assert.match(login, /validateUsername\(username\)/);
-    assert.match(login, /\/api\/profile\/username\?username=/);
-    assert.match(login, /USERNAME_TAKEN_MESSAGE/);
-    assert.match(login, /username: normalizedUsername/);
-    assert.match(login, /disabled=\{isLoadingEmail \|\| !email\.trim\(\) \|\| !password \|\| \(authMode === 'signup' && !username\.trim\(\)\)\}/);
+    assert.match(login, /signInWithGoogle/);
+    assert.match(login, /Continue with Google/);
+    assert.doesNotMatch(login, /validateUsername|checkUsernameAvailable|setUsername|signInWithPassword|signUp|PasswordInput|type="password"/);
   });
 
   await run('profile username API returns safe DTOs only', () => {

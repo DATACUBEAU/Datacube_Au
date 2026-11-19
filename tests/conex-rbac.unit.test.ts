@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 
 const TEST_OWNER_USER_ID = '11111111-1111-4111-8111-111111111111';
-const TEST_OWNER_EMAIL = 'owner@example.test';
 process.env.DATACUBE_OWNER_ADMIN_USER_ID = TEST_OWNER_USER_ID;
-process.env.CONEX_ROOT_ADMIN_EMAIL = TEST_OWNER_EMAIL;
 
 const {
   CONEX_ROOT_ADMIN_EMAIL,
@@ -27,25 +25,28 @@ function run(name: string, fn: () => void) {
   }
 }
 
-run('isRootConexAdmin allows only the protected owner id', () => {
-  assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, CONEX_ROOT_ADMIN_EMAIL), true);
-  assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, 'wrong@example.com'), true);
+run('Conex root access requires both the protected owner ID and the exact administrator email', () => {
+  assert.equal(CONEX_ROOT_ADMIN_EMAIL, 'fabiansazzy1214@gmail.com');
+  assert.equal(CONEX_ROOT_ADMIN_USER_ID, TEST_OWNER_USER_ID);
+  assert.equal(isRootConexAdmin(TEST_OWNER_USER_ID, 'fabiansazzy1214@gmail.com'), true);
+  assert.equal(isRootConexAdmin(TEST_OWNER_USER_ID, 'FABIANSAZZY1214@GMAIL.COM'), true);
+  assert.equal(isRootConexAdmin(TEST_OWNER_USER_ID, 'someone-else@gmail.com'), false);
   assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', CONEX_ROOT_ADMIN_EMAIL), false);
-  assert.equal(isRootConexAdmin('00000000-0000-0000-0000-000000000000', 'not-admin@example.com'), false);
 });
 
-run('hasConexAccess allows only the protected owner and ignores browser-visible tier claims', () => {
-  assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: 'user@example.com', tier: 'free' }), true);
-  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'admin' }), false);
-  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'user@example.com', tier: 'free' }), false);
+run('profile tier and browser-visible claims cannot bypass the owner email and ID checks', () => {
+  assert.equal(hasConexAccess({ userId: TEST_OWNER_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'free' }), true);
+  assert.equal(hasConexAccess({ userId: TEST_OWNER_USER_ID, email: 'someone-else@gmail.com', tier: 'admin' }), false);
+  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), false);
+  assert.equal(hasConexAccess({ userId: '22222222-2222-4222-8222-222222222222', email: 'someone-else@gmail.com', tier: 'free' }), false);
 });
 
 run('missing protected owner configuration fails closed', () => {
   const previous = process.env.DATACUBE_OWNER_ADMIN_USER_ID;
   delete process.env.DATACUBE_OWNER_ADMIN_USER_ID;
   try {
-    assert.equal(isRootConexAdmin(CONEX_ROOT_ADMIN_USER_ID, CONEX_ROOT_ADMIN_EMAIL), false);
-    assert.equal(hasConexAccess({ userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), false);
+    assert.equal(isRootConexAdmin(TEST_OWNER_USER_ID, CONEX_ROOT_ADMIN_EMAIL), false);
+    assert.equal(hasConexAccess({ userId: TEST_OWNER_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' }), false);
   } finally {
     process.env.DATACUBE_OWNER_ADMIN_USER_ID = previous;
   }

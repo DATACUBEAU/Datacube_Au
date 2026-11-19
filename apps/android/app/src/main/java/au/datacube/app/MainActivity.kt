@@ -5,6 +5,12 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.tween
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +39,9 @@ import au.datacube.app.ui.auth.AuthScreen
 import au.datacube.app.ui.auth.AuthViewModel
 import au.datacube.app.ui.chat.ChatScreen
 import au.datacube.app.ui.documents.DocumentsScreen
+import au.datacube.app.ui.documents.CollectionWorkspaceScreen
+import au.datacube.app.ui.documents.DocumentWorkspaceScreen
+import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.study.StudyScreen
@@ -90,6 +99,8 @@ private sealed class Screen(val route: String) {
     object Auth : Screen("auth")
     object Home : Screen("home")
     object Documents : Screen("documents")
+    object Collection : Screen("collection/{id}")
+    object Document : Screen("document/{id}")
     object Study : Screen("study")
     object Chat : Screen("chat")
     object Profile : Screen("profile")
@@ -118,10 +129,12 @@ private fun DataCubeRoot(
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
+    val collections by documentsViewModel.collections.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
 
     // Document picker
     val mimeTypes = arrayOf(
@@ -147,6 +160,22 @@ private fun DataCubeRoot(
         }
     }
 
+    val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val targetCollection = collectionPickerTarget
+        collectionPickerTarget = null
+        if (targetCollection != null && uris.isNotEmpty()) {
+            documentsViewModel.importManyToCollection(uris, targetCollection) { result ->
+                scope.launch {
+                    result.onSuccess { count ->
+                        snackbar.showSnackbar("$count document(s) added to collection.")
+                    }.onFailure { error ->
+                        snackbar.showSnackbar(error.message ?: "Could not finish importing documents.")
+                    }
+                }
+            }
+        }
+    }
+
     // Loading / session-restore gate
     if (!authState.sessionRestored) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -166,26 +195,35 @@ private fun DataCubeRoot(
         return
     }
 
-    // Main app scaffold with Navigation Compose
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val isWorkspaceRoute = currentRoute == Screen.Collection.route || currentRoute == Screen.Document.route
+
+    // Nested workspaces consume system back and return to their parent instead of closing the app.
+    BackHandler(enabled = isWorkspaceRoute && navController.previousBackStackEntry != null) {
+        navController.popBackStack()
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val current = navBackStackEntry?.destination
-            NavigationBar {
-                bottomNavItems.forEach { item ->
-                    NavigationBarItem(
-                        selected = current?.hierarchy?.any { it.route == item.screen.route } == true,
-                        onClick = {
-                            navController.navigate(item.screen.route) {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = { Icon(item.icon, contentDescription = item.label) },
-                        label = { Text(item.label) }
-                    )
+            if (!isWorkspaceRoute) {
+                val current = navBackStackEntry?.destination
+                NavigationBar {
+                    bottomNavItems.forEach { item ->
+                        NavigationBarItem(
+                            selected = current?.hierarchy?.any { it.route == item.screen.route } == true,
+                            onClick = {
+                                navController.navigate(item.screen.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { Icon(item.icon, contentDescription = item.label) },
+                            label = { Text(item.label) }
+                        )
+                    }
                 }
             }
         }
@@ -193,7 +231,11 @@ private fun DataCubeRoot(
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
-            modifier = Modifier.padding(padding)
+            modifier = Modifier.padding(padding),
+            enterTransition = { fadeIn(tween(170)) + slideInHorizontally(tween(170)) { it / 18 } },
+            exitTransition = { fadeOut(tween(130)) + slideOutHorizontally(tween(130)) { -it / 24 } },
+            popEnterTransition = { fadeIn(tween(170)) + slideInHorizontally(tween(170)) { -it / 24 } },
+            popExitTransition = { fadeOut(tween(130)) + slideOutHorizontally(tween(130)) { it / 24 } }
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
@@ -202,15 +244,84 @@ private fun DataCubeRoot(
                     onImportDocument = { picker.launch(mimeTypes) },
                     onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
                     onNavigateToStudy = { navController.navigate(Screen.Study.route) },
-                    onNavigateToChat = { navController.navigate(Screen.Chat.route) }
+                    onNavigateToChat = { navController.navigate(Screen.Chat.route) },
+                    onOpenDocument = { id -> navController.navigate("document/$id") },
+                    onNavigateSettings = { navController.navigate(Screen.Profile.route) }
                 )
             }
             composable(Screen.Documents.route) {
                 DocumentsScreen(
                     documents = documents,
+                    collections = collections,
                     onImport = { picker.launch(mimeTypes) },
+                    onNavigateHome = { navController.navigate(Screen.Home.route) },
+                    onNavigateSettings = { navController.navigate(Screen.Profile.route) },
+                    onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
+                    onOpenCollection = { id -> navController.navigate("collection/$id") },
+                    onDeleteCollection = documentsViewModel::deleteCollection,
+                    onOpenDocument = { id -> navController.navigate("document/$id") },
                     onDelete = documentsViewModel::delete
                 )
+            }
+            composable(Screen.Collection.route) { entry ->
+                val collectionId = entry.arguments?.getString("id").orEmpty()
+                val collection = collections.firstOrNull { it.id == collectionId }
+                val collectionDocumentsFlow = remember(collectionId) {
+                    documentsViewModel.observeCollectionDocuments(collectionId)
+                }
+                val collectionDocuments by collectionDocumentsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+                CollectionWorkspaceScreen(
+                    name = collection?.name ?: "Collection",
+                    documents = collectionDocuments,
+                    onBack = { navController.popBackStack() },
+                    onAddDocuments = {
+                        collectionPickerTarget = collectionId
+                        multiPicker.launch(mimeTypes)
+                    },
+                    onOpenDocument = { id -> navController.navigate("document/$id") }
+                )
+            }
+            composable(Screen.Document.route) { entry ->
+                val documentId = entry.arguments?.getString("id").orEmpty()
+                val selectedProcessing = documents.firstOrNull { it.document.id == documentId }
+                val selectedDocument = selectedProcessing?.document
+                var textPreview by remember(documentId) { mutableStateOf<String?>(null) }
+                var previewTruncated by remember(documentId) { mutableStateOf(false) }
+                var previewLoading by remember(documentId) { mutableStateOf(true) }
+                var previewError by remember(documentId) { mutableStateOf<String?>(null) }
+
+                LaunchedEffect(documentId, selectedProcessing?.extractionStatus) {
+                    previewLoading = true
+                    previewError = null
+                    textPreview = null
+                    try {
+                        val preview = documentsViewModel.loadDocumentTextPreview(documentId)
+                        textPreview = preview?.text
+                        previewTruncated = preview?.truncated == true
+                    } catch (error: Exception) {
+                        previewError = error.message ?: "The local document preview could not be loaded."
+                    } finally {
+                        previewLoading = false
+                    }
+                }
+
+                if (selectedDocument != null) {
+                    DocumentWorkspaceScreen(
+                        document = selectedDocument,
+                        extractionStatus = selectedProcessing.extractionStatus,
+                        extractionProgress = selectedProcessing.extractionProgress,
+                        extractionError = selectedProcessing.extractionError,
+                        textPreview = textPreview,
+                        previewTruncated = previewTruncated,
+                        previewLoading = previewLoading,
+                        previewError = previewError,
+                        onBack = { navController.popBackStack() }
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Document is unavailable. Return to your library and refresh.")
+                    }
+                }
             }
             composable(Screen.Study.route) {
                 StudyScreen()

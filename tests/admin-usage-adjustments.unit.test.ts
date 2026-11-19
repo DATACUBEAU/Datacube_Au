@@ -191,12 +191,19 @@ async function main() {
     assert.doesNotMatch(route, /scope:\s*'default'/);
   });
 
-  await run('simple admin UI clearly separates user-only usage resets from plan-wide cap edits', () => {
-    const page = readFileSync('src/app/conex/usage/page.tsx', 'utf8');
-    assert.match(page, /A cap change is plan-wide\. A usage reset above affects only the selected user\./);
-    assert.match(page, /Hard reset usage/);
-    assert.match(page, /Increase or decrease this number to change the allowance for the whole plan\./);
-    assert.match(page, /Advanced plan limits/);
+  await run('retired admin usage monitor is no longer a Conex page while plan limits remain manageable', () => {
+    const retiredUsagePage = readFileSync('src/app/conex/usage/page.tsx', 'utf8');
+    const adminPage = readFileSync('src/app/conex/page.tsx', 'utf8');
+    const planLimitsPage = readFileSync('src/app/conex/plan-limits/page.tsx', 'utf8');
+
+    assert.match(retiredUsagePage, /redirect\('\/conex'\)/);
+    assert.doesNotMatch(adminPage, /TabsContent value="usage"/);
+    assert.match(adminPage, /label: 'Billing'/);
+    assert.match(adminPage, /label: 'AI Models'/);
+    assert.match(adminPage, /label: 'Users'/);
+    assert.match(adminPage, /label: 'System Health'/);
+    assert.match(planLimitsPage, /APPROVED_LIMIT_KEYS/);
+    assert.match(planLimitsPage, /Plan Limits/);
   });
 
   if (failed > 0) process.exit(1);
