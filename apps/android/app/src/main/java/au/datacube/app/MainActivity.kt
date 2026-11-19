@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -188,26 +189,35 @@ private fun DataCubeRoot(
         return
     }
 
-    // Main app scaffold with Navigation Compose
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val isWorkspaceRoute = currentRoute == Screen.Collection.route || currentRoute == Screen.Document.route
+
+    // Nested workspaces consume system back and return to their parent instead of closing the app.
+    BackHandler(enabled = isWorkspaceRoute && navController.previousBackStackEntry != null) {
+        navController.popBackStack()
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            val navBackStackEntry by navController.currentBackStackEntryAsState()
-            val current = navBackStackEntry?.destination
-            NavigationBar {
-                bottomNavItems.forEach { item ->
-                    NavigationBarItem(
-                        selected = current?.hierarchy?.any { it.route == item.screen.route } == true,
-                        onClick = {
-                            navController.navigate(item.screen.route) {
-                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = { Icon(item.icon, contentDescription = item.label) },
-                        label = { Text(item.label) }
-                    )
+            if (!isWorkspaceRoute) {
+                val current = navBackStackEntry?.destination
+                NavigationBar {
+                    bottomNavItems.forEach { item ->
+                        NavigationBarItem(
+                            selected = current?.hierarchy?.any { it.route == item.screen.route } == true,
+                            onClick = {
+                                navController.navigate(item.screen.route) {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            icon = { Icon(item.icon, contentDescription = item.label) },
+                            label = { Text(item.label) }
+                        )
+                    }
                 }
             }
         }
