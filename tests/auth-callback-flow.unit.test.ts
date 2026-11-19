@@ -23,7 +23,7 @@ async function main() {
   await run('browser Supabase client uses PKCE for code-based callback exchange', () => {
     const client = readRepoFile('src', 'lib', 'supabase-client', 'client.ts');
     assert.match(client, /flowType: 'pkce'/);
-    assert.match(client, /detectSessionInUrl: true/);
+    assert.match(client, /detectSessionInUrl: false/);
   });
 
   await run('callback exchanges only when OAuth code exists', () => {
@@ -40,7 +40,7 @@ async function main() {
     const redirects = readRepoFile('src', 'lib', 'auth', 'redirects.ts');
     assert.match(callback, /searchParams\.get\('error'\)/);
     assert.match(callback, /provider_error/);
-    assert.match(callback, /sanitizeLocalRedirectPath\(searchParams\.get\('next'\)\)/);
+    assert.match(callback, /sanitizeLocalRedirectPath\(searchParams\.get\('next'\), '\/'\)/);
     assert.match(redirects, /!candidate\.startsWith\('\/'\) \|\| candidate\.startsWith\('\/\/'\)/);
     assert.match(redirects, /AUTH_PUBLIC_PREFIXES/);
     assert.match(redirects, /isPublicAuthPath\(parsed\.pathname\)/);
