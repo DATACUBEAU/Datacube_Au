@@ -366,7 +366,7 @@ fun PredictionWorkspace(documentName: String, textPreview: String?, previewLoadi
                         Text(documentName, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                         Text(sourceSnippets(textPreview).size.toString() + " readable passages found", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
                     }
-                    Icon(Icons.Outlined.CheckCircle, contentDescription = "Document ready", tint = Color(0xFF168A58))
+                    Icon(Icons.Outlined.CheckCircle, contentDescription = "Document ready", tint = DataCubeColors.Blue)
                 }
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = { generated = true }, Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
@@ -459,7 +459,7 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
             Text("Questions are built from locally extracted text. Reference passages support self-checking; responses are not automatically graded.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
         } else if (completed) {
             ToolCard {
-                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = Color(0xFF168A58), modifier = Modifier.size(40.dp))
+                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(40.dp))
                 Text("Practice complete", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                 Text(answers.values.count { it.isNotBlank() }.toString() + " of " + questions.size + " questions answered.", color = DataCubeColors.TextSecondary)
                 Spacer(Modifier.height(12.dp))
