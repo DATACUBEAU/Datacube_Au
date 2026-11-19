@@ -283,9 +283,40 @@ private fun DataCubeRoot(
             }
             composable(Screen.Document.route) { entry ->
                 val documentId = entry.arguments?.getString("id").orEmpty()
-                val selectedDocument = documents.firstOrNull { it.document.id == documentId }?.document
+                val selectedProcessing = documents.firstOrNull { it.document.id == documentId }
+                val selectedDocument = selectedProcessing?.document
+                var textPreview by remember(documentId) { mutableStateOf<String?>(null) }
+                var previewTruncated by remember(documentId) { mutableStateOf(false) }
+                var previewLoading by remember(documentId) { mutableStateOf(true) }
+                var previewError by remember(documentId) { mutableStateOf<String?>(null) }
+
+                LaunchedEffect(documentId, selectedProcessing?.extractionStatus) {
+                    previewLoading = true
+                    previewError = null
+                    textPreview = null
+                    try {
+                        val preview = documentsViewModel.loadDocumentTextPreview(documentId)
+                        textPreview = preview?.text
+                        previewTruncated = preview?.truncated == true
+                    } catch (error: Exception) {
+                        previewError = error.message ?: "The local document preview could not be loaded."
+                    } finally {
+                        previewLoading = false
+                    }
+                }
+
                 if (selectedDocument != null) {
-                    DocumentWorkspaceScreen(document = selectedDocument, onBack = { navController.popBackStack() })
+                    DocumentWorkspaceScreen(
+                        document = selectedDocument,
+                        extractionStatus = selectedProcessing.extractionStatus,
+                        extractionProgress = selectedProcessing.extractionProgress,
+                        extractionError = selectedProcessing.extractionError,
+                        textPreview = textPreview,
+                        previewTruncated = previewTruncated,
+                        previewLoading = previewLoading,
+                        previewError = previewError,
+                        onBack = { navController.popBackStack() }
+                    )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("Document is unavailable. Return to your library and refresh.")
