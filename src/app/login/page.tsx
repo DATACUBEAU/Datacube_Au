@@ -104,7 +104,7 @@ export default function LoginPage() {
           return;
         }
 
-        if (isConexDestination) {
+        if (isConexDestination || safeRedirectPath === '/') {
           const response = await fetch('/conex/users?mode=access', {
             method: 'GET',
             headers: {
@@ -116,18 +116,18 @@ export default function LoginPage() {
 
           if (cancelled) return;
           if (response.ok) {
-            router.replace(safeRedirectPath);
+            router.replace('/conex');
             return;
           }
           if (response.status === 403) {
-            router.replace('/403');
+            router.replace(isConexDestination ? '/403' : '/');
             return;
           }
           if (response.status === 401) {
             await signOutAndStop();
             return;
           }
-          router.replace('/');
+          router.replace(isConexDestination ? '/' : safeRedirectPath);
           return;
         }
 
