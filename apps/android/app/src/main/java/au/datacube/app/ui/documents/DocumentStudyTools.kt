@@ -415,8 +415,10 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
     var focus by remember(documentName) { mutableStateOf("All topics") }
     var started by remember(documentName) { mutableStateOf(false) }
     var currentIndex by remember(documentName) { mutableIntStateOf(0) }
-    var answer by remember(documentName) { mutableStateOf("") }
+    var answers by remember(documentName) { mutableStateOf<Map<Int, String>>(emptyMap()) }
     var showReference by remember(documentName) { mutableStateOf(false) }
+    var completed by remember(documentName) { mutableStateOf(false) }
+    val answer = answers[currentIndex].orEmpty()
     val topics = remember(textPreview) { documentTopics(textPreview) }
     val questions = remember(textPreview, questionCount, questionStyle, focus) {
         val all = suggestedStudyQuestions(textPreview, questionCount)
@@ -441,11 +443,27 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                 Text("Focus area", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
                 ChoiceDropdown(focus, listOf("All topics") + topics) { focus = it }
                 Spacer(Modifier.height(16.dp))
-                Button(onClick = { started = true; currentIndex = 0; answer = ""; showReference = false }, Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+                Button(onClick = { started = true; completed = false; currentIndex = 0; answers = emptyMap(); showReference = false }, Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Icon(Icons.Outlined.PlayArrow, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Start Practice")
                 }
             }
             Text("Questions are built from locally extracted text. Reference passages support self-checking; responses are not automatically graded.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+        } else if (completed) {
+            ToolCard {
+                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = Color(0xFF168A58), modifier = Modifier.size(40.dp))
+                Text("Practice complete", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Text(answers.values.count { it.isNotBlank() }.toString() + " of " + questions.size + " questions answered.", color = DataCubeColors.TextSecondary)
+                Spacer(Modifier.height(12.dp))
+                Text("Your answers remain available in this review until you restart the session.", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                Button(onClick = { completed = false; started = false; currentIndex = 0 }, Modifier.fillMaxWidth()) { Text("Practice Again") }
+            }
+            questions.forEachIndexed { index, question ->
+                ToolCard {
+                    Text("Question " + (index + 1), fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                    Text(question.prompt, color = DataCubeColors.Navy)
+                    Text(answers[index].orEmpty().ifBlank { "No answer entered." }, color = DataCubeColors.TextSecondary)
+                }
+            }
         } else {
             val question = questions.getOrNull(currentIndex)
             ToolCard {
@@ -465,7 +483,7 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                     style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy
                 )
                 Spacer(Modifier.height(14.dp))
-                OutlinedTextField(value = answer, onValueChange = { answer = it }, Modifier.fillMaxWidth(), minLines = 3, label = { Text("Your answer") }, placeholder = { Text("Write your response here…") })
+                OutlinedTextField(value = answer, onValueChange = { updated -> answers = answers + (currentIndex to updated) }, modifier = Modifier.fillMaxWidth(), minLines = 3, label = { Text("Your answer") }, placeholder = { Text("Write your response here…") })
                 Spacer(Modifier.height(10.dp))
                 OutlinedButton(onClick = { showReference = !showReference }, Modifier.fillMaxWidth(), enabled = question != null) {
                     Icon(Icons.Outlined.MenuBook, contentDescription = null); Spacer(Modifier.width(7.dp))
@@ -480,14 +498,15 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     OutlinedButton(
-                        onClick = { currentIndex = (currentIndex - 1).coerceAtLeast(0); answer = ""; showReference = false },
+                        onClick = { currentIndex = (currentIndex - 1).coerceAtLeast(0); showReference = false },
                         enabled = currentIndex > 0, Modifier.weight(1f)
                     ) { Text("Previous") }
                     Button(
                         onClick = {
                             if (currentIndex < questions.lastIndex) {
-                                currentIndex += 1; answer = ""; showReference = false
-                            } else started = false
+                                currentIndex += 1
+                                showReference = false
+                            } else completed = true
                         },
                         Modifier.weight(1f)
                     ) { Text(if (currentIndex == questions.lastIndex) "Finish" else "Next") }
