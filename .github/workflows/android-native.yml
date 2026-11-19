@@ -73,7 +73,6 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            cd apps/android
             mkdir -p app/build/diagnostics
             adb logcat -c
             set +e
