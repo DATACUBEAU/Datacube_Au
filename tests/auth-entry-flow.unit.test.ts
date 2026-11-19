@@ -9,8 +9,17 @@ function readRepoFile(...segments: string[]): string {
 const login = readRepoFile('src', 'app', 'login', 'page.tsx');
 const smartAuth = readRepoFile('src', 'hooks', 'use-smart-auth.tsx');
 const callback = readRepoFile('src', 'app', 'auth', 'callback', 'page.tsx');
+const mobileAppRequired = readRepoFile('src', 'app', 'mobile-app-required', 'page.tsx');
+const mobileAuthInstall = readRepoFile('src', 'app', 'mobile-auth', 'install', 'page.tsx');
 const dashboardLayout = readRepoFile('src', 'app', 'dashboard', 'dashboard-client-layout.tsx');
 
+assert.match(login, /src="\/icon\.png"/);
+assert.match(login, /dcau-auth-scene/);
+assert.match(login, /dcau-auth-mark__halo/);
+assert.doesNotMatch(login, /Email and password sign-in and registration are not available/);
+assert.doesNotMatch(mobileAppRequired, /browser-based product workspace has been retired|Account, subscription, billing and Conex Admin services/);
+assert.match(mobileAppRequired, /Get the app for a smarter way/);
+assert.doesNotMatch(mobileAuthInstall, /Your account is authenticated on the website|Your website sign-in was successful/);
 assert.match(login, /signInWithGoogle/);
 assert.match(login, /Continue with Google/);
 assert.doesNotMatch(login, /signInWithPassword|signUp\(|handleEmailAuth|PasswordInput|type="password"|TabsTrigger/);
