@@ -14,6 +14,8 @@ import au.datacube.app.data.LocalCollectionDocument
 import au.datacube.app.data.LocalCollectionWithCount
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.Flow
+import au.datacube.app.data.LocalDocument
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -73,6 +75,9 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun observeCollectionDocuments(collectionId: String): Flow<List<LocalDocument>> =
+        database.collections().observeDocuments(collectionId)
+
     fun addDocumentsToCollection(collectionId: String, documentIds: List<String>) {
         if (documentIds.isEmpty()) return
         viewModelScope.launch {
@@ -85,6 +90,23 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun deleteCollection(id: String) {
         viewModelScope.launch { database.collections().delete(id) }
+    }
+
+    fun importToCollection(uri: Uri, name: String, collectionId: String, done: (Result<Unit>) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val imported = repository.import(uri, getApplication<Application>().contentResolver, name)
+                database.collections().addDocuments(
+                    listOf(LocalCollectionDocument(collectionId, imported.document.id, System.currentTimeMillis()))
+                )
+                imported.jobs.forEach { job -> jobScheduler.enqueue(job.id, job.kind) }
+                done(Result.success(Unit))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                done(Result.failure(error))
+            }
+        }
     }
 
     fun delete(id: String) {
