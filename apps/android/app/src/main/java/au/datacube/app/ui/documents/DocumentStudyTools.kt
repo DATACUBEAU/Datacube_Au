@@ -197,7 +197,7 @@ fun DocumentChatWorkspace(
                 Text("Searching in", style = MaterialTheme.typography.labelMedium, color = DataCubeColors.TextSecondary)
                 Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
             }
-            AssistChip(onClick = {}, label = { Text("On device") })
+            AssistChip(onClick = {}, enabled = false, label = { Text("On device") })
         }
         if (textPreview.isNullOrBlank()) {
             Box(Modifier.weight(1f).fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
@@ -383,7 +383,7 @@ fun PredictionWorkspace(documentName: String, textPreview: String?, previewLoadi
                         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text((index + 1).toString() + ".", color = DataCubeColors.Blue, fontWeight = FontWeight.Bold)
                             Spacer(Modifier.width(8.dp)); Text(topic, Modifier.weight(1f), color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
-                            AssistChip(onClick = {}, label = { Text("Review") })
+                            AssistChip(onClick = {}, enabled = false, label = { Text("Review") })
                         }
                     }
                     if (topics.isEmpty()) Text("No distinct topics could be identified from this text.", color = DataCubeColors.TextSecondary)
