@@ -120,15 +120,15 @@ fun DocumentsScreen(
                         Button(onClick = onImport) { Text("Upload a document") }
                     }
                 }
-            } else documents.forEach { item ->
-                val d = item.document
+            } else documents.forEach { processing ->
+                val d = processing.document
                 val ext = d.extension.lowercase()
                 val tint = when (ext) { "pdf" -> Color(0xFFE5484D); "docx" -> DataCubeColors.Blue; else -> Color(0xFF20A866) }
-                val status = when (item.extractionStatus) {
+                val status = when (processing.extractionStatus) {
                     LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Processing queued"
                     LocalJobStatus.RUNNING -> "Processing…"
                     LocalJobStatus.COMPLETED -> "Ready"
-                    LocalJobStatus.FAILED -> item.extractionError ?: "Processing failed"
+                    LocalJobStatus.FAILED -> processing.extractionError ?: "Processing failed"
                     LocalJobStatus.CANCELLED -> "Cancelled"
                     else -> "Imported"
                 }
