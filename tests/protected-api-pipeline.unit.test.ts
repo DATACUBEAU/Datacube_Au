@@ -366,16 +366,17 @@ async function main() {
     assert.doesNotMatch(proxyAuth, /Authorization:\s*authorization/);
   });
 
-  await run('VPS ticket route owns protected AI auth failures after proxy removal', () => {
-    const source = readRepoFile('src/app/api/au/vps-ticket/route.ts');
-    assert.match(source, /requireEntitlement/);
-    assert.match(source, /isAccessControlError/);
-    assert.match(source, /buildApiErrorBody/);
-    assert.match(source, /correlationId/);
-    assert.match(source, /reserveAiUsage/);
-    assert.match(source, /AI_USAGE_RESERVATION_FAILED/);
-    assert.match(source, /route:\s*operation\.gatewayRoute/);
-    assert.doesNotMatch(source, /console\.log\([^)]*Authorization/);
+  await run('AI ticket calls use the configured gateway path without a missing local Next route dependency', () => {
+    const chat = readRepoFile('src/lib/api/chat.ts');
+    const exams = readRepoFile('src/lib/api/exams.ts');
+    const store = readRepoFile('src/hooks/use-store.ts');
+    assert.equal(fs.existsSync(path.join(repoRoot, 'src/app/api/au/vps-ticket/route.ts')), false);
+    assert.match(chat, /\/api\/au\/vps-ticket/);
+    assert.match(exams, /\/api\/au\/vps-ticket/);
+    assert.match(store, /\/api\/au\/vps-ticket/);
+    assert.match(chat, /suppressAuthError:\s*true/);
+    assert.match(exams, /suppressAuthError:\s*true/);
+    assert.match(store, /suppressAuthError:\s*true/);
   });
 
   await run('middleware API denials include safe opaque request IDs for correlation', () => {
