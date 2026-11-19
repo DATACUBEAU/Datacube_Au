@@ -94,7 +94,7 @@ fun HomeScreen(
             items(recentDocuments.take(5), key = { it.document.id }) { entry ->
                 val doc = entry.document
                 val ext = doc.extension.lowercase()
-                val tint = when (ext) { "pdf" -> Color(0xFFE5484D); "docx" -> DataCubeColors.Blue; else -> Color(0xFF20A866) }
+                val tint = DataCubeColors.Blue
                 Surface(onClick = { onOpenDocument(doc.id) }, shape = RoundedCornerShape(17.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
                     Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(tint.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
