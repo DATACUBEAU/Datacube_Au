@@ -30,7 +30,9 @@ class AppResponsiveUiTest {
                         onImportDocument = {},
                         onNavigateToDocuments = {},
                         onNavigateToStudy = {},
-                        onNavigateToChat = {}
+                        onNavigateToChat = {},
+                        onOpenDocument = {},
+                        onNavigateSettings = {}
                     )
                 }
             }
@@ -50,6 +52,7 @@ class AppResponsiveUiTest {
                         collections = emptyList(),
                         onImport = {},
                         onNavigateHome = {},
+                        onNavigateSettings = {},
                         onCreateCollection = { _, done -> done(Result.success("collection-test")) },
                         onOpenCollection = {},
                         onDeleteCollection = {},
