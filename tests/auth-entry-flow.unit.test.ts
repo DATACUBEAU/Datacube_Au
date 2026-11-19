@@ -14,7 +14,7 @@ assert.match(login, /signInWithGoogle/);
 assert.match(login, /Continue with Google/);
 assert.doesNotMatch(login, /signInWithPassword|signUp\(|handleEmailAuth|PasswordInput|type="password"|TabsTrigger/);
 assert.match(login, /sanitizeLocalRedirectPath\(redirectToParam, '\/'\)/);
-assert.match(login, /isConexDestination \|\| safeRedirectPath === '\\/'/);
+assert.match(login, /isConexDestination \|\| safeRedirectPath === '\/'/);
 assert.match(login, /\/conex\/users\?mode=access/);
 assert.match(login, /router\.replace\('\/conex'\)/);
 assert.match(login, /router\.replace\(safeRedirectPath\)/);
