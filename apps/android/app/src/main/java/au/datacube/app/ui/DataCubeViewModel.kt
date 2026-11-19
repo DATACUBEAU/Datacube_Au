@@ -92,19 +92,41 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { database.collections().delete(id) }
     }
 
-    fun importToCollection(uri: Uri, name: String, collectionId: String, done: (Result<Unit>) -> Unit) {
+    fun importManyToCollection(
+        uris: List<Uri>,
+        collectionId: String,
+        done: (Result<Int>) -> Unit
+    ) {
+        if (uris.isEmpty()) {
+            done(Result.success(0))
+            return
+        }
         viewModelScope.launch {
+            var importedCount = 0
             try {
-                val imported = repository.import(uri, getApplication<Application>().contentResolver, name)
-                database.collections().addDocuments(
-                    listOf(LocalCollectionDocument(collectionId, imported.document.id, System.currentTimeMillis()))
-                )
-                imported.jobs.forEach { job -> jobScheduler.enqueue(job.id, job.kind) }
-                done(Result.success(Unit))
+                // Copy and enqueue sequentially: large batches never fan out dozens
+                // of simultaneous file streams or database writes on the UI thread.
+                for (uri in uris) {
+                    val displayName = getApplication<Application>().contentResolver
+                        .query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+                        ?.use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+                        ?: "Imported document"
+                    val imported = repository.import(
+                        uri,
+                        getApplication<Application>().contentResolver,
+                        displayName
+                    )
+                    database.collections().addDocuments(
+                        listOf(LocalCollectionDocument(collectionId, imported.document.id, System.currentTimeMillis()))
+                    )
+                    imported.jobs.forEach { job -> jobScheduler.enqueue(job.id, job.kind) }
+                    importedCount += 1
+                }
+                done(Result.success(importedCount))
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                done(Result.failure(error))
+                done(Result.failure(IllegalStateException("Imported $importedCount of ${uris.size} files. ${error.message ?: "Import failed."}", error)))
             }
         }
     }
