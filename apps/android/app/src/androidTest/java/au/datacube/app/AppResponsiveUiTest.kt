@@ -238,6 +238,7 @@ class AppResponsiveUiTest {
                     onRestoreModels = {},
                     modelOperationBusy = false,
                     modelBackupProgress = null,
+                    installedModels = emptyList(),
                     onCancelModelOperation = {}
                 )
             }
@@ -268,6 +269,7 @@ class AppResponsiveUiTest {
                         completedFiles = 1,
                         totalFiles = 2
                     ),
+                    installedModels = emptyList(),
                     onCancelModelOperation = { cancelRequested = true }
                 )
             }
