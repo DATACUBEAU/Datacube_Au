@@ -40,27 +40,48 @@ class AppResponsiveUiTest {
     }
 
     @Test
-    fun documentsRendersOnCompactAndExpandedWidths() {
-        listOf(320.dp, 600.dp).forEach { width ->
-            composeRule.setContent {
-                DataCubeTheme {
-                    Box(Modifier.width(width).fillMaxHeight()) {
-                        DocumentsScreen(
-                            documents = emptyList(),
-                            collections = emptyList(),
-                            onImport = {},
-                            onCreateCollection = { _, done -> done(Result.success("collection-test")) },
-                            onOpenCollection = {},
-                            onDeleteCollection = {},
-                            onOpenDocument = {},
-                            onDelete = {}
-                        )
-                    }
+    fun documentsRendersOnCompactPhoneWidth() {
+        composeRule.setContent {
+            DataCubeTheme {
+                Box(Modifier.width(320.dp).fillMaxHeight()) {
+                    DocumentsScreen(
+                        documents = emptyList(),
+                        collections = emptyList(),
+                        onImport = {},
+                        onCreateCollection = { _, done -> done(Result.success("collection-test")) },
+                        onOpenCollection = {},
+                        onDeleteCollection = {},
+                        onOpenDocument = {},
+                        onDelete = {}
+                    )
                 }
             }
-            composeRule.onNodeWithText("Documents").assertIsDisplayed()
-            composeRule.onNodeWithText("Collections").assertIsDisplayed()
-            composeRule.onNodeWithText("Recent Documents").assertIsDisplayed()
         }
+        composeRule.onNodeWithText("Documents").assertIsDisplayed()
+        composeRule.onNodeWithText("Collections").assertIsDisplayed()
+        composeRule.onNodeWithText("Recent Documents").assertIsDisplayed()
+    }
+
+    @Test
+    fun documentsRendersOnExpandedWidth() {
+        composeRule.setContent {
+            DataCubeTheme {
+                Box(Modifier.width(600.dp).fillMaxHeight()) {
+                    DocumentsScreen(
+                        documents = emptyList(),
+                        collections = emptyList(),
+                        onImport = {},
+                        onCreateCollection = { _, done -> done(Result.success("collection-test")) },
+                        onOpenCollection = {},
+                        onDeleteCollection = {},
+                        onOpenDocument = {},
+                        onDelete = {}
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithText("Documents").assertIsDisplayed()
+        composeRule.onNodeWithText("Collections").assertIsDisplayed()
+        composeRule.onNodeWithText("Recent Documents").assertIsDisplayed()
     }
 }
