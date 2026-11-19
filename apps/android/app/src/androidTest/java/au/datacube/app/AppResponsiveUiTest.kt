@@ -21,6 +21,7 @@ import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.models.ModelBackupProgress
 import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.theme.DataCubeTheme
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -274,7 +275,7 @@ class AppResponsiveUiTest {
 
         composeRule.onNodeWithText("Writing external backup").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Cancel operation").performScrollTo().performClick()
-        assert(cancelRequested)
+        assertTrue(cancelRequested)
     }
 
 }
