@@ -24,7 +24,7 @@ export default function AuthCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [message, setMessage] = useState('Completing sign in...');
-  const nextPath = useMemo(() => sanitizeLocalRedirectPath(searchParams.get('next')), [searchParams]);
+  const nextPath = useMemo(() => sanitizeLocalRedirectPath(searchParams.get('next'), '/'), [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
