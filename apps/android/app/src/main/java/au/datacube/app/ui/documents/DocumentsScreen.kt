@@ -51,11 +51,12 @@ fun DocumentsScreen(
                 Column {
                     OutlinedTextField(
                         value = collectionName,
-                        onValueChange = { collectionName = it; error = null },
+                        onValueChange = { value -> if (value.length <= 60) collectionName = value; error = null },
                         label = { Text("Collection name") },
                         singleLine = true,
                         enabled = !creating,
-                        isError = error != null
+                        isError = error != null,
+                        supportingText = { Text("${collectionName.length}/60") }
                     )
                     error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 }
@@ -64,7 +65,7 @@ fun DocumentsScreen(
                 TextButton(enabled = collectionName.isNotBlank() && !creating, onClick = {
                     creating = true
                     onCreateCollection(collectionName) { result ->
-                        result.onSuccess { id -> collectionName = ""; creating = false; createDialog = false; onOpenCollection(id) }
+                        result.onSuccess { id -> collectionName = ""; error = null; creating = false; createDialog = false; onOpenCollection(id) }
                             .onFailure { error = it.message ?: "Unable to create collection."; creating = false }
                     }
                 }) { if (creating) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Create") }
