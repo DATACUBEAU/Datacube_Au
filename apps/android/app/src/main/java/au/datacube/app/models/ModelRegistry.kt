@@ -135,6 +135,45 @@ class ModelRegistry internal constructor(private val filesDir: File) {
         return inspectInstalledDirectory(directory.canonicalFile)
     }
 
+    /**
+     * Validates descriptive registry metadata and every declared model artifact
+     * inside a staged/restored model directory. A backup without registry metadata
+     * is accepted as a legacy folder, but metadata that exists must be valid.
+     */
+    fun validateStagedDirectory(stagedDirectory: File, expectedModelId: String) {
+        validateModelId(expectedModelId)
+        val directory = stagedDirectory.canonicalFile
+        require(directory.isDirectory && !isSymlink(directory)) {
+            "The restored model directory is missing or unsafe."
+        }
+        val metadata = File(directory, MANIFEST_FILE)
+        if (!metadata.exists()) return
+
+        val manifest = readManifest(metadata)
+        require(manifest.modelId == expectedModelId) {
+            "The restored model metadata identifier does not match its directory."
+        }
+        val actualArtifacts = directory.walkTopDown()
+            .filter { file ->
+                file.isFile && file != metadata && !isSymlink(file) &&
+                    !file.name.endsWith(".part", ignoreCase = true) &&
+                    !file.name.endsWith(".tmp", ignoreCase = true)
+            }
+            .map { relativePath(directory, it) }
+            .toSet()
+        require(actualArtifacts == manifest.artifacts.map { it.path }.toSet()) {
+            "The restored model files do not match the installed model metadata."
+        }
+        manifest.artifacts.forEach { artifact ->
+            val file = resolveInside(directory, artifact.path)
+            val digest = digestFile(file)
+            require(digest.first == artifact.sizeBytes &&
+                digest.second.equals(artifact.sha256, ignoreCase = true)) {
+                "The restored model failed metadata checksum verification: ${artifact.path}."
+            }
+        }
+    }
+
     fun createStagingFile(stagingDirectory: File, relativePath: String): File {
         val staging = stagingDirectory.canonicalFile
         val downloads = downloadsRoot.canonicalFile
@@ -231,7 +270,7 @@ class ModelRegistry internal constructor(private val filesDir: File) {
 
     private fun readManifest(file: File): ModelInstallManifest {
         val properties = Properties()
-        FileInputStream(file).use(properties::load)
+        FileInputStream(file).use { input -> properties.load(input) }
         require(properties.getProperty("schemaVersion") == "1") {
             "Unsupported installed model metadata version."
         }
