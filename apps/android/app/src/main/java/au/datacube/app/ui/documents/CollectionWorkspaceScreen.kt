@@ -1,5 +1,6 @@
 package au.datacube.app.ui.documents
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -14,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.ui.theme.DataCubeColors
@@ -27,44 +29,93 @@ fun CollectionWorkspaceScreen(
     onOpenDocument: (String) -> Unit
 ) {
     Column(Modifier.fillMaxSize().background(DataCubeColors.BluePale)) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") }
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back to documents") }
             Column(Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                Text("${documents.size} documents · Collection workspace", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${documents.size} documents · Collection", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
             }
-            IconButton(onClick = onAddDocuments) { Icon(Icons.Outlined.Add, "Add documents") }
+            IconButton(onClick = onAddDocuments) { Icon(Icons.Outlined.Add, "Add documents", tint = DataCubeColors.Blue) }
         }
-        Card(Modifier.fillMaxWidth().padding(horizontal = 16.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
-            Column(Modifier.padding(16.dp)) {
-                Icon(Icons.Outlined.FolderOpen, null, tint = DataCubeColors.Blue, modifier = Modifier.size(30.dp))
-                Spacer(Modifier.height(8.dp))
-                Text("Ask across this collection", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                Text("AU can use the documents in this collection as a shared context for answers.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                Spacer(Modifier.height(10.dp))
-                OutlinedButton(onClick = onAddDocuments) { Icon(Icons.Outlined.Add, null); Text(" Add documents") }
-            }
-        }
-        LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (documents.isEmpty()) item {
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
-                    Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Outlined.Description, null, tint = DataCubeColors.Blue, modifier = Modifier.size(36.dp))
-                        Text("This collection is empty", fontWeight = FontWeight.SemiBold)
-                        Text("Add multiple documents to build a shared study space.", color = DataCubeColors.TextSecondary)
+
+        LazyColumn(
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth().animateContentSize(),
+                    shape = RoundedCornerShape(22.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, DataCubeColors.Divider)
+                ) {
+                    Column(Modifier.padding(18.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(shape = RoundedCornerShape(13.dp), color = DataCubeColors.BlueLight) {
+                                Icon(Icons.Outlined.FolderOpen, null, tint = DataCubeColors.Blue, modifier = Modifier.padding(10.dp).size(28.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Collection workspace", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                                Text("Your documents, organized in one place.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        Spacer(Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(onClick = onAddDocuments, modifier = Modifier.weight(1f)) {
+                                Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(6.dp)); Text("Add documents")
+                            }
+                            Surface(shape = RoundedCornerShape(12.dp), color = DataCubeColors.BluePale) {
+                                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Description, null, tint = DataCubeColors.Blue, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("${documents.size}", color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
+                                }
+                            }
+                        }
                     }
                 }
             }
-            items(documents) { document ->
-                Surface(onClick = { onOpenDocument(document.id) }, shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
-                    Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Description, null, tint = DataCubeColors.Blue)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(document.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
-                            Text(document.extension.uppercase() + " · " + document.sizeBytes / 1024 + " KB", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Documents", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                    Spacer(Modifier.weight(1f))
+                    Text("${documents.size} items", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (documents.isEmpty()) {
+                item {
+                    Surface(shape = RoundedCornerShape(20.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                        Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.FolderOpen, null, tint = DataCubeColors.Blue, modifier = Modifier.size(44.dp))
+                            Spacer(Modifier.height(10.dp))
+                            Text("This collection is empty", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                            Text("Add several documents to build your collection workspace.", color = DataCubeColors.TextSecondary)
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = onAddDocuments) { Icon(Icons.Outlined.Add, null); Text(" Add documents") }
                         }
-                        Icon(Icons.Outlined.ChevronRight, null, tint = DataCubeColors.TextSecondary)
+                    }
+                }
+            } else {
+                items(documents, key = { it.id }) { document ->
+                    Surface(
+                        onClick = { onOpenDocument(document.id) },
+                        modifier = Modifier.fillMaxWidth().animateContentSize(),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, DataCubeColors.Divider)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Surface(shape = RoundedCornerShape(12.dp), color = DataCubeColors.BlueLight) {
+                                Icon(Icons.Outlined.Description, null, tint = DataCubeColors.Blue, modifier = Modifier.padding(10.dp).size(24.dp))
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(document.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${document.extension.uppercase()} · ${document.sizeBytes / 1024} KB", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            }
+                            Icon(Icons.Outlined.ChevronRight, null, tint = DataCubeColors.TextSecondary)
+                        }
                     }
                 }
             }
