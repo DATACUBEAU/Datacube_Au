@@ -62,7 +62,7 @@ fun DocumentsScreen(
                 TextButton(enabled = collectionName.isNotBlank() && !creating, onClick = {
                     creating = true
                     onCreateCollection(collectionName) { result ->
-                        result.onSuccess { collectionName = ""; creating = false; createDialog = false }
+                        result.onSuccess { id -> collectionName = ""; creating = false; createDialog = false; onOpenCollection(id) }
                             .onFailure { error = it.message ?: "Unable to create collection."; creating = false }
                     }
                 }) { if (creating) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Create") }
