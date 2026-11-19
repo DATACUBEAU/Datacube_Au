@@ -59,6 +59,48 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Imports a user-selected batch sequentially. Each file is durably copied and
+     * registered before the next one starts, keeping memory and IO pressure bounded.
+     */
+    fun importMany(uris: List<Uri>, done: (Result<Int>) -> Unit) {
+        if (uris.isEmpty()) {
+            done(Result.success(0))
+            return
+        }
+        viewModelScope.launch {
+            var importedCount = 0
+            try {
+                val resolver = getApplication<Application>().contentResolver
+                for (uri in uris) {
+                    val displayName = withContext(Dispatchers.IO) {
+                        resolver.query(
+                            uri,
+                            arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+                            null,
+                            null,
+                            null
+                        )?.use { cursor ->
+                            if (cursor.moveToFirst()) cursor.getString(0) else null
+                        } ?: "Imported document"
+                    }
+                    val imported = repository.import(uri, resolver, displayName)
+                    imported.jobs.forEach { job -> jobScheduler.enqueue(job.id, job.kind) }
+                    importedCount += 1
+                }
+                done(Result.success(importedCount))
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                val reason = error.message ?: "Import failed."
+                done(Result.failure(IllegalStateException(
+                    "Imported " + importedCount + " of " + uris.size + " files. " + reason,
+                    error
+                )))
+            }
+        }
+    }
+
     val collections: StateFlow<List<LocalCollectionWithCount>> =
         database.collections().observeAllWithCount().stateIn(
             viewModelScope,
