@@ -139,8 +139,8 @@ private fun DataCubeRoot(
     val context = LocalContext.current
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
     var modelOperationJob by remember { mutableStateOf<Job?>(null) }
+    var modelOperationBusy by remember { mutableStateOf(false) }
     var modelBackupProgress by remember { mutableStateOf<ModelBackupProgress?>(null) }
-    val modelOperationBusy = modelOperationJob?.isActive == true
 
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
     val mimeTypes = arrayOf(
@@ -153,8 +153,8 @@ private fun DataCubeRoot(
         ActivityResultContracts.CreateDocument(ModelBackupManager.BACKUP_MIME_TYPE)
     ) { destination ->
         if (destination != null && !modelOperationBusy) {
-            modelOperationProgressReset@ run {
-                modelBackupProgress = ModelBackupProgress(phase = "Starting model backup")
+            modelOperationBusy = true
+            modelBackupProgress = ModelBackupProgress(phase = "Starting model backup")
                 modelOperationJob = scope.launch {
                     try {
                         val summary = ModelBackupManager(context).exportBackup(destination) { progress ->
@@ -164,12 +164,12 @@ private fun DataCubeRoot(
                             "Backed up ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
                         )
                     } catch (cancelled: CancellationException) {
-                        snackbar.showSnackbar("Model backup cancelled.")
                         throw cancelled
                     } catch (error: Exception) {
                         snackbar.showSnackbar(error.message ?: "Could not create the model backup.")
                     } finally {
                         modelOperationJob = null
+                        modelOperationBusy = false
                         modelBackupProgress = null
                     }
                 }
@@ -181,6 +181,7 @@ private fun DataCubeRoot(
         ActivityResultContracts.OpenDocument()
     ) { source ->
         if (source != null && !modelOperationBusy) {
+            modelOperationBusy = true
             modelBackupProgress = ModelBackupProgress(phase = "Starting model restore")
             modelOperationJob = scope.launch {
                 try {
@@ -191,7 +192,6 @@ private fun DataCubeRoot(
                         "Restored ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
                     )
                 } catch (cancelled: CancellationException) {
-                    snackbar.showSnackbar("Model restore cancelled.")
                     throw cancelled
                 } catch (error: Exception) {
                     snackbar.showSnackbar(error.message ?: "Could not restore the model backup.")
