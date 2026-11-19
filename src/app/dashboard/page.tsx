@@ -92,7 +92,6 @@ export default function DashboardPage() {
     loading: documentsLoading,
     refresh,
     isUsingCachedData,
-    cachedAt,
   } = useAuDocuments();
   const { jobs } = useUploadJobs();
   const { showSkeleton, showSlowNotice } = useDelayedLoadingState(documentsLoading);
