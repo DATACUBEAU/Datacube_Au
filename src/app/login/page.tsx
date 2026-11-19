@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -8,7 +9,6 @@ import { Button } from '@/components/ui/button';
 import {
   Card,
   CardContent,
-  CardDescription,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
@@ -156,7 +156,7 @@ export default function LoginPage() {
       setAuthError(message);
       toast({
         variant: 'destructive',
-        title: 'Google sign-in failed',
+        title: 'Sign-in failed',
         description: message,
       });
       setIsLoadingGoogle(false);
@@ -165,71 +165,85 @@ export default function LoginPage() {
 
   if (isResolvingRedirect || (isUserLoading && Boolean(user))) {
     return (
-      <div className="flex h-dvh items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin" />
-      </div>
+      <main className="flex h-dvh items-center justify-center bg-background">
+        <Loader2 className="h-7 w-7 animate-spin text-primary" aria-label="Loading" />
+      </main>
     );
   }
 
   return (
-    <div className="flex min-h-dvh flex-col items-center justify-center bg-transparent px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <Link href="/" className="mx-auto mb-4 flex items-center justify-center">
-            <Icons.logo className="h-10 w-10 text-primary" />
-          </Link>
-          <CardTitle className="font-headline text-3xl">
-            Welcome to DataCube AU
-          </CardTitle>
-          <CardDescription>
-            {wasSessionExpired
-              ? 'Your session expired. Continue with Google to sign in again.'
-              : hadAuthError
-                ? 'Google authentication could not be completed. Please try again.'
-                : isConexDestination
-                  ? 'Sign in with your authorized Google account to continue to Conex Admin.'
-                  : 'Continue securely with your Google account.'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          {authError ? (
-            <Alert variant="destructive">
-              <AlertDescription>{authError}</AlertDescription>
-            </Alert>
-          ) : null}
+    <main className="dcau-auth-stage relative flex min-h-dvh items-center justify-center overflow-hidden px-5 py-10">
+      <div className="dcau-auth-scene" aria-hidden="true">
+        <div className="dcau-auth-scene__grid" />
+        <div className="dcau-auth-scene__orb" />
+        <div className="dcau-auth-scene__ring dcau-auth-scene__ring--one" />
+        <div className="dcau-auth-scene__ring dcau-auth-scene__ring--two" />
+      </div>
 
-          <Button
-            type="button"
-            onClick={handleGoogleSignIn}
-            className="w-full"
-            variant="outline"
-            disabled={isLoadingGoogle}
-          >
-            {isLoadingGoogle ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Icons.google className="mr-2 h-4 w-4" />
-            )}
-            {isLoadingGoogle ? 'Connecting to Google…' : 'Continue with Google'}
-          </Button>
+      <div className="relative z-10 w-full max-w-sm">
+        <Card className="dcau-auth-card border-white/10 bg-background/75 shadow-2xl shadow-primary/10 backdrop-blur-2xl">
+          <CardHeader className="items-center space-y-3 pb-5 text-center">
+            <div className="dcau-auth-mark">
+              <span className="dcau-auth-mark__halo" />
+              <span className="dcau-auth-mark__ring" />
+              <Image
+                src="/icon.png"
+                alt="DataCube AU"
+                width={92}
+                height={92}
+                priority
+                className="dcau-auth-mark__image"
+              />
+            </div>
+            <div className="space-y-1">
+              <CardTitle className="font-headline text-2xl font-semibold tracking-tight">
+                Welcome to DataCube AU
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Your knowledge, beautifully connected.
+              </p>
+            </div>
+          </CardHeader>
 
-          <p className="text-center text-xs text-muted-foreground">
-            Email and password sign-in and registration are not available. Use Google to continue.
-          </p>
-        </CardContent>
-      </Card>
+          <CardContent className="grid gap-4">
+            {authError ? (
+              <Alert variant="destructive">
+                <AlertDescription>{authError}</AlertDescription>
+              </Alert>
+            ) : null}
+            {wasSessionExpired || hadAuthError ? (
+              <p className="text-center text-sm text-muted-foreground">
+                {wasSessionExpired ? 'Please sign in again.' : 'Sign-in did not finish. Please try again.'}
+              </p>
+            ) : null}
 
-      <footer className="mt-8 text-center text-sm text-muted-foreground">
-        By continuing, you agree to our{' '}
-        <Link href="/policy#terms" className="text-primary underline underline-offset-4">
-          Terms of Service
-        </Link>
-        {' '}and{' '}
-        <Link href="/policy#privacy" className="text-primary underline underline-offset-4">
-          Privacy Policy
-        </Link>.
-        <p className="mt-2">DataCube AU is a product of Zahed Investment Ltd.</p>
-      </footer>
-    </div>
+            <Button
+              type="button"
+              onClick={handleGoogleSignIn}
+              className="h-12 w-full rounded-xl text-sm font-semibold shadow-lg shadow-primary/15"
+              variant="outline"
+              disabled={isLoadingGoogle}
+            >
+              {isLoadingGoogle ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Icons.google className="mr-2 h-4 w-4" />
+              )}
+              {isLoadingGoogle ? 'Connecting…' : 'Continue with Google'}
+            </Button>
+
+            <p className="text-center text-xs text-muted-foreground/80">
+              Secure sign-in
+            </p>
+          </CardContent>
+        </Card>
+
+        <footer className="mt-5 flex items-center justify-center gap-4 text-xs text-muted-foreground/70">
+          <Link href="/policy#terms" className="transition-colors hover:text-foreground">Terms</Link>
+          <span aria-hidden="true">•</span>
+          <Link href="/policy#privacy" className="transition-colors hover:text-foreground">Privacy</Link>
+        </footer>
+      </div>
+    </main>
   );
 }
