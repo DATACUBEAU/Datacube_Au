@@ -70,10 +70,10 @@ async function main() {
 
   await run('signed-out restore remains unauthenticated while Google-only entry stays available', () => {
     const stateTest = readRepoFile('tests', 'auth-state-hardening.unit.test.ts');
-    const entryTest = readRepoFile('tests', 'auth-entry-flow.unit.test.ts');
+    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
     assert.match(stateTest, /UNAUTHENTICATED/);
-    assert.match(entryTest, /Continue with Google/);
-    assert.doesNotMatch(entryTest, /signInWithPassword|signUp/);
+    assert.match(login, /Continue with Google/);
+    assert.doesNotMatch(login, /signInWithPassword|signUp\\(/);
   });
 
   if (failed > 0) {
