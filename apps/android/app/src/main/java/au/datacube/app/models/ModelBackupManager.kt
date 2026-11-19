@@ -303,7 +303,15 @@ class ModelBackupManager(context: Context) {
                         "The backup is incomplete. One or more model files are missing."
                     }
 
-                    // Commit only after every file has passed integrity checks.
+                    // If a downloaded model includes DataCube registry metadata, validate
+                    // its declared artifact set and checksums before making it visible.
+                    val registry = ModelRegistry(appContext)
+                    modelIds.forEach { id ->
+                        job?.ensureActive()
+                        registry.validateStagedDirectory(File(staging, id), id)
+                    }
+
+                    // Commit only after archive and optional model-registry validation.
                     modelRoot.mkdirs()
                     val committed = mutableListOf<Pair<File, File>>()
                     try {
