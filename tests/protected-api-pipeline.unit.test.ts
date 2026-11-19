@@ -397,17 +397,16 @@ async function main() {
     assert.doesNotMatch(forbiddenBlock, /accessToken/);
   });
 
-  await run('admin access is tied to the server-only owner override, not profile tier or browser claims', () => {
+  await run('admin access uses server-validated Supabase profile tier and protected owner identity', () => {
     const accessControl = readRepoFile('src/lib/authz/access-control.ts');
     const conexRbac = readRepoFile('src/lib/conex-rbac.ts');
 
     assert.match(accessControl, /export function isAdminSubject/);
     assert.match(accessControl, /return Boolean\(subject\.adminOverride\);/);
-    assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+profileTier\)\s*===\s*'admin'/);
     assert.doesNotMatch(accessControl, /isAdminSubject[\s\S]+plan\)\s*===\s*'admin'/);
     assert.match(conexRbac, /return isProtectedOwnerUserId\(userId\);/);
     assert.match(conexRbac, /export function hasConexAccess/);
-    assert.match(conexRbac, /return isRootConexAdmin\(subject\.userId, subject\.email\);/);
+    assert.match(conexRbac, /normalizeConexTier\(subject\.tier\) === 'admin'/);
   });
 
   await run('Conex user management route returns admin data with no-store responses only', () => {
