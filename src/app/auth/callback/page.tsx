@@ -87,25 +87,34 @@ export default function AuthCallbackPage() {
         if (!cancelled) {
           setMessage('Checking account access...');
           const isConexDestination = nextPath === '/conex' || nextPath.startsWith('/conex/');
-          const accessResponse = await fetch('/conex/users?mode=access', {
-            method: 'GET',
-            headers: {
-              Accept: 'application/json',
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            cache: 'no-store',
-          });
+          let accessResponse: Response | null = null;
+          try {
+            accessResponse = await fetch('/conex/users?mode=access', {
+              method: 'GET',
+              headers: {
+                Accept: 'application/json',
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              cache: 'no-store',
+            });
+          } catch {
+            // A temporary Conex check outage must not block an ordinary user sign-in.
+            if (isConexDestination) {
+              router.replace('/403');
+              return;
+            }
+          }
 
           if (cancelled) return;
-          if (accessResponse.ok) {
+          if (accessResponse?.ok) {
             router.replace('/conex');
             return;
           }
-          if (isConexDestination && accessResponse.status === 403) {
+          if (isConexDestination && accessResponse?.status === 403) {
             router.replace('/403');
             return;
           }
-          if (accessResponse.status === 401) {
+          if (accessResponse?.status === 401) {
             markAuthUnauthenticated('auth-callback', 'admin_access_session_invalid');
             router.replace(safeLoginRedirect(nextPath, 'session_expired'));
             return;
