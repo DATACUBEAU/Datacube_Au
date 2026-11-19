@@ -158,13 +158,14 @@ private fun DataCubeRoot(
     val multiPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val targetCollection = collectionPickerTarget
         collectionPickerTarget = null
-        if (targetCollection != null) {
-            uris.forEach { uri ->
-                val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
-                    if (cursor.moveToFirst()) cursor.getString(0) else null
-                } ?: "Imported document"
-                documentsViewModel.importToCollection(uri, name, targetCollection) { result ->
-                    scope.launch { result.exceptionOrNull()?.let { snackbar.showSnackbar(it.message ?: "Could not add document.") } }
+        if (targetCollection != null && uris.isNotEmpty()) {
+            documentsViewModel.importManyToCollection(uris, targetCollection) { result ->
+                scope.launch {
+                    result.onSuccess { count ->
+                        snackbar.showSnackbar("$count document(s) added to collection.")
+                    }.onFailure { error ->
+                        snackbar.showSnackbar(error.message ?: "Could not finish importing documents.")
+                    }
                 }
             }
         }
