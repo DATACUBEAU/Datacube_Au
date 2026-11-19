@@ -4,9 +4,10 @@ Status: agreed target contract; implementation and production cutover are gated 
 
 ## Product boundary
 
-- Flutter is the V1 customer app.
+- The active V1 customer mobile app is the native Android application in `apps/android`, built with Kotlin and Jetpack Compose.
+- The Flutter scaffold in `apps/mobile` is a retained migration/reference project only. It is not the active customer-app implementation; new mobile features and fixes belong in `apps/android`.
 - Supabase remains the SaaS control plane: Auth, profiles, subscriptions, Paystack, entitlements, admin, support, model catalogue/routing, cloud usage, audit/security and stateless AU Cloud inference.
-- Next.js public website and admin portal remain available during mobile migration.
+- The Next.js customer-facing website exposes the login and subscription-checkout journeys. The Conex admin portal remains a separate privileged surface.
 - Documents, parsed text, OCR output, chunks, embeddings, vector indexes, document insights and chat history remain on the user's device.
 - AU Local performs local retrieval and local inference where supported. Local inference never consumes cloud credits.
 - AU Cloud receives only the user's question and explicitly consented, locally retrieved context passages. It must not retrieve documents from Supabase or persist prompt, context, completion or chat history by default.
@@ -16,10 +17,11 @@ Status: agreed target contract; implementation and production cutover are gated 
 ## V1 execution flow
 
 ```text
-Flutter -> Auth -> AU Home -> AU Documents -> local import/parser/OCR
-       -> local chunking/embeddings/index -> local retrieval -> AU Chat
-       -> inference choice
-            | AU Local: on-device model -> answer -> local history
+Kotlin Android (Jetpack Compose) -> Auth -> AU Home -> AU Documents
+       -> local import / Room metadata / WorkManager processing
+       -> local parsing, chunking, embeddings and retrieval as capabilities land
+       -> AU Chat -> inference choice
+            | AU Local: supported on-device model -> answer -> local history
             | AU Cloud: consented question/context -> Supabase gateway
                        -> auth/entitlement/limits/reservation
                        -> provider -> settle usage -> answer
@@ -29,12 +31,12 @@ Flutter -> Auth -> AU Home -> AU Documents -> local import/parser/OCR
 ## Required release gates
 
 1. P0 baseline: schema/migration/policy/storage/function inventory; map dependencies; backup/disposition plan; protect billing/auth/admin; verify document object ownership; fix immediate exposure without deleting data.
-2. P1 contracts: Flutter modules, local persistence, import/parser/retrieval, model lifecycle, Cloud request/response and consent, idempotent usage reservation/settlement, offline/fallback behavior.
-3. P2 vertical slice: sign in, import one supported document, ask offline, grounded answer with citations, reopen local chat after restart; no document/chat content reaches Supabase.
+2. P1 contracts: Kotlin/Compose modules, Room persistence, Storage Access Framework import, WorkManager lifecycle, parser/retrieval pipeline, model lifecycle, Cloud request/response and consent, idempotent usage reservation/settlement, offline/fallback behavior.
+3. P2 vertical slice: sign in, import one supported document, complete the available local processing path, ask a grounded question where a supported local model is available, and reopen local state after restart; no document/chat content reaches Supabase.
 4. P3 stateless cloud: one supported endpoint; auth/entitlement/credit enforcement; bounded payload/timeouts/cost; no content persistence/logging; idempotency/retry/failure tests.
 5. P4 control plane: trusted admin authorization, RLS/RPC hardening, Paystack and entitlement authority, least privilege.
-6. P5 retire server document/chat infrastructure only after Flutter parity and dependency/ownership checks.
-7. P6 mobile QA, staged rollout, telemetry without content, rollback/support plan.
+6. P5 retire server document/chat infrastructure only after native Kotlin app parity and dependency/ownership checks.
+7. P6 Android device QA, staged rollout, telemetry without content, rollback/support plan.
 
 ## Non-negotiable change controls
 
