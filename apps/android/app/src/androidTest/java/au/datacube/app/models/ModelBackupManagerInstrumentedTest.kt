@@ -1,0 +1,86 @@
+package au.datacube.app.models
+
+import android.content.Context
+import android.net.Uri
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.io.File
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class ModelBackupManagerInstrumentedTest {
+    private lateinit var context: Context
+    private lateinit var installedModels: File
+    private lateinit var backupFile: File
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        installedModels = File(context.filesDir, "models/installed")
+        installedModels.deleteRecursively()
+        backupFile = File(context.cacheDir, "model-backup-test.zip")
+        backupFile.delete()
+    }
+
+    @After
+    fun tearDown() {
+        installedModels.deleteRecursively()
+        backupFile.delete()
+    }
+
+    @Test
+    fun exportsAndRestoresNestedModelFilesWithIntegrityChecks() = runBlocking {
+        val modelDirectory = File(installedModels, "embedding-test-v1")
+        val nestedDirectory = File(modelDirectory, "tokenizer")
+        assertTrue(nestedDirectory.mkdirs())
+        val modelBytes = ByteArray(256 * 1024) { (it % 251).toByte() }
+        val tokenizerBytes = "tokenizer fixture".toByteArray()
+        File(modelDirectory, "model.onnx").writeBytes(modelBytes)
+        File(nestedDirectory, "tokenizer.json").writeBytes(tokenizerBytes)
+
+        val manager = ModelBackupManager(context)
+        val exported = manager.exportBackup(Uri.fromFile(backupFile))
+
+        assertEquals(1, exported.modelCount)
+        assertEquals(2, exported.fileCount)
+        assertTrue(backupFile.length() > 0)
+
+        installedModels.deleteRecursively()
+        val restored = manager.restoreBackup(Uri.fromFile(backupFile))
+
+        assertEquals(1, restored.modelCount)
+        assertEquals(2, restored.fileCount)
+        assertArrayEquals(modelBytes, File(installedModels, "embedding-test-v1/model.onnx").readBytes())
+        assertArrayEquals(
+            tokenizerBytes,
+            File(installedModels, "embedding-test-v1/tokenizer/tokenizer.json").readBytes()
+        )
+    }
+
+    @Test
+    fun restoreRefusesToOverwriteAnAlreadyInstalledModel() = runBlocking {
+        val modelDirectory = File(installedModels, "embedding-test-v1")
+        assertTrue(modelDirectory.mkdirs())
+        val original = "original model".toByteArray()
+        File(modelDirectory, "weights.bin").writeBytes(original)
+
+        val manager = ModelBackupManager(context)
+        manager.exportBackup(Uri.fromFile(backupFile))
+
+        installedModels.deleteRecursively()
+        val restoredFile = File(installedModels, "embedding-test-v1/weights.bin")
+        assertTrue(restoredFile.parentFile!!.mkdirs())
+        restoredFile.writeText("locally installed version")
+
+        val result = runCatching { manager.restoreBackup(Uri.fromFile(backupFile)) }
+        assertTrue(result.isFailure)
+        assertEquals("locally installed version", restoredFile.readText())
+    }
+}

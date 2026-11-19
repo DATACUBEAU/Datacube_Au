@@ -20,7 +20,9 @@ import io.github.jan.supabase.auth.user.UserInfo
 fun ProfileScreen(
     modifier: Modifier = Modifier,
     user: UserInfo?,
-    onSignOut: () -> Unit
+    onSignOut: () -> Unit,
+    onBackupModels: () -> Unit,
+    onRestoreModels: () -> Unit
 ) {
     val email = user?.email ?: "—"
     val displayName = email.substringBefore('@')
@@ -136,6 +138,54 @@ fun ProfileScreen(
                         Spacer(Modifier.height(12.dp))
                         OutlinedButton(onClick = {}, modifier = Modifier.fillMaxWidth()) {
                             Text("View usage details")
+                        }
+                    }
+                }
+            }
+
+            // ── Model backup and restore ──
+            item {
+                Text(
+                    "Local AI models",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                )
+            }
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface
+                    ),
+                    elevation = CardDefaults.cardElevation(2.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("Model backups", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Export installed models into one portable ZIP file. Choose Documents, an SD card, USB storage or a connected cloud drive in the Android file picker. The backup is stored outside DataCube AU and can be restored after reinstalling the app.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Restore checks file sizes and SHA-256 hashes. Existing model folders are never overwritten.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = onBackupModels,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Export model backup")
+                        }
+                        OutlinedButton(
+                            onClick = onRestoreModels,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Restore from backup")
                         }
                     }
                 }
