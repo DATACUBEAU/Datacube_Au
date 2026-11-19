@@ -1,18 +1,20 @@
 package au.datacube.app
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.test.DeviceConfigurationOverride
+import androidx.compose.ui.test.WindowSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
-import au.datacube.app.ui.documents.DocumentsScreen
-import au.datacube.app.ui.documents.DocumentWorkspaceScreen
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.data.LocalJobStatus
+import au.datacube.app.ui.documents.CollectionWorkspaceScreen
+import au.datacube.app.ui.documents.DocumentWorkspaceScreen
+import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.theme.DataCubeTheme
 import org.junit.Rule
@@ -25,9 +27,10 @@ class AppResponsiveUiTest {
     @Test
     fun homeRendersOnCompactPhoneWidth() {
         composeRule.setContent {
-            DataCubeTheme {
-                Box(Modifier.width(320.dp).fillMaxHeight()) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+                DataCubeTheme {
                     HomeScreen(
+                        modifier = Modifier.fillMaxSize(),
                         user = null,
                         recentDocuments = emptyList(),
                         onImportDocument = {},
@@ -48,9 +51,10 @@ class AppResponsiveUiTest {
     @Test
     fun documentsRendersOnCompactPhoneWidth() {
         composeRule.setContent {
-            DataCubeTheme {
-                Box(Modifier.width(320.dp).fillMaxHeight()) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+                DataCubeTheme {
                     DocumentsScreen(
+                        modifier = Modifier.fillMaxSize(),
                         documents = emptyList(),
                         collections = emptyList(),
                         onImport = {},
@@ -73,9 +77,10 @@ class AppResponsiveUiTest {
     @Test
     fun documentsRendersOnExpandedWidth() {
         composeRule.setContent {
-            DataCubeTheme {
-                Box(Modifier.width(600.dp).fillMaxHeight()) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(600.dp, 900.dp))) {
+                DataCubeTheme {
                     DocumentsScreen(
+                        modifier = Modifier.fillMaxSize(),
                         documents = emptyList(),
                         collections = emptyList(),
                         onImport = {},
@@ -94,11 +99,33 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("Collections").assertIsDisplayed()
         composeRule.onNodeWithText("Recent Documents").performScrollTo().assertIsDisplayed()
     }
+
+    @Test
+    fun collectionWorkspaceShowsEmptyStateOnCompactWidth() {
+        composeRule.setContent {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+                DataCubeTheme {
+                    CollectionWorkspaceScreen(
+                        name = "Biology Notes",
+                        documents = emptyList(),
+                        onBack = {},
+                        onAddDocuments = {},
+                        onRemoveDocument = {},
+                        onOpenDocument = {}
+                    )
+                }
+            }
+        }
+        composeRule.onNodeWithText("Biology Notes").assertIsDisplayed()
+        composeRule.onNodeWithText("Collection workspace").assertIsDisplayed()
+        composeRule.onNodeWithText("This collection is empty").assertIsDisplayed()
+    }
+
     @Test
     fun documentWorkspaceShowsLocalPreviewOnCompactPhoneWidth() {
         composeRule.setContent {
-            DataCubeTheme {
-                Box(Modifier.width(320.dp).fillMaxHeight()) {
+            DeviceConfigurationOverride(DeviceConfigurationOverride.WindowSize(DpSize(320.dp, 740.dp))) {
+                DataCubeTheme {
                     DocumentWorkspaceScreen(
                         document = LocalDocument(
                             id = "test-document",
@@ -126,5 +153,4 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("Extracted text").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("LOCAL PREVIEW CONTENT FOR RESPONSIVE UI TEST").performScrollTo().assertIsDisplayed()
     }
-
 }
