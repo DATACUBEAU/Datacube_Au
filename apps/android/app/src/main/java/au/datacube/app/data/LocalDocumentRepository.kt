@@ -6,6 +6,7 @@ import android.webkit.MimeTypeMap
 import androidx.room.withTransaction
 import java.io.File
 import java.util.UUID
+import java.security.MessageDigest
 import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -37,6 +38,7 @@ class LocalDocumentRepository(
         val target = File(folder, id + "." + extension)
 
         try {
+            val digest = MessageDigest.getInstance("SHA-256")
             val input = resolver.openInputStream(uri)
                 ?: error("The selected file could not be read.")
             input.use { source ->
@@ -50,12 +52,14 @@ class LocalDocumentRepository(
                         require(total <= MAX_DOCUMENT_BYTES) {
                             "Files must be 100 MB or smaller."
                         }
+                        digest.update(buffer, 0, count)
                         output.write(buffer, 0, count)
                     }
                     require(total > 0L) { "The selected file is empty." }
                 }
             }
 
+            val sha256 = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
             val mimeType = resolver.getType(uri)
                 ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
                 ?: "application/octet-stream"
@@ -67,7 +71,8 @@ class LocalDocumentRepository(
                 mimeType = mimeType,
                 sizeBytes = target.length(),
                 privatePath = target.absolutePath,
-                createdAtEpochMs = now
+                createdAtEpochMs = now,
+                sha256 = sha256
             )
             val jobs = buildList {
                 add(
@@ -100,11 +105,20 @@ class LocalDocumentRepository(
 
             // The document receipt and every initial processing job commit together.
             // WorkManager is scheduled only after this transaction succeeds.
-            database.withTransaction {
-                database.documents().insert(document)
-                jobs.forEach { database.jobs().insert(it) }
+            val persistedDocument = database.withTransaction {
+                // Check and insert in one transaction so repeated or concurrent
+                // imports of the same content cannot create duplicate library rows.
+                val existing = database.documents().findByContentHash(sha256, extension)
+                if (existing != null) {
+                    existing
+                } else {
+                    database.documents().insert(document)
+                    jobs.forEach { database.jobs().insert(it) }
+                    document
+                }
             }
-            ImportedDocument(document, jobs)
+            if (persistedDocument.id != document.id) target.delete()
+            ImportedDocument(persistedDocument, if (persistedDocument.id == document.id) jobs else emptyList())
         } catch (error: Throwable) {
             target.delete()
             throw error
