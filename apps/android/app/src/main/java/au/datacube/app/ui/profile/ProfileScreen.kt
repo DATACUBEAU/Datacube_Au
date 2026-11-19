@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.jan.supabase.auth.user.UserInfo
 import au.datacube.app.models.ModelBackupProgress
+import au.datacube.app.models.InstalledModelRecord
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -26,6 +27,7 @@ fun ProfileScreen(
     onRestoreModels: () -> Unit,
     modelOperationBusy: Boolean,
     modelBackupProgress: ModelBackupProgress?,
+    installedModels: List<InstalledModelRecord>,
     onCancelModelOperation: () -> Unit
 ) {
     val email = user?.email ?: "—"
@@ -179,6 +181,45 @@ fun ProfileScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Text(
+                            "Installed models",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (installedModels.isEmpty()) {
+                            Text(
+                                "No model files are installed in local model storage yet. Models installed through the DataCube model manager will appear here.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                installedModels.forEach { model ->
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = MaterialTheme.shapes.medium,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(Modifier.padding(12.dp)) {
+                                            Text(
+                                                model.manifest?.displayName ?: model.modelId,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                model.manifest?.sourceRepository ?: "Model metadata unavailable",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                "${model.fileCount} files • ${formatBackupBytes(model.totalBytes)}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         if (modelOperationBusy) {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(
