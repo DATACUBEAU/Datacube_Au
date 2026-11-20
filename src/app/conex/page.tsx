@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Lock, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, Send, UserMinus, Search, Menu, FolderTree, Crown } from 'lucide-react';
+import { Shield, Lock, LogOut, ArrowRight, Loader2, AlertCircle, CheckCircle2, LayoutDashboard, Database, MessageSquare, Activity, Key, Plus, Trash2, Save, Users, Clock, Star, Mail, Download, Terminal, ThumbsUp, ThumbsDown, HeartPulse, Zap, RefreshCw, Smartphone, Globe, Send, UserMinus, Search, Menu, FolderTree, Crown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -17,6 +17,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useToast } from '@/hooks/use-toast';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import { fetchAdmin, readCachedAdminResponsePayload } from '@/lib/api/admin-fetch';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -3315,9 +3316,10 @@ export default function ConexPage() {
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     resetConexAuth();
-    window.location.reload();
+    await explicitSignOut(user?.id ?? null);
+    router.replace('/login');
   };
 
   const navItems = [
@@ -3552,7 +3554,14 @@ export default function ConexPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center bg-muted/30 p-4">
+      <div className="mb-4 flex w-full max-w-md justify-end">
+        <Button type="button" variant="outline" size="sm" onClick={() => void handleLogout()}>
+          <LogOut className="mr-2 h-4 w-4" />
+          Log out
+        </Button>
+      </div>
+      <div className="flex w-full flex-1 items-center justify-center">
       <AnimatePresence mode="wait">
         {step === 0 && (
           <motion.div
@@ -3691,6 +3700,7 @@ export default function ConexPage() {
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }
