@@ -37,6 +37,7 @@ export default function LoginPage() {
   const searchParams = useSearchParams();
 
   const redirectToParam = searchParams.get('redirectTo');
+  const forceReauth = searchParams.get('forceReauth') === '1';
   const sessionReasonParam = searchParams.get('reason');
   const wasSessionExpired = sessionReasonParam === 'session_expired';
   const hadAuthError = sessionReasonParam === 'auth_error';
@@ -48,9 +49,25 @@ export default function LoginPage() {
   const isConexDestination = safeRedirectPath === '/conex' || safeRedirectPath.startsWith('/conex/');
 
   useEffect(() => {
-    if (isUserLoading || !user) return;
+    if (isUserLoading) return;
 
     let cancelled = false;
+
+    if (forceReauth) {
+      if (!user) {
+        setIsResolvingRedirect(false);
+        return;
+      }
+      setIsResolvingRedirect(true);
+      void explicitSignOut(user.id).finally(() => {
+        if (!cancelled) setIsResolvingRedirect(false);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!user) return;
 
     const signOutAndStop = async () => {
       await explicitSignOut(user.id);
@@ -146,7 +163,7 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, isUserLoading, router, safeRedirectPath, isConexDestination]);
+  }, [user, isUserLoading, router, safeRedirectPath, isConexDestination, forceReauth]);
 
   const handleGoogleSignIn = async () => {
     if (isLoadingGoogle) return;
