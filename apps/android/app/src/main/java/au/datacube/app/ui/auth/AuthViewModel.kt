@@ -32,6 +32,16 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     private fun restoreSession() {
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
+            val configurationError = repository.configurationError()
+            if (configurationError != null) {
+                _state.value = AuthState(
+                    isLoading = false,
+                    user = null,
+                    sessionRestored = true,
+                    error = configurationError
+                )
+                return@launch
+            }
             val restored = repository.restoreSession()
             val user = if (restored) repository.currentUser() else null
             _state.value = AuthState(
