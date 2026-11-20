@@ -5,6 +5,8 @@ import android.util.Base64
 import android.util.Log
 import au.datacube.app.BuildConfig
 import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.providers.Google
+import io.github.jan.supabase.auth.providers.IDToken
 import io.github.jan.supabase.auth.exception.AuthRestException
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.android.Android
@@ -163,6 +165,41 @@ class AuthRepository(
                 if (detail != null) "Secure app sign-in failed: $detail"
                 else "The app could not reach Supabase (${e.javaClass.simpleName}). Check its connection settings and retry."
             )
+        }
+    }
+
+
+    /**
+     * Completes native Google authentication using the ID token obtained from
+     * Android Credential Manager. No browser callback or website handoff is used.
+     */
+    suspend fun signInWithGoogle(idToken: String, rawNonce: String): AuthResult {
+        configurationError()?.let { return AuthResult.Error(it) }
+        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isBlank()) {
+            return AuthResult.Error(
+                "Native Google sign-in is not configured. Add GOOGLE_WEB_CLIENT_ID (the Google Web OAuth client ID) to the Android build configuration."
+            )
+        }
+        if (idToken.isBlank() || rawNonce.isBlank()) {
+            return AuthResult.Error("Google did not return a valid identity token. Please try again.")
+        }
+        return try {
+            SupabaseClient.auth.signInWith(IDToken) {
+                this.idToken = idToken
+                provider = Google
+                nonce = rawNonce
+            }
+            val user = SupabaseClient.auth.currentUserOrNull()
+                ?: return AuthResult.Error("Supabase did not return an authenticated user. Please try again.")
+            sessionStore.persist(user)
+            AuthResult.Success
+        } catch (e: AuthRestException) {
+            Log.w(TAG, "Supabase rejected Google ID token: ${e.message}")
+            AuthResult.Error("Google sign-in was rejected: ${e.message ?: "authentication error"}. Check the Google provider configuration.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Native Google authentication failed", e)
+            AuthResult.Error(e.message?.take(180)?.takeIf { it.isNotBlank() }
+                ?: "Could not complete native Google sign-in. Check your connection and retry.")
         }
     }
 
