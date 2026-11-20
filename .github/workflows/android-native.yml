@@ -43,10 +43,14 @@ jobs:
 
       - name: Write Android build properties
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL || secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           AUTH_WEBSITE_URL: ${{ vars.AUTH_WEBSITE_URL }}
         run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::Android build needs SUPABASE_URL and SUPABASE_ANON_KEY. Configure them as GitHub Actions variables or secrets."
+            exit 1
+          fi
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
           echo "SUPABASE_URL=$SUPABASE_URL" >> local.properties
           echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> local.properties
