@@ -72,7 +72,7 @@ assert.match(websiteSettings, /Icons\.logo/);
 assert.match(websiteLayout, /icon: '\/icon\.svg'/);
 assert.match(websiteManifest, /icon\.svg/);
 assert.match(brandIcon, /DataCube AU/);
-assert.match(brandIcon, /data:image\\/png;base64,/);
+assert.match(brandIcon, /data:image\/png;base64,/);
 
 assert.match(route, /requireUserFromRequest\(request\)/);
 assert.match(route, /auth\.admin\.generateLink/);
