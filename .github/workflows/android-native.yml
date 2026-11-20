@@ -63,6 +63,35 @@ jobs:
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
 
+      # Publish build outputs before emulator UI tests. An unavailable hosted
+      # emulator must not prevent the developer from retrieving a valid APK.
+      - name: Build release bundle (unsigned preflight)
+        run: bash ./gradlew :app:bundleRelease --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-debug
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Room schemas
+        uses: actions/upload-artifact@v4
+        with:
+          name: room-schemas
+          path: apps/android/app/schemas/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload unsigned release bundle preflight
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-release-unsigned
+          path: apps/android/app/build/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Run Compose UI tests on Android emulator
         id: android-ui-tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -95,30 +124,3 @@ jobs:
             apps/android/app/build/outputs/androidTest-results/connected/**
           if-no-files-found: ignore
           retention-days: 7
-
-      - name: Build release bundle (unsigned preflight)
-        run: bash ./gradlew :app:bundleRelease --no-daemon
-
-      - name: Upload debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: datacube-au-android-debug
-          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Upload Room schemas
-        uses: actions/upload-artifact@v4
-        with:
-          name: room-schemas
-          path: apps/android/app/schemas/
-          if-no-files-found: error
-          retention-days: 7
-
-      - name: Upload unsigned release bundle preflight
-        uses: actions/upload-artifact@v4
-        with:
-          name: datacube-au-android-release-unsigned
-          path: apps/android/app/build/outputs/bundle/release/app-release.aab
-          if-no-files-found: error
-          retention-days: 14
