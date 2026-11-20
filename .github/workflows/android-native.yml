@@ -43,12 +43,14 @@ jobs:
 
       - name: Write Android build properties
         env:
-          SUPABASE_URL: ${{ vars.SUPABASE_URL || secrets.SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL || secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY || secrets.SUPABASE_ANON_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY || secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-          AUTH_WEBSITE_URL: ${{ vars.AUTH_WEBSITE_URL }}
+          # Supabase project URL and publishable key are public client credentials.
+          # A publishable key is safe in client builds; never place service-role keys here.
+          SUPABASE_URL: https://dhmukdeljiwvvwjdcxgn.supabase.co
+          SUPABASE_ANON_KEY: sb_publishable_6N4nuBJIaXzOVYYUXSzomA_R8TB1vc_
+          AUTH_WEBSITE_URL: https://datacube-au.vercel.app
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
-            echo "::error::Android build needs SUPABASE_URL and SUPABASE_ANON_KEY. Configure them as GitHub Actions variables or secrets."
+            echo "::error::Android build needs Supabase project URL and publishable key."
             exit 1
           fi
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
