@@ -19,6 +19,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.security.MessageDigest
 import java.security.SecureRandom
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 /**
  * Native authentication is handed off to the existing DataCube AU website.
@@ -71,52 +73,68 @@ class AuthRepository(
 
     suspend fun completeWebsiteAuthentication(code: String, state: String): AuthResult {
         return try {
-            val pending = pendingAuthStore.load(state)
-                ?: return AuthResult.Error("This sign-in request expired. Please sign in again.")
+            withTimeout(HANDOFF_TIMEOUT_MS) {
+                val pending = pendingAuthStore.load(state)
+                    ?: return@withTimeout AuthResult.Error("This sign-in request expired. Start Google sign-in again.")
 
-            val response = httpClient.post("${BuildConfig.AUTH_WEBSITE_URL.trimEnd('/')}/api/auth/mobile-handoff") {
-                contentType(ContentType.Application.Json)
-                header("Accept", "application/json")
-                setBody(
-                    """{"action":"exchange","code":"${jsonEscape(code)}","state":"${jsonEscape(state)}","codeVerifier":"${jsonEscape(pending.verifier)}"}"""
-                )
-            }
-            val payload = json.parseToJsonElement(response.bodyAsText()).jsonObject
-            if (payload["ok"]?.jsonPrimitive?.content != "true") {
-                val message = payload["message"]?.jsonPrimitive?.content
-                    ?: "The sign-in link expired or was already used. Please sign in again."
+                val response = httpClient.post("${BuildConfig.AUTH_WEBSITE_URL.trimEnd('/')}/api/auth/mobile-handoff") {
+                    contentType(ContentType.Application.Json)
+                    header("Accept", "application/json")
+                    setBody(
+                        """{"action":"exchange","code":"${jsonEscape(code)}","state":"${jsonEscape(state)}","codeVerifier":"${jsonEscape(pending.verifier)}"}"""
+                    )
+                }
+
+                val responseBody = response.bodyAsText()
+                val payload = runCatching { json.parseToJsonElement(responseBody).jsonObject }.getOrNull()
+                if (response.status.value !in 200..299) {
+                    pendingAuthStore.clear()
+                    val serverMessage = payload?.get("message")?.jsonPrimitive?.content
+                    return@withTimeout AuthResult.Error(
+                        serverMessage ?: "The authentication server returned HTTP ${response.status.value}. Please retry."
+                    )
+                }
+
+                if (payload?.get("ok")?.jsonPrimitive?.content != "true") {
+                    val message = payload?.get("message")?.jsonPrimitive?.content
+                        ?: "The server response was not a valid app-session confirmation."
+                    pendingAuthStore.clear()
+                    return@withTimeout AuthResult.Error(message)
+                }
+
+                val refreshToken = payload["refreshToken"]?.jsonPrimitive?.content
+                val expectedUserId = payload["userId"]?.jsonPrimitive?.content
+                if (refreshToken.isNullOrBlank() || expectedUserId.isNullOrBlank()) {
+                    pendingAuthStore.clear()
+                    return@withTimeout AuthResult.Error("The server did not return a complete native session.")
+                }
+
+                // Exchange the one-time server token with Supabase and verify that
+                // the resulting native identity is the same account authenticated in Chrome.
+                SupabaseClient.auth.refreshSession(refreshToken = refreshToken)
+                val user = SupabaseClient.auth.currentUserOrNull()
+                if (user?.id != expectedUserId) {
+                    SupabaseClient.auth.signOut()
+                    pendingAuthStore.clear()
+                    return@withTimeout AuthResult.Error("Supabase created a session, but the account identity did not match.")
+                }
+
+                sessionStore.persist(user)
                 pendingAuthStore.clear()
-                return AuthResult.Error(message)
+                AuthResult.Success
             }
-
-            val refreshToken = payload["refreshToken"]?.jsonPrimitive?.content
-            val expectedUserId = payload["userId"]?.jsonPrimitive?.content
-            if (refreshToken.isNullOrBlank() || expectedUserId.isNullOrBlank()) {
-                pendingAuthStore.clear()
-                return AuthResult.Error("The secure app session was incomplete. Please sign in again.")
-            }
-
-            // Supabase SDK performs the refresh-token exchange and persists the
-            // resulting native session using its configured session manager.
-            SupabaseClient.auth.refreshSession(refreshToken = refreshToken)
-            val user = SupabaseClient.auth.currentUserOrNull()
-            if (user?.id != expectedUserId) {
-                SupabaseClient.auth.signOut()
-                pendingAuthStore.clear()
-                return AuthResult.Error("The returned account could not be verified. Please sign in again.")
-            }
-
-            sessionStore.persist(user)
+        } catch (e: TimeoutCancellationException) {
             pendingAuthStore.clear()
-            AuthResult.Success
+            Log.w(TAG, "Mobile handoff timed out")
+            AuthResult.Error("The secure sign-in took too long. Check your connection and retry.")
         } catch (e: AuthRestException) {
             pendingAuthStore.clear()
-            Log.w(TAG, "Website handoff exchange failed: ${e.message}")
-            AuthResult.Error("The sign-in link expired or could not be verified. Please sign in again.")
+            Log.w(TAG, "Supabase rejected the native session: ${e.message}")
+            AuthResult.Error("Supabase rejected the app session: ${e.message ?: "authentication error"}. Please sign in again.")
         } catch (e: Exception) {
             pendingAuthStore.clear()
             Log.e(TAG, "Website authentication handoff failed", e)
-            AuthResult.Error("Could not complete sign-in. Check your connection and try again.")
+            AuthResult.Error("The app could not complete secure session exchange (${e.javaClass.simpleName}). Check your connection and retry.")
         }
     }
 
@@ -168,5 +186,6 @@ class AuthRepository(
 
     private companion object {
         const val TAG = "DataCubeAuth"
+        const val HANDOFF_TIMEOUT_MS = 25_000L
     }
 }
