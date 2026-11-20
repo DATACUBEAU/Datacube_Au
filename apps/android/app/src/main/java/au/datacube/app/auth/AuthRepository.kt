@@ -95,8 +95,13 @@ class AuthRepository(
                     )
                 }
 
-                if (payload?.get("ok")?.jsonPrimitive?.content != "true") {
-                    val message = payload?.get("message")?.jsonPrimitive?.content
+                if (payload == null) {
+                    pendingAuthStore.clear()
+                    return@withTimeout AuthResult.Error("The authentication server returned an unreadable response. Please retry.")
+                }
+
+                if (payload["ok"]?.jsonPrimitive?.content != "true") {
+                    val message = payload["message"]?.jsonPrimitive?.content
                         ?: "The server response was not a valid app-session confirmation."
                     pendingAuthStore.clear()
                     return@withTimeout AuthResult.Error(message)
