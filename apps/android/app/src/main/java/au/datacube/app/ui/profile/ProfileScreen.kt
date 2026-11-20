@@ -1,5 +1,6 @@
 package au.datacube.app.ui.profile
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -12,6 +13,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.res.painterResource
+import au.datacube.app.R
 import androidx.compose.ui.unit.dp
 import io.github.jan.supabase.auth.user.UserInfo
 
@@ -30,7 +33,19 @@ fun ProfileScreen(
     Scaffold(
         modifier = modifier,
         topBar = {
-            TopAppBar(title = { Text("Profile", fontWeight = FontWeight.Bold) })
+            TopAppBar(
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(R.drawable.datacube_logo),
+                            contentDescription = "DataCube AU",
+                            modifier = Modifier.size(30.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text("Profile", fontWeight = FontWeight.Bold)
+                    }
+                }
+            )
         }
     ) { padding ->
         LazyColumn(
