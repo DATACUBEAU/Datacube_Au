@@ -51,10 +51,10 @@ class AuthRepository(
         )
         pendingAuthStore.save(state, verifier)
 
-        val redirect = Uri.parse(BuildConfig.AUTH_WEBSITE_URL)
+        // redirectTo is a local website path. The login page accepts this
+        // directly and safely normalizes same-origin absolute URLs from older APKs.
+        val redirect = Uri.parse("/mobile-auth/complete")
             .buildUpon()
-            .appendPath("mobile-auth")
-            .appendPath("complete")
             .appendQueryParameter("state", state)
             .appendQueryParameter("code_challenge", challenge)
             .build()
