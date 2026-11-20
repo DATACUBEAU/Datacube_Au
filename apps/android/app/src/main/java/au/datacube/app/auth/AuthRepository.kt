@@ -11,6 +11,7 @@ import io.ktor.client.engine.android.Android
 import io.ktor.client.request.post
 import io.ktor.client.request.header
 import io.ktor.client.request.setBody
+import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
@@ -36,7 +37,21 @@ class AuthRepository(
         data class Error(val message: String) : AuthResult()
     }
 
-    private val httpClient = HttpClient(Android)
+    private val httpClient = HttpClient(Android) {
+        expectSuccess = false
+        install(HttpTimeout) {
+            connectTimeoutMillis = 10_000
+            requestTimeoutMillis = 25_000
+            socketTimeoutMillis = 25_000
+        }
+    }
+
+    fun configurationError(): String? {
+        if (!BuildConfig.SUPABASE_URL.startsWith("https://") || BuildConfig.SUPABASE_ANON_KEY.isBlank()) {
+            return "This app build is missing its Supabase connection settings. Install a correctly configured DataCube AU APK."
+        }
+        return null
+    }
     private val json = Json { ignoreUnknownKeys = true }
 
     suspend fun currentUser() = runCatching {
@@ -51,6 +66,8 @@ class AuthRepository(
             MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray(Charsets.US_ASCII)),
             Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING
         )
+        configurationError()?.let { throw IllegalStateException(it) }
+        pendingAuthStore.clear()
         pendingAuthStore.save(state, verifier)
 
         // redirectTo is a local website path. The login page accepts this
@@ -67,11 +84,13 @@ class AuthRepository(
             .appendPath("login")
             .appendQueryParameter("mode", mode)
             .appendQueryParameter("redirectTo", redirect)
+            .appendQueryParameter("forceReauth", "1")
             .build()
             .toString()
     }
 
     suspend fun completeWebsiteAuthentication(code: String, state: String): AuthResult {
+        configurationError()?.let { return AuthResult.Error(it) }
         return try {
             withTimeout(HANDOFF_TIMEOUT_MS) {
                 val pending = pendingAuthStore.load(state)
@@ -139,7 +158,11 @@ class AuthRepository(
         } catch (e: Exception) {
             pendingAuthStore.clear()
             Log.e(TAG, "Website authentication handoff failed", e)
-            AuthResult.Error("The app could not complete secure session exchange (${e.javaClass.simpleName}). Check your connection and retry.")
+            val detail = e.message?.take(180)?.takeIf { it.isNotBlank() }
+            AuthResult.Error(
+                if (detail != null) "Secure app sign-in failed: $detail"
+                else "The app could not reach Supabase (${e.javaClass.simpleName}). Check its connection settings and retry."
+            )
         }
     }
 
@@ -156,6 +179,7 @@ class AuthRepository(
     }
 
     suspend fun restoreSession(): Boolean = try {
+        if (configurationError() != null) return false
         SupabaseClient.auth.awaitInitialization()
         val user = SupabaseClient.auth.currentUserOrNull()
         if (user != null) {
