@@ -5,7 +5,7 @@ import au.datacube.app.BuildConfig
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.exception.AuthRestException
 import io.github.jan.supabase.auth.providers.Google
-import io.github.jan.supabase.auth.providers.IDToken
+import io.github.jan.supabase.auth.providers.builtin.IDToken
 
 /**
  * Native Android authentication backed by Supabase Auth.
