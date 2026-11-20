@@ -35,8 +35,8 @@ fun configuredValue(vararg names: String): String? {
 
 fun buildConfigLiteral(value: String): String = groovy.json.JsonOutput.toJson(value)
 
-val supabaseUrl = configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
-val supabaseAnonKey = configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+val supabaseUrl = configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL") ?: ""
+val supabaseAnonKey = configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY") ?: ""
 val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube-au.vercel.app"
 
 if (supabaseUrl.isNullOrBlank() || !supabaseUrl.startsWith("https://") || supabaseAnonKey.isNullOrBlank()) {
