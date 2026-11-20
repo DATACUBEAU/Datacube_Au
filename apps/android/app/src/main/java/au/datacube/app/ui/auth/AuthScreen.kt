@@ -1,15 +1,6 @@
 package au.datacube.app.ui.auth
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
+import android.util.Log
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,266 +11,151 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import au.datacube.app.R
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import au.datacube.app.BuildConfig
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
+import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
+import java.security.MessageDigest
+import java.util.UUID
+import kotlinx.coroutines.launch
 
 private val AuthBlue = Color(0xFF318BFF)
-private val AuthCyan = Color(0xFF78D5FF)
 private val AuthMuted = Color(0xFFB8C9DE)
 
-/** Native, minimal entry screen. The website remains the source of truth for authentication. */
+/** Native Android Google authentication. No website or browser callback is involved. */
 @Composable
-fun AuthScreen(
-    viewModel: AuthViewModel,
-    onOpenWebsite: (String) -> Unit
-) {
+fun AuthScreen(viewModel: AuthViewModel) {
     val state by viewModel.state.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    val motion = rememberInfiniteTransition(label = "auth-background-motion")
-    val drift by motion.animateFloat(
-        initialValue = -0.10f,
-        targetValue = 0.10f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(9000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "background-drift"
-    )
-    val orbit by motion.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(animation = tween(26000, easing = LinearEasing)),
-        label = "logo-orbit"
-    )
-    val breathe by motion.animateFloat(
-        initialValue = 0.88f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(3200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "logo-glow"
-    )
+    val startGoogleSignIn: () -> Unit = {
+        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isBlank()) {
+            viewModel.showError("Google sign-in is not configured yet. The app build needs the Google Web OAuth client ID.")
+        } else {
+            scope.launch {
+                try {
+                    val rawNonce = UUID.randomUUID().toString()
+                    val hashedNonce = MessageDigest.getInstance("SHA-256")
+                        .digest(rawNonce.toByteArray())
+                        .joinToString("") { "%02x".format(it) }
+
+                    val googleOption = GetGoogleIdOption.Builder()
+                        .setFilterByAuthorizedAccounts(false)
+                        .setServerClientId(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+                        .setNonce(hashedNonce)
+                        .build()
+                    val request = GetCredentialRequest.Builder()
+                        .addCredentialOption(googleOption)
+                        .build()
+                    val result = CredentialManager.create(context).getCredential(
+                        request = request,
+                        context = context
+                    )
+                    val googleCredential = GoogleIdTokenCredential.createFrom(result.credential.data)
+                    viewModel.signInWithGoogle(googleCredential.idToken, rawNonce)
+                } catch (_: GetCredentialCancellationException) {
+                    // Cancellation is a normal user action; leave the auth screen unchanged.
+                } catch (error: GetCredentialException) {
+                    Log.w("DataCubeAuth", "Google credential acquisition failed", error)
+                    viewModel.showError("Google account sign-in could not start. Check Google Play services and try again.")
+                } catch (error: GoogleIdTokenParsingException) {
+                    Log.w("DataCubeAuth", "Google returned an unreadable ID token", error)
+                    viewModel.showError("Google returned an invalid identity token. Please try again.")
+                } catch (error: Exception) {
+                    Log.e("DataCubeAuth", "Native Google sign-in failed", error)
+                    viewModel.showError(error.message?.take(160) ?: "Native Google sign-in failed. Check your connection and retry.")
+                }
+            }
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF06101F), Color(0xFF0A1B32), Color(0xFF071426))
-                )
-            )
+            .background(Brush.verticalGradient(listOf(Color(0xFF06101F), Color(0xFF0A1B32), Color(0xFF071426))))
+            .padding(horizontal = 28.dp, vertical = 36.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Canvas(Modifier.fillMaxSize()) {
-            val w = size.width
-            val h = size.height
-            val center = Offset(w * (0.5f + drift), h * 0.30f)
-
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0x55318BFF), Color(0x22318BFF), Color.Transparent),
-                    center = center,
-                    radius = w * 0.72f
-                ),
-                radius = w * 0.72f,
-                center = center
-            )
-            drawCircle(
-                brush = Brush.radialGradient(
-                    colors = listOf(Color(0x2278D5FF), Color.Transparent),
-                    center = Offset(w * 0.92f, h * 0.70f),
-                    radius = w * 0.50f
-                ),
-                radius = w * 0.50f,
-                center = Offset(w * 0.92f, h * 0.70f)
-            )
-
-            // Subtle perspective grid adds depth without a heavy 3D asset.
-            val horizon = h * 0.58f
-            for (index in 0..12) {
-                val x = w * index / 12f
-                drawLine(
-                    color = AuthBlue.copy(alpha = 0.10f),
-                    start = Offset(w * 0.5f, horizon),
-                    end = Offset(x, h * 1.08f),
-                    strokeWidth = 1.dp.toPx()
-                )
-            }
-            for (index in 0..9) {
-                val progress = index / 9f
-                val y = horizon + (h * 0.48f * progress * progress)
-                drawLine(
-                    color = AuthBlue.copy(alpha = 0.07f + progress * 0.035f),
-                    start = Offset(0f, y),
-                    end = Offset(w, y),
-                    strokeWidth = 1.dp.toPx()
-                )
-            }
-        }
-
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 28.dp, vertical = 36.dp),
+            modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Box(modifier = Modifier.size(154.dp), contentAlignment = Alignment.Center) {
-                Box(
-                    modifier = Modifier
-                        .size(142.dp)
-                        .graphicsLayer {
-                            rotationZ = orbit
-                            scaleX = breathe
-                            scaleY = breathe
-                        }
-                        .drawBehind {
-                            drawCircle(
-                                brush = Brush.radialGradient(
-                                    listOf(Color(0x66318BFF), Color(0x22318BFF), Color.Transparent)
-                                ),
-                                radius = size.minDimension * 0.50f
-                            )
-                            drawCircle(
-                                color = AuthCyan.copy(alpha = 0.55f),
-                                radius = size.minDimension * 0.46f,
-                                style = Stroke(width = 1.2.dp.toPx())
-                            )
-                            drawCircle(
-                                color = AuthBlue.copy(alpha = 0.30f),
-                                radius = size.minDimension * 0.36f,
-                                style = Stroke(
-                                    width = 1.dp.toPx(),
-                                    pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(
-                                        floatArrayOf(5.dp.toPx(), 8.dp.toPx())
-                                    )
-                                )
-                            )
-                        }
-                )
-                Image(
-                    painter = painterResource(R.drawable.datacube_app_icon),
-                    contentDescription = "DataCube AU",
-                    modifier = Modifier
-                        .size(88.dp)
-                        .clip(RoundedCornerShape(24.dp))
-                        .drawBehind {
-                            drawCircle(
-                                color = AuthBlue.copy(alpha = 0.22f),
-                                radius = size.minDimension * 0.72f
-                            )
-                        }
-                )
-            }
-
+            Text(
+                "DATACUBE AU",
+                color = Color(0xFF78D5FF),
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 3.sp,
+                style = MaterialTheme.typography.labelLarge
+            )
             Spacer(Modifier.height(18.dp))
             Text(
-                text = "DATACUBE AU",
-                style = MaterialTheme.typography.labelLarge,
-                color = AuthCyan,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 3.sp
-            )
-            Spacer(Modifier.height(12.dp))
-            Text(
-                text = "Welcome back.",
-                style = MaterialTheme.typography.headlineLarge,
+                "Welcome back.",
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
+                style = MaterialTheme.typography.headlineLarge,
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "Your knowledge. One connected space.",
-                style = MaterialTheme.typography.bodyLarge,
+                "Your knowledge. One connected space.",
                 color = AuthMuted,
+                style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center
             )
-
             Spacer(Modifier.height(38.dp))
             Button(
-                onClick = { viewModel.createWebsiteLoginUrl("login")?.let(onOpenWebsite) },
+                onClick = startGoogleSignIn,
                 enabled = !state.isLoading,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF247CEB),
-                    contentColor = Color.White,
-                    disabledContainerColor = Color(0xFF247CEB).copy(alpha = 0.45f)
+                    contentColor = Color.White
                 )
             ) {
                 if (state.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(19.dp),
-                        color = Color.White,
-                        strokeWidth = 2.dp
-                    )
+                    CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
                     Spacer(Modifier.size(10.dp))
                 }
                 Text("Continue with Google", fontWeight = FontWeight.SemiBold)
             }
-
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = { viewModel.createWebsiteLoginUrl("signup")?.let(onOpenWebsite) },
-                enabled = !state.isLoading,
-                modifier = Modifier.fillMaxWidth().height(54.dp),
-                shape = RoundedCornerShape(18.dp),
-                border = BorderStroke(1.dp, Color(0x668CBFFF)),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = Color(0xFFEAF4FF),
-                    containerColor = Color.Transparent
-                )
-            ) {
-                Text("Create account", fontWeight = FontWeight.Medium)
-            }
-
             state.error?.let { message ->
                 Spacer(Modifier.height(18.dp))
                 Text(
-                    text = message,
-                    style = MaterialTheme.typography.bodySmall,
+                    message,
                     color = Color(0xFFFFB8B8),
+                    style = MaterialTheme.typography.bodySmall,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0x22FF7777))
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
             Spacer(Modifier.height(24.dp))
-            Text(
-                text = "Secure sign-in",
-                style = MaterialTheme.typography.labelSmall,
-                color = AuthMuted.copy(alpha = 0.65f)
-            )
+            Text("Secure native sign-in", color = AuthMuted.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall)
         }
     }
 }
