@@ -86,6 +86,15 @@ function MobileAuthCompletion() {
           throw new Error(payload?.message || `The secure app session could not be prepared (HTTP ${response.status}).`);
         }
 
+        // The handoff contains an independent native refresh-token session.
+        // Close the browser's local session now so a failed app handoff cannot
+        // leave the website authenticated while the Android app is not.
+        const { error: browserSignOutError } = await supabase.auth.signOut({ scope: 'local' });
+        if (browserSignOutError) {
+          throw new Error('The app session was prepared, but the browser session could not be safely closed. Please retry.');
+        }
+        clearServerAuthSessionCookie();
+
         sessionStorage.setItem('datacube.au.mobile.handoff.v1', JSON.stringify({
           code: payload.handoffCode,
           state,
@@ -99,7 +108,7 @@ function MobileAuthCompletion() {
         setIntentUrl(deepLink);
         setAuthenticated(true);
         setBusy(false);
-        setMessage('Authenticated. DataCube AU is ready. Returning to the app…');
+        setMessage('Authenticated. Your separate app session is ready. The browser session has been closed. Returning to the app…');
 
         // The browser tab remains a useful authenticated confirmation page after
         // Android takes focus. The user can manually reopen the app or sign out.
