@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
  alias(libs.plugins.android.application)
  alias(libs.plugins.kotlin.android)
@@ -5,6 +7,46 @@ plugins {
  alias(libs.plugins.kotlin.kapt)
  alias(libs.plugins.kotlin.serialization)
 }
+
+// Gradle does not automatically expose arbitrary local.properties entries as
+// project properties. Read Android local.properties and ignored dotenv files
+// explicitly so the APK never silently ships with blank Supabase credentials.
+val androidBuildProperties = Properties()
+listOf(
+    rootProject.file("local.properties"),
+    rootProject.file("../.env.local"),
+    rootProject.file("../.env"),
+    rootProject.file("../.env.development.local")
+).filter { it.isFile }.forEach { file ->
+    file.inputStream().use { androidBuildProperties.load(it) }
+}
+
+fun configuredValue(vararg names: String): String? {
+    for (name in names) {
+        val value = providers.gradleProperty(name).orNull
+            ?: androidBuildProperties.getProperty(name)
+            ?: System.getenv(name)
+        if (!value.isNullOrBlank()) {
+            return value.trim().removeSurrounding("\"").removeSurrounding("'")
+        }
+    }
+    return null
+}
+
+fun buildConfigLiteral(value: String): String = groovy.json.JsonOutput.toJson(value)
+
+val supabaseUrl = configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL")
+val supabaseAnonKey = configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube-au.vercel.app"
+
+if (supabaseUrl.isNullOrBlank() || !supabaseUrl.startsWith("https://") || supabaseAnonKey.isNullOrBlank()) {
+    throw GradleException(
+        "DataCube AU Android build is missing Supabase configuration. Add SUPABASE_URL and " +
+            "SUPABASE_ANON_KEY to apps/android/local.properties, or set NEXT_PUBLIC_SUPABASE_URL " +
+            "and NEXT_PUBLIC_SUPABASE_ANON_KEY in the repository-root .env.local. Do not use a service-role key."
+    )
+}
+
 android {
  namespace = "au.datacube.app"
  compileSdk = 35
@@ -12,16 +54,12 @@ android {
      applicationId = "au.datacube.app"
      minSdk = 26
      targetSdk = 35
-     versionCode = 1
-     versionName = "1.0.0"
+     versionCode = 2
+     versionName = "1.0.1"
      testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-     // Supabase project values — injected from local.properties or CI secrets
-     val supabaseUrl = project.findProperty("SUPABASE_URL") as String? ?: ""
-     val supabaseAnonKey = project.findProperty("SUPABASE_ANON_KEY") as String? ?: ""
-     val authWebsiteUrl = project.findProperty("AUTH_WEBSITE_URL") as String? ?: "https://datacube-au.vercel.app"
-     buildConfigField("String", "SUPABASE_URL", "\"$supabaseUrl\"")
-     buildConfigField("String", "SUPABASE_ANON_KEY", "\"$supabaseAnonKey\"")
-     buildConfigField("String", "AUTH_WEBSITE_URL", "\"$authWebsiteUrl\"")
+     buildConfigField("String", "SUPABASE_URL", buildConfigLiteral(supabaseUrl))
+     buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigLiteral(supabaseAnonKey))
+     buildConfigField("String", "AUTH_WEBSITE_URL", buildConfigLiteral(authWebsiteUrl))
  }
  buildFeatures {
      compose = true
