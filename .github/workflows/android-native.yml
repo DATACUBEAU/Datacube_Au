@@ -5,11 +5,13 @@ on:
     paths:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
+      - "tests/mobile-auth-handoff.unit.test.ts"
   push:
     branches: ["**"]
     paths:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
+      - "tests/mobile-auth-handoff.unit.test.ts"
   workflow_dispatch:
 
 permissions:
