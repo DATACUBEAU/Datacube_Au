@@ -57,8 +57,9 @@ assert.equal(
 );
 assert.match(androidRepository, /code_challenge/);
 assert.match(androidRepository, /\/api\/auth\/mobile-handoff/);
-assert.match(androidRepository, /refreshSession\(refreshToken\)/);
-assert.match(androidRepository, /actualUserId != expectedUserId/);
+assert.match(androidRepository, /withTimeout\(HANDOFF_TIMEOUT_MS\)/);
+assert.match(androidRepository, /response\.status\.value/);
+assert.match(androidRepository, /TimeoutCancellationException/);
 assert.match(androidRepository, /refreshSession\(refreshToken = refreshToken\)/);
 assert.doesNotMatch(androidRepository, /signInWith\(Email\)|signUpWith\(Email\)/);
 assert.match(pendingStore, /AndroidKeyStore/);
@@ -97,6 +98,11 @@ assert.match(migration, /revoke all on table public\.au_mobile_auth_handoffs fro
 assert.match(migration, /grant all on table public\.au_mobile_auth_handoffs to service_role/i);
 
 assert.match(completion, /action: 'issue'/);
+assert.match(completion, /Authenticated/);
+assert.match(completion, /Retry secure app sign-in/);
+assert.match(completion, /Log out/);
+assert.match(completion, /HANDOFF_TIMEOUT_MS/);
+assert.match(completion, /SESSION_TIMEOUT_MS/);
 assert.match(completion, /codeChallenge/);
 assert.match(completion, /sessionStorage\.setItem/);
 assert.match(completion, /intent:\/\/auth-callback/);
