@@ -568,10 +568,17 @@ export default function SettingsPage() {
           
           <Card>
             <CardHeader>
-              <CardTitle className="font-headline">Application</CardTitle>
+              <div className="flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#2183E3] shadow-sm">
+                  <Icons.logo className="h-8 w-8 text-[#69B7FF]" aria-hidden="true" />
+                </div>
+                <div>
+                  <CardTitle className="font-headline">Application</CardTitle>
               <CardDescription>
-                Install the app on your device for a native experience.
-              </CardDescription>
+                    Install the app on your device for a native experience.
+                  </CardDescription>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-6">
                 <PwaInstallButton />
