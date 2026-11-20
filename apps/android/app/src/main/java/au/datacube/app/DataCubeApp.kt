@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.core.splashscreen.SplashScreen
 import au.datacube.app.auth.AuthRepository
 import au.datacube.app.auth.AuthSessionStore
-import au.datacube.app.auth.PendingMobileAuthStore
 import au.datacube.app.data.DataCubeDatabase
 
 /**
@@ -30,7 +29,7 @@ class DataCubeApp : Application() {
         super.onCreate()
         instance = this
         authSessionStore = AuthSessionStore(this)
-        authRepository = AuthRepository(authSessionStore, PendingMobileAuthStore(this))
+        authRepository = AuthRepository(authSessionStore)
         database = DataCubeDatabase.get(this)
     }
 
