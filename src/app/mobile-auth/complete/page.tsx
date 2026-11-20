@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-client/client';
+import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 
 function MobileAuthCompletion() {
   const searchParams = useSearchParams();
@@ -12,6 +13,7 @@ function MobileAuthCompletion() {
   const [message, setMessage] = useState('Preparing your secure mobile sign-in…');
   const [intentUrl, setIntentUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
+  const [handoffReady, setHandoffReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -27,6 +29,7 @@ function MobileAuthCompletion() {
         const { data: current, error: sessionError } = await supabase.auth.getSession();
         if (sessionError) throw sessionError;
         const browserSession = current.session;
+        if (browserSession) syncServerAuthSessionCookie(browserSession);
 
         if (!browserSession?.access_token || !browserSession.user?.id) {
           const redirectTo = `/mobile-auth/complete?state=${encodeURIComponent(state)}&code_challenge=${encodeURIComponent(codeChallenge)}`;
@@ -68,7 +71,14 @@ function MobileAuthCompletion() {
 
         if (cancelled) return;
         setIntentUrl(deepLink);
-        setMessage('Authentication successful. Opening DataCube AU…');
+        setHandoffReady(true);
+        setMessage('Authentication complete. Opening DataCube AU…');
+
+        // Some browsers remain on this page even after dispatching the intent.
+        // Keep a useful authenticated fallback instead of leaving a spinner.
+        window.setTimeout(() => {
+          if (!cancelled) setMessage('You’re authenticated. Open DataCube AU to continue.');
+        }, 1800);
 
         // Chrome opens the installed Android package. If it is not installed,
         // browser_fallback_url takes the user to the install/continue page.
@@ -88,7 +98,7 @@ function MobileAuthCompletion() {
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-5 px-5 text-center">
-      {!failed ? <Loader2 className="h-9 w-9 animate-spin text-primary" /> : null}
+      {!failed && !handoffReady ? <Loader2 className="h-9 w-9 animate-spin text-primary" /> : null}
       <div className="max-w-md space-y-3">
         <h1 className="text-2xl font-bold">DataCube AU</h1>
         <p className="text-sm text-muted-foreground">{message}</p>
@@ -102,7 +112,7 @@ function MobileAuthCompletion() {
         ) : null}
         {failed ? (
           <a href="/login" className="block text-sm font-medium text-primary underline underline-offset-4">
-            Return to sign in
+            Return to DataCube AU
           </a>
         ) : null}
       </div>
