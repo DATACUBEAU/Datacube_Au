@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { sanitizeRedirectTarget } from '../src/lib/auth/redirects';
 
 function read(...parts: string[]): string {
   return readFileSync(path.join(process.cwd(), ...parts), 'utf8');
@@ -32,6 +33,28 @@ assert.match(androidAuthScreen, /onOpenWebsite/);
 assert.doesNotMatch(androidAuthScreen, /OutlinedTextField|PasswordVisualTransformation|signIn\(|signUp\(/);
 
 assert.match(androidRepository, /BuildConfig\.AUTH_WEBSITE_URL/);
+assert.match(androidRepository, /Uri\.parse\("\/mobile-auth\/complete"\)/);
+assert.doesNotMatch(androidRepository, /appendPath\("mobile-auth"\)/);
+assert.equal(
+  sanitizeRedirectTarget(
+    'https://datacube-au.vercel.app/mobile-auth/complete?state=s&code_challenge=c',
+    'https://datacube-au.vercel.app',
+    '/',
+  ),
+  '/mobile-auth/complete?state=s&code_challenge=c',
+);
+assert.equal(
+  sanitizeRedirectTarget(
+    'https://evil.example/mobile-auth/complete?state=s',
+    'https://datacube-au.vercel.app',
+    '/',
+  ),
+  '/',
+);
+assert.equal(
+  sanitizeRedirectTarget('/mobile-auth/complete?state=s', 'https://datacube-au.vercel.app', '/'),
+  '/mobile-auth/complete?state=s',
+);
 assert.match(androidRepository, /code_challenge/);
 assert.match(androidRepository, /\/api\/auth\/mobile-handoff/);
 assert.match(androidRepository, /refreshSession\(refreshToken\)/);
