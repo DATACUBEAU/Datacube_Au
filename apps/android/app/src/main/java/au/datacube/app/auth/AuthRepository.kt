@@ -24,9 +24,6 @@ class AuthRepository(
         if (!BuildConfig.SUPABASE_URL.startsWith("https://") || BuildConfig.SUPABASE_ANON_KEY.isBlank()) {
             return "This app build is missing its Supabase connection settings. Install a correctly configured DataCube AU APK."
         }
-        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isBlank()) {
-            return "Native Google sign-in is not configured. Add GOOGLE_WEB_CLIENT_ID (the Google Web OAuth client ID) to the Android build configuration."
-        }
         return null
     }
 
