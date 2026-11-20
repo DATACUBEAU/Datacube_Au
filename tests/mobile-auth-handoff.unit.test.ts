@@ -13,6 +13,7 @@ const completion = read('src', 'app', 'mobile-auth', 'complete', 'page.tsx');
 const fallback = read('src', 'app', 'mobile-auth', 'install', 'page.tsx');
 const androidAuthScreen = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'ui', 'auth', 'AuthScreen.kt');
 const androidRepository = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'auth', 'AuthRepository.kt');
+const androidGradle = read('apps', 'android', 'app', 'build.gradle.kts');
 const pendingStore = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'auth', 'PendingMobileAuthStore.kt');
 const androidManifest = read('apps', 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
 const androidActivity = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'MainActivity.kt');
@@ -32,6 +33,14 @@ assert.doesNotMatch(androidAuthScreen, /Card\(|secure sign-in page|account and a
 assert.match(androidAuthScreen, /onOpenWebsite/);
 assert.doesNotMatch(androidAuthScreen, /OutlinedTextField|PasswordVisualTransformation|signIn\(|signUp\(/);
 
+assert.match(androidGradle, /local\.properties/);
+assert.match(androidGradle, /NEXT_PUBLIC_SUPABASE_URL/);
+assert.match(androidGradle, /NEXT_PUBLIC_SUPABASE_ANON_KEY/);
+assert.match(androidGradle, /GradleException/);
+assert.match(androidGradle, /versionCode = 2/);
+assert.match(androidRepository, /configurationError\(\)/);
+assert.match(androidRepository, /HttpTimeout/);
+assert.match(androidRepository, /forceReauth/);
 assert.match(androidRepository, /BuildConfig\.AUTH_WEBSITE_URL/);
 assert.match(androidRepository, /Uri\.parse\("\/mobile-auth\/complete"\)/);
 assert.doesNotMatch(androidRepository, /appendPath\("mobile-auth"\)/);
@@ -98,6 +107,9 @@ assert.match(migration, /revoke all on table public\.au_mobile_auth_handoffs fro
 assert.match(migration, /grant all on table public\.au_mobile_auth_handoffs to service_role/i);
 
 assert.match(completion, /action: 'issue'/);
+assert.match(completion, /signOut\(\{ scope: 'local' \}\)/);
+assert.match(completion, /clearServerAuthSessionCookie\(\)/);
+assert.match(websiteLogin, /forceReauth/);
 assert.match(completion, /Authenticated/);
 assert.match(completion, /Retry secure app sign-in/);
 assert.match(completion, /Log out/);
