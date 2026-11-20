@@ -23,7 +23,7 @@ import {
 } from '@/lib/auth/session-cookie';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { sanitizeRedirectTarget } from '@/lib/auth/redirects';
 
 export default function LoginPage() {
   const { signInWithGoogle } = useSmartAuth();
@@ -40,7 +40,11 @@ export default function LoginPage() {
   const sessionReasonParam = searchParams.get('reason');
   const wasSessionExpired = sessionReasonParam === 'session_expired';
   const hadAuthError = sessionReasonParam === 'auth_error';
-  const safeRedirectPath = sanitizeLocalRedirectPath(redirectToParam, '/');
+  const safeRedirectPath = sanitizeRedirectTarget(
+    redirectToParam,
+    typeof window === 'undefined' ? null : window.location.origin,
+    '/',
+  );
   const isConexDestination = safeRedirectPath === '/conex' || safeRedirectPath.startsWith('/conex/');
 
   useEffect(() => {
