@@ -178,20 +178,22 @@ class AuthRepository(
         AuthResult.Success
     }
 
-    suspend fun restoreSession(): Boolean = try {
-        if (configurationError() != null) return false
-        SupabaseClient.auth.awaitInitialization()
-        val user = SupabaseClient.auth.currentUserOrNull()
-        if (user != null) {
-            sessionStore.persist(user)
-            true
-        } else {
-            sessionStore.clear()
+    suspend fun restoreSession(): Boolean {
+        return try {
+            if (configurationError() != null) return false
+            SupabaseClient.auth.awaitInitialization()
+            val user = SupabaseClient.auth.currentUserOrNull()
+            if (user != null) {
+                sessionStore.persist(user)
+                true
+            } else {
+                sessionStore.clear()
+                false
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Session restore failed", e)
             false
         }
-    } catch (e: Exception) {
-        Log.w(TAG, "Session restore failed", e)
-        false
     }
 
     private fun randomUrlSafe(bytes: Int): String {
