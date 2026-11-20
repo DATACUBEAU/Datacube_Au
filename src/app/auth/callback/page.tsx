@@ -8,6 +8,19 @@ import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { markAuthSessionRestored, markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
 import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
+// A callback can be mounted more than once (for example during React remounts).
+// PKCE authorization codes are single-use, so share one exchange promise per code.
+let callbackExchangeCode: string | null = null;
+let callbackExchangePromise: ReturnType<typeof supabase.auth.exchangeCodeForSession> | null = null;
+
+function exchangeOAuthCodeOnce(code: string) {
+  if (callbackExchangeCode !== code || !callbackExchangePromise) {
+    callbackExchangeCode = code;
+    callbackExchangePromise = supabase.auth.exchangeCodeForSession(code);
+  }
+  return callbackExchangePromise;
+}
+
 function safeLoginRedirect(nextPath: string, reason: 'auth_error' | 'session_expired'): string {
   return `/login?redirectTo=${encodeURIComponent(nextPath)}&reason=${reason}`;
 }
@@ -62,7 +75,7 @@ export default function AuthCallbackPage() {
       }
 
       try {
-        const { data, error } = await supabase.auth.exchangeCodeForSession(code);
+        const { data, error } = await exchangeOAuthCodeOnce(code);
 
         if (error) throw error;
 
