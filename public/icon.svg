@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">DataCube AU</title>
+  <rect width="512" height="512" rx="104" fill="#2183E3"/>
+  <g fill="none" stroke="#69B7FF" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M448 342V170a42 42 0 0 0-21-36L277 48a42 42 0 0 0-42 0L85 134a42 42 0 0 0-21 36v172a42 42 0 0 0 21 36l150 86a42 42 0 0 0 42 0l150-86a42 42 0 0 0 21-36Z"/>
+    <path d="m69 148 187 108 187-108"/>
+    <path d="M256 468V256"/>
+  </g>
+</svg>
