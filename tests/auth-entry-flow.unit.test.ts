@@ -13,7 +13,7 @@ const mobileAppRequired = readRepoFile('src', 'app', 'mobile-app-required', 'pag
 const mobileAuthInstall = readRepoFile('src', 'app', 'mobile-auth', 'install', 'page.tsx');
 const dashboardLayout = readRepoFile('src', 'app', 'dashboard', 'dashboard-client-layout.tsx');
 
-assert.match(login, /src="\/icon\.png"/);
+assert.match(login, /src="\/icon\.svg"/);
 assert.match(login, /dcau-auth-scene/);
 assert.match(login, /dcau-auth-mark__halo/);
 assert.doesNotMatch(login, /Email and password sign-in and registration are not available/);
