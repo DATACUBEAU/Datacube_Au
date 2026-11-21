@@ -18,10 +18,7 @@ object SupabaseClient {
         supabaseUrl = au.datacube.app.BuildConfig.SUPABASE_URL,
         supabaseKey = au.datacube.app.BuildConfig.SUPABASE_ANON_KEY
     ) {
-        install(Auth) {
-            scheme = "datacube"
-            host = "auth-callback"
-        }
+        install(Auth)
         install(Postgrest)
     }
 

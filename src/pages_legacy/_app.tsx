@@ -17,8 +17,8 @@ export default function App({ Component, pageProps }: AppProps) {
         <meta name="description" content={APP_DESCRIPTION} />
         <meta name="theme-color" content="#3F51B5" />
         <link rel="manifest" href="/manifest.webmanifest" />
-        <link rel="icon" href="/icon.png" />
-        <link rel="apple-touch-icon" href="/icon.png" />
+        <link rel="icon" href="/icon.svg" />
+        <link rel="apple-touch-icon" href="/icon.svg" />
       </Head>
       <ThemeProvider attribute="class" defaultTheme="dark" enableSystem disableTransitionOnChange>
         <ServiceWorkerRegister />

@@ -38,6 +38,7 @@ fun buildConfigLiteral(value: String): String = groovy.json.JsonOutput.toJson(va
 val supabaseUrl = configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL") ?: ""
 val supabaseAnonKey = configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY") ?: ""
 val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube-au.vercel.app"
+val googleWebClientId = configuredValue("GOOGLE_WEB_CLIENT_ID") ?: ""
 
 if (supabaseUrl.isNullOrBlank() || !supabaseUrl.startsWith("https://") || supabaseAnonKey.isNullOrBlank()) {
     throw GradleException(
@@ -60,6 +61,7 @@ android {
      buildConfigField("String", "SUPABASE_URL", buildConfigLiteral(supabaseUrl))
      buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigLiteral(supabaseAnonKey))
      buildConfigField("String", "AUTH_WEBSITE_URL", buildConfigLiteral(authWebsiteUrl))
+     buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", buildConfigLiteral(googleWebClientId))
  }
  buildFeatures {
      compose = true
@@ -96,6 +98,9 @@ dependencies {
  implementation(libs.work.runtime)
  implementation(libs.datastore.preferences)
  implementation(libs.supabase.auth)
+ implementation(libs.credentials)
+ implementation(libs.credentials.play.services.auth)
+ implementation(libs.googleid)
  implementation(libs.supabase.postgrest)
  implementation(libs.supabase.compose.auth)
  implementation(libs.ktor.client.android)

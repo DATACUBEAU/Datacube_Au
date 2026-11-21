@@ -9,7 +9,6 @@ import io.github.jan.supabase.auth.user.UserInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 data class AuthState(
@@ -52,39 +51,17 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun createWebsiteLoginUrl(mode: String): String? = try {
-        _state.value = _state.value.copy(error = null)
-        repository.createWebsiteLoginUrl(mode)
-    } catch (error: Exception) {
-        _state.value = _state.value.copy(
-            error = error.message ?: "Could not open the DataCube AU sign-in page."
-        )
-        null
-    }
-
-    fun completeWebsiteAuthentication(code: String?, state: String?) {
-        if (code.isNullOrBlank() || state.isNullOrBlank()) {
-            _state.value = _state.value.copy(
-                isLoading = false,
-                sessionRestored = true,
-                error = "The sign-in return link is invalid. Please sign in again."
-            )
-            return
-        }
-
+    fun signInWithGoogle(idToken: String, rawNonce: String) {
         viewModelScope.launch {
-            // The initial Supabase SDK session restore and the incoming mobile
-            // handoff must not mutate the same auth client concurrently.
-            _state.first { it.sessionRestored }
             _state.value = _state.value.copy(isLoading = true, error = null)
-            when (val result = repository.completeWebsiteAuthentication(code, state)) {
+            when (val result = repository.signInWithGoogle(idToken, rawNonce)) {
                 is AuthRepository.AuthResult.Success -> {
                     val user = repository.currentUser()
                     _state.value = AuthState(
                         isLoading = false,
                         user = user,
                         sessionRestored = true,
-                        error = if (user == null) "Your session could not be restored. Please sign in again." else null
+                        error = if (user == null) "Your Google session could not be restored. Please try again." else null
                     )
                 }
                 is AuthRepository.AuthResult.Error -> {
@@ -96,6 +73,10 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    fun showError(message: String) {
+        _state.value = _state.value.copy(isLoading = false, error = message)
     }
 
     fun signOut() {

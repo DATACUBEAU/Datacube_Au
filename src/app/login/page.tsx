@@ -1,6 +1,5 @@
 'use client';
 
-import Image from 'next/image';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -207,14 +206,7 @@ export default function LoginPage() {
             <div className="dcau-auth-mark">
               <span className="dcau-auth-mark__halo" />
               <span className="dcau-auth-mark__ring" />
-              <Image
-                src="/icon.png"
-                alt="DataCube AU"
-                width={92}
-                height={92}
-                priority
-                className="dcau-auth-mark__image"
-              />
+              <Icons.logo className="dcau-auth-mark__image h-[92px] w-[92px] text-[#69B7FF]" aria-label="DataCube AU" />
             </div>
             <div className="space-y-1">
               <CardTitle className="font-headline text-2xl font-semibold tracking-tight">

@@ -15,7 +15,7 @@ export default function MobileAppRequiredPage() {
         <div className="dcau-auth-mark mx-auto mb-7">
           <span className="dcau-auth-mark__halo" />
           <span className="dcau-auth-mark__ring" />
-          <Image src="/icon.png" alt="DataCube AU" width={104} height={104} priority className="dcau-auth-mark__image" />
+          <Image src="/icon.svg" alt="DataCube AU" width={104} height={104} priority unoptimized className="dcau-auth-mark__image" />
         </div>
 
         <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-primary">DataCube AU</p>

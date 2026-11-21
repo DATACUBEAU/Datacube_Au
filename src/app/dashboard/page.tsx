@@ -230,7 +230,7 @@ export default function DashboardPage() {
         <div className="dcau-hero-orb relative mr-2 hidden h-28 w-28 shrink-0 items-center justify-center sm:flex md:mr-6" aria-hidden="true">
           <span className="dcau-hero-orb__halo" />
           <span className="dcau-hero-orb__ring" />
-          <Image src="/icon.png" alt="" width={88} height={88} priority className="dcau-hero-orb__logo relative z-10 h-[88px] w-[88px] rounded-2xl object-contain" />
+          <Image src="/icon.svg" alt="" width={88} height={88} priority unoptimized className="dcau-hero-orb__logo relative z-10 h-[88px] w-[88px] rounded-2xl object-contain" />
         </div>
       </section>
       
