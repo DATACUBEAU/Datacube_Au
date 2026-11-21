@@ -12,7 +12,6 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { getSupabaseAccessToken, supabase } from '@/lib/supabase-client/client';
@@ -206,7 +205,7 @@ export default function LoginPage() {
             <div className="dcau-auth-mark">
               <span className="dcau-auth-mark__halo" />
               <span className="dcau-auth-mark__ring" />
-              <Icons.logo className="dcau-auth-mark__image h-[92px] w-[92px] text-[#69B7FF]" aria-label="DataCube AU" />
+              <img src="/icon.svg" alt="DataCube AU" className="dcau-auth-mark__image h-[92px] w-[92px]" />
             </div>
             <div className="space-y-1">
               <CardTitle className="font-headline text-2xl font-semibold tracking-tight">
