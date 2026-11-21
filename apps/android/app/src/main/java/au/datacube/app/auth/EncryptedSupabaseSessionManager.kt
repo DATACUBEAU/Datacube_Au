@@ -59,6 +59,11 @@ class EncryptedSupabaseSessionManager(context: Context) : SessionManager {
             check(preferences.edit().remove(STORAGE_KEY).commit()) {
                 "Could not clear the unreadable encrypted Supabase session."
             }
+            // A permanently invalidated or replaced Keystore key cannot decrypt old
+            // ciphertext. Remove the unusable alias as well, so the next successful
+            // sign-in can generate a fresh key instead of failing on every save.
+            runCatching { deleteKey() }
+                .onFailure { Log.e(TAG, "Could not remove the unusable Supabase session key.", it) }
             null
         }
     }
@@ -66,6 +71,13 @@ class EncryptedSupabaseSessionManager(context: Context) : SessionManager {
     override suspend fun deleteSession() = withContext(Dispatchers.IO) {
         check(preferences.edit().remove(STORAGE_KEY).commit()) {
             "Could not clear the encrypted Supabase session."
+        }
+    }
+
+    private fun deleteKey() {
+        val keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER).apply { load(null) }
+        if (keyStore.containsAlias(KEY_ALIAS)) {
+            keyStore.deleteEntry(KEY_ALIAS)
         }
     }
 
