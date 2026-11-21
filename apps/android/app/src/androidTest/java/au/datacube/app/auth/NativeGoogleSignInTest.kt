@@ -12,7 +12,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.performScrollToNode
 import androidx.credentials.Credential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
@@ -35,6 +37,7 @@ import io.ktor.client.engine.mock.toByteArray
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.runBlocking
@@ -61,7 +64,7 @@ class NativeGoogleSignInTest {
     @Before fun clean() { runBlocking { storage.deleteSession() } }
     @After fun finish() { runBlocking { clients.forEach { it.close() }; storage.deleteSession() } }
 
-    private fun repository(reject: Boolean = false): AuthRepository {
+    private fun repository(reject: Boolean = false, includeUser: Boolean = true): AuthRepository {
         val engine = MockEngine { request ->
             val headers = headersOf(HttpHeaders.ContentType, "application/json")
             when (request.url.encodedPath) {
@@ -76,7 +79,10 @@ class NativeGoogleSignInTest {
                     assertEquals(expected, hashedNonce)
                     exchanged++
                     if (reject) respond("""{"code":400,"error_code":"validation_failed","msg":"controlled rejection"}""", HttpStatusCode.BadRequest, headers)
-                    else respond("""{"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":7200,"token_type":"bearer","user":{"aud":"authenticated","id":"test-account"}}""", headers = headers)
+                    else {
+                        val account = if (includeUser) ""","user":{"aud":"authenticated","id":"test-account"}""" else ""
+                        respond("""{"access_token":"fixture-access","refresh_token":"fixture-refresh","expires_in":7200,"token_type":"bearer"$account}""", headers = headers)
+                    }
                 }
                 "/auth/v1/logout" -> {
                     logoutCalls++
@@ -90,7 +96,7 @@ class NativeGoogleSignInTest {
             install(Auth) { sessionManager = storage; alwaysAutoRefresh = false }
         }
         clients.add(client)
-        return AuthRepository(AuthSessionStore(app), { googleCleared = true }, client.auth)
+        return AuthRepository(AuthSessionStore(app), { googleCleared = true }) { client.auth }
     }
 
     private fun credential(request: GetCredentialRequest): Credential {
@@ -126,7 +132,8 @@ class NativeGoogleSignInTest {
         ui.waitUntil(10_000) { reopened.state.value.sessionRestored }
         assertEquals("test-account", reopened.state.value.user?.id)
         ui.onNodeWithText("Profile").performClick()
-        ui.onNodeWithText("Sign out").performScrollTo().performClick()
+        ui.onNode(hasScrollAction()).performScrollToNode(hasText("Sign out"))
+        ui.onNodeWithText("Sign out").performClick()
         waitForText("Continue with Google")
         ui.waitUntil(10_000) { googleCleared }
         assertEquals(1, logoutCalls)
@@ -167,6 +174,14 @@ class NativeGoogleSignInTest {
         assertEquals(0, exchanged)
     }
 
+    @Test fun incompleteExchangeCannotLeaveAnInvisibleSession() {
+        mount(repository(includeUser = false), ::credential)
+        ui.onNodeWithText("Continue with Google").performClick()
+        waitForText("Your account was selected", substring = true)
+        assertEquals(1, exchanged)
+        assertNull(runBlocking { storage.loadSession() })
+    }
+
     @Test fun rejectedExchangeShowsFeedbackAndKeepsLogin() {
         mount(repository(reject = true), ::credential)
         ui.onNodeWithText("Continue with Google").performClick()
@@ -193,11 +208,25 @@ class NativeGoogleSignInTest {
     }
 
     private fun saveImage(name: String, bitmap: Bitmap) {
-        val file = File(app.externalMediaDirs.first(), "datacube-$name.png")
-        file.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
-        val exe = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val result = exe.executeShellCommand("cp '${file.absolutePath}' /data/local/tmp/datacube-$name.png")
-        val output = ParcelFileDescriptor.AutoCloseInputStream(result).bufferedReader().use { it.readText() }
-        assertEquals("", output)
+        val bytes = ByteArrayOutputStream().use { stream ->
+            assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream))
+            stream.toByteArray()
+        }
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val shell = instrumentation.uiAutomation
+        val devicePath = "/data/local/tmp/datacube-$name.png"
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            val pipes = shell.executeShellCommandRw("dd of=$devicePath")
+            ParcelFileDescriptor.AutoCloseOutputStream(pipes[1]).use { it.write(bytes) }
+            ParcelFileDescriptor.AutoCloseInputStream(pipes[0]).use { it.readBytes() }
+        } else {
+            val file = File(app.externalMediaDirs.first(), "datacube-$name.png")
+            file.writeBytes(bytes)
+            val result = shell.executeShellCommand("cp ${file.absolutePath} $devicePath")
+            ParcelFileDescriptor.AutoCloseInputStream(result).use { it.readBytes() }
+        }
+        val stat = shell.executeShellCommand("stat -c %s $devicePath")
+        val count = ParcelFileDescriptor.AutoCloseInputStream(stat).bufferedReader().use { it.readText().trim() }
+        assertEquals(bytes.size.toString(), count)
     }
 }

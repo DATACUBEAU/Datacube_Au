@@ -24,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -32,7 +31,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.credentials.Credential
 import androidx.credentials.GetCredentialRequest
-import androidx.credentials.CredentialManager
 import au.datacube.app.R
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -43,15 +41,8 @@ import androidx.compose.ui.semantics.semantics
 
 /** Native Android Google authentication. No website or browser callback is involved. */
 @Composable
-fun AuthScreen(viewModel: AuthViewModel, getGoogleCredential: (suspend (GetCredentialRequest) -> Credential)? = null) {
+fun AuthScreen(viewModel: AuthViewModel, getGoogleCredential: suspend (GetCredentialRequest) -> Credential) {
     val state by viewModel.state.collectAsState()
-    val context = LocalContext.current
-    val startGoogleSignIn: () -> Unit = {
-        viewModel.signInWithGoogle(getGoogleCredential ?: { request ->
-            CredentialManager.create(context).getCredential(context, request).credential
-        })
-    }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -87,7 +78,7 @@ fun AuthScreen(viewModel: AuthViewModel, getGoogleCredential: (suspend (GetCrede
             )
             Spacer(Modifier.height(38.dp))
             Button(
-                onClick = startGoogleSignIn,
+                onClick = { viewModel.signInWithGoogle(getGoogleCredential) },
                 enabled = !state.isLoading,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(18.dp),

@@ -29,7 +29,7 @@ const brandIcon = read('public', 'icon.svg');
 const middleware = read('src', 'middleware.ts');
 
 assert.match(androidAuthScreen, /Continue with Google/);
-assert.match(androidAuthScreen, /CredentialManager/);
+assert.match(androidActivity, /getCredential\(this@MainActivity, request\)/);
 assert.match(picker, /GetSignInWithGoogleOption/);
 assert.match(picker, /GetSignInWithGoogleOption\.Builder\(BuildConfig\.GOOGLE_WEB_CLIENT_ID\)/);
 assert.match(picker, /GoogleIdTokenCredential\.createFrom/);

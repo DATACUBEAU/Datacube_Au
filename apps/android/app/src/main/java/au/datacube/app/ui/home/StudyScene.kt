@@ -1,16 +1,24 @@
 package au.datacube.app.ui.home
 
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.MotionDurationScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -19,8 +27,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.flow.collectLatest
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.sin
@@ -30,28 +36,25 @@ import kotlin.math.sin
 @Composable
 internal fun StudyScene(modifier: Modifier) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
-    var angle by remember { mutableFloatStateOf(0.64f) }
-    LaunchedEffect(lifecycle) {
-        val motion = coroutineContext[MotionDurationScale]
-        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            snapshotFlow { motion?.scaleFactor ?: 1f }.collectLatest { scale ->
-                if (scale <= 0f) {
-                    angle = 0.64f
-                    return@collectLatest
-                }
-                var previous = withFrameNanos { it }
-                while (true) {
-                    withFrameNanos { now ->
-                        val elapsed = now - previous
-                        if (elapsed >= 32_000_000L) {
-                            angle = (angle + elapsed.coerceAtMost(100_000_000L) / 1e9f * .13f / scale) % (2f * PI.toFloat())
-                            previous = now
-                        }
-                    }
-                }
-            }
+    val stage by lifecycle.currentStateFlow.collectAsState()
+    val resolver = LocalContext.current.contentResolver
+    fun motionAllowed() = Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
+    var animate by remember(resolver) { mutableStateOf(motionAllowed()) }
+    DisposableEffect(resolver) {
+        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) { animate = motionAllowed() }
         }
+        resolver.registerContentObserver(Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE), false, observer)
+        animate = motionAllowed()
+        onDispose { resolver.unregisterContentObserver(observer) }
     }
+    val angle = if (animate && stage.isAtLeast(Lifecycle.State.RESUMED)) {
+        rememberInfiniteTransition(label = "Study scene").animateFloat(
+            initialValue = .64f, targetValue = .64f + 2f * PI.toFloat(),
+            animationSpec = infiniteRepeatable(tween(48_000, easing = LinearEasing)),
+            label = "Cube rotation"
+        )
+    } else null
     Spacer(modifier.drawWithCache {
         val background = Brush.linearGradient(listOf(Color(0xFF081322), Color(0xFF102F55), Color(0xFF0755A3)))
         val center = Offset(size.width * .83f, size.height * .39f)
@@ -66,7 +69,7 @@ internal fun StudyScene(modifier: Modifier) {
         onDrawBehind {
             drawRect(background)
             drawCircle(glow, glowRadius, center)
-            val rotation = angle
+            val rotation = angle?.value ?: .64f
             repeat(22) { i ->
                 val depth = (i % 4 + 1) * .24f
                 val x = ((i * 73 + 9) % 101) / 101f * size.width + sin(rotation + i) * 7.dp.toPx() * depth

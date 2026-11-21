@@ -1,5 +1,6 @@
 package au.datacube.app.auth
 
+import io.github.jan.supabase.logging.LogLevel
 import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
@@ -19,6 +20,8 @@ object SupabaseClient {
         supabaseUrl = au.datacube.app.BuildConfig.SUPABASE_URL,
         supabaseKey = au.datacube.app.BuildConfig.SUPABASE_ANON_KEY
     ) {
+        // SDK HTTP exceptions can contain request headers. The app logs fixed stage codes.
+        defaultLogLevel = LogLevel.NONE
         install(Auth) {
             sessionManager = EncryptedSupabaseSessionManager(DataCubeApp.instance)
             autoLoadFromStorage = true

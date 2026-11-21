@@ -23,6 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.credentials.Credential
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -65,7 +68,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             DataCubeTheme {
-                DataCubeRoot(authViewModel, documentsViewModel)
+                DataCubeRoot(authViewModel, documentsViewModel) { request ->
+                    CredentialManager.create(this@MainActivity)
+                        .getCredential(this@MainActivity, request).credential
+                }
             }
         }
     }
@@ -106,7 +112,7 @@ private val bottomNavItems = listOf(
 internal fun DataCubeRoot(
     authViewModel: AuthViewModel,
     documentsViewModel: DataCubeViewModel,
-    getGoogleCredential: (suspend (androidx.credentials.GetCredentialRequest) -> androidx.credentials.Credential)? = null
+    getGoogleCredential: suspend (GetCredentialRequest) -> Credential
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     // Loading / session-restore gate

@@ -13,6 +13,11 @@ on:
       - ".github/workflows/android-native.yml"
       - "tests/mobile-auth-handoff.unit.test.ts"
   workflow_dispatch:
+    inputs:
+      personal_test_signer:
+        description: Use the registered personal debug signer
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,6 +47,20 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: wrapper
+
+      - name: Restore personal debug signer
+        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        env:
+          PERSONAL_KEYSTORE: ${{ secrets.ANDROID_PERSONAL_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$PERSONAL_KEYSTORE" ]]; then
+            echo "::error::The personal debug signing keystore is missing."
+            exit 1
+          fi
+          umask 077
+          mkdir -p "$HOME/.android"
+          printf '%s' "$PERSONAL_KEYSTORE" | base64 --decode > "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -storepass android > /dev/null
 
       - name: Write Android build properties
         env:

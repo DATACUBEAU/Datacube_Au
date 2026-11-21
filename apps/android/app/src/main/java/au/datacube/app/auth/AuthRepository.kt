@@ -8,7 +8,7 @@ import kotlinx.coroutines.CancellationException
 import au.datacube.app.BuildConfig
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.user.UserInfo
-import io.github.jan.supabase.auth.exception.AuthRestException
+import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.IDToken
 
@@ -20,8 +20,10 @@ import io.github.jan.supabase.auth.providers.builtin.IDToken
 class AuthRepository(
     private val sessionStore: AuthSessionStore,
     private val resetGoogleAccount: suspend () -> Unit,
-    private val auth: Auth = SupabaseClient.auth
+    authProvider: () -> Auth = { SupabaseClient.auth }
 ) {
+    private val auth by lazy(authProvider)
+
     constructor(store: AuthSessionStore, manager: CredentialManager) :
         this(store, { manager.clearCredentialState(ClearCredentialStateRequest()) })
 
@@ -57,19 +59,25 @@ class AuthRepository(
             val user = auth.currentUserOrNull()
                 ?: run {
                     Log.w(TAG, "session_missing")
+                    auth.clearSession()
                     return AuthResult.Error("Your account was selected, but sign-in didn’t finish. Please try again.")
                 }
             saveDisplayAccount(user)
             Log.i(TAG, "session_ready")
             AuthResult.Success
-        } catch (_: AuthRestException) {
-            Log.w(TAG, "exchange_rejected")
-            AuthResult.Error("DataCube AU couldn’t verify this Google sign-in. Try again or contact support if it continues.")
+        } catch (error: RestException) {
+            Log.w(TAG, "exchange_rejected status=${error.statusCode}")
+            val feedback = when (error.statusCode) {
+                429 -> "Too many sign-in attempts. Wait a moment and try again."
+                in 500..599 -> "DataCube AU couldn’t complete sign-in right now. Please try again shortly."
+                else -> "DataCube AU couldn’t verify this Google sign-in. Try again or contact support if it continues."
+            }
+            AuthResult.Error(feedback)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             Log.w(TAG, "exchange_failed")
-            AuthResult.Error("Could not complete Google sign-in. Check your connection and retry.")
+            AuthResult.Error("Sign-in couldn’t finish. Check your connection and try again.")
         }
     }
 
