@@ -18,7 +18,10 @@ import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.ui.documents.PracticeWorkspace
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.home.HomeScreen
+import au.datacube.app.models.ModelBackupProgress
+import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.theme.DataCubeTheme
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
@@ -224,4 +227,57 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("Chapters").assertIsDisplayed()
         composeRule.onNodeWithText("Play summary").assertIsDisplayed()
     }
+    @Test
+    fun profileShowsExternalModelBackupActions() {
+        composeRule.setContent {
+            DataCubeTheme {
+                ProfileScreen(
+                    user = null,
+                    onSignOut = {},
+                    onBackupModels = {},
+                    onRestoreModels = {},
+                    modelOperationBusy = false,
+                    modelBackupProgress = null,
+                    installedModels = emptyList(),
+                    onCancelModelOperation = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Model backups").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Export model backup").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Restore from backup").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun profileShowsModelBackupProgressAndCancellation() {
+        var cancelRequested = false
+        composeRule.setContent {
+            DataCubeTheme {
+                ProfileScreen(
+                    user = null,
+                    onSignOut = {},
+                    onBackupModels = {},
+                    onRestoreModels = {},
+                    modelOperationBusy = true,
+                    modelBackupProgress = ModelBackupProgress(
+                        phase = "Writing external backup",
+                        currentModel = "embedding-model",
+                        currentFile = "model.onnx",
+                        completedBytes = 5L * 1024 * 1024,
+                        totalBytes = 10L * 1024 * 1024,
+                        completedFiles = 1,
+                        totalFiles = 2
+                    ),
+                    installedModels = emptyList(),
+                    onCancelModelOperation = { cancelRequested = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithText("Writing external backup").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Cancel operation").performScrollTo().performClick()
+        assertTrue(cancelRequested)
+    }
+
 }

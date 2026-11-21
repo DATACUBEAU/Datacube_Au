@@ -42,12 +42,19 @@ import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.models.ModelBackupManager
+import au.datacube.app.models.ModelBackupProgress
+import au.datacube.app.models.ModelRegistry
+import au.datacube.app.models.InstalledModelRecord
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.study.StudyScreen
 import au.datacube.app.ui.theme.DataCubeTheme
 import au.datacube.app.work.LocalJobScheduler
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -135,6 +142,11 @@ private fun DataCubeRoot(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
+    var modelOperationJob by remember { mutableStateOf<Job?>(null) }
+    var modelOperationBusy by remember { mutableStateOf(false) }
+    var modelBackupProgress by remember { mutableStateOf<ModelBackupProgress?>(null) }
+    var installedModels by remember { mutableStateOf<List<InstalledModelRecord>>(emptyList()) }
+    var modelInventoryRevision by remember { mutableStateOf(0) }
 
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
     val mimeTypes = arrayOf(
@@ -146,17 +158,26 @@ private fun DataCubeRoot(
     val modelBackupLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument(ModelBackupManager.BACKUP_MIME_TYPE)
     ) { destination ->
-        if (destination != null) {
-            scope.launch {
-                runCatching { ModelBackupManager(context).exportBackup(destination) }
-                    .onSuccess { summary ->
-                        snackbar.showSnackbar(
-                            "Backed up ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
-                        )
+        if (destination != null && !modelOperationBusy) {
+            modelOperationBusy = true
+            modelBackupProgress = ModelBackupProgress(phase = "Starting model backup")
+            modelOperationJob = scope.launch {
+                try {
+                    val summary = ModelBackupManager(context).exportBackup(destination) { progress ->
+                        scope.launch { modelBackupProgress = progress }
                     }
-                    .onFailure { error ->
-                        snackbar.showSnackbar(error.message ?: "Could not create the model backup.")
-                    }
+                    snackbar.showSnackbar(
+                        "Backed up ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    snackbar.showSnackbar(error.message ?: "Could not create the model backup.")
+                } finally {
+                    modelOperationJob = null
+                    modelOperationBusy = false
+                    modelBackupProgress = null
+                }
             }
         }
     }
@@ -164,17 +185,27 @@ private fun DataCubeRoot(
     val modelRestoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { source ->
-        if (source != null) {
-            scope.launch {
-                runCatching { ModelBackupManager(context).restoreBackup(source) }
-                    .onSuccess { summary ->
-                        snackbar.showSnackbar(
-                            "Restored ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
-                        )
+        if (source != null && !modelOperationBusy) {
+            modelOperationBusy = true
+            modelBackupProgress = ModelBackupProgress(phase = "Starting model restore")
+            modelOperationJob = scope.launch {
+                try {
+                    val summary = ModelBackupManager(context).restoreBackup(source) { progress ->
+                        scope.launch { modelBackupProgress = progress }
                     }
-                    .onFailure { error ->
-                        snackbar.showSnackbar(error.message ?: "Could not restore the model backup.")
-                    }
+                    modelInventoryRevision += 1
+                    snackbar.showSnackbar(
+                        "Restored ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    snackbar.showSnackbar(error.message ?: "Could not restore the model backup.")
+                } finally {
+                    modelOperationJob = null
+                    modelOperationBusy = false
+                    modelBackupProgress = null
+                }
             }
         }
     }
@@ -228,6 +259,13 @@ private fun DataCubeRoot(
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    LaunchedEffect(currentRoute, modelInventoryRevision) {
+        if (currentRoute == Screen.Profile.route) {
+            installedModels = withContext(Dispatchers.IO) {
+                ModelRegistry(context).listInstalled()
+            }
+        }
+    }
     val isWorkspaceRoute = currentRoute == Screen.Collection.route || currentRoute == Screen.Document.route
 
     // Nested workspaces consume system back and return to their parent instead of closing the app.
@@ -393,6 +431,10 @@ private fun DataCubeRoot(
             composable(Screen.Profile.route) {
                 ProfileScreen(
                     user = authState.user,
+                    modelOperationBusy = modelOperationBusy,
+                    modelBackupProgress = modelBackupProgress,
+                    installedModels = installedModels,
+                    onCancelModelOperation = { modelOperationJob?.cancel() },
                     onSignOut = { authViewModel.signOut() },
                     onBackupModels = {
                         modelBackupLauncher.launch(

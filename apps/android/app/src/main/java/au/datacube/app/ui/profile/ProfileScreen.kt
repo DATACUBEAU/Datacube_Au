@@ -14,6 +14,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.jan.supabase.auth.user.UserInfo
+import au.datacube.app.models.ModelBackupProgress
+import au.datacube.app.models.InstalledModelRecord
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -22,7 +24,11 @@ fun ProfileScreen(
     user: UserInfo?,
     onSignOut: () -> Unit,
     onBackupModels: () -> Unit,
-    onRestoreModels: () -> Unit
+    onRestoreModels: () -> Unit,
+    modelOperationBusy: Boolean,
+    modelBackupProgress: ModelBackupProgress?,
+    installedModels: List<InstalledModelRecord>,
+    onCancelModelOperation: () -> Unit
 ) {
     val email = user?.email ?: "—"
     val displayName = email.substringBefore('@')
@@ -175,14 +181,94 @@ fun ProfileScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Text(
+                            "Installed models",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        if (installedModels.isEmpty()) {
+                            Text(
+                                "No model files are installed in local model storage yet. Models installed through the DataCube model manager will appear here.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                installedModels.forEach { model ->
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        shape = MaterialTheme.shapes.medium,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(Modifier.padding(12.dp)) {
+                                            Text(
+                                                model.manifest?.displayName ?: model.modelId,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                            Text(
+                                                model.manifest?.sourceRepository ?: "Model metadata unavailable",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                "${model.fileCount} files • ${formatBackupBytes(model.totalBytes)}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if (modelOperationBusy) {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    modelBackupProgress?.phase ?: "Processing model backup",
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                                val progress = modelBackupProgress
+                                val progressDetail = listOfNotNull(
+                                    progress?.currentModel,
+                                    progress?.currentFile
+                                ).joinToString(" • ")
+                                if (progressDetail.isNotBlank()) {
+                                    Text(
+                                        progressDetail,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                if (progress != null && progress.totalBytes > 0L) {
+                                    LinearProgressIndicator(
+                                        progress = progress.fraction,
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    Text(
+                                        "${formatBackupBytes(progress.completedBytes)} of ${formatBackupBytes(progress.totalBytes)} • ${progress.completedFiles.coerceAtMost(progress.totalFiles)} / ${progress.totalFiles} files",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                }
+                                OutlinedButton(
+                                    onClick = onCancelModelOperation,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Cancel operation")
+                                }
+                            }
+                        }
                         Button(
                             onClick = onBackupModels,
+                            enabled = !modelOperationBusy,
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Text("Export model backup")
+                            Text(if (modelOperationBusy) "Processing…" else "Export model backup")
                         }
                         OutlinedButton(
                             onClick = onRestoreModels,
+                            enabled = !modelOperationBusy,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text("Restore from backup")
@@ -236,4 +322,15 @@ private fun ProfileRow(
         )
     }
     HorizontalDivider()
+}
+
+
+private fun formatBackupBytes(bytes: Long): String {
+    if (bytes < 1024L) return "${bytes} B"
+    val kib = bytes / 1024.0
+    if (kib < 1024.0) return String.format(java.util.Locale.US, "%.1f KB", kib)
+    val mib = kib / 1024.0
+    if (mib < 1024.0) return String.format(java.util.Locale.US, "%.1f MB", mib)
+    val gib = mib / 1024.0
+    return String.format(java.util.Locale.US, "%.2f GB", gib)
 }
