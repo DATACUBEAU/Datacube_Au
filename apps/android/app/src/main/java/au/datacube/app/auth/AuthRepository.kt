@@ -68,8 +68,15 @@ class AuthRepository(
         AuthResult.Success
     } catch (e: Exception) {
         Log.e(TAG, "Sign-out error", e)
-        sessionStore.clear()
-        AuthResult.Success
+        val localClearError = runCatching {
+            SupabaseClient.auth.clearSession()
+            sessionStore.clear()
+        }.exceptionOrNull()
+        if (localClearError == null) {
+            AuthResult.Success
+        } else {
+            AuthResult.Error("The app could not securely clear its local session. Please try again.")
+        }
     }
 
     suspend fun restoreSession(): Boolean {

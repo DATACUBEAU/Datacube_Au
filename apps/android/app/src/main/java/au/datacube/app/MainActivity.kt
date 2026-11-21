@@ -119,8 +119,8 @@ private fun DataCubeRoot(
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
     val mimeTypes = arrayOf(
         "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "text/plain", "application/rtf", "text/markdown"
+        "text/plain",
+        "text/markdown"
     )
 
     val modelBackupLauncher = rememberLauncherForActivityResult(

@@ -4,6 +4,7 @@ import io.github.jan.supabase.createSupabaseClient
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.Postgrest
+import au.datacube.app.DataCubeApp
 
 /**
  * Singleton Supabase client.
@@ -18,7 +19,12 @@ object SupabaseClient {
         supabaseUrl = au.datacube.app.BuildConfig.SUPABASE_URL,
         supabaseKey = au.datacube.app.BuildConfig.SUPABASE_ANON_KEY
     ) {
-        install(Auth)
+        install(Auth) {
+            sessionManager = EncryptedSupabaseSessionManager(DataCubeApp.instance)
+            autoLoadFromStorage = true
+            autoSaveToStorage = true
+            alwaysAutoRefresh = true
+        }
         install(Postgrest)
     }
 

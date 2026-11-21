@@ -30,7 +30,7 @@ class LocalDocumentRepository(
     ): ImportedDocument = withContext(Dispatchers.IO) {
         val extension = name.substringAfterLast('.', "").lowercase()
         require(extension in SUPPORTED_EXTENSIONS) {
-            "Choose a PDF, DOCX, TXT, RTF or Markdown file."
+            "Choose a PDF, TXT or Markdown file."
         }
 
         val id = UUID.randomUUID().toString()
@@ -135,7 +135,7 @@ class LocalDocumentRepository(
 
     companion object {
         private const val MAX_DOCUMENT_BYTES = 100L * 1024L * 1024L
-        private val SUPPORTED_EXTENSIONS = setOf("pdf", "docx", "txt", "rtf", "md")
+        private val SUPPORTED_EXTENSIONS = setOf("pdf", "txt", "md")
         private val TEXT_EXTRACTION_EXTENSIONS = setOf("pdf", "txt", "md")
     }
 }

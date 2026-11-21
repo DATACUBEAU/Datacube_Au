@@ -15,9 +15,9 @@ private val Context.authDataStore: DataStore<Preferences> by preferencesDataStor
 /**
  * Persists lightweight authentication state to DataStore.
  *
- * The Supabase-kt SDK manages the JWT session internally (in-memory + serialised
- * on demand). We persist only the user display metadata needed to restore UI state
- * between cold starts without an extra network round-trip.
+ * The Supabase-kt SDK persists the complete JWT session through
+ * EncryptedSupabaseSessionManager. This store persists only lightweight display
+ * metadata and must not be treated as the authenticated session.
  */
 class AuthSessionStore(private val context: Context) {
 
