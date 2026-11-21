@@ -29,8 +29,8 @@ const middleware = read('src', 'middleware.ts');
 
 assert.match(androidAuthScreen, /Continue with Google/);
 assert.match(androidAuthScreen, /CredentialManager/);
-assert.match(androidAuthScreen, /GetGoogleIdOption/);
-assert.match(androidAuthScreen, /setServerClientId\(BuildConfig\.GOOGLE_WEB_CLIENT_ID\)/);
+assert.match(androidAuthScreen, /GetSignInWithGoogleOption/);
+assert.match(androidAuthScreen, /GetSignInWithGoogleOption\.Builder\(BuildConfig\.GOOGLE_WEB_CLIENT_ID\)/);
 assert.match(androidAuthScreen, /GoogleIdTokenCredential\.createFrom/);
 assert.match(androidAuthScreen, /GetCredentialCancellationException/);
 assert.match(androidAuthScreen, /signInWithGoogle/);
@@ -49,6 +49,8 @@ assert.match(androidRepository, /signInWith\(IDToken\)/);
 assert.match(androidRepository, /provider = Google/);
 assert.match(androidRepository, /idToken = idToken/);
 assert.match(androidRepository, /nonce = rawNonce/);
+assert.match(androidAuthScreen, /setNonce\(hashedNonce\)/);
+assert.match(androidRepository, /clearCredentialState\(ClearCredentialStateRequest\(\)\)/);
 assert.match(androidRepository, /sessionStore\.persist\(user\)/);
 assert.match(androidRepository, /restoreSession/);
 assert.match(androidRepository, /signOut\(\)/);
@@ -83,7 +85,7 @@ assert.match(migration, /enable row level security/i);
 assert.match(migration, /revoke all on table public\.au_mobile_auth_handoffs from public, anon, authenticated/i);
 assert.match(completion, /action: 'issue'/);
 assert.match(completion, /codeChallenge/);
-assert.match(fallback, /Authentication successful/);
+assert.match(fallback, /intentUrl && !appMissing/);
 assert.match(middleware, /isRetiredWebProductPath/);
 
 console.log('PASS native Android Google auth, isolated legacy handoff compatibility, and DataCube AU cube branding');

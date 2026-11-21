@@ -6,6 +6,8 @@ import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.github.jan.supabase.auth.user.UserSession
+import org.junit.Assert.assertEquals
 import java.security.KeyStore
 import javax.crypto.KeyGenerator
 import kotlinx.coroutines.runBlocking
@@ -17,6 +19,22 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class EncryptedSupabaseSessionManagerTest {
+
+    @Test
+    fun savedSessionSurvivesReopeningAndIsRemovedOnLogout() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val session = UserSession("test-access", "test-refresh", expiresIn = 3600, tokenType = "bearer")
+        val manager = EncryptedSupabaseSessionManager(context)
+        try {
+            manager.saveSession(session)
+            val reopened = EncryptedSupabaseSessionManager(context)
+            assertEquals(session, reopened.loadSession())
+            reopened.deleteSession()
+            assertNull(manager.loadSession())
+        } finally {
+            manager.deleteSession()
+        }
+    }
 
     @Test
     fun unreadableCiphertextClearsStoredSessionAndUnusableKeystoreKey() = runBlocking {

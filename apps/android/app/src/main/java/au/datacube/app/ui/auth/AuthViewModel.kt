@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import au.datacube.app.DataCubeApp
 import au.datacube.app.auth.AuthRepository
+import io.github.jan.supabase.auth.status.SessionStatus
 import io.github.jan.supabase.auth.user.UserInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,6 +49,17 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
                 user = user,
                 sessionRestored = true
             )
+            repository.sessionStatus.collect { status ->
+                when (status) {
+                    is SessionStatus.Authenticated -> _state.value = _state.value.copy(user = status.session.user)
+                    is SessionStatus.NotAuthenticated -> _state.value = _state.value.copy(user = null)
+                    is SessionStatus.RefreshFailure -> _state.value = _state.value.copy(
+                        user = null,
+                        error = "Session refresh is unavailable. Reconnecting to Supabase."
+                    )
+                    SessionStatus.Initializing -> Unit
+                }
+            }
         }
     }
 
@@ -80,10 +92,15 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun signOut() {
+        if (_state.value.isLoading) return
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true)
-            repository.signOut()
-            _state.value = AuthState(isLoading = false, user = null, sessionRestored = true)
+            val result = repository.signOut()
+            _state.value = AuthState(
+                user = repository.currentUser(),
+                sessionRestored = true,
+                error = (result as? AuthRepository.AuthResult.Error)?.message
+            )
         }
     }
 }

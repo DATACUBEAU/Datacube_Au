@@ -6,6 +6,8 @@ import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
@@ -150,7 +152,8 @@ class AppResponsiveUiTest {
                 }
             }
         }
-        composeRule.onNodeWithText("Study notes.pdf").assertIsDisplayed()
+        // The workspace header precedes the second copy inside the chat panel.
+        composeRule.onAllNodesWithText("Study notes.pdf").onFirst().assertIsDisplayed()
         composeRule.onNodeWithText("AU Chat").assertIsDisplayed()
         composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
     }

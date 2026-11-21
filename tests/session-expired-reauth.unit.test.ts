@@ -28,10 +28,10 @@ async function run(name: string, fn: () => void | Promise<void>) {
 async function main() {
   await run('safe local return path is preserved and malicious targets are rejected', () => {
     assert.equal(sanitizeLocalRedirectPath('/dashboard/chat?doc=abc'), '/dashboard/chat?doc=abc');
-    assert.equal(sanitizeLocalRedirectPath('//evil.example/dashboard'), '/dashboard');
-    assert.equal(sanitizeLocalRedirectPath('https://evil.example/dashboard'), '/dashboard');
-    assert.equal(sanitizeLocalRedirectPath('/login?redirectTo=/dashboard'), '/dashboard');
-    assert.equal(sanitizeLocalRedirectPath('/session-expired?next=/dashboard'), '/dashboard');
+    assert.equal(sanitizeLocalRedirectPath('//evil.example/dashboard'), '/mobile-app-required');
+    assert.equal(sanitizeLocalRedirectPath('https://evil.example/dashboard'), '/mobile-app-required');
+    assert.equal(sanitizeLocalRedirectPath('/login?redirectTo=/dashboard'), '/mobile-app-required');
+    assert.equal(sanitizeLocalRedirectPath('/session-expired?next=/dashboard'), '/mobile-app-required');
   });
 
   await run('expired-session and login URLs carry only safe local paths', () => {
