@@ -13,10 +13,10 @@ plugins {
 // explicitly so the APK never silently ships with blank Supabase credentials.
 val androidBuildProperties = Properties()
 listOf(
-    rootProject.file("local.properties"),
-    rootProject.file("../.env.local"),
-    rootProject.file("../.env"),
-    rootProject.file("../.env.development.local")
+    rootProject.file("../../.env"),
+    rootProject.file("../../.env.local"),
+    rootProject.file("../../.env.development.local"),
+    rootProject.file("local.properties")
 ).filter { it.isFile }.forEach { file ->
     file.inputStream().use { androidBuildProperties.load(it) }
 }
@@ -38,7 +38,12 @@ fun buildConfigLiteral(value: String): String = groovy.json.JsonOutput.toJson(va
 val supabaseUrl = configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL") ?: ""
 val supabaseAnonKey = configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY") ?: ""
 val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube-au.vercel.app"
-val googleWebClientId = configuredValue("GOOGLE_WEB_CLIENT_ID") ?: ""
+// Public OAuth audience for the production project. Alternate environments can override it.
+val googleWebClientId = configuredValue("GOOGLE_WEB_CLIENT_ID")
+    ?: "414692638202-h7k7u85qaib8lvvt057bprrigmeirugi.apps.googleusercontent.com"
+require(Regex("""[0-9]+-[a-zA-Z0-9_-]+[.]apps[.]googleusercontent[.]com""").matches(googleWebClientId)) {
+    "GOOGLE_WEB_CLIENT_ID must be a Google OAuth client ID."
+}
 
 if (supabaseUrl.isNullOrBlank() || !supabaseUrl.startsWith("https://") || supabaseAnonKey.isNullOrBlank()) {
     throw GradleException(

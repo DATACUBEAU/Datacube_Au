@@ -108,12 +108,38 @@ private fun DataCubeRoot(
     documentsViewModel: DataCubeViewModel
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
+    // Loading / session-restore gate
+    if (!authState.sessionRestored) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    // If not authenticated, show auth screen
+    if (authState.user == null) {
+        AuthScreen(viewModel = authViewModel)
+        return
+    }
+
+    key(authState.user?.id) {
+        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel)
+    }
+}
+
+@Composable
+private fun AuthenticatedWorkspace(
+    authState: au.datacube.app.ui.auth.AuthState,
+    authViewModel: AuthViewModel,
+    documentsViewModel: DataCubeViewModel
+) {
     val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
     val collections by documentsViewModel.collections.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
 
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
@@ -185,20 +211,6 @@ private fun DataCubeRoot(
                 }
             }
         }
-    }
-
-    // Loading / session-restore gate
-    if (!authState.sessionRestored) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
-
-    // If not authenticated, show auth screen
-    if (authState.user == null) {
-        AuthScreen(viewModel = authViewModel)
-        return
     }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()

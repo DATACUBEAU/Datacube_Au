@@ -1,6 +1,10 @@
 package au.datacube.app.auth
 
 import android.util.Log
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CredentialManager
+import androidx.credentials.exceptions.ClearCredentialException
+import kotlinx.coroutines.CancellationException
 import au.datacube.app.BuildConfig
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.auth.exception.AuthRestException
@@ -13,7 +17,8 @@ import io.github.jan.supabase.auth.providers.builtin.IDToken
  * only the resulting ID token is exchanged with Supabase.
  */
 class AuthRepository(
-    private val sessionStore: AuthSessionStore
+    private val sessionStore: AuthSessionStore,
+    private val credentialManager: CredentialManager
 ) {
     sealed class AuthResult {
         data object Success : AuthResult()
@@ -27,7 +32,9 @@ class AuthRepository(
         return null
     }
 
-    suspend fun currentUser() = runCatching {
+    val sessionStatus get() = SupabaseClient.auth.sessionStatus
+
+    fun currentUser() = runCatching {
         SupabaseClient.auth.currentUserOrNull()
     }.getOrNull()
 
@@ -52,30 +59,39 @@ class AuthRepository(
                 ?: return AuthResult.Error("Supabase did not return an authenticated user. Please try again.")
             sessionStore.persist(user)
             AuthResult.Success
-        } catch (e: AuthRestException) {
-            Log.w(TAG, "Supabase rejected Google ID token: ${e.message}")
-            AuthResult.Error("Google sign-in was rejected: ${e.message ?: "authentication error"}. Check the Google provider configuration.")
-        } catch (e: Exception) {
-            Log.e(TAG, "Native Google authentication failed", e)
-            AuthResult.Error(e.message?.take(180)?.takeIf { it.isNotBlank() }
-                ?: "Could not complete native Google sign-in. Check your connection and retry.")
+        } catch (_: AuthRestException) {
+            AuthResult.Error("Supabase rejected the Google sign-in. Check the provider configuration and try again.")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            AuthResult.Error("Could not complete Google sign-in. Check your connection and retry.")
         }
     }
 
-    suspend fun signOut(): AuthResult = try {
-        SupabaseClient.auth.signOut()
-        sessionStore.clear()
-        AuthResult.Success
-    } catch (e: Exception) {
-        Log.e(TAG, "Sign-out error", e)
-        val localClearError = runCatching {
-            SupabaseClient.auth.clearSession()
+    suspend fun signOut(): AuthResult {
+        try {
+            SupabaseClient.auth.signOut()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            try {
+                SupabaseClient.auth.clearSession()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                return AuthResult.Error("The app could not securely clear its local session. Please try again.")
+            }
+        }
+        return try {
             sessionStore.clear()
-        }.exceptionOrNull()
-        if (localClearError == null) {
+            credentialManager.clearCredentialState(ClearCredentialStateRequest())
             AuthResult.Success
-        } else {
-            AuthResult.Error("The app could not securely clear its local session. Please try again.")
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: ClearCredentialException) {
+            AuthResult.Error("Signed out of DataCube AU. Google could not reset its account selection.")
+        } catch (_: Exception) {
+            AuthResult.Error("Signed out of DataCube AU. Local account preferences could not be cleared.")
         }
     }
 
@@ -91,8 +107,10 @@ class AuthRepository(
                 sessionStore.clear()
                 false
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Session restore failed", e)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            Log.w(TAG, "Session restore failed")
             false
         }
     }

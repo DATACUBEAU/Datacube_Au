@@ -50,7 +50,8 @@ jobs:
           SUPABASE_URL: https://dhmukdeljiwvvwjdcxgn.supabase.co
           SUPABASE_ANON_KEY: sb_publishable_6N4nuBJIaXzOVYYUXSzomA_R8TB1vc_
           AUTH_WEBSITE_URL: https://datacube-au.vercel.app
-          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          # Built-in public project audience is used when no override is configured.
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID || secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "::error::Android build needs Supabase project URL and publishable key."
@@ -104,6 +105,13 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Enable KVM for the hosted emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -w /dev/kvm
+
       - name: Run Compose UI tests on Android emulator
         id: android-ui-tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -111,19 +119,16 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
+          working-directory: apps/android
           profile: pixel_2
           disable-animations: true
-          script: |
-            mkdir -p app/build/diagnostics
-            adb logcat -c
-            set +e
-            bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
-            test_status=$?
-            set -e
-            adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true
-            adb devices -l > app/build/diagnostics/adb-devices.txt || true
-            printf 'connectedDebugAndroidTest_exit_code=%s\\n' "$test_status" > app/build/diagnostics/test-exit-code.txt
-            exit "$test_status"
+          script: >-
+            mkdir -p app/build/diagnostics && adb logcat -c &&
+            { test_status=0; bash ./gradlew :app:connectedDebugAndroidTest --no-daemon || test_status=$?;
+            adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true;
+            adb devices -l > app/build/diagnostics/adb-devices.txt || true;
+            echo "connectedDebugAndroidTest_exit_code=$test_status" > app/build/diagnostics/test-exit-code.txt;
+            exit "$test_status"; }
 
       - name: Upload emulator UI test diagnostics
         if: always()

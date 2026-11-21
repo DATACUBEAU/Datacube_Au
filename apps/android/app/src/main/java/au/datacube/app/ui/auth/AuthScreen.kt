@@ -32,17 +32,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.credentials.CustomCredential
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.GetCredentialException
 import au.datacube.app.BuildConfig
 import au.datacube.app.R
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenParsingException
 import java.security.MessageDigest
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import kotlinx.coroutines.launch
 
 private val AuthBlue = Color(0xFF318BFF)
@@ -55,10 +60,13 @@ fun AuthScreen(viewModel: AuthViewModel) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    var acquiringCredential by remember { mutableStateOf(false) }
+
     val startGoogleSignIn: () -> Unit = {
         if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isBlank()) {
             viewModel.showError("Google sign-in is not configured yet. The app build needs the Google Web OAuth client ID.")
-        } else {
+        } else if (!acquiringCredential && !state.isLoading) {
+            acquiringCredential = true
             scope.launch {
                 try {
                     val rawNonce = UUID.randomUUID().toString()
@@ -66,9 +74,7 @@ fun AuthScreen(viewModel: AuthViewModel) {
                         .digest(rawNonce.toByteArray())
                         .joinToString("") { "%02x".format(it) }
 
-                    val googleOption = GetGoogleIdOption.Builder()
-                        .setFilterByAuthorizedAccounts(false)
-                        .setServerClientId(BuildConfig.GOOGLE_WEB_CLIENT_ID)
+                    val googleOption = GetSignInWithGoogleOption.Builder(BuildConfig.GOOGLE_WEB_CLIENT_ID)
                         .setNonce(hashedNonce)
                         .build()
                     val request = GetCredentialRequest.Builder()
@@ -78,19 +84,27 @@ fun AuthScreen(viewModel: AuthViewModel) {
                         request = request,
                         context = context
                     )
-                    val googleCredential = GoogleIdTokenCredential.createFrom(result.credential.data)
+                    val credential = result.credential
+                    if (credential !is CustomCredential || credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                        viewModel.showError("Google returned an unexpected credential. Please try again.")
+                        return@launch
+                    }
+                    val googleCredential = GoogleIdTokenCredential.createFrom(credential.data)
                     viewModel.signInWithGoogle(googleCredential.idToken, rawNonce)
                 } catch (_: GetCredentialCancellationException) {
                     // Cancellation is a normal user action; leave the auth screen unchanged.
-                } catch (error: GetCredentialException) {
-                    Log.w("DataCubeAuth", "Google credential acquisition failed", error)
+                } catch (_: GetCredentialException) {
+                    Log.w("DataCubeAuth", "Google credential acquisition failed")
                     viewModel.showError("Google account sign-in could not start. Check Google Play services and try again.")
-                } catch (error: GoogleIdTokenParsingException) {
-                    Log.w("DataCubeAuth", "Google returned an unreadable ID token", error)
+                } catch (_: GoogleIdTokenParsingException) {
+                    Log.w("DataCubeAuth", "Google returned an unreadable ID token")
                     viewModel.showError("Google returned an invalid identity token. Please try again.")
-                } catch (error: Exception) {
-                    Log.e("DataCubeAuth", "Native Google sign-in failed", error)
-                    viewModel.showError(error.message?.take(160) ?: "Native Google sign-in failed. Check your connection and retry.")
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    viewModel.showError("Native Google sign-in failed. Check your connection and retry.")
+                } finally {
+                    acquiringCredential = false
                 }
             }
         }
@@ -139,7 +153,7 @@ fun AuthScreen(viewModel: AuthViewModel) {
             Spacer(Modifier.height(38.dp))
             Button(
                 onClick = startGoogleSignIn,
-                enabled = !state.isLoading,
+                enabled = !acquiringCredential && !state.isLoading,
                 modifier = Modifier.fillMaxWidth().height(56.dp),
                 shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
