@@ -6,7 +6,8 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.exceptions.ClearCredentialException
 import kotlinx.coroutines.CancellationException
 import au.datacube.app.BuildConfig
-import io.github.jan.supabase.auth.auth
+import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.user.UserInfo
 import io.github.jan.supabase.auth.exception.AuthRestException
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.IDToken
@@ -18,8 +19,12 @@ import io.github.jan.supabase.auth.providers.builtin.IDToken
  */
 class AuthRepository(
     private val sessionStore: AuthSessionStore,
-    private val credentialManager: CredentialManager
+    private val resetGoogleAccount: suspend () -> Unit,
+    private val auth: Auth = SupabaseClient.auth
 ) {
+    constructor(store: AuthSessionStore, manager: CredentialManager) :
+        this(store, { manager.clearCredentialState(ClearCredentialStateRequest()) })
+
     sealed class AuthResult {
         data object Success : AuthResult()
         data class Error(val message: String) : AuthResult()
@@ -27,55 +32,55 @@ class AuthRepository(
 
     fun configurationError(): String? {
         if (!BuildConfig.SUPABASE_URL.startsWith("https://") || BuildConfig.SUPABASE_ANON_KEY.isBlank()) {
-            return "This app build is missing its Supabase connection settings. Install a correctly configured DataCube AU APK."
+            return "This copy of DataCube AU is missing its sign-in settings."
         }
         return null
     }
 
-    val sessionStatus get() = SupabaseClient.auth.sessionStatus
+    val sessionStatus get() = auth.sessionStatus
 
     fun currentUser() = runCatching {
-        SupabaseClient.auth.currentUserOrNull()
+        auth.currentUserOrNull()
     }.getOrNull()
 
     suspend fun signInWithGoogle(idToken: String, rawNonce: String): AuthResult {
-        if (!BuildConfig.SUPABASE_URL.startsWith("https://") || BuildConfig.SUPABASE_ANON_KEY.isBlank()) {
-            return AuthResult.Error("This app build is missing its Supabase connection settings.")
-        }
-        if (BuildConfig.GOOGLE_WEB_CLIENT_ID.isBlank()) {
-            return AuthResult.Error("Native Google sign-in is not configured. Add GOOGLE_WEB_CLIENT_ID to the Android build configuration.")
-        }
-        if (idToken.isBlank() || rawNonce.isBlank()) {
-            return AuthResult.Error("Google did not return a valid identity token. Please try again.")
-        }
+        configurationError()?.let { return AuthResult.Error(it) }
+        if (idToken.isBlank() || rawNonce.isBlank()) return AuthResult.Error("Google didn't finish verifying the account. Please try again.")
 
         return try {
-            SupabaseClient.auth.signInWith(IDToken) {
+            Log.i(TAG, "exchange_started")
+            auth.signInWith(IDToken) {
                 this.idToken = idToken
                 provider = Google
                 nonce = rawNonce
             }
-            val user = SupabaseClient.auth.currentUserOrNull()
-                ?: return AuthResult.Error("Supabase did not return an authenticated user. Please try again.")
-            sessionStore.persist(user)
+            val user = auth.currentUserOrNull()
+                ?: run {
+                    Log.w(TAG, "session_missing")
+                    return AuthResult.Error("Your account was selected, but sign-in didn’t finish. Please try again.")
+                }
+            saveDisplayAccount(user)
+            Log.i(TAG, "session_ready")
             AuthResult.Success
         } catch (_: AuthRestException) {
-            AuthResult.Error("Supabase rejected the Google sign-in. Check the provider configuration and try again.")
+            Log.w(TAG, "exchange_rejected")
+            AuthResult.Error("DataCube AU couldn’t verify this Google sign-in. Try again or contact support if it continues.")
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
+            Log.w(TAG, "exchange_failed")
             AuthResult.Error("Could not complete Google sign-in. Check your connection and retry.")
         }
     }
 
     suspend fun signOut(): AuthResult {
         try {
-            SupabaseClient.auth.signOut()
+            auth.signOut()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             try {
-                SupabaseClient.auth.clearSession()
+                auth.clearSession()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -83,8 +88,8 @@ class AuthRepository(
             }
         }
         return try {
-            sessionStore.clear()
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
+            saveDisplayAccount(null)
+            resetGoogleAccount()
             AuthResult.Success
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -98,13 +103,13 @@ class AuthRepository(
     suspend fun restoreSession(): Boolean {
         return try {
             if (configurationError() != null) return false
-            SupabaseClient.auth.awaitInitialization()
-            val user = SupabaseClient.auth.currentUserOrNull()
+            auth.awaitInitialization()
+            val user = auth.currentUserOrNull()
             if (user != null) {
-                sessionStore.persist(user)
+                saveDisplayAccount(user)
                 true
             } else {
-                sessionStore.clear()
+                saveDisplayAccount(null)
                 false
             }
         } catch (cancelled: CancellationException) {
@@ -112,6 +117,18 @@ class AuthRepository(
         } catch (_: Exception) {
             Log.w(TAG, "Session restore failed")
             false
+        }
+    }
+
+    // These preferences are display metadata. The SDK has already persisted the
+    // authenticated session in the Keystore-backed session manager.
+    private suspend fun saveDisplayAccount(user: UserInfo?) {
+        try {
+            sessionStore.persist(user)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            Log.w(TAG, "display_account_write_failed")
         }
     }
 

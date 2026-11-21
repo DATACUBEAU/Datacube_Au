@@ -67,23 +67,44 @@ fun HomeScreen(
             }
         }
         item {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("DataCube AU", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                        Text("Chat, analyze, and get insights from your documents.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodyLarge)
-                    }
-                    Surface(shape = RoundedCornerShape(18.dp), color = DataCubeColors.BlueLight) {
-                        Icon(Icons.Outlined.AutoAwesome, contentDescription = "DataCube AU", tint = DataCubeColors.Blue, modifier = Modifier.padding(14.dp).size(28.dp))
-                    }
-                }
-                Spacer(Modifier.height(18.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = onNavigateToChat, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(15.dp)) {
-                        Icon(Icons.Outlined.ChatBubbleOutline, null); Spacer(Modifier.width(7.dp)); Text("AU Chat")
-                    }
-                    OutlinedButton(onClick = onNavigateToStudy, modifier = Modifier.weight(1f).heightIn(min = 52.dp), shape = RoundedCornerShape(15.dp)) {
-                        Icon(Icons.Outlined.School, null); Spacer(Modifier.width(7.dp)); Text("Study")
+            Surface(
+                shape = RoundedCornerShape(26.dp),
+                color = DataCubeColors.Navy,
+                border = BorderStroke(1.dp, Color(0xFF35608B)),
+                shadowElevation = 6.dp
+            ) {
+                Box(Modifier.fillMaxWidth()) {
+                    StudyScene(Modifier.matchParentSize())
+                    Column(Modifier.fillMaxWidth().padding(20.dp)) {
+                        Column(Modifier.fillMaxWidth(.69f)) {
+                            Text("DataCube AU", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = Color.White)
+                            Spacer(Modifier.height(5.dp))
+                            Text("Chat, analyze, and get insights from your documents.", color = Color(0xFFD4E6FA), style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Spacer(Modifier.height(22.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = onNavigateToChat,
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = DataCubeColors.Navy)
+                            ) {
+                                Icon(Icons.Outlined.ChatBubbleOutline, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("AU Chat")
+                            }
+                            OutlinedButton(
+                                onClick = onNavigateToStudy,
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp),
+                                border = BorderStroke(1.dp, Color(0xFF81ACDA)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White, containerColor = Color(0xB0123659))
+                            ) {
+                                Icon(Icons.Outlined.School, null, Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Study")
+                            }
+                        }
                     }
                 }
             }
@@ -113,7 +134,7 @@ fun HomeScreen(
                 val doc = entry.document
                 val ext = doc.extension.lowercase()
                 val tint = DataCubeColors.Blue
-                Surface(onClick = { onOpenDocument(doc.id) }, shape = RoundedCornerShape(17.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                Surface(onClick = { onOpenDocument(doc.id) }, shape = RoundedCornerShape(17.dp), color = Color.White, shadowElevation = 2.dp, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
                     Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(tint.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                             Text(ext.uppercase().take(3), color = tint, fontWeight = FontWeight.Bold)

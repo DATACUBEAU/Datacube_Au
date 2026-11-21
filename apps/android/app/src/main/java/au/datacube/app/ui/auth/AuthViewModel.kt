@@ -1,6 +1,13 @@
 package au.datacube.app.ui.auth
 
 import android.app.Application
+import android.util.Log
+import androidx.credentials.Credential
+import androidx.credentials.GetCredentialRequest
+import au.datacube.app.auth.PickerFailure
+import au.datacube.app.auth.chooseGoogleAccount
+import kotlinx.coroutines.CancellationException
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import au.datacube.app.DataCubeApp
@@ -19,8 +26,12 @@ data class AuthState(
     val error: String? = null
 )
 
-class AuthViewModel(app: Application) : AndroidViewModel(app) {
-    private val repository: AuthRepository = (app as DataCubeApp).authRepository
+class AuthViewModel(
+    app: Application,
+    private val repository: AuthRepository,
+    private val savedState: SavedStateHandle = SavedStateHandle()
+) : AndroidViewModel(app) {
+    constructor(app: Application, savedState: SavedStateHandle) : this(app, (app as DataCubeApp).authRepository, savedState)
 
     private val _state = MutableStateFlow(AuthState())
     val state: StateFlow<AuthState> = _state.asStateFlow()
@@ -44,10 +55,12 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
             }
             val restored = repository.restoreSession()
             val user = if (restored) repository.currentUser() else null
+            val interrupted = savedState.remove<Boolean>("googleSignInPending") == true && user == null
             _state.value = AuthState(
                 isLoading = false,
                 user = user,
-                sessionRestored = true
+                sessionRestored = true,
+                error = if (interrupted) "Sign-in was interrupted. Please try again." else null
             )
             repository.sessionStatus.collect { status ->
                 when (status) {
@@ -55,7 +68,7 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
                     is SessionStatus.NotAuthenticated -> _state.value = _state.value.copy(user = null)
                     is SessionStatus.RefreshFailure -> _state.value = _state.value.copy(
                         user = null,
-                        error = "Session refresh is unavailable. Reconnecting to Supabase."
+                        error = "Your session couldn’t be refreshed. Check your connection and sign in again."
                     )
                     SessionStatus.Initializing -> Unit
                 }
@@ -63,32 +76,35 @@ class AuthViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun signInWithGoogle(idToken: String, rawNonce: String) {
+    fun signInWithGoogle(getCredential: suspend (GetCredentialRequest) -> Credential) {
+        if (_state.value.isLoading || !_state.value.sessionRestored || _state.value.user != null) return
+        savedState["googleSignInPending"] = true
+        _state.value = _state.value.copy(isLoading = true, error = null)
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, error = null)
-            when (val result = repository.signInWithGoogle(idToken, rawNonce)) {
-                is AuthRepository.AuthResult.Success -> {
-                    val user = repository.currentUser()
-                    _state.value = AuthState(
-                        isLoading = false,
-                        user = user,
-                        sessionRestored = true,
-                        error = if (user == null) "Your Google session could not be restored. Please try again." else null
-                    )
+            try {
+                Log.i("DataCubeAuth", "picker_started")
+                val account = chooseGoogleAccount(getCredential)
+                Log.i("DataCubeAuth", "credential_received")
+                val result = repository.signInWithGoogle(account.token, account.rawNonce)
+                val user = repository.currentUser()
+                val error = when (result) {
+                    AuthRepository.AuthResult.Success -> if (user == null) "Your sign-in didn’t finish. Please try again." else null
+                    is AuthRepository.AuthResult.Error -> result.message
                 }
-                is AuthRepository.AuthResult.Error -> {
-                    _state.value = _state.value.copy(
-                        isLoading = false,
-                        sessionRestored = true,
-                        error = result.message
-                    )
-                }
+                _state.value = AuthState(user = user, sessionRestored = true, error = error)
+            } catch (failure: PickerFailure) {
+                Log.w("DataCubeAuth", failure.diagnostic)
+                _state.value = _state.value.copy(isLoading = false, error = failure.feedback)
+            } catch (cancelled: CancellationException) {
+                _state.value = _state.value.copy(isLoading = false, error = "Sign-in was interrupted. Please try again.")
+                throw cancelled
+            } catch (_: Exception) {
+                Log.w("DataCubeAuth", "sign_in_interrupted")
+                _state.value = _state.value.copy(isLoading = false, error = "Sign-in couldn’t finish. Please try again.")
+            } finally {
+                savedState.remove<Boolean>("googleSignInPending")
             }
         }
-    }
-
-    fun showError(message: String) {
-        _state.value = _state.value.copy(isLoading = false, error = message)
     }
 
     fun signOut() {

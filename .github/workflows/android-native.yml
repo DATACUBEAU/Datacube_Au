@@ -73,6 +73,13 @@ jobs:
       - name: Build debug APK
         run: bash ./gradlew :app:assembleDebug --no-daemon
 
+      - name: Record debug APK identity
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          "$signer" verify --verbose --print-certs "$apk" | grep 'certificate SHA-1 digest' >> "$GITHUB_STEP_SUMMARY"
+          sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
 
@@ -130,6 +137,7 @@ jobs:
           script: >-
             mkdir -p app/build/diagnostics && adb logcat -c &&
             { test_status=0; bash ./gradlew :app:connectedDebugAndroidTest --no-daemon || test_status=$?;
+            for screen in launcher login home; do adb pull "/data/local/tmp/datacube-$screen.png" app/build/diagnostics/ || test_status=1; done;
             adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true;
             adb devices -l > app/build/diagnostics/adb-devices.txt || true;
             echo "connectedDebugAndroidTest_exit_code=$test_status" > app/build/diagnostics/test-exit-code.txt;
@@ -141,6 +149,7 @@ jobs:
         with:
           name: datacube-au-android-ui-test-diagnostics
           path: |
+            apps/android/app/build/test-results/testDebugUnitTest/TEST-*.xml
             apps/android/app/build/diagnostics/**
             apps/android/app/build/reports/androidTests/connected/**
             apps/android/app/build/outputs/androidTest-results/connected/**

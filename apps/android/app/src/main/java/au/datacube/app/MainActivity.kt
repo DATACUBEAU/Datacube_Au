@@ -103,9 +103,10 @@ private val bottomNavItems = listOf(
 // ── Root composable ───────────────────────────────────────────────────────────
 
 @Composable
-private fun DataCubeRoot(
+internal fun DataCubeRoot(
     authViewModel: AuthViewModel,
-    documentsViewModel: DataCubeViewModel
+    documentsViewModel: DataCubeViewModel,
+    getGoogleCredential: (suspend (androidx.credentials.GetCredentialRequest) -> androidx.credentials.Credential)? = null
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     // Loading / session-restore gate
@@ -118,7 +119,7 @@ private fun DataCubeRoot(
 
     // If not authenticated, show auth screen
     if (authState.user == null) {
-        AuthScreen(viewModel = authViewModel)
+        AuthScreen(viewModel = authViewModel, getGoogleCredential = getGoogleCredential)
         return
     }
 

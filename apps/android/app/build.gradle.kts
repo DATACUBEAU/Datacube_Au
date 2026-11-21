@@ -60,8 +60,8 @@ android {
      applicationId = "au.datacube.app"
      minSdk = 26
      targetSdk = 35
-     versionCode = 2
-     versionName = "1.0.1"
+     versionCode = 3
+     versionName = "1.0.2"
      testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
      buildConfigField("String", "SUPABASE_URL", buildConfigLiteral(supabaseUrl))
      buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigLiteral(supabaseAnonKey))
@@ -119,6 +119,7 @@ dependencies {
  androidTestImplementation(libs.androidx.test.ext.junit)
  androidTestImplementation(platform(libs.compose.bom))
  androidTestImplementation(libs.compose.ui.test)
+ androidTestImplementation(libs.ktor.client.mock)
  androidTestImplementation(libs.junit)
  androidTestImplementation(libs.pdfbox.android)
  debugImplementation(libs.compose.tooling)

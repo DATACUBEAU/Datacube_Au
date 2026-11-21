@@ -16,7 +16,8 @@ const androidGradle = read('apps', 'android', 'app', 'build.gradle.kts');
 const androidManifest = read('apps', 'android', 'app', 'src', 'main', 'AndroidManifest.xml');
 const androidActivity = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'MainActivity.kt');
 const androidViewModel = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'ui', 'auth', 'AuthViewModel.kt');
-const androidLogo = read('apps', 'android', 'app', 'src', 'main', 'res', 'drawable', 'datacube_logo.xml');
+const androidLogo = readFileSync('apps/android/app/src/main/res/drawable-nodpi/datacube_logo.png');
+const picker = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'auth', 'GoogleAccountPicker.kt');
 const launcherIcon = read('apps', 'android', 'app', 'src', 'main', 'res', 'mipmap-anydpi-v26', 'ic_launcher.xml');
 const profileScreen = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'ui', 'profile', 'ProfileScreen.kt');
 const websiteLogin = read('src', 'app', 'login', 'page.tsx');
@@ -29,10 +30,10 @@ const middleware = read('src', 'middleware.ts');
 
 assert.match(androidAuthScreen, /Continue with Google/);
 assert.match(androidAuthScreen, /CredentialManager/);
-assert.match(androidAuthScreen, /GetSignInWithGoogleOption/);
-assert.match(androidAuthScreen, /GetSignInWithGoogleOption\.Builder\(BuildConfig\.GOOGLE_WEB_CLIENT_ID\)/);
-assert.match(androidAuthScreen, /GoogleIdTokenCredential\.createFrom/);
-assert.match(androidAuthScreen, /GetCredentialCancellationException/);
+assert.match(picker, /GetSignInWithGoogleOption/);
+assert.match(picker, /GetSignInWithGoogleOption\.Builder\(BuildConfig\.GOOGLE_WEB_CLIENT_ID\)/);
+assert.match(picker, /GoogleIdTokenCredential\.createFrom/);
+assert.match(picker, /GetCredentialCancellationException/);
 assert.match(androidAuthScreen, /signInWithGoogle/);
 assert.doesNotMatch(androidAuthScreen, /onOpenWebsite|createWebsiteLoginUrl|mobile-handoff|AUTH_WEBSITE_URL/);
 
@@ -49,7 +50,7 @@ assert.match(androidRepository, /signInWith\(IDToken\)/);
 assert.match(androidRepository, /provider = Google/);
 assert.match(androidRepository, /idToken = idToken/);
 assert.match(androidRepository, /nonce = rawNonce/);
-assert.match(androidAuthScreen, /setNonce\(hashedNonce\)/);
+assert.match(picker, /setNonce\(googleNonceDigest\(rawNonce\)\)/);
 assert.match(androidRepository, /clearCredentialState\(ClearCredentialStateRequest\(\)\)/);
 assert.match(androidRepository, /sessionStore\.persist\(user\)/);
 assert.match(androidRepository, /restoreSession/);
@@ -63,7 +64,7 @@ assert.doesNotMatch(androidActivity, /handleAuthIntent|completeWebsiteAuthentica
 assert.match(androidViewModel, /signInWithGoogle/);
 assert.match(androidViewModel, /restoreSession/);
 
-assert.match(androidLogo, /pathData/);
+assert.deepEqual(androidLogo, Buffer.from(brandIcon.match(/data:image\/png;base64,([^"]+)/)![1], 'base64'));
 assert.match(launcherIcon, /@drawable\/datacube_logo/);
 assert.match(profileScreen, /R\.drawable\.datacube_logo/);
 assert.match(androidAuthScreen, /R\.drawable\.datacube_logo/);
