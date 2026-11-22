@@ -34,7 +34,7 @@ internal suspend fun chooseGoogleAccount(
         getCredential(request)
     } catch (_: GetCredentialCancellationException) {
         // Play services can also return cancellation after the user selects an account.
-        throw PickerFailure("picker_closed", "Google sign-in didn’t finish. Try again. If this happens after choosing an account, this build’s Google sign-in settings may need updating.")
+        throw PickerFailure("picker_closed", "Couldn’t sign you in. Please try again.")
     } catch (_: NoCredentialException) {
         throw PickerFailure("no_account", "Google couldn’t find an available account. Check the Google accounts on this device and try again.")
     } catch (_: GetCredentialInterruptedException) {
