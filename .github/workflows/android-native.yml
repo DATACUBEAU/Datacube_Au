@@ -99,6 +99,20 @@ jobs:
           "$signer" verify --verbose --print-certs "$apk" | grep 'certificate SHA-1 digest' >> "$GITHUB_STEP_SUMMARY"
           sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
 
+      # Never label a temporary CI-signed APK as a personal Google OAuth test build.
+      - name: Verify registered personal APK certificate
+        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          actual=$("$signer" verify --print-certs "$apk" | sed -n 's/.*Signer #1 certificate SHA-1 digest: //p' | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d ':')
+          expected=DF81CB825B6FA1C414A74AAFC4199E0C9BB704FC
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::The APK signer does not match the registered personal test certificate."
+            exit 1
+          fi
+          echo "Verified registered test certificate SHA-1: $actual" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
 
@@ -107,10 +121,23 @@ jobs:
       - name: Build release bundle (unsigned preflight)
         run: bash ./gradlew :app:bundleRelease --no-daemon
 
-      - name: Upload debug APK
+      # Ordinary PR and push artifacts have transient CI signatures. They are not
+      # guaranteed to be accepted by a Google Cloud Android OAuth client.
+      - name: Upload CI debug APK (temporary signer)
+        if: github.event_name != 'workflow_dispatch' || !inputs.personal_test_signer
         uses: actions/upload-artifact@v4
         with:
-          name: datacube-au-android-debug
+          name: datacube-au-android-ci-debug-unregistered-signer
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # Only a manually requested, certificate-checked APK gets this artifact name.
+      - name: Upload personal Google sign-in test APK
+        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-personal-google-test-signed
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
