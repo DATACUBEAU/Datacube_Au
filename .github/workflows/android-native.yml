@@ -107,7 +107,8 @@ jobs:
           apk=app/build/outputs/apk/debug/app-debug.apk
           signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
           certificates=$("$signer" verify --verbose --print-certs "$apk")
-          grep 'certificate SHA-1 digest' <<< "$certificates" >> "$GITHUB_STEP_SUMMARY"
+          digests=$(grep 'certificate SHA-1 digest:' <<< "$certificates")
+          printf '%s\n' "$digests" | tee -a "$GITHUB_STEP_SUMMARY"
           sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
 
       # Never label a temporary CI-signed APK as a personal Google OAuth test build.
@@ -116,8 +117,9 @@ jobs:
         run: |
           apk=app/build/outputs/apk/debug/app-debug.apk
           signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
-          certificates=$("$signer" verify --print-certs "$apk")
-          actual=$(sed -n 's/^Signer #1 certificate SHA-1 digest: //p' <<< "$certificates" | tr '[:lower:]' '[:upper:]' | tr -d ':')
+          certificates=$("$signer" verify --verbose --print-certs "$apk")
+          actual=$(sed -nE '/^[[:space:]]*Source Stamp/!s/^.*certificate SHA-1 digest:[[:space:]]*([[:xdigit:]:]+)[[:space:]]*$/\1/p' <<< "$certificates" |
+            tr '[:lower:]' '[:upper:]' | tr -d ':' | sort -u)
           if [ "$actual" != "$PERSONAL_TEST_SHA1" ]; then
             echo "::error::APK signer $actual does not match the expected personal test certificate."
             exit 1
