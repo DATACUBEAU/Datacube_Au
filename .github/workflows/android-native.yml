@@ -6,12 +6,14 @@ on:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
       - "tests/mobile-auth-handoff.unit.test.ts"
+      - "public/.well-known/assetlinks.json"
   push:
     branches: ["**"]
     paths:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
       - "tests/mobile-auth-handoff.unit.test.ts"
+      - "public/.well-known/assetlinks.json"
   workflow_dispatch:
     inputs:
       personal_test_signer:
@@ -129,7 +131,16 @@ jobs:
             echo "::error::The APK package does not match the personal Google OAuth configuration."
             exit 1
           fi
+          apk_sha256=$(sed -nE '/^[[:space:]]*Source Stamp/!s/^.*certificate SHA-256 digest:[[:space:]]*([[:xdigit:]:]+)[[:space:]]*$/\1/p' <<< "$certificates" |
+            tr '[:lower:]' '[:upper:]' | tr -d ':' | sort -u)
+          jq -e --arg signer "$apk_sha256" '
+            any(.[];
+              (.relation | index("delegate_permission/common.handle_all_urls")) != null and
+              .target.namespace == "android_app" and .target.package_name == "au.datacube.app" and
+              any(.target.sha256_cert_fingerprints[]; gsub(":"; "") == $signer)
+            )' ../../public/.well-known/assetlinks.json > /dev/null
           printf 'Verified Android OAuth identity: au.datacube.app / %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Verified App Links APK certificate SHA-256: %s\n' "$apk_sha256" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon

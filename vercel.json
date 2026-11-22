@@ -2,6 +2,11 @@
   "framework": "nextjs",
   "installCommand": "pnpm install",
   "buildCommand": "pnpm run build",
+  "git": {
+    "deploymentEnabled": {
+      "fix/android-hybrid-auth": false
+    }
+  },
   "crons": [
     {
       "path": "/api/cron/retention",
