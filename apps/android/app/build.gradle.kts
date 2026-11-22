@@ -68,6 +68,11 @@ android {
      buildConfigField("String", "AUTH_WEBSITE_URL", buildConfigLiteral(authWebsiteUrl))
      buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", buildConfigLiteral(googleWebClientId))
  }
+ providers.environmentVariable("ANDROID_PERSONAL_DEBUG_KEYSTORE_PATH").orNull?.let { keystorePath ->
+     signingConfigs.named("debug") {
+         storeFile = rootProject.file(keystorePath)
+     }
+ }
  buildFeatures {
      compose = true
      buildConfig = true

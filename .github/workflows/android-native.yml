@@ -15,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       personal_test_signer:
-        description: Use the registered personal debug signer
+        description: Use the persistent personal debug signer
         type: boolean
         default: false
 
@@ -23,13 +23,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-native-${{ github.head_ref || github.ref_name }}
+  group: android-native-${{ github.head_ref || github.ref_name }}${{ github.event_name == 'workflow_dispatch' && inputs.personal_test_signer && '-personal-signing' || '' }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      PERSONAL_TEST_SHA1: DF81CB825B6FA1C414A74AAFC4199E0C9BB704FC
     defaults:
       run:
         working-directory: apps/android
@@ -50,6 +52,7 @@ jobs:
 
       - name: Restore personal debug signer
         if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        shell: bash
         env:
           PERSONAL_KEYSTORE: ${{ secrets.ANDROID_PERSONAL_DEBUG_KEYSTORE_BASE64 }}
         run: |
@@ -58,9 +61,16 @@ jobs:
             exit 1
           fi
           umask 077
-          mkdir -p "$HOME/.android"
-          printf '%s' "$PERSONAL_KEYSTORE" | base64 --decode > "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -alias androiddebugkey -storepass android > /dev/null
+          keystore="$RUNNER_TEMP/datacube-personal-debug.keystore"
+          printf '%s' "$PERSONAL_KEYSTORE" | base64 --decode > "$keystore"
+          fingerprint=$(keytool -exportcert -keystore "$keystore" -alias androiddebugkey -storepass android |
+            sha1sum | cut -d ' ' -f 1 | tr '[:lower:]' '[:upper:]')
+          printf 'Persistent debug certificate SHA-1: %s\n' "$fingerprint" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ "$fingerprint" != "$PERSONAL_TEST_SHA1" ]]; then
+            echo "::error::The stored key does not match the expected personal test certificate."
+            exit 1
+          fi
+          printf 'ANDROID_PERSONAL_DEBUG_KEYSTORE_PATH=%s\n' "$keystore" >> "$GITHUB_ENV"
 
       - name: Write Android build properties
         env:
@@ -96,22 +106,28 @@ jobs:
         run: |
           apk=app/build/outputs/apk/debug/app-debug.apk
           signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
-          "$signer" verify --verbose --print-certs "$apk" | grep 'certificate SHA-1 digest' >> "$GITHUB_STEP_SUMMARY"
+          certificates=$("$signer" verify --verbose --print-certs "$apk")
+          grep 'certificate SHA-1 digest' <<< "$certificates" >> "$GITHUB_STEP_SUMMARY"
           sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
 
       # Never label a temporary CI-signed APK as a personal Google OAuth test build.
-      - name: Verify registered personal APK certificate
+      - name: Verify personal APK certificate and package
         if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
         run: |
           apk=app/build/outputs/apk/debug/app-debug.apk
           signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
-          actual=$("$signer" verify --print-certs "$apk" | sed -n 's/.*Signer #1 certificate SHA-1 digest: //p' | head -n 1 | tr '[:lower:]' '[:upper:]' | tr -d ':')
-          expected=DF81CB825B6FA1C414A74AAFC4199E0C9BB704FC
-          if [ "$actual" != "$expected" ]; then
-            echo "::error::The APK signer does not match the registered personal test certificate."
+          certificates=$("$signer" verify --print-certs "$apk")
+          actual=$(sed -n 's/^Signer #1 certificate SHA-1 digest: //p' <<< "$certificates" | tr '[:lower:]' '[:upper:]' | tr -d ':')
+          if [ "$actual" != "$PERSONAL_TEST_SHA1" ]; then
+            echo "::error::APK signer $actual does not match the expected personal test certificate."
             exit 1
           fi
-          echo "Verified registered test certificate SHA-1: $actual" >> "$GITHUB_STEP_SUMMARY"
+          badging=$("$(dirname "$signer")/aapt" dump badging "$apk")
+          if ! grep -q "^package: name='au.datacube.app' " <<< "$badging"; then
+            echo "::error::The APK package does not match the personal Google OAuth configuration."
+            exit 1
+          fi
+          printf 'Verified Android OAuth identity: au.datacube.app / %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
