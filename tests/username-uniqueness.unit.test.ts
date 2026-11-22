@@ -55,11 +55,12 @@ async function main() {
   await run('Google-only web login never demands username or password', () => {
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');
     const signup = readRepoFile('src', 'app', 'signup', 'page.tsx');
-    assert.match(login, /signInWithGoogle/);
-    assert.match(login, /Continue with Google/);
-    assert.doesNotMatch(login, /const \\[username, setUsername\\]/);
-    assert.doesNotMatch(login, /signInWithPassword|signUp\\(|type="password"|handleEmailAuth/);
-    assert.match(signup, /export \\{ default \\} from ['"]\\.\\.\\/login\\/page['"]/);
+    assert.ok(login.includes('signInWithGoogle'));
+    assert.ok(login.includes('Continue with Google'));
+    for (const legacy of ['const [username, setUsername]', 'signInWithPassword', 'signUp(', 'type="password"', 'handleEmailAuth']) {
+      assert.equal(login.includes(legacy), false, 'Legacy login field or action was reintroduced');
+    }
+    assert.ok(signup.includes("export { default } from '../login/page';"));
   });
 
   await run('profile username API returns safe DTOs only', () => {
