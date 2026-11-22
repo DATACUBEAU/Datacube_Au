@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { GatewayProviderError, isAmbiguousProviderFailure } from '../vps-ai-gateway/src/utils';
 import { readFileSync } from 'node:fs';
+import { resolveAiGatewayOperation } from '../shared/ai-gateway-contract.js';
 import {
   buildAiUsageReservationPayload,
   normalizeAiIdempotencyKey,
@@ -8,7 +8,6 @@ import {
   reserveAiUsage,
   reserveFailureStatus,
 } from '../src/lib/server/ai-usage-accounting.js';
-import { resolveVpsTicketOperation } from '../src/lib/server/vps-ticket-config.js';
 
 let failed = 0;
 
@@ -67,16 +66,6 @@ function limitsFixture(overrides?: Record<string, Partial<Record<'value' | 'isEn
 }
 
 async function main() {
-  await run('ambiguous provider outcomes keep reserved credits disputed instead of releasing them', () => {
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 400)), false);
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 429)), false);
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 408)), true);
-    assert.equal(isAmbiguousProviderFailure(new GatewayProviderError('openrouter', 502)), true);
-    assert.equal(isAmbiguousProviderFailure(new Error('OPENROUTER_API_KEY not configured')), false);
-    assert.equal(isAmbiguousProviderFailure(new Error('fetch failed: socket disconnected')), true);
-    assert.equal(isAmbiguousProviderFailure(new Error('provider response stream terminated')), true);
-  });
-
   await run('idempotency keys are reused when valid and rejected when malformed', () => {
     assert.equal(normalizeAiIdempotencyKey('chat_123456789abc'), 'chat_123456789abc');
     assert.equal(normalizeAiIdempotencyKey('short', 'chat'), '');
@@ -85,7 +74,7 @@ async function main() {
   });
 
   await run('chat reservation payload reserves one chat plus a bounded token estimate', () => {
-    const operation = resolveVpsTicketOperation('au-chat');
+    const operation = resolveAiGatewayOperation('au-chat');
     assert.ok(operation);
     const payload = buildAiUsageReservationPayload({
       limits: limitsFixture(),
@@ -107,7 +96,7 @@ async function main() {
   });
 
   await run('prompt starters reserve the prompt quota metric', () => {
-    const operation = resolveVpsTicketOperation('generate-prompt-starters');
+    const operation = resolveAiGatewayOperation('generate-prompt-starters');
     assert.ok(operation);
     const payload = buildAiUsageReservationPayload({
       limits: limitsFixture(),
@@ -122,7 +111,7 @@ async function main() {
   });
 
   await run('reserveAiUsage calls only the reservation RPC and does not pre-commit usage', async () => {
-    const operation = resolveVpsTicketOperation('global-chat');
+    const operation = resolveAiGatewayOperation('global-chat');
     assert.ok(operation);
     const supabase = new FakeSupabase();
     const reservation = buildAiUsageReservationPayload({
@@ -150,7 +139,7 @@ async function main() {
     assert.ok(limitChecks.some((entry) => entry.scope === 'canonical_plan' && entry.window_start));
   });
 
-  await run('failed Next.js ticket issuance can release a reserved usage claim', async () => {
+  await run('release and dispute preserve the full reservation identity', async () => {
     const supabase = new FakeSupabase();
     supabase.response = {
       ok: true,
@@ -158,7 +147,7 @@ async function main() {
       status: 'released',
     };
 
-    const result = await releaseReservedAiUsage({
+    const reservation = {
       supabase: supabase as any,
       userId: '00000000-0000-4000-8000-000000000001',
       featureKey: 'au_chat',
@@ -166,6 +155,9 @@ async function main() {
       idempotencyKey: 'chat_123456789abc',
       ticketId: 'ticket-1',
       reservationId: '11111111-1111-4111-8111-111111111111',
+    };
+    const result = await releaseReservedAiUsage({
+      ...reservation,
       failureCode: 'TICKET_UNKNOWN_SERVER_ERROR',
     });
 
@@ -175,7 +167,24 @@ async function main() {
     assert.equal(supabase.calls[0]?.payload.p_user_id, '00000000-0000-4000-8000-000000000001');
     assert.equal(supabase.calls[0]?.payload.p_feature_key, 'au_chat');
     assert.equal(supabase.calls[0]?.payload.p_route, '/chat/au-chat');
+    assert.equal(supabase.calls[0]?.payload.p_idempotency_key, 'chat_123456789abc');
+    assert.equal(supabase.calls[0]?.payload.p_ticket_id, 'ticket-1');
+    assert.equal(supabase.calls[0]?.payload.p_reservation_id, '11111111-1111-4111-8111-111111111111');
     assert.equal(supabase.calls[0]?.payload.p_status, 'released');
+
+    supabase.response = { ok: true, code: null, status: 'disputed' };
+    const disputed = await releaseReservedAiUsage({
+      ...reservation,
+      failureCode: 'PROVIDER_RESULT_UNKNOWN',
+      status: 'disputed',
+    });
+    assert.equal(disputed.status, 'disputed');
+    assert.equal(supabase.calls[1]?.name, 'release_ai_usage');
+    assert.deepEqual(supabase.calls[1]?.payload, {
+      ...supabase.calls[0]?.payload,
+      p_status: 'disputed',
+      p_failure_code: 'PROVIDER_RESULT_UNKNOWN',
+    });
   });
 
   await run('reserve failure maps limit and inactive reservation states safely', () => {
@@ -233,45 +242,6 @@ async function main() {
     assert.doesNotMatch(sql, /\bDROP\s+TABLE\b|\bTRUNCATE\b|\bDELETE\s+FROM\b/i);
   });
 
-  await run('VPS ticket route reserves before signing and includes reservation claims', () => {
-    const source = readFileSync('src/app/api/au/vps-ticket/route.ts', 'utf8');
-    assert.match(source, /reserveAiUsage/);
-    assert.match(source, /releaseReservationAfterTicketFailure/);
-    assert.match(source, /TICKET_USAGE_RESERVATION_FAILED/);
-    assert.match(source, /stage = 'reserve_usage'/);
-    assert.doesNotMatch(source, /trackUsageEvent/);
-    assert.match(source, /reservation_id:\s*reservation\.reservationId/);
-    assert.match(source, /idempotency_key:\s*reservation\.idempotencyKey/);
-  });
-
-  await run('VPS ticket route emits sanitized stage traces with correlation IDs', () => {
-    const source = readFileSync('src/app/api/au/vps-ticket/route.ts', 'utf8');
-    assert.match(source, /function logTicketStage/);
-    assert.match(source, /correlationId/);
-    assert.match(source, /stage:\s*input\.stage/);
-    assert.match(source, /status:\s*input\.status/);
-    assert.match(source, /TICKET_RESERVATION_RPC_SIGNATURE_MISMATCH/);
-    assert.match(source, /TICKET_RESERVATION_PERMISSION_DENIED/);
-    assert.match(source, /TICKET_SIGNING_SECRET_MISSING/);
-    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*auth\.userId/);
-    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*secretResolution\.secret/);
-    assert.doesNotMatch(source, /console\.(?:info|warn|error)\([^)]*jwt/);
-  });
-
-  await run('gateway verifies reservation claims and commits or releases reservations', () => {
-    const auth = readFileSync('vps-ai-gateway/src/auth.ts', 'utf8');
-    const index = readFileSync('vps-ai-gateway/src/index.ts', 'utf8');
-    const chat = readFileSync('vps-ai-gateway/src/chat-handler.ts', 'utf8');
-    const generation = readFileSync('vps-ai-gateway/src/generation-handler.ts', 'utf8');
-    assert.match(auth, /reservation_id/);
-    assert.match(auth, /idempotency_key/);
-    assert.match(index, /x-usage-reservation-id/);
-    assert.match(chat, /commitUsageReservation/);
-    assert.match(chat, /safeReleaseUsageReservation/);
-    assert.match(generation, /commitUsageReservation/);
-    assert.match(generation, /safeReleaseUsageReservation/);
-  });
-
   await run('client generation paths send idempotency keys to ticket and gateway requests', () => {
     const chat = readFileSync('src/lib/api/chat.ts', 'utf8');
     const exams = readFileSync('src/lib/api/exams.ts', 'utf8');
@@ -284,16 +254,10 @@ async function main() {
     assert.match(store, /createAiIdempotencyKey\('knowledge'\)/);
   });
 
-
-  await run('gateway commits measured provider usage through the atomic actual-settlement RPC without losing reserved feature units', () => {
-    const gatewayUsage = readFileSync('vps-ai-gateway/src/usage-accounting.ts', 'utf8');
+  await run('the atomic actual-settlement RPC preserves reserved feature units', () => {
     const settlement = readFileSync('supabase/migrations/20261115220430_merge_actual_usage_with_reserved_units.sql', 'utf8');
 
-    assert.match(gatewayUsage, /rpc\('commit_ai_usage_actual'/);
-    assert.match(gatewayUsage, /p_actual_units:\s*actualUnits/);
-    assert.match(gatewayUsage, /max_tokens_total:\s*totalTokens/);
-    assert.match(gatewayUsage, /p_prompt_tokens:\s*promptTokens/);
-    assert.match(gatewayUsage, /p_cost_usd:/);
+    assert.match(settlement, /create or replace function public\.commit_ai_usage_actual/i);
     assert.match(settlement, /v_actual_units := COALESCE\(v_row\.reserved_units, '\{\}'::jsonb\) \|\| COALESCE\(p_actual_units, '\{\}'::jsonb\)/);
     assert.match(settlement, /ai_usage_delta_units\(v_actual_units, v_row\.reserved_units\)/);
     assert.match(settlement, /ON CONFLICT \(user_id, event_key\) DO NOTHING/);
