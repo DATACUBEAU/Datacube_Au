@@ -150,7 +150,7 @@ class NativeGoogleSignInTest {
             credential(request)
         }
         ui.onNodeWithText("Continue with Google").performClick()
-        waitForText("Google sign-in didn’t finish", substring = true)
+        waitForText("Couldn’t sign you in", substring = true)
         assertEquals(0, exchanged)
         ui.onNodeWithText("Continue with Google").performClick()
         waitForText("Active Documents")
