@@ -68,8 +68,8 @@ class LocalDocumentChatHistory(filesDir: File) {
                             .map { steps.optString(it).take(200) },
                         corrections = map,
                         interrupted = entry.optBoolean("interrupted"),
-                        audioPath = entry.optString("audioPath").takeIf { it.isNotBlank() }
-                            ?.take(280)
+                        audioPath = if (!entry.has("audioPath") || entry.isNull("audioPath")) null
+                            else entry.optString("audioPath").takeIf { it.isNotBlank() }?.take(280)
                     )
                 }
             }.getOrDefault(emptyList())
