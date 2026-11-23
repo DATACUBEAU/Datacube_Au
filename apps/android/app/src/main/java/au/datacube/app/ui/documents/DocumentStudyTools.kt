@@ -243,6 +243,7 @@ fun DocumentChatWorkspace(
     documentName: String, initialPrompt: String? = null, textPreview: String?, previewLoading: Boolean, previewError: String?,
     extractionStatus: String?, extractionProgress: Double?, extractionError: String?,
     showHistoryPicker: Boolean = false,
+    onOpenHistory: () -> Unit = {},
     onDismissHistory: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -607,8 +608,19 @@ fun DocumentChatWorkspace(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall)
             } ?: Spacer(Modifier.weight(1f))
-            IconButton(onClick = ::startNewChat, enabled = threadIndex != null) {
-                Icon(Icons.Outlined.AddCircleOutline, contentDescription = "Start new chat")
+            TextButton(
+                onClick = onOpenHistory,
+                contentPadding = PaddingValues(horizontal = 6.dp)
+            ) {
+                Icon(Icons.Outlined.History, "Document chat history", Modifier.size(19.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("History")
+            }
+            TextButton(onClick = ::startNewChat, enabled = threadIndex != null,
+                contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Icon(Icons.Outlined.Add, "Start new document chat", Modifier.size(19.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("New")
             }
         }
         if (textPreview.isNullOrBlank()) {
