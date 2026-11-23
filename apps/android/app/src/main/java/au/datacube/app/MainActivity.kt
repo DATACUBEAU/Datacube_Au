@@ -503,7 +503,12 @@ private fun AuthenticatedWorkspace(
                     onThemeChange = onThemeChange,
                     onOpenModels = { navController.navigate(Screen.Models.route) },
                     onOpenSubscription = {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.AUTH_WEBSITE_URL)))
+                        val url = BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/dashboard/settings/subscription"
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    },
+                    onOpenUsage = {
+                        val url = BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/dashboard/settings/usage"
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     },
                     onEnableNotifications = {
                         if (android.os.Build.VERSION.SDK_INT >= 33) {
