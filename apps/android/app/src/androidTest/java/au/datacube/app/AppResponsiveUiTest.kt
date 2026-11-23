@@ -307,10 +307,10 @@ class AppResponsiveUiTest {
 
         composeRule.onNodeWithText("Podcast").performClick()
         // The two-speaker conversation is now the default; narration is an explicit tab.
-        composeRule.onNodeWithText("Audio conversation").assertIsDisplayed()
-        composeRule.onNodeWithText("Create audio conversation").assertIsDisplayed()
-        composeRule.onNodeWithText("Narration").performClick()
-        composeRule.onNodeWithText("Chapters").assertIsDisplayed()
-        composeRule.onNodeWithText("Play summary").assertIsDisplayed()
+        composeRule.onNodeWithText("Audio conversation").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Create audio conversation").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Narration").performScrollTo().performClick()
+        composeRule.onNodeWithText("Play summary").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Chapters").performScrollTo().assertIsDisplayed()
     }
 }
