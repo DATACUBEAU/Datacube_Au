@@ -74,6 +74,7 @@ fun DiscsScreen(
     var historyOpen by remember { mutableStateOf(false) }
     var expandedSources by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var expandedProcess by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var liveActivityOpen by remember(threadId) { mutableStateOf(false) }
 
     fun newChat() {
         uiScope.launch {
@@ -133,9 +134,10 @@ fun DiscsScreen(
         if (audioPath == null) prompt = ""
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
         session.searching = true
+        session.activitySteps.clear()
         session.searchingStage = "Planning your search"
         session.activeRequest = session.scope.launch {
-            val events = mutableListOf<String>()
+            val events = session.activitySteps
             try {
                 threads.nameFromQuestion(ownerId, threadId, question)
                 val isLibraryQuery = Regex(
@@ -232,6 +234,7 @@ fun DiscsScreen(
             } finally {
                 session.searching = false
                 session.searchingStage = ""
+                session.activitySteps.clear()
                 session.activeRequest = null
             }
         }
@@ -363,6 +366,28 @@ fun DiscsScreen(
         }
 
         if (session.searching) {
+            if (session.activitySteps.isNotEmpty()) {
+                TextButton(
+                    onClick = { liveActivityOpen = !liveActivityOpen },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                ) {
+                    Icon(Icons.Outlined.AccountTree, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("AU activity (" + session.activitySteps.size + ")")
+                    Icon(
+                        if (liveActivityOpen) Icons.Outlined.ExpandLess
+                        else Icons.Outlined.ExpandMore, null
+                    )
+                }
+                if (liveActivityOpen) {
+                    AuActivityTimeline(
+                        session.activitySteps.toList(),
+                        modifier = Modifier.heightIn(max = 220.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp)
+                    )
+                }
+            }
             AuWorkingStatus(
                 stage = session.searchingStage,
                 onStop = { session.activeRequest?.cancel() }
