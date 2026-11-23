@@ -83,4 +83,29 @@ class ModelBackupManagerInstrumentedTest {
         assertTrue(result.isFailure)
         assertEquals("locally installed version", restoredFile.readText())
     }
+    @Test
+    fun backsUpOneModelWithStableIdAndInspectsItBeforeRestore() = runBlocking {
+        val embedding = File(installedModels, "embeddinggemma-2-270m")
+        val generation = File(installedModels, "qwen3-0.6b-litert")
+        assertTrue(embedding.mkdirs())
+        assertTrue(generation.mkdirs())
+        File(embedding, "weights.bin").writeText("embedding fixture")
+        File(generation, "weights.bin").writeText("generation fixture")
+
+        val manager = ModelBackupManager(context)
+        val result = manager.exportBackup(Uri.fromFile(backupFile), "embeddinggemma-2-270m")
+        assertEquals(1, result.modelCount)
+        val preview = manager.inspectBackup(Uri.fromFile(backupFile))
+        assertEquals(listOf("embeddinggemma-2-270m"), preview.modelIds)
+        assertTrue(preview.labels.first().contains("embedding"))
+        assertEquals(1, preview.fileCount)
+
+        installedModels.deleteRecursively()
+        manager.restoreBackup(Uri.fromFile(backupFile))
+        assertEquals("embedding fixture",
+            File(installedModels, "embeddinggemma-2-270m/weights.bin").readText())
+        assertTrue(!File(installedModels, "qwen3-0.6b-litert").exists())
+    }
+
+
 }

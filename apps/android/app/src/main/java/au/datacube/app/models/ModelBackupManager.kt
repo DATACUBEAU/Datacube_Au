@@ -18,6 +18,13 @@ import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
+data class ModelBackupPreview(val modelIds: List<String>, val fileCount: Int, val totalBytes: Long) {
+    val labels: List<String> get() = modelIds.map { id ->
+        ModelCatalog.models.firstOrNull { it.id == id }?.let { "${it.name} (${it.role.name.lowercase()})" }
+            ?: "$id (unknown type)"
+    }
+}
+
 data class ModelBackupSummary(
     val modelCount: Int,
     val fileCount: Int,
@@ -40,8 +47,10 @@ class ModelBackupManager(context: Context) {
     private val modelRoot = File(appContext.filesDir, "models/installed")
     private val modelsParent = File(appContext.filesDir, "models")
 
-    suspend fun exportBackup(destination: Uri): ModelBackupSummary = withContext(Dispatchers.IO) {
-        val models = installedModelFiles()
+    /** Export only one model when an ID is supplied; older all-model backups stay supported. */
+    suspend fun exportBackup(destination: Uri, modelId: String? = null): ModelBackupSummary = withContext(Dispatchers.IO) {
+        require(modelId == null || MODEL_ID.matches(modelId)) { "Invalid model identifier." }
+        val models = installedModelFiles().filter { modelId == null || it.id == modelId }
         require(models.isNotEmpty()) { "There are no installed models to back up yet." }
 
         val fileRecords = models.flatMap { model ->
@@ -106,6 +115,27 @@ class ModelBackupManager(context: Context) {
             fileCount = fileRecords.size,
             totalBytes = totalBytes
         )
+    }
+
+    /** Inspect a bounded self-describing archive; full hashes are verified by restoreBackup. */
+    suspend fun inspectBackup(source: Uri): ModelBackupPreview = withContext(Dispatchers.IO) {
+        val input = appContext.contentResolver.openInputStream(source)
+            ?: error("Could not open this archive.")
+        input.use { raw ->
+            ZipInputStream(BufferedInputStream(raw)).use { zip ->
+                val first = zip.nextEntry ?: error("Empty model archive.")
+                require(first.name == MANIFEST_NAME && !first.isDirectory) {
+                    "Not a DataCube AU model archive."
+                }
+                val entries = decodeManifest(readEntryBounded(zip, MAX_MANIFEST_BYTES))
+                require(entries.isNotEmpty()) { "Archive has no model files." }
+                ModelBackupPreview(
+                    modelIds = entries.map { it.modelId }.distinct(),
+                    fileCount = entries.size,
+                    totalBytes = entries.sumOf { it.size }
+                )
+            }
+        }
     }
 
     suspend fun restoreBackup(source: Uri): ModelBackupSummary = withContext(Dispatchers.IO) {
@@ -384,6 +414,12 @@ class ModelBackupManager(context: Context) {
     companion object {
         const val BACKUP_MIME_TYPE = "application/zip"
         const val BACKUP_FILE_PREFIX = "DataCubeAU-ModelBackup"
+
+        /** Stable model ID in the filename; manifest inside is authoritative on restore. */
+        fun suggestedName(modelId: String): String {
+            require(MODEL_ID.matches(modelId)) { "Invalid model identifier." }
+            return "DataCubeAU-${modelId}-${System.currentTimeMillis()}.zip"
+        }
         private const val MANIFEST_NAME = "manifest.tsv"
         private const val FORMAT_VERSION = "1"
         private const val BUFFER_SIZE = 64 * 1024
