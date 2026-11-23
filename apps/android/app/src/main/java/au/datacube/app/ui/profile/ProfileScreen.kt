@@ -1,5 +1,6 @@
 package au.datacube.app.ui.profile
 
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,7 +33,6 @@ fun ProfileScreen(
     onOpenModels: () -> Unit = {},
     onOpenVault: () -> Unit = {},
     onOpenSubscription: () -> Unit = {},
-    onOpenUsage: () -> Unit = {},
     onEnableNotifications: () -> Unit = {}
 ) {
     val email = user?.email ?: "—"
@@ -40,7 +40,7 @@ fun ProfileScreen(
     var showBackups by remember { mutableStateOf(false) }
 
     if (showProfile) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { showProfile = false },
             title = { Text("Profile") },
             text = {
@@ -54,7 +54,7 @@ fun ProfileScreen(
     }
 
     if (showBackups) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { showBackups = false },
             title = { Text("Model backups") },
             text = { Text("Keep a copy of your downloaded models.") },
@@ -133,12 +133,7 @@ fun ProfileScreen(
             item { SettingsSection("Membership") }
             item {
                 SettingsEntry(
-                    Icons.Outlined.CreditCard, "Manage subscription", "Plan and billing", onOpenSubscription
-                )
-            }
-            item {
-                SettingsEntry(
-                    Icons.Outlined.QueryStats, "Cloud AU usage", "Check your cloud AU usage", onOpenUsage
+                    Icons.Outlined.CreditCard, "Manage subscription", "Usage and plan & billing", onOpenSubscription
                 )
             }
             item { SettingsSection("On-device") }

@@ -1,5 +1,6 @@
 package au.datacube.app.ui.models
 
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -169,7 +170,7 @@ private fun ModelCard(
     val error = work?.outputData?.getString(VerifiedModelDownloadWorker.KEY_ERROR)
 
     if (chooseNetwork && verified != null) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { chooseNetwork = false },
             title = { Text("Download " + model.name + "?") },
             text = { Text(verified.displaySize + " · " + verified.license +

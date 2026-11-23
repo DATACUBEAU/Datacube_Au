@@ -30,8 +30,8 @@ class ModelSetupUiTest {
                 )
             }
         }
-        composeRule.onNodeWithText("Cloud AU usage").assertExists()
-        composeRule.onNodeWithText("Check your cloud AU usage").assertExists()
+        composeRule.onNodeWithText("Manage subscription").assertExists()
+        composeRule.onNodeWithText("Cloud AU usage").assertDoesNotExist()
         composeRule.onNodeWithText("Models").assertExists()
         composeRule.onNodeWithText("Display mode").assertIsDisplayed()
     }

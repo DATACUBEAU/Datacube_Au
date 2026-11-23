@@ -1,5 +1,6 @@
 package au.datacube.app.ui.documents
 
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
@@ -47,7 +48,7 @@ fun DocumentWorkspaceScreen(
     var showDetails by remember(document.id) { mutableStateOf(false) }
 
     if (showDetails) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { showDetails = false },
             title = { Text("Document details") },
             text = {
@@ -69,11 +70,11 @@ fun DocumentWorkspaceScreen(
             IconButton(onClick = onBack) {
                 Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to documents")
             }
-            Surface(shape = RoundedCornerShape(12.dp), color = DataCubeColors.BlueLight) {
+            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                 Icon(
                     Icons.Outlined.Description,
                     contentDescription = null,
-                    tint = DataCubeColors.Blue,
+                    tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.padding(9.dp).size(25.dp)
                 )
             }
@@ -84,11 +85,11 @@ fun DocumentWorkspaceScreen(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     fontWeight = FontWeight.Bold,
-                    color = DataCubeColors.Navy
+                    color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
                     "${document.extension.uppercase()} · ${formatDocumentSize(document.sizeBytes)}",
-                    color = DataCubeColors.TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -127,11 +128,11 @@ fun DocumentWorkspaceScreen(
             workspaceTabs.forEachIndexed { index, title ->
                 val selected = selectedTab == index
                 val container by animateColorAsState(
-                    targetValue = if (selected) DataCubeColors.Blue else Color.White.copy(alpha = 0.86f),
+                    targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
                     label = "document-tab-container"
                 )
                 val foreground by animateColorAsState(
-                    targetValue = if (selected) Color.White else DataCubeColors.Navy,
+                    targetValue = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                     label = "document-tab-content"
                 )
                 val icon = when (index) {
@@ -145,7 +146,7 @@ fun DocumentWorkspaceScreen(
                     onClick = { selectedTab = index },
                     shape = RoundedCornerShape(24.dp),
                     color = container,
-                    border = if (selected) null else BorderStroke(1.dp, DataCubeColors.Divider),
+                    border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     shadowElevation = if (selected) 3.dp else 0.dp
                 ) {
                     Row(
