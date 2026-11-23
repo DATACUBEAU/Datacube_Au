@@ -184,3 +184,25 @@ internal fun playPrivateVoiceNote(path: String) {
         player.release()
     }
 }
+
+/** A visible/playable voice bubble without showing a transcription. */
+@Composable
+fun VoiceNotePlayback(audioPath: String, label: String) {
+    val context = LocalContext.current
+    val valid = remember(audioPath) {
+        runCatching {
+            val base = java.io.File(context.filesDir, "voice-notes").canonicalFile
+            val file = java.io.File(audioPath).canonicalFile
+            file.isFile && file.extension == "wav" &&
+                file.path.startsWith(base.path + java.io.File.separator)
+        }.getOrDefault(false)
+    }
+    TextButton(
+        enabled = valid,
+        onClick = { if (valid) playPrivateVoiceNote(audioPath) }
+    ) {
+        Icon(Icons.Outlined.PlayArrow, contentDescription = null)
+        Spacer(Modifier.width(7.dp))
+        Text(if (valid) label else "Voice note unavailable")
+    }
+}
