@@ -160,7 +160,19 @@ class VerifiedModelDownloadWorker(
             }
             publishInstalled(artifact, partial, hash)
             etag.delete()
-            setProgress(workDataOf(KEY_PROGRESS to 100, KEY_STAGE to "Downloaded · runtime not configured"))
+            // The user opted into this location before download. Commit a portable,
+            // verified, self-describing archive outside the app sandbox as part of
+            // completing the requested download. No automatic model download occurs.
+            setProgress(workDataOf(KEY_PROGRESS to 99, KEY_STAGE to "Saving in model folder"))
+            try {
+                ModelVaultStore(applicationContext).save(id)
+            } catch (saveError: Exception) {
+                throw ModelDownloadRejected(
+                    "Model installed, but could not save its external copy. " +
+                        "Open Model Vault and back it up before uninstalling."
+                )
+            }
+            setProgress(workDataOf(KEY_PROGRESS to 100, KEY_STAGE to "Installed · portable copy saved"))
         } finally {
             connection.disconnect()
         }
