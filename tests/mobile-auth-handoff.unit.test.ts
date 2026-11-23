@@ -39,7 +39,7 @@ assert.ok(!androidActivity.includes('Screen.Study') && !androidActivity.includes
 assert.match(androidHomeScreen, /BasicTextField/);
 assert.match(androidHomeScreen, /Upload a document to start asking/);
 assert.ok(profileScreen.includes('Text("Settings"'));
-assert.match(profileScreen, /label = "Profile"/);
+assert.match(profileScreen, /SettingsEntry\(Icons\.Outlined\.PersonOutline,\s*"Profile"/);
 assert.match(androidAuthScreen, /startMobileSignIn/);
 assert.doesNotMatch(androidAuthScreen, /Use Google on this device|viewModel\.signInWithGoogle/);
 assert.doesNotMatch(androidActivity, /CredentialManager|getCredential/);
