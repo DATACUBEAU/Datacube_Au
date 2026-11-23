@@ -38,4 +38,44 @@ class DocumentQueryInterpreterTest {
     @Test fun keyboardTranspositionIsWithinOneEdit() {
         assertEquals(1, DocumentQueryInterpreter.distance("neutorn", "neutron", 2))
     }
+    @Test fun realWordTypoUsesRepeatedDocumentEvidenceWhenUnique() {
+        val plan = DocumentQueryInterpreter.understand(
+            "What is meter?", "Matter forms objects. Matter exists in many states. Matter has mass."
+        )
+        assertEquals("matter", plan.correctedTerms["meter"])
+        assertTrue("matter" in plan.retrievalQuery)
+    }
+
+    @Test fun existingCorrectTermIsNotChanged() {
+        val plan = DocumentQueryInterpreter.understand(
+            "Explain meter", "A meter measures length. Matter has mass. Matter exists."
+        )
+        assertTrue(plan.correctedTerms.isEmpty())
+    }
+
+    @Test fun incompleteFollowUpUsesPriorQuestionWithinSameThread() {
+        val plan = DocumentQueryInterpreter.understand(
+            "And why?", "Water evaporates when heated. Evaporation changes liquid into vapor.",
+            previousQuestion = "What causes water evaporation?"
+        )
+        assertTrue(plan.clarification == null)
+        assertTrue("evaporation" in plan.retrievalQuery)
+        assertTrue(plan.contextualQuestion?.contains("Follow-up: And why?") == true)
+    }
+
+    @Test fun vagueQuestionWithoutContextAsksForClarification() {
+        val plan = DocumentQueryInterpreter.understand(
+            "And why?", "A long document about the solar system."
+        )
+        assertTrue(plan.clarification?.contains("Which topic") == true)
+    }
+
+    @Test fun unknownTermInShortQuestionCanAskBeforeGuessing() {
+        val plan = DocumentQueryInterpreter.understand(
+            "What is meter?", "The chapter defines matter in physics."
+        )
+        assertEquals(null, plan.correctedTerms["meter"])
+        assertTrue(plan.clarification?.contains("matter") == true)
+    }
+
 }
