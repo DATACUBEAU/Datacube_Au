@@ -45,7 +45,53 @@ fun DocumentWorkspaceScreen(
 ) {
     var selectedTab by remember(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
     var menuExpanded by remember(document.id) { mutableStateOf(false) }
+    var chatHistoryOpen by remember(document.id) { mutableStateOf(false) }
     var showDetails by remember(document.id) { mutableStateOf(false) }
+
+    if (menuExpanded) {
+        DataCubeDialog(
+            onDismissRequest = { menuExpanded = false },
+            title = { Text("Document workspace", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TextButton(onClick = {
+                        menuExpanded = false
+                        selectedTab = 0
+                        chatHistoryOpen = true
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.History, null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Chat history", Modifier.weight(1f))
+                    }
+                    TextButton(onClick = {
+                        menuExpanded = false
+                        showDetails = true
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.Info, null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Document details", Modifier.weight(1f))
+                    }
+                    TextButton(onClick = {
+                        menuExpanded = false
+                        selectedTab = 1
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.Notes, null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Smart Note", Modifier.weight(1f))
+                    }
+                    TextButton(onClick = {
+                        menuExpanded = false
+                        selectedTab = 4
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.Headphones, null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Podcast", Modifier.weight(1f))
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { menuExpanded = false }) { Text("Close") } }
+        )
+    }
 
     if (showDetails) {
         DataCubeDialog(
@@ -93,27 +139,8 @@ fun DocumentWorkspaceScreen(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            Box {
-                IconButton(onClick = { menuExpanded = true }) {
-                    Icon(Icons.Outlined.MoreVert, contentDescription = "Document options")
-                }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Document details") },
-                        leadingIcon = { Icon(Icons.Outlined.Info, null) },
-                        onClick = { menuExpanded = false; showDetails = true }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Open Smart Note") },
-                        leadingIcon = { Icon(Icons.Outlined.Notes, null) },
-                        onClick = { menuExpanded = false; selectedTab = 1 }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Open Podcast") },
-                        leadingIcon = { Icon(Icons.Outlined.Headphones, null) },
-                        onClick = { menuExpanded = false; selectedTab = 4 }
-                    )
-                }
+            IconButton(onClick = { menuExpanded = true }) {
+                Icon(Icons.Outlined.MoreVert, contentDescription = "Document options")
             }
         }
 
@@ -177,7 +204,9 @@ fun DocumentWorkspaceScreen(
                 previewError = previewError,
                 extractionStatus = extractionStatus,
                 extractionProgress = extractionProgress,
-                extractionError = extractionError
+                extractionError = extractionError,
+                showHistoryPicker = chatHistoryOpen,
+                onDismissHistory = { chatHistoryOpen = false }
             )
             1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading)
             2 -> PredictionWorkspace(document.name, textPreview, previewLoading)

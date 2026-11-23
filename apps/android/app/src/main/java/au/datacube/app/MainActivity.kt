@@ -43,6 +43,8 @@ import au.datacube.app.ui.auth.AuthViewModel
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
+import au.datacube.app.ui.documents.DocumentChatSessions
+import au.datacube.app.ui.chat.DiscsScreen
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.models.ModelBackupManager
 import au.datacube.app.models.ModelBackupPreview
@@ -165,6 +167,7 @@ private sealed class Screen(val route: String) {
     object Auth : Screen("auth")
     object Home : Screen("home")
     object Documents : Screen("documents")
+    object Discs : Screen("discs")
     object Collection : Screen("collection/{id}")
     object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
     object Settings : Screen("settings")
@@ -450,13 +453,22 @@ private fun AuthenticatedWorkspace(
                     recentDocuments = documents,
                     onImportDocument = { multiPicker.launch(mimeTypes) },
                     onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
-                    onNavigateToStudy = { navController.navigate(Screen.Documents.route) },
+                    onNavigateToStudy = { navController.navigate(Screen.Discs.route) },
                     onNavigateToChat = { navController.navigate(Screen.Documents.route) },
                     onOpenDocument = { id -> navController.navigate("document/$id") },
                     onSendPromptToDocument = { id, prompt ->
                         navController.navigate("document/$id?prompt=" + Uri.encode(prompt) + "&tab=0")
                     },
                     onNavigateSettings = { navController.navigate(Screen.Settings.route) }
+                )
+            }
+            composable(Screen.Discs.route) {
+                DiscsScreen(
+                    accountId = requireNotNull(authState.user).id,
+                    documents = documents,
+                    onBack = { navController.popBackStack() },
+                    onOpenDocument = { id -> navController.navigate("document/$id") },
+                    onOpenDocuments = { navController.navigate(Screen.Documents.route) }
                 )
             }
             composable(Screen.Documents.route) {
@@ -466,6 +478,7 @@ private fun AuthenticatedWorkspace(
                     onImport = { multiPicker.launch(mimeTypes) },
                     onNavigateHome = { navController.navigate(Screen.Home.route) },
                     onNavigateSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToDiscs = { navController.navigate(Screen.Discs.route) },
                     onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
                     onOpenCollection = { id -> navController.navigate("collection/$id") },
                     onDeleteCollection = documentsViewModel::deleteCollection,
@@ -556,7 +569,7 @@ private fun AuthenticatedWorkspace(
                 ProfileScreen(
                     user = authState.user,
                     onBack = { navController.popBackStack() },
-                    onSignOut = { authViewModel.signOut() },
+                    onSignOut = { DocumentChatSessions.releaseAll(); authViewModel.signOut() },
                     onBackupModels = {
                         modelBackupLauncher.launch(
                             "${ModelBackupManager.BACKUP_FILE_PREFIX}-${System.currentTimeMillis()}.zip"
