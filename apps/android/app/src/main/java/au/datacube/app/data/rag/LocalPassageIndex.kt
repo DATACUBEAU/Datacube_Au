@@ -189,28 +189,39 @@ class LocalPassageIndex(context: Context) :
         if (!hasCurrent(documentId, source)) return emptyList()
         val terms = keywords(question)
         if (terms.isEmpty()) return emptyList()
-        // Quoted tokens and bound parameters prevent FTS syntax injection.
-        val expression = terms.joinToString(" OR ") { "\"" + it + "\"" }
-        val matches = mutableListOf<IndexedPassage>()
-        readableDatabase.rawQuery(
-            "SELECT ordinal, page, body FROM passages " +
-                "WHERE documentId = ? AND passages MATCH ? LIMIT 300",
-            arrayOf(documentId, expression)
-        ).use { cursor ->
-            while (cursor.moveToNext()) {
-                val ordinal = cursor.getString(0).toIntOrNull() ?: continue
-                val page = cursor.getString(1)?.toIntOrNull()
-                val text = cursor.getString(2) ?: continue
-                val lower = text.lowercase(Locale.ROOT)
-                val hits = terms.count { it in lower }
-                val frequency = terms.sumOf { term ->
-                    Regex(Regex.escape(term)).findAll(lower).take(5).count()
+        // Prefer joint term matches (including late pages); widen to OR only if
+        // necessary. Query tokens are quoted and passed as SQL parameters.
+        val quoted = terms.map { 34.toChar().toString() + it + 34.toChar() }
+        val patterns = listOf(
+            quoted.take(3).joinToString(" "),
+            quoted.joinToString(" OR ")
+        ).distinct()
+        val matches = linkedMapOf<Int, IndexedPassage>()
+        for (expression in patterns) {
+            readableDatabase.rawQuery(
+                "SELECT ordinal, page, body FROM passages " +
+                    "WHERE documentId = ? AND passages MATCH ? LIMIT 400",
+                arrayOf(documentId, expression)
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    val ordinal = cursor.getString(0).toIntOrNull() ?: continue
+                    val page = cursor.getString(1)?.toIntOrNull()
+                    val text = cursor.getString(2) ?: continue
+                    val lower = text.lowercase(Locale.ROOT)
+                    val hits = terms.count { it in lower }
+                    val frequency = terms.sumOf { term ->
+                        Regex(Regex.escape(term)).findAll(lower).take(5).count()
+                    }
+                    val score = hits * 10 + frequency
+                    val previous = matches[ordinal]
+                    if (score > 0 && (previous == null || score > previous.score)) {
+                        matches[ordinal] = IndexedPassage(text, page, ordinal, score)
+                    }
                 }
-                val score = (hits * 10) + frequency
-                if (score > 0) matches += IndexedPassage(text, page, ordinal, score)
             }
+            if (matches.size >= limit * 3) break
         }
-        return matches.sortedWith(
+        return matches.values.sortedWith(
             compareByDescending<IndexedPassage> { it.score }.thenBy { it.ordinal }
         ).take(limit)
     }
