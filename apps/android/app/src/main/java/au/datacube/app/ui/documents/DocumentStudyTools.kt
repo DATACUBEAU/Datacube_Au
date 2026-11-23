@@ -34,6 +34,11 @@ import au.datacube.app.data.rag.LocalSemanticSearch
 import au.datacube.app.data.rag.DocumentQueryInterpreter
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
+import au.datacube.app.data.rag.LocalDocumentChatHistory
+import au.datacube.app.data.rag.SavedDocumentTurn
+import au.datacube.app.data.rag.SavedSource
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
 import au.datacube.app.data.rag.GroundedRagPlanner
 import au.datacube.app.data.rag.RagEvidence
@@ -236,7 +241,51 @@ fun DocumentChatWorkspace(
         }
     }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
-    val messages = remember(documentName) { mutableStateListOf<ChatMessage>() }
+    val messages = remember(documentId) { mutableStateListOf<ChatMessage>() }
+    val historyStore = remember(context) { LocalDocumentChatHistory(context) }
+    var historyReady by remember(documentId) { mutableStateOf(false) }
+    LaunchedEffect(documentId) {
+        historyReady = false
+        val saved = historyStore.load(documentId)
+        messages.clear()
+        messages.addAll(saved.map { turn ->
+            ChatMessage(
+                question = turn.question,
+                matches = turn.matches.map { SourceSnippet(it.text, it.page) },
+                isUser = turn.isUser,
+                semantic = turn.semantic,
+                overview = turn.overview,
+                steps = turn.steps,
+                corrected = turn.corrections,
+                answer = turn.answer,
+                generationError = if (turn.interrupted) "Local generation was interrupted." else null
+            )
+        })
+        historyReady = true
+    }
+    LaunchedEffect(documentId, historyReady) {
+        if (historyReady) {
+            snapshotFlow { messages.toList() }.collectLatest { list ->
+                // Debounced atomic writes: do not hit flash storage for every generated token.
+                delay(750)
+                runCatching {
+                    historyStore.save(documentId, list.map { item ->
+                        SavedDocumentTurn(
+                            question = item.question,
+                            answer = item.answer,
+                            isUser = item.isUser,
+                            matches = item.matches.map { SavedSource(it.text, it.page) },
+                            semantic = item.semantic,
+                            overview = item.overview,
+                            steps = item.steps,
+                            corrections = item.corrected,
+                            interrupted = item.generating
+                        )
+                    })
+                }
+            }
+        }
+    }
 
     openedEvidence?.let { evidence ->
         AlertDialog(
@@ -289,7 +338,7 @@ fun DocumentChatWorkspace(
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                     Text(
                         if (llmInstalled) "Ask AU. Answers are generated offline from cited document passages."
-                        else "Read source passages offline. Install Qwen3 in Settings → Models to enable answers.",
+                        else "Read local source passages. Install a chat model in Models to enable answers.",
                         color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -558,7 +607,7 @@ fun DocumentChatWorkspace(
                             }
                         }
                     },
-                    enabled = prompt.isNotBlank() && !textPreview.isNullOrBlank() && !searching, modifier = Modifier.size(52.dp)
+                    enabled = historyReady && prompt.isNotBlank() && !textPreview.isNullOrBlank() && !searching, modifier = Modifier.size(52.dp)
                 ) { Icon(Icons.Outlined.Send, contentDescription = "Search document") }
             }
         }
