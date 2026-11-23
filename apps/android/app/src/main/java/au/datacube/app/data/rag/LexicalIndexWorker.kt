@@ -39,7 +39,9 @@ class LexicalIndexWorker(context: Context, parameters: WorkerParameters) :
             if (index.hasCurrent(documentId, file)) return@withContext Result.success()
             notifications.showDocumentSearchIndexing(documentId, 0)
             val count = index.build(documentId, file) { completed ->
-                setProgress(workDataOf(KEY_COUNT to completed))
+                // Schedule WorkManager persistence without suspending SQLite's
+                // thread-bound indexing transaction.
+                setProgressAsync(workDataOf(KEY_COUNT to completed))
                 notifications.showDocumentSearchIndexing(documentId, completed)
             }
             // A deleted document must never publish a new ready notification.
