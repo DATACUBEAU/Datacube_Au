@@ -10,5 +10,6 @@ class AuActivityTimelineTest {
         assertEquals(AuActivityKind.EVIDENCE, classifyAuActivity("Selected 4 supporting passages"))
         assertEquals(AuActivityKind.ANSWER, classifyAuActivity("Generated an answer using AU"))
         assertEquals(AuActivityKind.OTHER, classifyAuActivity("Listed imported document titles"))
+        assertEquals(AuActivityKind.ERROR, classifyAuActivity("AU response failed; sources remain available"))
     }
 }
