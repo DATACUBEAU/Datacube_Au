@@ -1,5 +1,6 @@
 package au.datacube.app.ui.documents
 
+import au.datacube.app.ui.common.DataCubeDialog
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import au.datacube.app.audio.OfflineNarrationPreferences
@@ -301,7 +302,7 @@ fun DocumentChatWorkspace(
     }
 
     tappedTerm?.let { info ->
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = {
                 termRequest?.cancel()
                 tappedTerm = null
@@ -361,7 +362,7 @@ fun DocumentChatWorkspace(
     }
 
     openedEvidence?.let { evidence ->
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { openedEvidence = null },
             title = {
                 Text(evidence.page?.let { "Source · Page $it" } ?: "Source · Extracted text")
@@ -717,7 +718,7 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
     var selectedSource by remember(documentName) { mutableStateOf<SourceSnippet?>(null) }
 
     selectedSource?.let { evidence ->
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { selectedSource = null },
             title = { Text(evidence.page?.let { "Source · Page $it" } ?: "Source") },
             text = {
