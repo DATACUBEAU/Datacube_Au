@@ -71,6 +71,11 @@ class LocalNotificationService(private val context: Context) {
         showCompletion(documentId, "Document verification complete")
     }
 
+    fun showTextReady(documentId: String) {
+        clearDocumentProgress(documentId)
+        showCompletion(documentId, "Document is ready for study")
+    }
+
     fun showIndexComplete(documentId: String) {
         clearDocumentProgress(documentId)
         showCompletion(documentId, "Document search index is ready")
