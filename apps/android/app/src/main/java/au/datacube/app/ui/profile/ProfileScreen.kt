@@ -32,7 +32,6 @@ fun ProfileScreen(
     onOpenModels: () -> Unit = {},
     onOpenVault: () -> Unit = {},
     onOpenSubscription: () -> Unit = {},
-    onOpenUsage: () -> Unit = {},
     onEnableNotifications: () -> Unit = {}
 ) {
     val email = user?.email ?: "—"
@@ -133,12 +132,7 @@ fun ProfileScreen(
             item { SettingsSection("Membership") }
             item {
                 SettingsEntry(
-                    Icons.Outlined.CreditCard, "Manage subscription", "Plan and billing", onOpenSubscription
-                )
-            }
-            item {
-                SettingsEntry(
-                    Icons.Outlined.QueryStats, "Cloud AU usage", "Check your cloud AU usage", onOpenUsage
+                    Icons.Outlined.CreditCard, "Manage subscription", "Usage and plan & billing", onOpenSubscription
                 )
             }
             item { SettingsSection("On-device") }
