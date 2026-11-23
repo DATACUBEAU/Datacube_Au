@@ -149,11 +149,11 @@ class LocalPassageIndex(context: Context) :
                     if (read < 0) break
                     for (i in 0 until read) {
                         when (val ch = block[i]) {
-                            '\\n' -> {
+                            '\n' -> {
                                 acceptTextLine(line.toString())
                                 line.setLength(0)
                             }
-                            '\\r' -> Unit
+                            '\r' -> Unit
                             else -> {
                                 line.append(ch)
                                 if (line.length >= 4096) {
