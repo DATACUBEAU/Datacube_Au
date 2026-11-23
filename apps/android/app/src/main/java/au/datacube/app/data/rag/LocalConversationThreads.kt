@@ -89,23 +89,33 @@ class LocalConversationThreads(private val filesDir: File) {
      * Deleting an imported file must not leave its extracted text in Discs
      * citations or generated reply history. Other unrelated chats survive.
      */
-    suspend fun redactDeletedDocument(documentId: String) {
-        val state = list("global")
+    suspend fun redactDeletedDocument(documentId: String) = withContext(Dispatchers.IO) {
+        // Iterate only account-scoped Discs metadata in private app storage.
+        // Accounts must not share a single unscoped global chat history.
+        val owners = root.listFiles().orEmpty().filter { file ->
+            file.isFile && file.extension == "json" &&
+                (file.nameWithoutExtension == "global" ||
+                 file.nameWithoutExtension.startsWith("global-"))
+        }.map { it.nameWithoutExtension }.filter { safeId(it) }
+
         val histories = LocalDocumentChatHistory(filesDir)
-        state.threads.forEach { thread ->
-            val key = historyKey("global", thread.id)
-            val turns = histories.load(key)
-            if (turns.none { turn -> turn.matches.any { it.documentId == documentId } }) return@forEach
-            histories.save(key, turns.map { turn ->
-                if (turn.matches.any { it.documentId == documentId }) {
-                    turn.copy(
-                        answer = "This reply was removed because a supporting document was deleted.",
-                        matches = emptyList(),
-                        steps = emptyList(),
-                        interrupted = false
-                    )
-                } else turn
-            })
+        for (owner in owners) {
+            val state = list(owner)
+            for (thread in state.threads) {
+                val key = historyKey(owner, thread.id)
+                val turns = histories.load(key)
+                if (turns.none { turn -> turn.matches.any { it.documentId == documentId } }) continue
+                histories.save(key, turns.map { turn ->
+                    if (turn.matches.any { it.documentId == documentId }) {
+                        turn.copy(
+                            answer = "This reply was removed because a supporting document was deleted.",
+                            matches = emptyList(),
+                            steps = emptyList(),
+                            interrupted = false
+                        )
+                    } else turn
+                })
+            }
         }
     }
 
