@@ -11,7 +11,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -34,6 +38,13 @@ import au.datacube.app.data.rag.LocalSemanticSearch
 import au.datacube.app.data.rag.DocumentQueryInterpreter
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
+import au.datacube.app.data.rag.LocalDocumentChatHistory
+import au.datacube.app.data.rag.SavedDocumentTurn
+import au.datacube.app.data.rag.SavedSource
+import au.datacube.app.data.rag.SourceTermGrounding
+import au.datacube.app.data.rag.TermContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
 import au.datacube.app.data.rag.GroundedRagPlanner
 import au.datacube.app.data.rag.RagEvidence
@@ -230,13 +241,121 @@ fun DocumentChatWorkspace(
     var activeRequest by remember(documentId) { mutableStateOf<Job?>(null) }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
     var expandedSteps by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
+    var termExplanation by remember(documentId) { mutableStateOf("") }
+    var explainingTerm by remember(documentId) { mutableStateOf(false) }
+    var termRequest by remember(documentId) { mutableStateOf<Job?>(null) }
     LaunchedEffect(documentId, textPreview, semanticSupported) {
         if (semanticSupported && !textPreview.isNullOrBlank()) {
             semanticSearch.scheduleIndex(documentId)
         }
     }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
-    val messages = remember(documentName) { mutableStateListOf<ChatMessage>() }
+    val messages = remember(documentId) { mutableStateListOf<ChatMessage>() }
+    val historyStore = remember(context) { LocalDocumentChatHistory(context) }
+    var historyReady by remember(documentId) { mutableStateOf(false) }
+    LaunchedEffect(documentId) {
+        historyReady = false
+        val saved = historyStore.load(documentId)
+        messages.clear()
+        messages.addAll(saved.map { turn ->
+            ChatMessage(
+                question = turn.question,
+                matches = turn.matches.map { SourceSnippet(it.text, it.page) },
+                isUser = turn.isUser,
+                semantic = turn.semantic,
+                overview = turn.overview,
+                steps = turn.steps,
+                corrected = turn.corrections,
+                answer = turn.answer,
+                generationError = if (turn.interrupted) "Local generation was interrupted." else null
+            )
+        })
+        historyReady = true
+    }
+    LaunchedEffect(documentId, historyReady) {
+        if (historyReady) {
+            snapshotFlow { messages.toList() }.collectLatest { list ->
+                // Debounced atomic writes: do not hit flash storage for every generated token.
+                delay(750)
+                runCatching {
+                    historyStore.save(documentId, list.map { item ->
+                        SavedDocumentTurn(
+                            question = item.question,
+                            answer = item.answer,
+                            isUser = item.isUser,
+                            matches = item.matches.map { SavedSource(it.text, it.page) },
+                            semantic = item.semantic,
+                            overview = item.overview,
+                            steps = item.steps,
+                            corrections = item.corrected,
+                            interrupted = item.generating
+                        )
+                    })
+                }
+            }
+        }
+    }
+
+    tappedTerm?.let { info ->
+        AlertDialog(
+            onDismissRequest = {
+                termRequest?.cancel()
+                tappedTerm = null
+                explainingTerm = false
+            },
+            title = { Text(info.term) },
+            text = {
+                Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(info.page?.let { "Source · Page $it" } ?: "Source",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                    SelectionContainer { Text(info.excerpt) }
+                    if (termExplanation.isNotBlank()) {
+                        HorizontalDivider()
+                        Text(termExplanation, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (explainingTerm) LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {
+                if (llmInstalled && !explainingTerm && termExplanation.isBlank()) {
+                    TextButton(onClick = {
+                        explainingTerm = true
+                        termRequest = scope.launch {
+                            val grounded = GroundedRagPlanner.build(
+                                "Explain the meaning of '${info.term}' as used in this passage, in 1-2 sentences.",
+                                emptyList(), listOf(RagEvidence(info.excerpt, info.page))
+                            )
+                            try {
+                                var raw = ""
+                                LocalGenerativeEngine.generate(context, grounded.value) { part ->
+                                    raw += part
+                                    withContext(Dispatchers.Main) {
+                                        termExplanation = ModelOutputCleaner.visible(raw, 1).take(1200)
+                                    }
+                                }
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                termExplanation = "Could not explain this term with the local model."
+                            } finally {
+                                explainingTerm = false
+                            }
+                        }
+                    }) { Text("Explain locally") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    termRequest?.cancel()
+                    tappedTerm = null
+                    explainingTerm = false
+                }) { Text("Close") }
+            }
+        )
+    }
 
     openedEvidence?.let { evidence ->
         AlertDialog(
@@ -289,7 +408,7 @@ fun DocumentChatWorkspace(
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                     Text(
                         if (llmInstalled) "Ask AU. Answers are generated offline from cited document passages."
-                        else "Read source passages offline. Install Qwen3 in Settings → Models to enable answers.",
+                        else "Read local source passages. Install a chat model in Models to enable answers.",
                         color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -331,10 +450,25 @@ fun DocumentChatWorkspace(
                             }
                             Spacer(Modifier.height(8.dp))
                             if (message.answer.isNotBlank()) {
-                                SelectionContainer {
-                                    Text(message.answer, style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface)
-                                }
+                                ClickableText(
+                                    text = AnnotatedString(message.answer),
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    ),
+                                    onClick = { offset ->
+                                        val term = SourceTermGrounding.wordAt(message.answer, offset)
+                                        val source = term?.let { key ->
+                                            SourceTermGrounding.find(
+                                                key, message.matches.map { RagEvidence(it.text, it.page) }
+                                            )
+                                        }
+                                        if (source != null) {
+                                            termRequest?.cancel()
+                                            termExplanation = ""
+                                            tappedTerm = source
+                                        }
+                                    }
+                                )
                                 Spacer(Modifier.height(10.dp))
                                 Text("Source passages", style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -558,7 +692,7 @@ fun DocumentChatWorkspace(
                             }
                         }
                     },
-                    enabled = prompt.isNotBlank() && !textPreview.isNullOrBlank() && !searching, modifier = Modifier.size(52.dp)
+                    enabled = historyReady && prompt.isNotBlank() && !textPreview.isNullOrBlank() && !searching, modifier = Modifier.size(52.dp)
                 ) { Icon(Icons.Outlined.Send, contentDescription = "Search document") }
             }
         }
@@ -571,6 +705,24 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
     val topics = remember(textPreview) { documentTopics(textPreview) }
     val summary = remember(textPreview) { documentSummary(textPreview) }
     val snippets = remember(textPreview) { sourceSnippets(textPreview) }
+    val clipboard = LocalClipboardManager.current
+    var selectedSource by remember(documentName) { mutableStateOf<SourceSnippet?>(null) }
+
+    selectedSource?.let { evidence ->
+        AlertDialog(
+            onDismissRequest = { selectedSource = null },
+            title = { Text(evidence.page?.let { "Source · Page $it" } ?: "Source") },
+            text = {
+                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    SelectionContainer { Text(evidence.text) }
+                }
+            },
+            confirmButton = { TextButton(onClick = { selectedSource = null }) { Text("Done") } },
+            dismissButton = {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(evidence.text)) }) { Text("Copy") }
+            }
+        )
+    }
 
     ToolPage("Smart Note", "Organize key ideas extracted from $documentName. Content stays on this device.") {
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null) else {
@@ -596,10 +748,15 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
                             Surface(shape = RoundedCornerShape(50), color = DataCubeColors.BlueLight) {
                                 Text((index + 1).toString(), Modifier.padding(horizontal = 11.dp, vertical = 6.dp), color = DataCubeColors.BlueDark, fontWeight = FontWeight.Bold)
                             }
-                            Spacer(Modifier.width(9.dp)); Text(topic, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                            Spacer(Modifier.width(9.dp))
+                            Text(topic, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                         }
                         snippets.firstOrNull { it.text.contains(topic, ignoreCase = true) }?.let { evidence ->
-                            Spacer(Modifier.height(8.dp)); Text(evidence.text, color = DataCubeColors.TextSecondary)
+                            Spacer(Modifier.height(8.dp))
+                            Text(evidence.text, color = DataCubeColors.TextSecondary, maxLines = 4)
+                            TextButton(onClick = { selectedSource = evidence }) {
+                                Text(evidence.page?.let { "View page $it" } ?: "View source")
+                            }
                         }
                     }
                 }
@@ -609,22 +766,73 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
                 }
             } else {
                 ToolCard {
-                    Text("Concept map", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text("Main themes found in the extracted text", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(16.dp))
-                    Surface(shape = RoundedCornerShape(16.dp), color = DataCubeColors.BlueLight, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
-                        Text(documentName, Modifier.fillMaxWidth().padding(14.dp), color = DataCubeColors.Navy, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.AccountTree, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Concept map", style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold)
                     }
-                    if (topics.isEmpty()) Text("No distinct headings or repeated terms were detected.", Modifier.padding(10.dp), color = DataCubeColors.TextSecondary)
-                    else topics.forEach { topic ->
-                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("│", color = DataCubeColors.Blue)
-                                Surface(shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
-                                    Text(topic, Modifier.padding(horizontal = 16.dp, vertical = 11.dp), color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
+                    Text("Tap a concept to see its passage.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.MenuBook, null,
+                                tint = MaterialTheme.colorScheme.primary)
+                            Text(documentName, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (topics.isEmpty()) {
+                        Text("No concepts detected in the available source text.",
+                            style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        val lineColor = MaterialTheme.colorScheme.primary
+                        Canvas(Modifier.fillMaxWidth().height(26.dp)) {
+                            val midpoint = size.width / 2f
+                            drawLine(lineColor, Offset(midpoint, 0f), Offset(midpoint, size.height), 2.dp.toPx())
+                            drawCircle(lineColor, radius = 4.dp.toPx(), center = Offset(midpoint, size.height))
+                        }
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            topics.take(10).forEachIndexed { index, topic ->
+                                val evidence = snippets.firstOrNull { it.text.contains(topic, ignoreCase = true) }
+                                OutlinedCard(
+                                    onClick = { if (evidence != null) selectedSource = evidence },
+                                    enabled = evidence != null,
+                                    modifier = Modifier.width(174.dp),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Column(Modifier.padding(13.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("${index + 1}", color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold)
+                                            Spacer(Modifier.weight(1f))
+                                            Icon(Icons.Outlined.Hub, null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp))
+                                        }
+                                        Text(topic, fontWeight = FontWeight.SemiBold, maxLines = 3)
+                                        Text(evidence?.page?.let { "Page $it · Open" }
+                                            ?: "No linked page",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }
+                        Text("Concepts come from extracted text; diagrams are not generated illustrations.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
