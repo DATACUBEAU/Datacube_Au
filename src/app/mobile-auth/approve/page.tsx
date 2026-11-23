@@ -125,13 +125,16 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
     <div className="space-y-5">
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold">Approve app sign-in</h1>
-        <p className="text-sm text-muted-foreground">
-          Enter the code shown in the DataCube AU app, then choose whether to approve this sign-in.
-        </p>
+        <div className="rounded-xl border-2 border-blue-500/60 bg-blue-500/10 px-4 py-3 text-left shadow-sm">
+          <p className="text-base font-bold text-foreground">Go to your DataCube AU app</p>
+          <p className="mt-1 text-sm font-medium leading-relaxed text-foreground">
+            Tap <strong>Copy code</strong> in the app, return here, paste the code below, then approve sign-in.
+          </p>
+        </div>
         {user?.email && <p className="break-all text-sm font-medium">Signed in as {user.email}</p>}
       </div>
       <div className="space-y-2 text-left">
-        <Label htmlFor="pairing-code">Pairing code</Label>
+        <Label htmlFor="pairing-code" className="text-sm font-semibold text-foreground">Pairing code</Label>
         <Input
           id="pairing-code"
           autoComplete="off"
@@ -146,7 +149,7 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
           }}
           disabled={pending !== null}
           aria-describedby={error ? 'mobile-approval-error' : undefined}
-          className="font-mono tracking-widest"
+          className="min-h-12 border-blue-500/50 font-mono text-lg font-semibold tracking-widest"
         />
       </div>
       {error && <p id="mobile-approval-error" role="alert" className="text-sm text-destructive">{error}</p>}

@@ -36,6 +36,7 @@ import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -48,6 +49,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -70,6 +73,7 @@ fun AuthScreen(
     openBrowser: (Uri) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
+    val clipboardManager = LocalClipboardManager.current
     val motionEnabled = rememberAmbientMotionEnabled()
     val motionPhase = if (motionEnabled) {
         val transition = rememberInfiniteTransition(label = "DataCube AU ambient motion")
@@ -126,10 +130,11 @@ fun AuthScreen(
             )
             Spacer(Modifier.height(38.dp))
             val pairingCode = state.pairingCode
+            var codeCopied by remember(pairingCode) { mutableStateOf(false) }
             val canContinue = state.sessionRestored && !state.isLoading
             if (pairingCode != null) {
                 Text(
-                    "Enter this code on the DataCube AU website, then return here.",
+                    "Copy this code, paste it on the DataCube AU website, then return here.",
                     color = Color.White,
                     style = MaterialTheme.typography.bodyMedium,
                     textAlign = TextAlign.Center
@@ -143,7 +148,21 @@ fun AuthScreen(
                     style = MaterialTheme.typography.headlineSmall,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
                 )
-                Spacer(Modifier.height(18.dp))
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(pairingCode))
+                        codeCopied = true
+                    },
+                    enabled = canContinue
+                ) {
+                    Text(
+                        if (codeCopied) "Copied!" else "Copy code",
+                        color = Color(0xFFBCE8FF),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
             }
             Button(
                 onClick = {
