@@ -18,6 +18,13 @@ class VerifiedModelDownloadsTest {
         assertTrue(model.maximumBytes > 614_000_000L)
     }
 
+    @Test fun embeddingGemma2HasPublisherPinnedBytes() {
+        val model = requireNotNull(VerifiedModelDownloads.find("embeddinggemma-2-270m"))
+        assertEquals("Apache-2.0", model.license)
+        assertEquals("2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb", model.sha256)
+        assertTrue(model.url.contains("/resolve/9be6e8b90982095dc05c2bd162e4b954ee4dbac7/"))
+    }
+
     @Test fun neverDownloadsGatedOrUnreviewedModel() {
         assertNull(VerifiedModelDownloads.find("gemma-4-e2b"))
         assertNull(VerifiedModelDownloads.find("embeddinggemma-300m"))
