@@ -4,7 +4,7 @@ Native Kotlin + Jetpack Compose application. The Flutter project in `apps/mobile
 
 ## Implemented native slices
 
-- Five-item application navigation: Home, Documents, Study, AU Chat and Profile.
+- Floating sticky AU / Document navigation; document tools open inside their document workspace.
 - Compose Material 3 theme tokens and the black/white/blue visual system.
 - Home dashboard with active documents, recent files and document-scoped quick ask.
 - Multi-file Android Storage Access Framework import into app-private storage.
@@ -31,12 +31,12 @@ Imported document bytes and extracted text remain inside app-private storage. Ro
 
 - Installed model artifacts use the app-private location `files/models/installed/<model-id>/`.
 - Temporary downloads must stay outside that installed directory. Only complete model folders in the installed directory are exported.
-- Profile settings provides **Export model backup** and **Restore from backup** actions.
+- Settings > Backups provides **Export backup** and **Restore backup** actions.
 - Export creates one portable ZIP file through Android's Storage Access Framework. The user chooses the destination, including Documents, an SD card, USB storage or a connected cloud document provider.
 - The archive includes every installed model file plus a versioned manifest containing file sizes and SHA-256 checksums. Partial `.part` and `.tmp` files are excluded.
 - Restore verifies the manifest, paths, file sizes and checksums before installing any model. It rejects unsafe paths, duplicate entries, incomplete archives and attempts to overwrite an installed model.
 - Model data is copied into app-private installed storage after verification; the exported ZIP remains in the user-selected external location and can be selected again after reinstalling the app.
-- This backup foundation does not yet implement model discovery, Hugging Face downloads, model inference, or model activation. The future model download manager must install into the documented directory and write only complete model folders there.
+- Settings > Models lists publisher pages for EmbeddingGemma 300M and Gemma 4 E2B/E4B; the user may accept upstream terms, obtain compatible model bundles, and import files using Android's document picker. Import stages data outside the installed folder and commits complete model directories atomically. Hashes are recorded for local integrity, but there is no upstream checksum authenticity verification yet.\n- This is a model setup and import stage, not a native one-tap model downloader, embedder activation, vector index, or model inference runtime. Do not advertise local RAG as ready until those engines and integrity checks are integrated.
 
 ## Target architecture
 
@@ -47,7 +47,7 @@ Kotlin, Jetpack Compose, MVVM, Coroutines/Flow, Room, WorkManager, Android Keyst
 - Home and Documents are accessed through the AU / Document selector at the top; the bottom tab bar is retired.
 - Home keeps a source-grounded question composer above the system navigation area. Add/select a document before sending.
 - AU Chat, Smart Note, Prediction, Practice and Podcast are views within an imported document's workspace, not separate top-level destinations.
-- The Settings gear opens Settings, with a Profile action that displays account information without a new destination.
+- The Settings gear opens compact Settings, with display modes, Models, Backups, notifications opt-in and Profile. A first-login, opt-in device capability check reads memory and free storage only.
 - During browser sign-in, the temporary device pairing code can be copied to the clipboard and pasted into the highlighted approval field on the website.
 
 ## Build and verification
