@@ -1,5 +1,6 @@
 package au.datacube.app.ui.documents
 
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -33,7 +34,7 @@ fun CollectionWorkspaceScreen(
 
     removeDocumentId?.let { documentId ->
         val selectedDocument = documents.firstOrNull { it.id == documentId }
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { removeDocumentId = null },
             title = { Text("Remove from collection?") },
             text = {
@@ -55,8 +56,8 @@ fun CollectionWorkspaceScreen(
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back to documents") }
             Column(Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("${documents.size} documents · Collection", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                Text(name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("${documents.size} documents · Collection", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             IconButton(onClick = onAddDocuments) { Icon(Icons.Outlined.Add, "Add documents", tint = DataCubeColors.Blue) }
         }
@@ -69,8 +70,8 @@ fun CollectionWorkspaceScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth().animateContentSize(),
                     shape = RoundedCornerShape(22.dp),
-                    color = Color.White,
-                    border = BorderStroke(1.dp, DataCubeColors.Divider)
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Column(Modifier.padding(18.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -79,8 +80,8 @@ fun CollectionWorkspaceScreen(
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Collection workspace", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                                Text("Your documents, organized in one place.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                                Text("Collection workspace", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                                Text("Your documents, organized in one place.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                             }
                         }
                         Spacer(Modifier.height(16.dp))
@@ -92,7 +93,7 @@ fun CollectionWorkspaceScreen(
                                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Description, null, tint = DataCubeColors.Blue, modifier = Modifier.size(17.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("${documents.size}", color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
+                                    Text("${documents.size}", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -101,19 +102,19 @@ fun CollectionWorkspaceScreen(
             }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Documents", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                    Text("Documents", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Spacer(Modifier.weight(1f))
-                    Text("${documents.size} items", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Text("${documents.size} items", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (documents.isEmpty()) {
                 item {
-                    Surface(shape = RoundedCornerShape(20.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                         Column(Modifier.fillMaxWidth().padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Outlined.FolderOpen, null, tint = DataCubeColors.Blue, modifier = Modifier.size(44.dp))
                             Spacer(Modifier.height(10.dp))
-                            Text("This collection is empty", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                            Text("Add several documents to build your collection workspace.", color = DataCubeColors.TextSecondary)
+                            Text("This collection is empty", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                            Text("Add several documents to build your collection workspace.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(12.dp))
                             Button(onClick = onAddDocuments) { Icon(Icons.Outlined.Add, null); Text(" Add documents") }
                         }
@@ -125,8 +126,8 @@ fun CollectionWorkspaceScreen(
                         onClick = { onOpenDocument(document.id) },
                         modifier = Modifier.fillMaxWidth().animateContentSize(),
                         shape = RoundedCornerShape(16.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, DataCubeColors.Divider)
+                        color = MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                             Surface(shape = RoundedCornerShape(12.dp), color = DataCubeColors.BlueLight) {
@@ -134,13 +135,13 @@ fun CollectionWorkspaceScreen(
                             }
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(document.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text("${document.extension.uppercase()} · ${document.sizeBytes / 1024} KB", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                                Text(document.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${document.extension.uppercase()} · ${document.sizeBytes / 1024} KB", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                             }
                             IconButton(onClick = { removeDocumentId = document.id }) {
-                                Icon(Icons.Outlined.RemoveCircleOutline, "Remove from collection", tint = DataCubeColors.TextSecondary)
+                                Icon(Icons.Outlined.RemoveCircleOutline, "Remove from collection", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            Icon(Icons.Outlined.ChevronRight, null, tint = DataCubeColors.TextSecondary)
+                            Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
