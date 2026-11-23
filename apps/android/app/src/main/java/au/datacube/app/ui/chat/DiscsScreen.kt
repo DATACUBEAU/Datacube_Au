@@ -26,6 +26,9 @@ import au.datacube.app.data.rag.LocalConversationThreads
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
 import au.datacube.app.ui.common.DataCubeDialog
+import au.datacube.app.ui.common.AuComposer
+import au.datacube.app.ui.common.AuActivityTimeline
+import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.documents.ChatMessage
 import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.ui.documents.SourceSnippet
@@ -348,9 +351,8 @@ fun DiscsScreen(
                                         Spacer(Modifier.width(7.dp))
                                         Text("How AU worked")
                                     }
-                                    if (i in expandedProcess) message.steps.forEachIndexed { n, step ->
-                                        Text("${n + 1}. $step", style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (i in expandedProcess) {
+                                        AuActivityTimeline(message.steps)
                                     }
                                 }
                             }
@@ -361,54 +363,44 @@ fun DiscsScreen(
         }
 
         if (session.searching) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(9.dp))
-                Text(session.searchingStage, Modifier.weight(1f),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { session.activeRequest?.cancel() }) { Text("Stop") }
-            }
+            AuWorkingStatus(
+                stage = session.searchingStage,
+                onStop = { session.activeRequest?.cancel() }
+            )
         }
         ConversationWindow.warning(userTurns)?.let {
             Text(it, Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall)
         }
-        Surface(color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Row(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(10.dp),
-                verticalAlignment = Alignment.Bottom) {
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it.take(700) },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Ask AU anything or search across your documents…") },
-                    shape = RoundedCornerShape(18.dp),
-                    maxLines = 5
-                )
-                Spacer(Modifier.width(4.dp))
+        AuComposer(
+            value = prompt,
+            onValueChange = { prompt = it.take(700) },
+            onSend = { send() },
+            placeholder = "Ask AU or search your documents…",
+            enabled = ready && !session.searching,
+            sendEnabled = ready && !session.searching && prompt.isNotBlank() &&
+                userTurns < ConversationWindow.MAX_USER_TURNS,
+            sendDescription = "Send question",
+            actions = {
                 VoiceNoteInputButton(
                     ownerId = ownerId,
                     enabled = ready && !session.searching &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->
-                        val label = "Voice note · ${note.durationSeconds}s"
+                        val label = "Voice note · " + note.durationSeconds + "s"
                         turns.add(ChatMessage(label, emptyList(), true,
                             audioPath = note.file.absolutePath))
                         session.searching = true
-                        session.searchingStage = "AI is listening"
+                        session.searchingStage = "AU is listening"
                         session.activeRequest = session.scope.launch {
                             try {
                                 val question = LocalGenerativeEngine.understandVoiceNote(
                                     context, note.file)
                                 session.searching = false
                                 session.searchingStage = ""
-                                send(question, label, note.file.absolutePath,
-                                    alreadyAdded = true)
+                                send(question, label, note.file.absolutePath, alreadyAdded = true)
                             } catch (cancelled: CancellationException) {
                                 session.searching = false
                                 session.searchingStage = ""
@@ -422,15 +414,7 @@ fun DiscsScreen(
                         }
                     }
                 )
-                Spacer(Modifier.width(4.dp))
-                FilledIconButton(onClick = { send() },
-                    enabled = ready && !session.searching && prompt.isNotBlank() &&
-                        userTurns < ConversationWindow.MAX_USER_TURNS,
-                    modifier = Modifier.size(52.dp)) {
-                    Icon(Icons.Outlined.Send, "Send question")
-                }
             }
-        }
+        )
     }
 }
-
