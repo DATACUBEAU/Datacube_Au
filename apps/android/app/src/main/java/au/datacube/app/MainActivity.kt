@@ -477,6 +477,7 @@ private fun AuthenticatedWorkspace(
                     onImport = { multiPicker.launch(mimeTypes) },
                     onNavigateHome = { navController.navigate(Screen.Home.route) },
                     onNavigateSettings = { navController.navigate(Screen.Settings.route) },
+                    onNavigateToDiscs = { navController.navigate(Screen.Discs.route) },
                     onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
                     onOpenCollection = { id -> navController.navigate("collection/$id") },
                     onDeleteCollection = documentsViewModel::deleteCollection,
