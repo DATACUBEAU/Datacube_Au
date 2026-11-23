@@ -117,6 +117,12 @@ internal object DocumentChatSessions {
         }
     }
 
+    fun forgetGlobal() {
+        sessions.keys.filter { it == "global" || it.startsWith("global--") }.forEach { key ->
+            sessions.remove(key)?.stop()
+        }
+    }
+
     fun releaseAll() {
         sessions.values.forEach { it.stop() }
         sessions.clear()
