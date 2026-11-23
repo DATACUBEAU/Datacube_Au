@@ -75,6 +75,8 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("DataCube AU").assertIsDisplayed()
         composeRule.onNodeWithText("Active Documents").assertIsDisplayed()
         composeRule.onNodeWithText("No documents yet").assertIsDisplayed()
+        composeRule.onNodeWithText("Upload a document to start asking…").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Upload documents").assertIsDisplayed()
     }
 
     @Test
