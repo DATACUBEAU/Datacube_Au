@@ -24,6 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalJobStatus
+import au.datacube.app.data.rag.RagTextChunker
+import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
 
@@ -107,15 +109,11 @@ private fun suggestedStudyQuestions(raw: String?, count: Int = 5): List<StudyQue
 }
 
 private fun findRelevantSnippets(query: String, raw: String?): List<SourceSnippet> {
-    val terms = Regex("[\\p{L}\\p{N}]{3,}").findAll(query.lowercase())
-        .map { it.value }.filterNot { it in ignoredTerms }.toSet()
-    if (terms.isEmpty()) return emptyList()
-    return sourceSnippets(raw).map { snippet ->
-        val words = Regex("[\\p{L}\\p{N}]{3,}").findAll(snippet.text.lowercase()).map { it.value }.toSet()
-        snippet to terms.count { it in words }
-    }.filter { it.second > 0 }
-        .sortedWith(compareByDescending<Pair<SourceSnippet, Int>> { it.second }.thenByDescending { it.first.text.length })
-        .map { it.first }.distinctBy { it.text }.take(4)
+    val text = raw?.take(48_000).orEmpty()
+    if (query.isBlank() || text.isBlank()) return emptyList()
+    val chunks = RagTextChunker().chunk("document-preview", text)
+    return RagBm25Index(chunks).search(query, limit = 4)
+        .map { SourceSnippet(it.text, it.page) }
 }
 
 @Composable
@@ -211,7 +209,7 @@ fun DocumentChatWorkspace(
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                     Text(
-                        "Searches extracted text and returns matching passages with page references. This local search does not invent an AI answer.",
+                        "Searches extracted text with local BM25 ranking and page references. It does not generate an AU answer.",
                         color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
