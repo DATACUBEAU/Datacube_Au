@@ -58,8 +58,10 @@ class ModelVaultStore(context: Context) {
         }.forEach { (_, uri) ->
             runCatching { DocumentsContract.deleteDocument(resolver, uri) }
         }
-        val id = DocumentsContract.getTreeDocumentId(dir)
-        val parent = DocumentsContract.buildDocumentUriUsingTree(dir, id)
+        val rootId = DocumentsContract.getTreeDocumentId(dir)
+        val vaultFolder = ensureFolder(dir, rootId, "DataCubeAU-Models")
+        val modelFolder = ensureFolder(dir, DocumentsContract.getDocumentId(vaultFolder), modelId)
+        val parent = modelFolder
         val partialName = ModelBackupManager.suggestedName(modelId).removeSuffix(".zip") + ".partial"
         val destination = DocumentsContract.createDocument(
             resolver, parent, "application/octet-stream", partialName
@@ -83,28 +85,60 @@ class ModelVaultStore(context: Context) {
         ModelBackupManager(app).restoreBackup(uri)
     }
 
+    /** Create user-owned folders, not app-specific storage erased on uninstall. */
+    private fun ensureFolder(tree: Uri, parentId: String, name: String): Uri {
+        val listing = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        val parent = DocumentsContract.buildDocumentUriUsingTree(tree, parentId)
+        resolver.query(
+            listing,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                DocumentsContract.Document.COLUMN_MIME_TYPE),
+            null, null, null
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1) == name &&
+                    cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    return DocumentsContract.buildDocumentUriUsingTree(tree, cursor.getString(0))
+                }
+            }
+        }
+        return DocumentsContract.createDocument(
+            resolver, parent, DocumentsContract.Document.MIME_TYPE_DIR, name
+        ) ?: error("Selected folder doesn't support creating model directories.")
+    }
+
+    /** Read both legacy flat archives and the new DataCubeAU-Models/<id>/ hierarchy. */
     private fun entries(): List<Pair<String, Uri>> {
         val tree = requireNotNull(folder()) { "Choose your model folder again." }
-        val parentId = DocumentsContract.getTreeDocumentId(tree)
-        val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+        val rootId = DocumentsContract.getTreeDocumentId(tree)
         val fields = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE
         )
         val result = mutableListOf<Pair<String, Uri>>()
-        resolver.query(children, fields, null, null, null)?.use { cursor ->
-            while (cursor.moveToNext() && result.size < MAX_ARCHIVES * 4) {
-                val id = cursor.getString(0) ?: continue
-                val name = cursor.getString(1) ?: continue
-                val mime = cursor.getString(2)
-                if (name.startsWith("DataCubeAU-") &&
-                    (mime == ModelBackupManager.BACKUP_MIME_TYPE || mime == "application/octet-stream")
-                ) {
-                    result += name to DocumentsContract.buildDocumentUriUsingTree(tree, id)
+        fun scan(parentId: String, depth: Int) {
+            if (depth > 2 || result.size >= MAX_ARCHIVES * 4) return
+            val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, parentId)
+            resolver.query(children, fields, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext() && result.size < MAX_ARCHIVES * 4) {
+                    val id = cursor.getString(0) ?: continue
+                    val name = cursor.getString(1) ?: continue
+                    val mime = cursor.getString(2)
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR &&
+                        (name == "DataCubeAU-Models" || (depth == 1 &&
+                            name.matches(Regex("[a-z0-9][a-z0-9._-]{1,80}"))))) {
+                        scan(id, depth + 1)
+                    } else if (name.startsWith("DataCubeAU-") &&
+                        (mime == ModelBackupManager.BACKUP_MIME_TYPE ||
+                            mime == "application/octet-stream")) {
+                        result += name to DocumentsContract.buildDocumentUriUsingTree(tree, id)
+                    }
                 }
             }
         }
+        scan(rootId, 0)
         return result
     }
 
