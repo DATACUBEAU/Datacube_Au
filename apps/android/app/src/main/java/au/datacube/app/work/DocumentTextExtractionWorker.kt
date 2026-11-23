@@ -13,6 +13,7 @@ import au.datacube.app.data.PdfDocumentTextExtractor
 import au.datacube.app.data.PlainTextDocumentExtractor
 import au.datacube.app.data.TextExtractionRejectedException
 import au.datacube.app.notifications.LocalNotificationService
+import au.datacube.app.data.rag.LexicalIndexWorker
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -103,6 +104,8 @@ class DocumentTextExtractionWorker(
                 )
             } else {
                 notifications.showTextReady(documentId)
+                // Non-blocking keyword index: full extracted text, no AI model required.
+                LexicalIndexWorker.schedule(applicationContext, documentId)
             }
             Result.success()
         } catch (cancelled: CancellationException) {
