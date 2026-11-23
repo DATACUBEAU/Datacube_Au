@@ -55,6 +55,8 @@ fun OfflineVoiceInputButton(
     }
 
     fun start() {
+        // Explicit SDK check here lets lint prove the Android 12 API is guarded.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
         if (!supported || listening || !enabled) return
         try {
             val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
