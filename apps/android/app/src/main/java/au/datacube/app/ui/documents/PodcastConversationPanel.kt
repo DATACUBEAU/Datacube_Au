@@ -52,7 +52,7 @@ fun PodcastConversationPanel(
     var playbackStage by remember(documentId) { mutableStateOf("") }
     var playbackError by remember(documentId) { mutableStateOf<String?>(null) }
     var playbackJob by remember(documentId) { mutableStateOf<Job?>(null) }
-    var showTranscript by remember(documentId) { mutableStateOf(true) }
+    var showTranscript by remember(documentId) { mutableStateOf(false) }
 
     DisposableEffect(documentId) {
         onDispose {
@@ -123,36 +123,20 @@ fun PodcastConversationPanel(
             }
             Text(documentName, style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
-            Surface(
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(24.dp)
-            ) {
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 22.dp, horizontal = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    PodcastSpeakerAvatar(
-                        label = "Host",
-                        detail = "Introduces and asks",
-                        active = listening && turns.getOrNull(activeSpeakerIndex)
-                            ?.speaker == PodcastSpeaker.HOST,
-                        color = MaterialTheme.colorScheme.primary,
-                        icon = Icons.Outlined.RecordVoiceOver
-                    )
-                    Icon(Icons.Outlined.GraphicEq, null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(26.dp))
-                    PodcastSpeakerAvatar(
-                        label = "Guide",
-                        detail = "Explains the ideas",
-                        active = listening && turns.getOrNull(activeSpeakerIndex)
-                            ?.speaker == PodcastSpeaker.GUIDE,
-                        color = MaterialTheme.colorScheme.tertiary,
-                        icon = Icons.Outlined.School
-                    )
+            AuPodcastStage(
+                playing = listening,
+                activeSpeaker = turns.getOrNull(activeSpeakerIndex)?.speaker,
+                status = if (listening) playbackStage else "",
+                hasScript = turns.isNotEmpty(),
+                enabled = neuralReady && !session.generating,
+                onPlayPause = {
+                    if (listening) {
+                        playbackJob?.cancel()
+                        NeuralNarration.stop()
+                        listening = false
+                    } else startPlayback()
                 }
-            }
+            )
             if (session.generating) {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(session.stage.ifBlank { "AU is preparing your podcast" },
@@ -200,35 +184,15 @@ fun PodcastConversationPanel(
                     if (listening) CircularProgressIndicator(
                         Modifier.size(18.dp), strokeWidth = 2.dp)
                 }
-                if (listening && playbackStage.isNotBlank()) {
-                    Text(playbackStage,
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.labelMedium)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        modifier = Modifier.weight(1f).heightIn(min = 50.dp),
-                        enabled = neuralReady,
-                        onClick = {
-                            if (listening) {
-                                playbackJob?.cancel()
-                                NeuralNarration.stop()
-                                listening = false
-                            } else startPlayback()
-                        }
-                    ) {
-                        Icon(if (listening) Icons.Outlined.Stop
-                            else Icons.Outlined.PlayArrow, null)
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (listening) "Stop podcast" else "Play podcast")
-                    }
-                    OutlinedButton(
-                        onClick = {
-                            if (!listening) session.generate(context, documentName, textPreview.orEmpty())
-                        },
-                        enabled = !listening && modelReady && !textPreview.isNullOrBlank()
-                    ) { Text("Regenerate") }
+                OutlinedButton(
+                    onClick = {
+                        if (!listening) session.generate(context, documentName, textPreview.orEmpty())
+                    },
+                    enabled = !listening && modelReady && !textPreview.isNullOrBlank()
+                ) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Regenerate conversation")
                 }
                 if (!neuralReady) {
                     Text("To hear both speakers, install Kokoro under Models. The prepared transcript is still available.",
@@ -290,35 +254,3 @@ fun PodcastConversationPanel(
     }
 }
 
-@Composable
-private fun PodcastSpeakerAvatar(
-    label: String,
-    detail: String,
-    active: Boolean,
-    color: Color,
-    icon: androidx.compose.ui.graphics.vector.ImageVector
-) {
-    val scale by animateFloatAsState(if (active) 1.12f else 1f, label = "speaker activity")
-    Column(
-        modifier = Modifier.width(125.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Surface(
-            shape = CircleShape,
-            modifier = Modifier.size(72.dp).scale(scale),
-            color = if (active) color else MaterialTheme.colorScheme.surface,
-            border = BorderStroke(2.dp, color)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(icon, null, Modifier.size(34.dp),
-                    tint = if (active) MaterialTheme.colorScheme.onPrimary else color)
-            }
-        }
-        Text(label, color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.Bold)
-        Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall,
-            textAlign = TextAlign.Center)
-    }
-}
