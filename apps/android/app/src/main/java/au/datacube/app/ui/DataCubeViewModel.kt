@@ -234,6 +234,7 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun delete(id: String) {
         DocumentChatSessions.forgetDocument(id)
+        DocumentChatSessions.forgetGlobal()
         viewModelScope.launch {
             val jobs = database.jobs().findForDocument(id)
             jobs.forEach { job ->
