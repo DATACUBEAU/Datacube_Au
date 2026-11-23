@@ -9,6 +9,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,10 +29,27 @@ fun ProfileScreen(
     user: UserInfo?,
     onSignOut: () -> Unit,
     onBackupModels: () -> Unit,
-    onRestoreModels: () -> Unit
+    onRestoreModels: () -> Unit,
+    onBack: () -> Unit = {}
 ) {
     val email = user?.email ?: "—"
     val displayName = email.substringBefore('@')
+    var showProfile by remember { mutableStateOf(false) }
+
+    if (showProfile) {
+        AlertDialog(
+            onDismissRequest = { showProfile = false },
+            title = { Text("Profile", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(email, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (user != null) Text("Signed in", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showProfile = false }) { Text("Close") } }
+        )
+    }
 
     Scaffold(
         modifier = modifier,
@@ -42,7 +63,12 @@ fun ProfileScreen(
                             modifier = Modifier.size(30.dp)
                         )
                         Spacer(Modifier.width(10.dp))
-                        Text("Profile", fontWeight = FontWeight.Bold)
+                        Text("Settings", fontWeight = FontWeight.Bold)
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -55,56 +81,12 @@ fun ProfileScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── Avatar + name ──
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(2.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                displayName.take(1).uppercase(),
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontWeight = FontWeight.Bold,
-                                style = MaterialTheme.typography.headlineSmall
-                            )
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text(displayName, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleMedium)
-                            Text(email, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (user != null) {
-                                Spacer(Modifier.height(4.dp))
-                                AssistChip(
-                                    onClick = {},
-                                    label = { Text("Signed in", style = MaterialTheme.typography.labelSmall) },
-                                    leadingIcon = { Icon(Icons.Outlined.CheckCircle, null, modifier = Modifier.size(14.dp)) }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
             // ── Account settings ──
             item {
                 Text("Account", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
             }
             item {
-                ProfileRow(icon = Icons.Outlined.Person, label = "Account details", onClick = {})
-                ProfileRow(icon = Icons.Outlined.Notifications, label = "Notifications", onClick = {})
-                ProfileRow(icon = Icons.Outlined.Security, label = "Privacy & security", onClick = {})
+                ProfileRow(icon = Icons.Outlined.Person, label = "Profile", onClick = { showProfile = true })
             }
 
             // ── Subscription ──
