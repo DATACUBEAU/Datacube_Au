@@ -30,6 +30,7 @@ fun ProfileScreen(
     themePreference: ThemePreference = ThemePreference.SYSTEM,
     onThemeChange: (ThemePreference) -> Unit = {},
     onOpenModels: () -> Unit = {},
+    onOpenVault: () -> Unit = {},
     onOpenSubscription: () -> Unit = {},
     onOpenUsage: () -> Unit = {},
     onEnableNotifications: () -> Unit = {}
@@ -63,7 +64,10 @@ fun ProfileScreen(
                         Text("Export backup")
                     }
                     OutlinedButton(onClick = { showBackups = false; onRestoreModels() }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Restore backup")
+                        Text("Smart restore archive")
+                    }
+                    OutlinedButton(onClick = { showBackups = false; onOpenVault() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open Model Vault")
                     }
                 }
             },
