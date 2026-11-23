@@ -1,60 +1,56 @@
 # DataCube AU — Native Android
 
-Native Kotlin + Jetpack Compose application. The Flutter project in `apps/mobile` remains a legacy reference and is not the active customer app.
+Active client: Kotlin, Jetpack Compose, Coroutines, Room, WorkManager and native on-device AI adapters in `apps/android`. The Flutter directory is legacy reference material. The web app handles browser sign-in/approval and checkout, not local document inference.
 
-## Implemented native slices
+## Workspace and local documents
 
-- Floating sticky AU / Document navigation; document tools open inside their document workspace.
-- Compose Material 3 theme tokens and the black/white/blue visual system.
-- Home dashboard with active documents, recent files and document-scoped quick ask.
-- Multi-file Android Storage Access Framework import into app-private storage.
-- Room-backed document metadata, collections and collection membership with versioned migrations.
-- Durable Room import/extraction jobs scheduled by WorkManager; recovery is attempted at app startup.
-- Streaming SHA-256 integrity verification for imported files.
-- Local UTF-8 text extraction for TXT and Markdown files (up to 20 MB) with BOM/newline handling.
-- Local PDF text extraction using PDFium, preserving page boundaries for citations (up to 100 MB).
-- Extracted text is written atomically to app-private storage, not to Room or cloud storage.
-- Document workspace with AU Chat, Smart Note, Prediction, Practice and Podcast tabs.
-- AU Chat uses page-aware BM25 keyword ranking. On Android 9+ it can also use real EmbeddingGemma 2 vectors from a downloaded and verified model after background indexing, returning source-page matches with BM25 fallback. This is retrieval only; generative AU answers are not yet enabled.
-- Smart Note currently builds extractive notes and a heuristic concept map from detected headings and recurring terms.
-- Prediction currently builds a revision outline and prompts from detected topics; it does not provide probability scores or claim to forecast an exam.
-- Practice currently provides configurable self-study prompts, answer capture and source-passage review; it does not automatically grade answers.
-- Podcast currently uses user-selectable installed **offline** Android voices, with voice preview, speed and pitch persisted on-device. It does not yet have a neural voice engine, create an audio file, or upload text/audio.
-- Empty, loading and extraction error states are surfaced in the relevant document tools.
-- Compose UI tests cover Home, Documents, collection workspace and document study-tool interactions.
+- Home and Documents share a compact floating AU / Document selector; document study tools are nested in each document workspace.
+- Google sign-in uses explicit browser approval/pairing and encrypted Android session recovery. Session restore avoids flashing the unauthenticated screen.
+- The Android document picker imports multiple PDF, TXT and Markdown files into private app storage. Room tracks document metadata, collections and work state.
+- WorkManager extracts local text; PDFium keeps page boundaries for source citations. Existing limits are 100 MB PDF and 20 MB text/Markdown.
+- The workspace has AU Chat, Smart Note, Prediction, Practice and Podcast tabs. Smart Notes include an interactive source-linked concept map; prediction is a heuristic revision outline, not an actual exam forecast; practice is self-review, not automated grading.
+- Per-document AU Chat turns and source references persist across ordinary app restarts in app-private files. They do not survive uninstall without a separate backup.
 
-## Local-first data boundary
+## Real local AU Chat / retrieval
 
-Imported document bytes and extracted text remain inside app-private storage. Room stores local metadata and job state. The current study helpers operate on the locally extracted preview; they do not upload source text, prompts or generated audio. Do not describe these deterministic local helpers as the production AU AI/RAG runtime.
+- Document search begins with source-page-aware text chunking and BM25. If a verified compatible EmbeddingGemma 2 270M model is installed on Android 9+, a background Room vector index adds on-device semantic retrieval.
+- The BM25 and semantic passage results are fused for citations. Retrieval remains usable when a model is missing or fails.
+- Android LiteRT-LM uses one explicitly selected, publisher-checksum-verified local Qwen3 0.6B or Gemma 4 E2B/E4B model for source-grounded streaming AU Chat answers. Models are **not included in the APK** and are never downloaded automatically.
+- Generation quality, exact runtime support, RAM use and citation faithfulness need real-phone benchmarking. Retrieved evidence remains available on model failure; model output is not guaranteed factual.
+- Tapping words in a generated response opens real source text when a matching passage exists. The optional explanation uses the installed local model; the app must never fabricate source definitions.
 
-## Local AI model backup and restore
+## Small, explicit model setup and portable storage
 
-- Installed model artifacts use the app-private location `files/models/installed/<model-id>/`.
-- Temporary downloads must stay outside that installed directory. Only complete model folders in the installed directory are exported.
-- Settings > Backups provides **Export backup** and **Restore backup** actions.
-- Export creates one portable ZIP file through Android's Storage Access Framework. The user chooses the destination, including Documents, an SD card, USB storage or a connected cloud document provider.
-- The archive includes every installed model file plus a versioned manifest containing file sizes and SHA-256 checksums. Partial `.part` and `.tmp` files are excluded.
-- Restore verifies the manifest, paths, file sizes and checksums before installing any model. It rejects unsafe paths, duplicate entries, incomplete archives and attempts to overwrite an installed model.
-- Model data is copied into app-private installed storage after verification; the exported ZIP remains in the user-selected external location and can be selected again after reinstalling the app.
-- Settings > Models lists publisher pages for EmbeddingGemma 300M and Gemma 4 E2B/E4B; the user may accept upstream terms, obtain compatible model bundles, and import files using Android's document picker. Import stages data outside the installed folder and commits complete model directories atomically. Hashes are recorded for local integrity, but there is no upstream checksum authenticity verification for manually imported files yet.
-- A verified download path is available for public Apache-2.0 Qwen3 0.6B LiteRT-LM (fixed upstream revision and SHA-256). WorkManager streams the file, supports download progress and resume, and places only checksum-verified complete files under `installed/<model-id>`. Downloads require explicit Wi-Fi/mobile-data choice. Gated Gemma files still open the publisher's license page and must not bypass it.
-- Downloads are **model files only**. No model activation, embedding inference, vector index or generative inference runtime is connected. Do not advertise local RAG as ready. Do not advertise local RAG as ready until those engines and integrity checks are integrated.
+- First-login device assessment is optional and checks RAM and available storage. It recommends one search model plus one chat model; advanced alternatives are collapsed.
+- The user must choose an external folder via Android Storage Access Framework before using a verified model download.
+- Download controls explicitly ask for Wi-Fi only or mobile-data consent. A WorkManager worker streams into app-private temporary storage with resume, progress, cancellation, an immutable publisher revision and SHA-256 verification.
+- A completed download installs a private runtime copy and writes a named, checksum-manifested per-model ZIP into the user-selected `DataCubeAU-Models/<model-id>/` hierarchy. Staging and incomplete downloads remain private and **do not survive uninstall**.
+- External completed archives can survive uninstall, but the user must reselect the folder and restore models into app-private storage after reinstalling. Android SAF authorization is not retained across uninstall.
+- Importing arbitrary publisher files checks local file integrity but does not establish publisher authenticity. Only reviewed verified model artifacts are permitted to activate supported runtime adapters.
+- The external archive and installed model generally consume storage for two copies. Never describe portable backup as zero-copy model inference.
 
-## Target architecture
+## Speech and podcasts
 
-Kotlin, Jetpack Compose, MVVM, Coroutines/Flow, Room, WorkManager, Android Keystore, local-first document intelligence and provider-independent DIMR. Cloud inference should remain optional and consent-based.
+- Podcast supports installed offline Android TTS voices and, optionally, the user-downloaded verified Kokoro-82M neural pack. The Kokoro option uses local PCM synthesis with curated voice choices and explicit Preview/Play/Stop controls; it is not voice cloning or speech recognition.
+- AU Chat can optionally dictate an editable question using Android's on-device speech recognizer on Android 12+ **only when the device reports a local recognition service**. The microphone is activated only after tapping the mic and granting permission; Stop cancels recognition. Text must still be manually sent. This path never falls back to an online recognizer and never triggers a model download.
+- If the phone has no offline recognition service, typed chat remains available. No always-listening assistant or hands-free voice conversation is implemented.
 
-## Minimalist document-first navigation
+## Local/cloud boundary and known gaps
 
-- Home and Documents are accessed through the AU / Document selector at the top; the bottom tab bar is retired.
-- Home keeps a source-grounded question composer above the system navigation area. Add/select a document before sending.
-- AU Chat, Smart Note, Prediction, Practice and Podcast are views within an imported document's workspace, not separate top-level destinations.
-- The Settings gear opens compact Settings, with display modes, Models, Backups, notifications opt-in and Profile. A first-login, opt-in device capability check reads memory and free storage only.
-- During browser sign-in, the temporary device pairing code can be copied to the clipboard and pasted into the highlighted approval field on the website.
+Private imported documents, extracted text, local embeddings, model-generated answers and narration remain on the device in these workflows. Supabase remains the authentication, administration and potential billing control plane; this Android work does **not** prove billing/entitlement enforcement.
 
-## Build and verification
+Outstanding product or release tasks:
+- Real-device acceptance of Gemma/Qwen, EmbeddingGemma and Kokoro, including RAM, thermal pressure, cancellation, backgrounding and actual download/restore over multiple storage providers.
+- DOCX/RTF extraction, OCR for scanned PDFs and large-document streaming improvements.
+- Automated practice assessment, fuller study history and advanced generated visuals. Smart Note diagrams are document-derived interactive concept maps, not photorealistic graphics.
+- Android and backend billing/entitlement integration, real subscription flows and a signed store-ready release.
+- Accessibility, low-RAM, offline language availability and device-matrix tests.
 
-The GitHub Actions workflow uses JDK 21 and Android SDK 35. From this directory:
+## Verification
+
+The GitHub Native Android CI builds the debug APK, runs JVM tests, compiles instrumentation tests, runs Android lint and API-35 emulator UI tests, and builds an **unsigned** release bundle. CI success is not proof of performance or speech quality on a physical phone.
+
+From `apps/android` with Android SDK and JDK 21 available:
 
 ```sh
 ./gradlew :app:testDebugUnitTest
@@ -64,20 +60,4 @@ The GitHub Actions workflow uses JDK 21 and Android SDK 35. From this directory:
 ./gradlew :app:bundleRelease
 ```
 
-The CI release bundle is an unsigned preflight artifact, not a Play Store-ready signed release.
-
-## Remaining migration and product gaps
-
-- DOCX/RTF parsing and OCR for scanned PDFs.
-- Large-document streaming/indexing optimization, Android 9+ EmbeddingGemma 2 hardware validation and semantic-retrieval quality benchmarks. The initial version already includes a model-backed local index and Room vector persistence.
-- Production RAG chat and model gateway integration for document-aware AI.
-- AI-generated Smart Notes, actual exam prediction and generated/streamable podcast audio.
-- Automatic practice grading and durable study-session history.
-- Complete entitlement/billing enforcement and production app configuration.
-- Additional device testing across Android versions, screen sizes, accessibility settings and real hardware.
-
-Authentication, import and local processing have native implementations, but production readiness still requires the full CI gate, real-device verification and review of backend/entitlement boundaries.
-
-## Active implementation roadmap
-
-See `docs/android-local-rag-neural-voice-implementation.md` for the ordered offline model downloader, actual vector embedding, local LLM, Smart Note diagram and optional neural TTS integration plan. Payment remains deferred in issue #50.
+For deeper implementation notes see `docs/android-local-rag-neural-voice-implementation.md`, `docs/android-model-vault-and-evidence-ux.md` and `docs/android-kokoro-neural-narration.md`.
