@@ -190,6 +190,33 @@ class LocalPassageIndex(context: Context) :
         ).take(limit)
     }
 
+    /** Representative start/middle/end passages for grounded overviews. */
+    fun overview(documentId: String, source: File, limit: Int = 8): List<IndexedPassage> {
+        require(limit in 1..12)
+        if (!hasCurrent(documentId, source)) return emptyList()
+        val count = passageCount(documentId)
+        val desired = minOf(limit, count)
+        if (desired <= 0) return emptyList()
+        val result = mutableListOf<IndexedPassage>()
+        for (i in 0 until desired) {
+            val position = if (desired == 1) 0 else (count - 1) * i / (desired - 1)
+            readableDatabase.rawQuery(
+                "SELECT ordinal, page, body FROM passages WHERE documentId = ? ORDER BY rowid LIMIT 1 OFFSET ?",
+                arrayOf(documentId, position.toString())
+            ).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    result += IndexedPassage(
+                        text = cursor.getString(2),
+                        page = cursor.getString(1)?.toIntOrNull(),
+                        ordinal = cursor.getString(0).toIntOrNull() ?: position,
+                        score = 0
+                    )
+                }
+            }
+        }
+        return result
+    }
+
     fun remove(documentId: String) {
         if (!validId(documentId)) return
         writableDatabase.beginTransaction()
