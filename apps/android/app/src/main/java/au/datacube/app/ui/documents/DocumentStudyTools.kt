@@ -738,7 +738,7 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
             // Two full-width targets without icons: on narrow phones the
             // SegmentedButton default checkmark and icon collided with labels.
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                listOf("Concept map", "Notes").forEachIndexed { index, title ->
+                listOf("Diagram", "Notes").forEachIndexed { index, title ->
                     Surface(
                         onClick = { selectedView = index },
                         modifier = Modifier.weight(1f),
