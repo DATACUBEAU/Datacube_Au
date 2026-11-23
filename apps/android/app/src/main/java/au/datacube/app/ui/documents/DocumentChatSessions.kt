@@ -30,6 +30,8 @@ import kotlinx.coroutines.launch
 internal class DocumentChatSession(private val historyKey: String) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val messages = mutableStateListOf<ChatMessage>()
+    // Observed application actions live for this chat while generation is active.
+    val activitySteps = mutableStateListOf<String>()
     var searching by mutableStateOf(false)
     var searchingStage by mutableStateOf("")
     var activeRequest: Job? = null
