@@ -54,12 +54,39 @@ object VerifiedModelDownloads {
         license = "Apache-2.0"
     )
 
-    /** Earlier EmbeddingGemma v1 and Gemma 4 weights need publisher terms. */
+    /**
+     * Official LiteRT Community CPU-compatible Gemma 4 exports.
+     * SHA-256 values are taken from the pinned Hugging Face Xet pointer pages.
+     * Files are Apache-2.0 and ungated; real device RAM/performance varies.
+     */
+    private val gemma4E2B = VerifiedModelArtifact(
+        modelId = "gemma-4-e2b",
+        fileName = "gemma-4-E2B-it.litertlm",
+        url = "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/resolve/95d108359598714b42933b5efff29987823e688b/gemma-4-E2B-it.litertlm",
+        sha256 = "ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42",
+        maximumBytes = 3_000_000_000L,
+        displaySize = "2.58 GB",
+        license = "Apache-2.0"
+    )
+
+    private val gemma4E4B = VerifiedModelArtifact(
+        modelId = "gemma-4-e4b",
+        fileName = "gemma-4-E4B-it.litertlm",
+        url = "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/resolve/28299f30ee4d43294517a4ac93abd6163412f07f/gemma-4-E4B-it.litertlm",
+        sha256 = "0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0",
+        maximumBytes = 4_000_000_000L,
+        displaySize = "3.66 GB",
+        license = "Apache-2.0"
+    )
+
+    /** Older EmbeddingGemma v1 remains publisher/import only. */
 
     fun find(modelId: String): VerifiedModelArtifact? =
         when (modelId) {
             qwen3Small.modelId -> qwen3Small
             embeddingGemma2.modelId -> embeddingGemma2
+            gemma4E2B.modelId -> gemma4E2B
+            gemma4E4B.modelId -> gemma4E4B
             else -> null
         }
 }
