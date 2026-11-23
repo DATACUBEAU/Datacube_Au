@@ -81,7 +81,7 @@ jobs:
           test -s "$apk"
           signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
           "$signer" verify --verbose "$apk"
-          mapfile -t abis < <(unzip -Z1 "$apk" | awk -F/ '/^lib\\/[^/]+\\/[^/]+/ {print $2}' | sort -u)
+          mapfile -t abis < <(unzip -Z1 "$apk" | awk -F/ '$1 == "lib" && NF >= 3 {print $2}' | sort -u)
           if [[ "${#abis[@]}" -ne 1 || "${abis[0]}" != "arm64-v8a" ]]; then
             echo "::error::Expected only ARM64 native libraries. Found: ${abis[*]:-none}"
             exit 1
