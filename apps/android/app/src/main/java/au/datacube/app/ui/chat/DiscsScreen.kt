@@ -138,7 +138,7 @@ fun DiscsScreen(
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
         session.searching = true
         session.activitySteps.clear()
-        session.searchingStage = "Planning your search"
+        session.searchingStage = "Understanding your question"
         session.activeRequest = session.scope.launch {
             val events = session.activitySteps
             try {
@@ -311,7 +311,7 @@ fun DiscsScreen(
                 OutlinedButton(onClick = onOpenDocuments) {
                     Icon(Icons.Outlined.FolderOpen, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Open document library")
+                    Text("Browse documents (optional)")
                 }
             }
         } else {
@@ -383,7 +383,7 @@ fun DiscsScreen(
                                     }) {
                                         Icon(Icons.Outlined.AccountTree, null)
                                         Spacer(Modifier.width(7.dp))
-                                        Text("How AU worked")
+                                        Text("AU activity")
                                     }
                                     if (i in expandedProcess) {
                                         AuActivityTimeline(message.steps)
