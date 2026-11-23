@@ -108,8 +108,14 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
 
     adb('install', '-t', args.probe_apk)
-    baseline = measure_build(args.baseline_apk, args.baseline_test_apk)
-    final = measure_build(args.final_apk, args.final_test_apk)
+    try:
+        baseline = measure_build(args.baseline_apk, args.baseline_test_apk)
+        final = measure_build(args.final_apk, args.final_test_apk)
+    except RuntimeError as error:
+        (args.output / 'startup-error.txt').write_text(str(error) + '\n')
+        (args.output / 'emulator-crash.txt').write_text(adb('logcat', '-b', 'crash', '-d'))
+        (args.output / 'emulator-activities.txt').write_text(adb('shell', 'dumpsys', 'activity', 'activities'))
+        raise
     (args.output / 'startup.json').write_text(json.dumps({'baseline': baseline, 'final': final}, indent=2) + '\n')
     model = adb('shell', 'getprop', 'ro.product.model').strip()
     summary, within_budget = report(baseline, final, f'Emulator model: `{model}`.')
