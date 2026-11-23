@@ -43,6 +43,23 @@ fun DocumentWorkspaceScreen(
     initialTab: Int = 0
 ) {
     var selectedTab by remember(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
+    var menuExpanded by remember(document.id) { mutableStateOf(false) }
+    var showDetails by remember(document.id) { mutableStateOf(false) }
+
+    if (showDetails) {
+        AlertDialog(
+            onDismissRequest = { showDetails = false },
+            title = { Text("Document details") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(document.name)
+                    Text("${document.extension.uppercase()} · ${formatDocumentSize(document.sizeBytes)}")
+                    Text("Stored locally on this device")
+                }
+            },
+            confirmButton = { TextButton(onClick = { showDetails = false }) { Text("Done") } }
+        )
+    }
 
     Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
         Row(
@@ -75,8 +92,27 @@ fun DocumentWorkspaceScreen(
                     style = MaterialTheme.typography.bodySmall
                 )
             }
-            IconButton(onClick = onBack) {
-                Icon(Icons.Outlined.Close, contentDescription = "Close document workspace")
+            Box {
+                IconButton(onClick = { menuExpanded = true }) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "Document options")
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Document details") },
+                        leadingIcon = { Icon(Icons.Outlined.Info, null) },
+                        onClick = { menuExpanded = false; showDetails = true }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Open Smart Note") },
+                        leadingIcon = { Icon(Icons.Outlined.Notes, null) },
+                        onClick = { menuExpanded = false; selectedTab = 1 }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Open Podcast") },
+                        leadingIcon = { Icon(Icons.Outlined.Headphones, null) },
+                        onClick = { menuExpanded = false; selectedTab = 4 }
+                    )
+                }
             }
         }
 
