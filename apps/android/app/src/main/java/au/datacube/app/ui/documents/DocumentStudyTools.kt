@@ -166,8 +166,8 @@ private fun ToolPage(title: String, subtitle: String, content: @Composable Colum
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = DataCubeColors.TextSecondary)
+            Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         content()
     }
@@ -176,8 +176,8 @@ private fun ToolPage(title: String, subtitle: String, content: @Composable Colum
 @Composable
 private fun ToolCard(content: @Composable ColumnScope.() -> Unit) {
     Surface(
-        Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = Color.White,
-        border = BorderStroke(1.dp, DataCubeColors.Divider), tonalElevation = 1.dp
+        Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), tonalElevation = 1.dp
     ) {
         Column(Modifier.padding(16.dp), content = content)
     }
@@ -193,10 +193,10 @@ private fun SourceUnavailableCard(
 ) {
     ToolCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Description, contentDescription = null, tint = DataCubeColors.Blue)
+            Icon(Icons.Outlined.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text("Waiting for extracted document text", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Waiting for extracted document text", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Text(
                     when {
                         previewLoading -> "Loading the private on-device text preview."
@@ -206,7 +206,7 @@ private fun SourceUnavailableCard(
                         extractionStatus == LocalJobStatus.FAILED -> extractionError ?: "Local extraction failed."
                         else -> "Import a supported file and let local extraction finish."
                     },
-                    style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             if (previewLoading || extractionStatus == LocalJobStatus.RUNNING) {
@@ -219,7 +219,7 @@ private fun SourceUnavailableCard(
         Spacer(Modifier.height(12.dp))
         Text(
             "These study tools use text already extracted on your device. They do not invent answers or success probabilities when source text is unavailable.",
-            style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -384,11 +384,11 @@ fun DocumentChatWorkspace(
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Search, contentDescription = null, tint = DataCubeColors.Blue)
+            Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("Searching in", style = MaterialTheme.typography.labelMedium, color = DataCubeColors.TextSecondary)
-                Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Searching in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             }
             AssistChip(onClick = {}, enabled = false, label = {
                 Text(when {
@@ -407,12 +407,12 @@ fun DocumentChatWorkspace(
         } else if (messages.isEmpty()) {
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(42.dp))
-                    Text("Ask about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
+                    Text("Ask about this document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Text(
                         if (llmInstalled) "Ask AU. Answers are generated offline from cited document passages."
                         else "Read local source passages. Install a chat model in Models to enable answers.",
-                        color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("Summarize the key ideas", "Find important definitions").forEach { suggestion ->
@@ -430,8 +430,8 @@ fun DocumentChatWorkspace(
                 items(messages) { message ->
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                            Surface(shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), color = DataCubeColors.BlueLight) {
-                                Text(message.question, Modifier.padding(13.dp), color = DataCubeColors.Navy)
+                            Surface(shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                                Text(message.question, Modifier.padding(13.dp), color = MaterialTheme.colorScheme.onSurface)
                             }
                         }
                     } else {
@@ -578,7 +578,7 @@ fun DocumentChatWorkspace(
         Surface(
             color = MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-            border = BorderStroke(1.dp, DataCubeColors.Divider), tonalElevation = 2.dp
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), tonalElevation = 2.dp
         ) {
             Row(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
                 OutlinedTextField(
@@ -734,34 +734,54 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
 
     ToolPage("Smart Note", "Organize key ideas extracted from $documentName. Content stays on this device.") {
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null) else {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                SegmentedButton(selectedView == 0, { selectedView = 0 }, SegmentedButtonDefaults.itemShape(0, 2)) {
-                    Icon(Icons.Outlined.AccountTree, contentDescription = null); Spacer(Modifier.width(6.dp)); Text("Diagram")
-                }
-                SegmentedButton(selectedView == 1, { selectedView = 1 }, SegmentedButtonDefaults.itemShape(1, 2)) {
-                    Icon(Icons.Outlined.Notes, contentDescription = null); Spacer(Modifier.width(6.dp)); Text("Notes")
+            // Two full-width targets without icons: on narrow phones the
+            // SegmentedButton default checkmark and icon collided with labels.
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                listOf("Concept map", "Study notes").forEachIndexed { index, title ->
+                    Surface(
+                        onClick = { selectedView = index },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(14.dp),
+                        color = if (selectedView == index) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(
+                            1.dp,
+                            if (selectedView == index) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outlineVariant
+                        )
+                    ) {
+                        Text(
+                            title,
+                            Modifier.padding(vertical = 14.dp, horizontal = 8.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            color = if (selectedView == index) MaterialTheme.colorScheme.onPrimaryContainer
+                                else MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
             if (selectedView == 1) {
                 ToolCard {
-                    Text("Study notes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text("Extracted from $documentName", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                    Text("Study notes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Extracted from $documentName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
-                    Text("Key takeaway", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text(summary.ifBlank { "No readable passages were extracted." }, color = DataCubeColors.Navy)
+                    Text("Key takeaway", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text(summary.ifBlank { "No readable passages were extracted." }, color = MaterialTheme.colorScheme.onSurface)
                 }
                 topics.forEachIndexed { index, topic ->
                     ToolCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(shape = RoundedCornerShape(50), color = DataCubeColors.BlueLight) {
-                                Text((index + 1).toString(), Modifier.padding(horizontal = 11.dp, vertical = 6.dp), color = DataCubeColors.BlueDark, fontWeight = FontWeight.Bold)
+                            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primaryContainer) {
+                                Text((index + 1).toString(), Modifier.padding(horizontal = 11.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
                             }
                             Spacer(Modifier.width(9.dp))
-                            Text(topic, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                            Text(topic, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         }
                         snippets.firstOrNull { it.text.contains(topic, ignoreCase = true) }?.let { evidence ->
                             Spacer(Modifier.height(8.dp))
-                            Text(evidence.text, color = DataCubeColors.TextSecondary, maxLines = 4)
+                            Text(evidence.text, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 4)
                             TextButton(onClick = { selectedSource = evidence }) {
                                 Text(evidence.page?.let { "View page $it" } ?: "View source")
                             }
@@ -769,8 +789,8 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
                     }
                 }
                 ToolCard {
-                    Text("Source", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text("These are extractive study aids built from available text, not an AI paraphrase.", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                    Text("Source", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("These are extractive study aids built from available text, not an AI paraphrase.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 ToolCard {
@@ -858,13 +878,13 @@ fun PredictionWorkspace(documentName: String, textPreview: String?, previewLoadi
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null) else {
             ToolCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Description, contentDescription = null, tint = DataCubeColors.Blue)
+                    Icon(Icons.Outlined.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(documentName, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                        Text(sourceSnippets(textPreview).size.toString() + " readable passages found", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                        Text(documentName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Text(sourceSnippets(textPreview).size.toString() + " readable passages found", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Icon(Icons.Outlined.CheckCircle, contentDescription = "Document ready", tint = DataCubeColors.Blue)
+                    Icon(Icons.Outlined.CheckCircle, contentDescription = "Document ready", tint = MaterialTheme.colorScheme.primary)
                 }
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = { generated = true }, Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
@@ -873,32 +893,32 @@ fun PredictionWorkspace(documentName: String, textPreview: String?, previewLoadi
             }
             if (generated) {
                 ToolCard {
-                    Text("Key topics to focus on", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text("Topics are identified from headings and repeated terms; they are not exam-probability scores.", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                    Text("Key topics to focus on", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Topics are identified from headings and repeated terms; they are not exam-probability scores.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
                     topics.forEachIndexed { index, topic ->
                         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text((index + 1).toString() + ".", color = DataCubeColors.Blue, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.width(8.dp)); Text(topic, Modifier.weight(1f), color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
+                            Text((index + 1).toString() + ".", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(8.dp)); Text(topic, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
                             AssistChip(onClick = {}, enabled = false, label = { Text("Review") })
                         }
                     }
-                    if (topics.isEmpty()) Text("No distinct topics could be identified from this text.", color = DataCubeColors.TextSecondary)
+                    if (topics.isEmpty()) Text("No distinct topics could be identified from this text.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 ToolCard {
-                    Text("Suggested revision questions", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                    Text("Suggested revision questions", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     questions.take(5).forEachIndexed { index, question ->
                         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text((index + 1).toString() + ". " + question.prompt, color = DataCubeColors.Navy, fontWeight = FontWeight.Medium)
-                            Text(question.page?.let { "Source: page $it" } ?: "Source: extracted document text", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                            Text((index + 1).toString() + ". " + question.prompt, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
+                            Text(question.page?.let { "Source: page $it" } ?: "Source: extracted document text", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                         }
-                        if (index != questions.take(5).lastIndex) HorizontalDivider(color = DataCubeColors.Divider)
+                        if (index != questions.take(5).lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                     }
                 }
             } else {
                 ToolCard {
-                    Text("What this plan uses", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text("The plan is derived from detected headings, recurring terms and readable passages. It does not claim to predict an actual exam.", color = DataCubeColors.TextSecondary)
+                    Text("What this plan uses", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("The plan is derived from detected headings, recurring terms and readable passages. It does not claim to predict an actual exam.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -927,55 +947,55 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null)
         else if (questions.isEmpty()) {
             ToolCard {
-                Text("No readable passages found", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Text("No readable passages found", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 Text(
                     "There is not enough readable extracted text to create practice questions. Check the document extraction status or choose a document with readable text.",
-                    color = DataCubeColors.TextSecondary
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
         else if (!started) {
             ToolCard {
-                Text("Practice setup", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Text("Practice setup", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(14.dp))
-                Text("Question count", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Question count", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 ChoiceDropdown("$questionCount questions", listOf("5 questions", "10 questions", "15 questions")) {
                     questionCount = it.substringBefore(' ').toIntOrNull() ?: 5
                 }
                 Spacer(Modifier.height(10.dp))
-                Text("Question style", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Question style", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 ChoiceDropdown(questionStyle, listOf("Explain", "Recall")) { questionStyle = it }
                 Spacer(Modifier.height(10.dp))
-                Text("Focus area", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Focus area", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 ChoiceDropdown(focus, listOf("All topics") + topics) { focus = it }
                 Spacer(Modifier.height(16.dp))
                 Button(onClick = { started = true; completed = false; currentIndex = 0; answers = emptyMap(); showReference = false }, Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
                     Icon(Icons.Outlined.PlayArrow, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Start Practice")
                 }
             }
-            Text("Questions are built from locally extracted text. Reference passages support self-checking; responses are not automatically graded.", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+            Text("Questions are built from locally extracted text. Reference passages support self-checking; responses are not automatically graded.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         } else if (completed) {
             ToolCard {
-                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(40.dp))
-                Text("Practice complete", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                Text(answers.values.count { it.isNotBlank() }.toString() + " of " + questions.size + " questions answered.", color = DataCubeColors.TextSecondary)
+                Icon(Icons.Outlined.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
+                Text("Practice complete", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Text(answers.values.count { it.isNotBlank() }.toString() + " of " + questions.size + " questions answered.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(12.dp))
-                Text("Your answers remain available in this review until you restart the session.", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                Text("Your answers remain available in this review until you restart the session.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Button(onClick = { completed = false; started = false; currentIndex = 0 }, Modifier.fillMaxWidth()) { Text("Practice Again") }
             }
             questions.forEachIndexed { index, question ->
                 ToolCard {
-                    Text("Question " + (index + 1), fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text(question.prompt, color = DataCubeColors.Navy)
-                    Text(answers[index].orEmpty().ifBlank { "No answer entered." }, color = DataCubeColors.TextSecondary)
+                    Text("Question " + (index + 1), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text(question.prompt, color = MaterialTheme.colorScheme.onSurface)
+                    Text(answers[index].orEmpty().ifBlank { "No answer entered." }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else {
             val question = questions.getOrNull(currentIndex)
             ToolCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Question " + (currentIndex + 1) + " of " + questions.size, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Spacer(Modifier.weight(1f)); Text(question?.topic.orEmpty(), color = DataCubeColors.Blue, style = MaterialTheme.typography.labelMedium)
+                    Text("Question " + (currentIndex + 1) + " of " + questions.size, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.weight(1f)); Text(question?.topic.orEmpty(), color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                 }
                 Spacer(Modifier.height(10.dp))
                 LinearProgressIndicator(
@@ -986,7 +1006,7 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                 Text(
                     question?.let { if (questionStyle == "Recall") "What do your notes say about " + it.topic + "?" else it.prompt }
                         ?: "There is not enough extracted text to build a practice question.",
-                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
                 )
                 Spacer(Modifier.height(14.dp))
                 OutlinedTextField(value = answer, onValueChange = { updated -> answers = answers + (currentIndex to updated) }, modifier = Modifier.fillMaxWidth(), minLines = 3, label = { Text("Your answer") }, placeholder = { Text("Write your response here…") })
@@ -996,10 +1016,10 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                     Text(if (showReference) "Hide source passage" else "Show source passage")
                 }
                 if (showReference && question != null) {
-                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = DataCubeColors.Divider)
-                    Text("Reference from your document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text(question.reference, color = DataCubeColors.TextSecondary)
-                    Text(question.page?.let { "Page $it" } ?: "Local extracted text", style = MaterialTheme.typography.labelSmall, color = DataCubeColors.Blue)
+                    HorizontalDivider(Modifier.padding(vertical = 10.dp), color = MaterialTheme.colorScheme.outlineVariant)
+                    Text("Reference from your document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text(question.reference, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(question.page?.let { "Page $it" } ?: "Local extracted text", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                 }
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -1027,7 +1047,7 @@ private fun ChoiceDropdown(value: String, options: List<String>, onSelect: (Stri
     var expanded by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxWidth()) {
         OutlinedButton(onClick = { expanded = true }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)) {
-            Text(value, Modifier.weight(1f), color = DataCubeColors.Navy)
+            Text(value, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface)
             Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Choose $value")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -1173,18 +1193,18 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
         else {
             ToolCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = RoundedCornerShape(18.dp), color = DataCubeColors.Navy) {
-                        Icon(Icons.Outlined.GraphicEq, contentDescription = "Audio summary", tint = Color.White, modifier = Modifier.size(78.dp).padding(20.dp))
+                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                        Icon(Icons.Outlined.GraphicEq, contentDescription = "Audio summary", tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(78.dp).padding(20.dp))
                     }
                     Spacer(Modifier.width(14.dp))
                     Column(Modifier.weight(1f)) {
-                        Text("$documentName · Audio Summary", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                        Text(chapters.size.toString() + " chapters · Text-to-speech", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                        Text(if (speaking) "Narration playing" else "Ready to play", color = DataCubeColors.Blue, style = MaterialTheme.typography.labelMedium)
+                        Text("$documentName · Audio Summary", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Text(chapters.size.toString() + " chapters · Text-to-speech", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        Text(if (speaking) "Narration playing" else "Ready to play", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Text("Voice engine", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Voice engine", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(
                         selected = !useNeural,
@@ -1211,10 +1231,10 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                 }
                 if (!neuralInstalled) {
                     Text("Kokoro: optional download in Settings → Models",
-                        color = DataCubeColors.TextSecondary,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
                 }
-                Text("Voice", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Voice", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(6.dp))
                 Box(Modifier.fillMaxWidth()) {
                     OutlinedButton(
@@ -1278,7 +1298,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(if (useNeural) "Offline neural · 4 voices"
                         else "${offlineVoices.size} installed voices", style = MaterialTheme.typography.labelSmall,
-                        color = DataCubeColors.TextSecondary, modifier = Modifier.weight(1f))
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                     TextButton(
                         onClick = { voiceRefresh += 1 },
                         enabled = !useNeural && speechReady
@@ -1288,7 +1308,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                         enabled = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty()
                     ) { Text("Preview") }
                 }
-                Text("Narration speed", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Narration speed", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(0.8f, 1.0f, 1.2f).forEach { rate ->
                         FilterChip(
@@ -1303,7 +1323,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                     }
                 }
                 if (!useNeural) {
-                Text("Voice tone", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Text("Voice tone", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(0.9f, 1.0f, 1.1f).forEach { pitch ->
                         FilterChip(
@@ -1340,31 +1360,31 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                 }
                 speechError?.let { Spacer(Modifier.height(8.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (!speechReady && speechError == null) {
-                    Spacer(Modifier.height(8.dp)); Text("Preparing the installed Android speech engine…", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(8.dp)); Text("Preparing the installed Android speech engine…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
                     "All narration runs on this device. Kokoro requires an optional model download.",
-                    Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary
+                    Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             ToolCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Chapters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Spacer(Modifier.weight(1f)); Text(chapters.size.toString() + " sections", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                    Text("Chapters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.weight(1f)); Text(chapters.size.toString() + " sections", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
                 chapters.forEachIndexed { index, chapter ->
                     Surface(
                         onClick = { activeChapter = index; speak(chapter.first.text) },
                         shape = RoundedCornerShape(14.dp),
-                        color = if (activeChapter == index) DataCubeColors.BlueLight else Color.White,
-                        border = BorderStroke(1.dp, DataCubeColors.Divider), enabled = narrationReady
+                        color = if (activeChapter == index) MaterialTheme.colorScheme.primaryContainer else Color.White,
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), enabled = narrationReady
                     ) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (activeChapter == index && speaking) Icons.Outlined.VolumeUp else Icons.Outlined.PlayArrow, contentDescription = "Play " + chapter.second, tint = DataCubeColors.Blue)
+                            Icon(if (activeChapter == index && speaking) Icons.Outlined.VolumeUp else Icons.Outlined.PlayArrow, contentDescription = "Play " + chapter.second, tint = MaterialTheme.colorScheme.primary)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
-                                Text(chapter.second, color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
-                                Text(chapter.first.page?.let { "Starts near page $it" } ?: "Extracted document passage", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelSmall)
+                                Text(chapter.second, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                                Text(chapter.first.page?.let { "Starts near page $it" } ?: "Extracted document passage", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
                             }
                         }
                     }
@@ -1372,8 +1392,8 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                 }
             }
             ToolCard {
-                Text("Audio summary text", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                Spacer(Modifier.height(7.dp)); Text(summary, color = DataCubeColors.TextSecondary)
+                Text("Audio summary text", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Spacer(Modifier.height(7.dp)); Text(summary, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
