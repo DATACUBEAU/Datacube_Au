@@ -4,7 +4,7 @@ import android.content.ContentResolver
 import android.net.Uri
 import android.webkit.MimeTypeMap
 import androidx.room.withTransaction
-import au.datacube.app.data.rag.LocalDocumentChatHistory
+import au.datacube.app.data.rag.LocalConversationThreads
 import java.io.File
 import java.util.UUID
 import java.security.MessageDigest
@@ -133,7 +133,7 @@ class LocalDocumentRepository(
             ExtractedTextStore.fileFor(filesDir, id).delete()
         }
         // Erase persisted chat turns and citations even after an interrupted prior deletion.
-        LocalDocumentChatHistory(filesDir).clear(id)
+        LocalConversationThreads(filesDir).clear(id)
     }
 
     companion object {
