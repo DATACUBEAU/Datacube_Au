@@ -42,6 +42,14 @@ Imported document bytes and extracted text remain inside app-private storage. Ro
 
 Kotlin, Jetpack Compose, MVVM, Coroutines/Flow, Room, WorkManager, Android Keystore, local-first document intelligence and provider-independent DIMR. Cloud inference should remain optional and consent-based.
 
+## Minimalist document-first navigation
+
+- Home and Documents are accessed through the AU / Document selector at the top; the bottom tab bar is retired.
+- Home keeps a source-grounded question composer above the system navigation area. Add/select a document before sending.
+- AU Chat, Smart Note, Prediction, Practice and Podcast are views within an imported document's workspace, not separate top-level destinations.
+- The Settings gear opens Settings, with a Profile action that displays account information without a new destination.
+- During browser sign-in, the temporary device pairing code can be copied to the clipboard and pasted into the highlighted approval field on the website.
+
 ## Build and verification
 
 The GitHub Actions workflow uses JDK 21 and Android SDK 35. From this directory:
