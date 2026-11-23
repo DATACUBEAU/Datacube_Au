@@ -455,7 +455,7 @@ private fun AuthenticatedWorkspace(
                     recentDocuments = documents,
                     onImportDocument = { multiPicker.launch(mimeTypes) },
                     onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
-                    onNavigateToStudy = { navController.navigate(Screen.Discs.route) },
+                    onNavigateToGist = { navController.navigate(Screen.Discs.route) },
                     onNavigateToChat = { navController.navigate(Screen.Documents.route) },
                     onOpenDocument = { id -> navController.navigate("document/$id") },
                     onSendPromptToDocument = { id, prompt ->
