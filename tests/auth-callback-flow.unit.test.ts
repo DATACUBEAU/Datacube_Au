@@ -68,6 +68,19 @@ async function main() {
     assert.match(settings, /\/auth\/callback\?next=/);
   });
 
+  await run('validated mobile transaction reaches approval before Conex access checks', () => {
+    const callback = readRepoFile('src', 'app', 'auth', 'callback', 'page.tsx');
+    const login = readRepoFile('src', 'app', 'login', 'page.tsx');
+    for (const [source, path] of [[callback, 'nextPath'], [login, 'safeRedirectPath']]) {
+      const mobileBranch = new RegExp(`if \\(isMobileDestination\\) \\{\\s+router\\.replace\\(${path}\\);`);
+      const mobileCheck = source.search(mobileBranch);
+      const conexCheck = source.indexOf("fetch('/conex/users?mode=access'");
+      assert.notEqual(mobileCheck, -1);
+      assert.notEqual(conexCheck, -1);
+      assert.ok(mobileCheck < conexCheck);
+    }
+  });
+
   await run('signed-out restore remains unauthenticated while Google-only entry stays available', () => {
     const stateTest = readRepoFile('tests', 'auth-state-hardening.unit.test.ts');
     const login = readRepoFile('src', 'app', 'login', 'page.tsx');

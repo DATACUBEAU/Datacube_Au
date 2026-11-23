@@ -178,7 +178,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ci-build-placeholder-service-role-key
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
           SUPABASE_ANON_KEY: ci-build-placeholder-anon-key
-        run: pnpm exec playwright test tests/auth-guard.spec.ts
+        run: pnpm exec playwright test tests/auth-guard.spec.ts tests/mobile-authorization.spec.ts
 
       - name: Billing plan refresh browser tests
         env:

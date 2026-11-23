@@ -1,5 +1,6 @@
 package au.datacube.app.ui.auth
 
+import android.net.Uri
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -29,6 +30,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
@@ -67,6 +69,7 @@ private val AuthBlue = Color(0xFF318BFF)
 @Composable
 fun AuthScreen(
     viewModel: AuthViewModel,
+    openBrowser: (Uri) -> Unit,
     getGoogleCredential: suspend (GetCredentialRequest) -> Credential
 ) {
     val state by viewModel.state.collectAsState()
@@ -118,16 +121,39 @@ fun AuthScreen(
             )
             Spacer(Modifier.height(19.dp))
             Text(
-                "Welcome back.",
+                "Yo, welcome.",
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.headlineLarge,
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(38.dp))
+            val pairingCode = state.pairingCode
+            val canContinue = state.sessionRestored && !state.isLoading
+            if (pairingCode != null) {
+                Text(
+                    "Enter this code on the DataCube AU website, then return here.",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    pairingCode,
+                    color = Color(0xFF92E0FF),
+                    letterSpacing = 4.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
+                Spacer(Modifier.height(18.dp))
+            }
             Button(
-                onClick = { viewModel.signInWithGoogle(getGoogleCredential) },
-                enabled = !state.isLoading,
+                onClick = {
+                    if (pairingCode == null) viewModel.startMobileSignIn(openBrowser)
+                    else viewModel.openPendingSignIn(openBrowser)
+                },
+                enabled = canContinue,
                 interactionSource = buttonInteraction,
                 modifier = Modifier.fillMaxWidth().height(56.dp).graphicsLayer {
                     val scale = buttonScale.value
@@ -144,7 +170,19 @@ fun AuthScreen(
                     CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
                     Spacer(Modifier.size(10.dp))
                 }
-                Text("Continue with Google", fontWeight = FontWeight.SemiBold)
+                Text(if (pairingCode == null) "Continue with Google" else "Open browser", fontWeight = FontWeight.SemiBold)
+            }
+            if (pairingCode == null) {
+                TextButton(onClick = { viewModel.signInWithGoogle(getGoogleCredential) }, enabled = canContinue) {
+                    Text("Use Google on this device", color = Color(0xFF92E0FF))
+                }
+            } else {
+                TextButton(onClick = { viewModel.resumeMobileSignIn() }, enabled = canContinue) {
+                    Text("Check sign-in", color = Color(0xFF92E0FF))
+                }
+                TextButton(onClick = viewModel::cancelMobileSignIn, enabled = canContinue) {
+                    Text("Cancel", color = Color(0xFFB8C9DE))
+                }
             }
             state.error?.let { message ->
                 Spacer(Modifier.height(18.dp))

@@ -7,10 +7,13 @@ import androidx.credentials.exceptions.ClearCredentialException
 import kotlinx.coroutines.CancellationException
 import au.datacube.app.BuildConfig
 import io.github.jan.supabase.auth.Auth
-import io.github.jan.supabase.auth.user.UserInfo
+import io.github.jan.supabase.auth.user.UserSession
 import io.github.jan.supabase.exceptions.RestException
 import io.github.jan.supabase.auth.providers.Google
 import io.github.jan.supabase.auth.providers.builtin.IDToken
+import kotlinx.datetime.Clock
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Native Android authentication backed by Supabase Auth.
@@ -23,6 +26,7 @@ class AuthRepository(
     authProvider: () -> Auth = { SupabaseClient.auth }
 ) {
     private val auth by lazy(authProvider)
+    private val displayAccountMutex = Mutex()
 
     constructor(store: AuthSessionStore, manager: CredentialManager) :
         this(store, { manager.clearCredentialState(ClearCredentialStateRequest()) })
@@ -56,13 +60,12 @@ class AuthRepository(
                 provider = Google
                 nonce = rawNonce
             }
-            val user = auth.currentUserOrNull()
-                ?: run {
-                    Log.w(TAG, "session_missing")
-                    auth.clearSession()
-                    return AuthResult.Error("Your account was selected, but sign-in didn’t finish. Please try again.")
-                }
-            saveDisplayAccount(user)
+            if (auth.currentUserOrNull() == null) {
+                Log.w(TAG, "session_missing")
+                auth.clearSession()
+                return AuthResult.Error("Your account was selected, but sign-in didn’t finish. Please try again.")
+            }
+            syncDisplayAccount()
             Log.i(TAG, "session_ready")
             AuthResult.Success
         } catch (error: RestException) {
@@ -96,7 +99,7 @@ class AuthRepository(
             }
         }
         return try {
-            saveDisplayAccount(null)
+            syncDisplayAccount()
             resetGoogleAccount()
             AuthResult.Success
         } catch (cancelled: CancellationException) {
@@ -108,18 +111,35 @@ class AuthRepository(
         }
     }
 
+    internal suspend fun completeMobileSignIn(session: UserSession, expectedUserId: String?): AuthResult {
+        val user = session.user
+        if (expectedUserId.isNullOrBlank() || user == null || user.id != expectedUserId ||
+            session.accessToken.isBlank() || session.refreshToken.isBlank() ||
+            !session.tokenType.equals("bearer", ignoreCase = true) ||
+            session.expiresIn <= 0 || session.expiresAt <= Clock.System.now()
+        ) {
+            Log.w(TAG, "mobile_session_invalid")
+            return AuthResult.Error("Sign-in couldn’t finish. Please try again.")
+        }
+
+        return try {
+            auth.importSession(session, autoRefresh = true)
+            syncDisplayAccount()
+            Log.i(TAG, "mobile_session_ready")
+            AuthResult.Success
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            Log.w(TAG, "mobile_session_import_failed")
+            AuthResult.Error("Sign-in couldn’t finish. Please try again.")
+        }
+    }
+
     suspend fun restoreSession(): Boolean {
         return try {
             if (configurationError() != null) return false
             auth.awaitInitialization()
-            val user = auth.currentUserOrNull()
-            if (user != null) {
-                saveDisplayAccount(user)
-                true
-            } else {
-                saveDisplayAccount(null)
-                false
-            }
+            auth.currentUserOrNull() != null
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
@@ -130,9 +150,9 @@ class AuthRepository(
 
     // These preferences are display metadata. The SDK has already persisted the
     // authenticated session in the Keystore-backed session manager.
-    private suspend fun saveDisplayAccount(user: UserInfo?) {
+    internal suspend fun syncDisplayAccount() {
         try {
-            sessionStore.persist(user)
+            displayAccountMutex.withLock { sessionStore.persist(auth.currentUserOrNull()) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

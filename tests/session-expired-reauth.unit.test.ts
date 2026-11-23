@@ -4,8 +4,10 @@ import path from 'node:path';
 import {
   buildLoginReauthPath,
   buildSessionExpiredPath,
+  isMobileAuthorizationDestination,
   isPublicAuthPath,
   sanitizeLocalRedirectPath,
+  sanitizeRedirectTarget,
 } from '../src/lib/auth/redirects.js';
 
 let failed = 0;
@@ -43,6 +45,34 @@ async function main() {
       buildLoginReauthPath('/dashboard/knowledge'),
       '/login?redirectTo=%2Fdashboard%2Fknowledge&reason=session_expired',
     );
+  });
+
+  await run('mobile OAuth redirect requires exactly one opaque request ID', () => {
+    const requestId = 'a'.repeat(43);
+    const approval = `/mobile-auth/approve?request=${requestId}`;
+    const returnPath = `/mobile-auth/return?request=${requestId}`;
+    assert.equal(sanitizeLocalRedirectPath(approval, '/'), approval);
+    assert.equal(sanitizeLocalRedirectPath(returnPath, '/'), returnPath);
+    assert.equal(sanitizeLocalRedirectPath(`/mobile-auth/approve/?request=${requestId}`, '/'), approval);
+    assert.equal(sanitizeRedirectTarget(`https://datacube.example${approval}`, 'https://datacube.example'), approval);
+    assert.equal(isMobileAuthorizationDestination(approval), true);
+    assert.equal(isMobileAuthorizationDestination(returnPath), true);
+    assert.equal(isMobileAuthorizationDestination('/mobile-auth/complete'), false);
+
+    for (const invalid of [
+      '/mobile-auth/approve',
+      '/mobile-auth/approve?request=short',
+      '/mobile-auth/return?request=short',
+      `${approval}&request=${requestId}`,
+      `${approval}&pairingCode=ABCD2345`,
+      `${approval}#fragment`,
+      `//evil.example${approval}`,
+    ]) assert.equal(sanitizeLocalRedirectPath(invalid, '/'), '/', invalid);
+
+    const legacy = '/mobile-auth/complete?state=state&code_challenge=challenge';
+    assert.equal(sanitizeLocalRedirectPath(legacy, '/'), legacy);
+    assert.equal(isPublicAuthPath('/mobile-auth/approve'), true);
+    assert.equal(isPublicAuthPath('/mobile-auth/return'), true);
   });
 
   await run('public auth routes remain public while unauthenticated', () => {

@@ -3,6 +3,7 @@ package au.datacube.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,6 +11,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,14 +24,15 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.credentials.Credential
 import androidx.credentials.CredentialManager
 import androidx.credentials.GetCredentialRequest
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.doOnPreDraw
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -50,25 +53,31 @@ import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.study.StudyScreen
 import au.datacube.app.ui.theme.DataCubeTheme
 import au.datacube.app.work.LocalJobScheduler
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private val authViewModel: AuthViewModel by viewModels()
     private val documentsViewModel: DataCubeViewModel by viewModels()
+    private var mobileSignInRequest: String? = null
+    private var ignoreViewIntentOnResume = false
+    private var workspaceRecoveryStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-
-        // Recover any locally interrupted jobs on startup.
-        lifecycleScope.launch {
-            runCatching { LocalJobScheduler(applicationContext).enqueueRecoverable() }
-        }
+        receiveMobileSignInIntent(intent, "cold")
 
         setContent {
             DataCubeTheme {
-                DataCubeRoot(authViewModel, documentsViewModel) { request ->
+                DataCubeRoot(
+                    authViewModel,
+                    { documentsViewModel },
+                    openBrowser = ::openBrowser,
+                    onWorkspaceDrawn = ::recoverWorkspaceJobs
+                ) { request ->
                     CredentialManager.create(this@MainActivity)
                         .getCredential(this@MainActivity, request).credential
                 }
@@ -76,7 +85,62 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        receiveMobileSignInIntent(intent, "warm")
+    }
 
+    override fun onResume() {
+        super.onResume()
+        val request = mobileSignInRequest
+        val ignoreIntent = ignoreViewIntentOnResume
+        mobileSignInRequest = null
+        ignoreViewIntentOnResume = false
+        if (!ignoreIntent) authViewModel.resumeMobileSignIn(request)
+    }
+
+    override fun onPause() {
+        authViewModel.pauseMobileSignIn()
+        super.onPause()
+    }
+
+    private fun receiveMobileSignInIntent(intent: Intent?, launch: String) {
+        if (intent?.action != Intent.ACTION_VIEW) {
+            ignoreViewIntentOnResume = false
+            return
+        }
+        val request = mobileSignInRequestId(intent)
+        if (request == null) {
+            ignoreViewIntentOnResume = mobileSignInRequest == null
+            Log.i(TAG, "mobile_return_ignored launch=$launch")
+            return
+        }
+        mobileSignInRequest = request
+        ignoreViewIntentOnResume = false
+        Log.i(TAG, "mobile_return_received launch=$launch")
+    }
+
+    private fun openBrowser(uri: Uri) {
+        startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+    }
+
+    private fun recoverWorkspaceJobs() {
+        if (workspaceRecoveryStarted) return
+        workspaceRecoveryStarted = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                LocalJobScheduler(applicationContext).enqueueRecoverable()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                Log.w(TAG, "local_job_recovery_failed")
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "DataCubeStartup"
+    }
 }
 
 // ── Navigation destinations ───────────────────────────────────────────────────
@@ -111,26 +175,30 @@ private val bottomNavItems = listOf(
 @Composable
 internal fun DataCubeRoot(
     authViewModel: AuthViewModel,
-    documentsViewModel: DataCubeViewModel,
+    documentsViewModel: () -> DataCubeViewModel,
+    openBrowser: (Uri) -> Unit = {},
+    onWorkspaceDrawn: () -> Unit = {},
     getGoogleCredential: suspend (GetCredentialRequest) -> Credential
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
-    // Loading / session-restore gate
-    if (!authState.sessionRestored) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
+    ReportDrawnWhen { authState.sessionRestored && !authState.isLoading }
 
-    // If not authenticated, show auth screen
-    if (authState.user == null) {
-        AuthScreen(viewModel = authViewModel, getGoogleCredential = getGoogleCredential)
+    if (!authState.sessionRestored || authState.user == null) {
+        AuthScreen(
+            viewModel = authViewModel,
+            openBrowser = openBrowser,
+            getGoogleCredential = getGoogleCredential
+        )
         return
     }
 
     key(authState.user?.id) {
-        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel)
+        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel())
+        val view = LocalView.current
+        DisposableEffect(view) {
+            val listener = view.doOnPreDraw { view.post { onWorkspaceDrawn() } }
+            onDispose { listener.removeListener() }
+        }
     }
 }
 

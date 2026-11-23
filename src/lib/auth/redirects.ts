@@ -1,4 +1,19 @@
 const AUTH_PUBLIC_PREFIXES = ['/login', '/signup', '/auth/callback', '/session-expired'] as const;
+const MOBILE_AUTH_REQUEST_ID = /^[A-Za-z0-9_-]{43}$/;
+export const MOBILE_AUTH_APPROVAL_PATH = '/mobile-auth/approve';
+export const MOBILE_AUTH_RETURN_PATH = '/mobile-auth/return';
+
+export function isMobileAuthorizationPage(pathname: string): boolean {
+  const normalized = pathname.replace(/\/$/, '');
+  return normalized === MOBILE_AUTH_APPROVAL_PATH || normalized === MOBILE_AUTH_RETURN_PATH;
+}
+
+export function readMobileAuthorizationRequest(search: Pick<URLSearchParams, 'get' | 'toString'>): string | null {
+  const requestId = search.get('request');
+  return requestId && MOBILE_AUTH_REQUEST_ID.test(requestId) && search.toString() === `request=${requestId}`
+    ? requestId
+    : null;
+}
 
 function normalizeCandidatePath(value: string | null | undefined): string {
   return String(value || '').trim();
@@ -6,7 +21,8 @@ function normalizeCandidatePath(value: string | null | undefined): string {
 
 export function isPublicAuthPath(pathname: string | null | undefined): boolean {
   const normalized = normalizeCandidatePath(pathname).replace(/\/$/, '') || '/';
-  return AUTH_PUBLIC_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
+  return isMobileAuthorizationPage(normalized)
+    || AUTH_PUBLIC_PREFIXES.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
 }
 
 export function sanitizeLocalRedirectPath(
@@ -20,12 +36,23 @@ export function sanitizeLocalRedirectPath(
   try {
     const parsed = new URL(candidate, 'https://datacube.local');
     if (parsed.origin !== 'https://datacube.local') return fallback;
+    if (isMobileAuthorizationPage(parsed.pathname)) {
+      const requestId = readMobileAuthorizationRequest(parsed.searchParams);
+      return requestId && !parsed.hash ? `${parsed.pathname.replace(/\/$/, '')}?request=${requestId}` : fallback;
+    }
     const nextPath = `${parsed.pathname}${parsed.search}${parsed.hash}`;
     if (isPublicAuthPath(parsed.pathname)) return fallback;
     return nextPath || fallback;
   } catch {
     return fallback;
   }
+}
+
+export function isMobileAuthorizationDestination(path: string): boolean {
+  return [MOBILE_AUTH_APPROVAL_PATH, MOBILE_AUTH_RETURN_PATH].some((pathname) => {
+    const prefix = `${pathname}?request=`;
+    return path.startsWith(prefix) && MOBILE_AUTH_REQUEST_ID.test(path.slice(prefix.length));
+  });
 }
 
 export function buildSessionExpiredPath(next: string | null | undefined): string {

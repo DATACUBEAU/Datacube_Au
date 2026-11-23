@@ -6,6 +6,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import { ToastAction } from '@/components/ui/toast';
 import { CommunityPopup } from '@/components/community-popup';
 import { AUTH_SESSION_EXPIRED_EVENT } from '@/lib/auth/session-expiry-events';
+import { isPublicAuthPath } from '@/lib/auth/redirects';
 
 export function GlobalListeners() {
   const { toast } = useToast();
@@ -34,7 +35,7 @@ export function GlobalListeners() {
   useEffect(() => {
     const handleExpired = (event: Event) => {
       if (process.env.NODE_ENV !== 'development' && process.env.NEXT_PUBLIC_DCAU_AUTH_DEBUG !== '1') return;
-      if (pathname?.startsWith('/login') || pathname?.startsWith('/signup') || pathname?.startsWith('/session-expired')) return;
+      if (isPublicAuthPath(pathname)) return;
       const detail = (event as CustomEvent)?.detail || {};
       console.warn('[auth] session expired', {
         source: detail.source || null,
@@ -46,9 +47,5 @@ export function GlobalListeners() {
     return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpired as EventListener);
   }, [pathname]);
 
-  return (
-    <>
-      <CommunityPopup />
-    </>
-  );
+  return isPublicAuthPath(pathname) ? null : <CommunityPopup />;
 }

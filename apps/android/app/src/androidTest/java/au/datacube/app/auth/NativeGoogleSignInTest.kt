@@ -109,7 +109,7 @@ class NativeGoogleSignInTest {
     private fun mount(repo: AuthRepository, picker: suspend (GetCredentialRequest) -> Credential): AuthViewModel {
         val model = ui.runOnUiThread { AuthViewModel(app, repo) }
         val documents = ui.runOnUiThread { DataCubeViewModel(app) }
-        ui.setContent { DataCubeTheme { DataCubeRoot(model, documents, picker) } }
+        ui.setContent { DataCubeTheme { DataCubeRoot(model, { documents }, getGoogleCredential = picker) } }
         ui.waitUntil(10_000) { model.state.value.sessionRestored }
         return model
     }
@@ -120,8 +120,9 @@ class NativeGoogleSignInTest {
 
     @Test fun pickerExchangeHomeRestorationAndLogout() {
         mount(repository(), ::credential)
-        val button = ui.onNodeWithText("Continue with Google")
+        val button = ui.onNodeWithText("Use Google on this device")
         button.assertIsDisplayed()
+        ui.onNodeWithText("Continue with Google").assertIsDisplayed()
         saveImage("login", ui.onRoot().captureToImage().asAndroidBitmap())
         button.performClick()
         waitForText("Active Documents")
@@ -149,10 +150,10 @@ class NativeGoogleSignInTest {
             if (++attempts == 1) throw GetCredentialCancellationException()
             credential(request)
         }
-        ui.onNodeWithText("Continue with Google").performClick()
+        ui.onNodeWithText("Use Google on this device").performClick()
         waitForText("Couldn’t sign you in", substring = true)
         assertEquals(0, exchanged)
-        ui.onNodeWithText("Continue with Google").performClick()
+        ui.onNodeWithText("Use Google on this device").performClick()
         waitForText("Active Documents")
         assertEquals(1, exchanged)
     }
@@ -169,14 +170,14 @@ class NativeGoogleSignInTest {
 
     @Test fun unexpectedCredentialShowsErrorWithoutExchange() {
         mount(repository()) { androidx.credentials.CustomCredential("fixture.unexpected", android.os.Bundle()) }
-        ui.onNodeWithText("Continue with Google").performClick()
+        ui.onNodeWithText("Use Google on this device").performClick()
         waitForText("unexpected response", substring = true)
         assertEquals(0, exchanged)
     }
 
     @Test fun incompleteExchangeCannotLeaveAnInvisibleSession() {
         mount(repository(includeUser = false), ::credential)
-        ui.onNodeWithText("Continue with Google").performClick()
+        ui.onNodeWithText("Use Google on this device").performClick()
         waitForText("Your account was selected", substring = true)
         assertEquals(1, exchanged)
         assertNull(runBlocking { storage.loadSession() })
@@ -184,7 +185,7 @@ class NativeGoogleSignInTest {
 
     @Test fun rejectedExchangeShowsFeedbackAndKeepsLogin() {
         mount(repository(reject = true), ::credential)
-        ui.onNodeWithText("Continue with Google").performClick()
+        ui.onNodeWithText("Use Google on this device").performClick()
         waitForText("couldn’t verify", substring = true)
         ui.onNodeWithText("Continue with Google").assertIsDisplayed()
         assertEquals(1, exchanged)

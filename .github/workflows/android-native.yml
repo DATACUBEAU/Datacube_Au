@@ -20,16 +20,21 @@ on:
         description: Use the persistent personal debug signer
         type: boolean
         default: false
+      startup_benchmark:
+        description: Compare startup against the PR 47 Android baseline
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-native-${{ github.head_ref || github.ref_name }}${{ github.event_name == 'workflow_dispatch' && inputs.personal_test_signer && '-personal-signing' || '' }}
+  group: android-native-${{ github.head_ref || github.ref_name }}${{ github.event_name == 'workflow_dispatch' && (inputs.personal_test_signer && '-personal-signing' || inputs.startup_benchmark && '-startup' || '') || '' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || !inputs.startup_benchmark || inputs.personal_test_signer
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -228,5 +233,86 @@ jobs:
             apps/android/app/build/diagnostics/**
             apps/android/app/build/reports/androidTests/connected/**
             apps/android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  startup-benchmark:
+    if: github.event_name == 'workflow_dispatch' && inputs.startup_benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/android
+    env:
+      STARTUP_BASELINE: 1ef561115b09409ab65d4d69e814488f0ff5435c
+      SUPABASE_URL: https://startup-fixture.invalid
+      SUPABASE_ANON_KEY: startup-fixture-public
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
+
+      - name: Build baseline and candidate with isolated auth settings
+        run: |
+          baseline="$RUNNER_TEMP/startup-baseline"
+          mkdir -p "$baseline"
+          git archive "$STARTUP_BASELINE" apps/android | tar -xf - -C "$baseline"
+          fixture=app/src/androidTest/java/au/datacube/app/auth/StartupSessionFixture.kt
+          cp "$fixture" "$baseline/apps/android/$fixture"
+          (cd "$baseline/apps/android" && bash ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon)
+          bash ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :startupProbe:assembleDebug --no-daemon
+
+      - name: Enable KVM for startup measurements
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          test -w /dev/kvm
+
+      - name: Compare Android startup on one emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          working-directory: apps/android
+          profile: pixel_2
+          emulator-boot-timeout: 1200
+          disable-animations: true
+          script: >-
+            python3 startupProbe/compare.py
+            --baseline-apk "$RUNNER_TEMP/startup-baseline/apps/android/app/build/outputs/apk/debug/app-debug.apk"
+            --baseline-test-apk "$RUNNER_TEMP/startup-baseline/apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+            --final-apk app/build/outputs/apk/debug/app-debug.apk
+            --final-test-apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            --probe-apk startupProbe/build/outputs/apk/debug/startupProbe-debug.apk
+            --output "$RUNNER_TEMP/datacube-startup-report"
+
+      - name: Record startup results
+        if: always()
+        run: |
+          report="$RUNNER_TEMP/datacube-startup-report/startup.md"
+          if [[ -f "$report" ]]; then
+            printf 'Baseline `%s` and candidate `%s`\n\n' "$STARTUP_BASELINE" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload startup measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-startup-measurements
+          path: ${{ runner.temp }}/datacube-startup-report/
           if-no-files-found: ignore
           retention-days: 7

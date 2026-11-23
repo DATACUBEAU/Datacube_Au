@@ -19,6 +19,9 @@ import kotlinx.coroutines.flow.Flow
 import au.datacube.app.data.LocalDocument
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -30,12 +33,12 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val MAX_DOCUMENT_PREVIEW_CHARS = 48_000
     }
-    private val database: DataCubeDatabase = (app as DataCubeApp).database
-    private val repository = LocalDocumentRepository(database, app.filesDir)
-    private val jobScheduler = LocalJobScheduler(app)
+    private val database: DataCubeDatabase get() = getApplication<DataCubeApp>().database
+    private val repository by lazy { LocalDocumentRepository(database, app.filesDir) }
+    private val jobScheduler by lazy { LocalJobScheduler(app) }
 
     val documents: StateFlow<List<LocalDocumentProcessing>> =
-        database.documents().observeAllWithProcessing().stateIn(
+        flow { emitAll(database.documents().observeAllWithProcessing()) }.flowOn(Dispatchers.IO).stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
             emptyList()
@@ -102,7 +105,7 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     val collections: StateFlow<List<LocalCollectionWithCount>> =
-        database.collections().observeAllWithCount().stateIn(
+        flow { emitAll(database.collections().observeAllWithCount()) }.flowOn(Dispatchers.IO).stateIn(
             viewModelScope,
             SharingStarted.WhileSubscribed(5_000),
             emptyList()
