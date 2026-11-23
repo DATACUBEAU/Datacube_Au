@@ -13,6 +13,7 @@ import au.datacube.app.data.PdfDocumentTextExtractor
 import au.datacube.app.data.PlainTextDocumentExtractor
 import au.datacube.app.data.TextExtractionRejectedException
 import au.datacube.app.notifications.LocalNotificationService
+import au.datacube.app.data.rag.LexicalIndexWorker
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -50,7 +51,8 @@ class DocumentTextExtractionWorker(
 
         val notifications = LocalNotificationService(applicationContext)
         var trackedDocumentId: String? = null
-        return try {
+        var indexDocumentId: String? = null
+        val outcome = try {
             val documentId = JSONObject(job.payloadJson)
                 .optString("documentId")
                 .takeIf { it.isNotBlank() }
@@ -103,6 +105,7 @@ class DocumentTextExtractionWorker(
                 )
             } else {
                 notifications.showTextReady(documentId)
+                indexDocumentId = documentId
             }
             Result.success()
         } catch (cancelled: CancellationException) {
@@ -140,6 +143,12 @@ class DocumentTextExtractionWorker(
         } finally {
             trackedDocumentId?.let(notifications::clearDocumentProgress)
         }
+        // Start follow-up indexing only after extraction clears its own
+        // notification; the two workers must not cancel each other's status.
+        indexDocumentId?.let { id ->
+            runCatching { LexicalIndexWorker.schedule(applicationContext, id) }
+        }
+        return outcome
     }
 
     companion object {

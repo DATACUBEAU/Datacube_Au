@@ -1,5 +1,6 @@
 package au.datacube.app.data.rag
 
+import android.content.Context
 import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.data.LocalDocument
 import java.io.File
@@ -23,7 +24,11 @@ data class CrossDocumentEvidence(
  * Documents are evaluated sequentially to limit phone memory and thermal load.
  * A larger production index can replace this search contract later.
  */
-class CrossDocumentSearch(private val filesDir: File) {
+class CrossDocumentSearch(
+    private val filesDir: File,
+    private val appContext: Context? = null
+) {
+    constructor(context: Context) : this(context.filesDir, context.applicationContext)
     suspend fun search(
         documents: List<LocalDocument>,
         query: String,
@@ -36,10 +41,32 @@ class CrossDocumentSearch(private val filesDir: File) {
             .filter { it.length >= 4 && it !in STOP_WORDS }.distinct()
         if (tokens.isEmpty()) return@withContext emptyList()
 
+        val persistent = appContext?.let { LocalPassageIndex(it) }
+        try {
         for (document in documents) {
             currentCoroutineContext().ensureActive()
             val file = ExtractedTextStore.fileFor(filesDir, document.id)
             if (!file.isFile || file.length() <= 0L) continue
+            // FTS4 indexes cover the complete extracted file. Older documents
+            // without an index keep the original bounded keyword fallback.
+            val indexed = runCatching {
+                if (persistent?.hasCurrent(document.id, file) == true)
+                    persistent.search(document.id, query, file, limit = 4)
+                else null
+            }.getOrNull()
+            if (indexed != null) {
+                indexed.forEach { passage ->
+                    val titleHits = tokens.count { document.name.lowercase().contains(it) }
+                    result += CrossDocumentEvidence(
+                        documentId = document.id,
+                        documentName = document.name,
+                        page = passage.page,
+                        text = passage.text.take(1100),
+                        score = passage.score + titleHits * 4
+                    )
+                }
+                continue
+            }
             val preview = try {
                 file.bufferedReader(Charsets.UTF_8).use { reader ->
                     val buffer = CharArray(MAX_CHARACTERS_PER_DOCUMENT)
@@ -72,6 +99,9 @@ class CrossDocumentSearch(private val filesDir: File) {
             compareByDescending<CrossDocumentEvidence> { it.score }
                 .thenBy { it.documentName }
         ).distinctBy { it.documentId to it.text }.take(limit)
+        } finally {
+            persistent?.close()
+        }
     }
 
     companion object {
