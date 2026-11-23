@@ -30,6 +30,7 @@ import au.datacube.app.data.rag.LocalSemanticSearch
 import androidx.work.WorkInfo
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 private data class SourceSnippet(val text: String, val page: Int?)
 private data class StudyQuestion(val prompt: String, val reference: String, val page: Int?, val topic: String)
