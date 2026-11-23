@@ -51,7 +51,7 @@ fun ModelsScreen(
                 item(key = spec.id) { ModelCard(spec, { installed(spec.id) }, onGet, onImport) }
             }
             item {
-                Text("Model files remain on your device. Downloading does not enable generation or semantic search until their local runtimes are connected.",
+                Text("Models stay on your device. EmbeddingGemma 2 enables semantic retrieval when indexing finishes. Chat generation models are not active yet.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(4.dp))
             }
