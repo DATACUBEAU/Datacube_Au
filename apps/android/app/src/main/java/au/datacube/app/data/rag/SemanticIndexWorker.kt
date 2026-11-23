@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.ExtractedTextStore
+import au.datacube.app.notifications.LocalNotificationService
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,7 @@ class SemanticIndexWorker(context: Context, params: WorkerParameters) : Coroutin
             return@withContext Result.failure(workDataOf(KEY_ERROR to "Download the EmbeddingGemma 2 search model."))
         }
         val db = DataCubeDatabase.get(applicationContext)
+        val notifications = LocalNotificationService(applicationContext)
         try {
             checkNotNull(db.documents().find(id)) { "Document no longer exists." }
             val extracted = ExtractedTextStore.fileFor(applicationContext.filesDir, id)
@@ -39,6 +41,7 @@ class SemanticIndexWorker(context: Context, params: WorkerParameters) : Coroutin
             // Do not silently truncate a large source. Streaming indexing follows in optimization.
             check(chunks.size < 8_000) { "This document needs the large-document indexing pipeline." }
             val vectors = ArrayList<SemanticVectorChunk>(chunks.size)
+            notifications.showDocumentIndexing(id, 0, chunks.size)
             var size: Int? = null
             chunks.forEachIndexed { index, chunk ->
                 currentCoroutineContext().ensureActive()
@@ -56,7 +59,9 @@ class SemanticIndexWorker(context: Context, params: WorkerParameters) : Coroutin
                     vectorBytes = DenseVectorCodec.encode(embedding)
                 )
                 if (index % 10 == 0 || index == chunks.lastIndex) {
-                    setProgress(workDataOf(KEY_PROGRESS to ((index + 1) * 100 / chunks.size), KEY_COUNT to (index + 1)))
+                    val done = index + 1
+                    setProgress(workDataOf(KEY_PROGRESS to (done * 100 / chunks.size), KEY_COUNT to done))
+                    notifications.showDocumentIndexing(id, done, chunks.size)
                 }
             }
             currentCoroutineContext().ensureActive()
@@ -66,11 +71,14 @@ class SemanticIndexWorker(context: Context, params: WorkerParameters) : Coroutin
                 db.semanticChunks().clear(id, LocalEmbeddingRuntime.MODEL_ID)
                 db.semanticChunks().insertAll(vectors)
             }
+            notifications.showIndexComplete(id)
             Result.success(workDataOf(KEY_COUNT to vectors.size))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
             Result.failure(workDataOf(KEY_ERROR to (error.message ?: "Local indexing failed.")))
+        } finally {
+            notifications.clearDocumentProgress(id)
         }
     }
 
