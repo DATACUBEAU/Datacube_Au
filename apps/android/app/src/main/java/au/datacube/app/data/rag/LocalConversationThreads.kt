@@ -85,6 +85,30 @@ class LocalConversationThreads(private val filesDir: File) {
         }
     }
 
+    /**
+     * Deleting an imported file must not leave its extracted text in Discs
+     * citations or generated reply history. Other unrelated chats survive.
+     */
+    suspend fun redactDeletedDocument(documentId: String) {
+        val state = list("global")
+        val histories = LocalDocumentChatHistory(filesDir)
+        state.threads.forEach { thread ->
+            val key = historyKey("global", thread.id)
+            val turns = histories.load(key)
+            if (turns.none { turn -> turn.matches.any { it.documentId == documentId } }) return@forEach
+            histories.save(key, turns.map { turn ->
+                if (turn.matches.any { it.documentId == documentId }) {
+                    turn.copy(
+                        answer = "This reply was removed because a supporting document was deleted.",
+                        matches = emptyList(),
+                        steps = emptyList(),
+                        interrupted = false
+                    )
+                } else turn
+            })
+        }
+    }
+
     private fun read(ownerId: String): ConversationThreadIndex {
         val file = fileFor(ownerId)
         if (!file.isFile || file.length() > 32_000L) return initial()
