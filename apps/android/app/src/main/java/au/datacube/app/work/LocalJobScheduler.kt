@@ -50,6 +50,10 @@ class LocalJobScheduler(context: Context) {
         )
     }
 
+    fun cancel(jobId: String) {
+        workManager.cancelUniqueWork(UNIQUE_WORK_PREFIX + jobId)
+    }
+
     suspend fun enqueueRecoverable() {
         database.documents().findTextDocumentsMissingExtraction().forEach { document ->
             val now = System.currentTimeMillis()
