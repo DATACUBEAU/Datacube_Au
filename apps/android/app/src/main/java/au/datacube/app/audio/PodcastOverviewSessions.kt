@@ -8,9 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
-import au.datacube.app.data.rag.RagEvidence
-import au.datacube.app.data.rag.RagTextChunker
-import au.datacube.app.data.rag.StudyContentQuality
+import au.datacube.app.data.ExtractedTextStore
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
@@ -61,14 +59,16 @@ class PodcastOverviewSession(private val documentId: String) {
         val app = context.applicationContext
         job = scope.launch {
             try {
-                // Bound input and retrieval to avoid duplicating huge PDFs in RAM.
-                val source = extractedText.take(130_000)
-                stage = "Finding useful study passages"
-                val evidence = withContext(Dispatchers.Default) {
-                    val chunks = RagTextChunker(maxChunks = 210).chunk(documentId, source)
-                    StudyContentQuality.chooseOverview(
-                        chunks.map { RagEvidence(it.text, it.page) }, limit = 8
-                    ).filter { StudyContentQuality.score(it.text) > 0 }
+                // The workspace only holds a 48k-character preview. Sample
+                // small evidence windows across the full extracted source,
+                // instead of claiming the first few pages summarize the book.
+                stage = "Finding useful passages throughout the document"
+                val evidence = withContext(Dispatchers.IO) {
+                    PodcastSourceSampler.sample(
+                        sourceFile = ExtractedTextStore.fileFor(app.filesDir, documentId),
+                        documentId = documentId,
+                        preview = extractedText
+                    )
                 }
                 check(evidence.size >= 2) {
                     "This document does not contain enough readable study content for a two-speaker podcast."
