@@ -55,6 +55,7 @@ internal class MobileAuthorizationResult(
 )
 
 internal class MobileAuthorizationUnavailable : Exception()
+internal class MobileAuthorizationHttpFailure(val statusCode: Int) : Exception()
 
 internal interface MobileAuthorizationGateway {
     suspend fun create(challenge: String): MobileAuthorizationCreated
@@ -78,7 +79,7 @@ internal class MobileAuthorizationClient(
         httpClient ?: HttpClient(Android) {
             followRedirects = false
             install(HttpTimeout) {
-                connectTimeoutMillis = 4_000
+                connectTimeoutMillis = 10_000
             }
         }
     }
@@ -91,7 +92,7 @@ internal class MobileAuthorizationClient(
         val payload = request(buildJsonObject {
             put("action", "create")
             put("challenge", challenge)
-        }, timeoutMillis = 18_000)
+        }, timeoutMillis = 30_000)
         return MobileAuthorizationCreated(
             requestId = requireNotNull(payload["requestId"]?.jsonPrimitive?.contentOrNull)
                 .also { require(MobileAuthorizationRequestId.matches(it)) },
@@ -142,10 +143,11 @@ internal class MobileAuthorizationClient(
             }
             setBody(body.toString())
         }
-        when (response.status.value) {
+        val httpStatus = response.status.value
+        when (httpStatus) {
             401, 404, 410 -> throw MobileAuthorizationUnavailable()
         }
-        check(response.status.value in 200..299)
+        if (httpStatus !in 200..299) throw MobileAuthorizationHttpFailure(httpStatus)
         json.parseToJsonElement(response.bodyAsText()).jsonObject.also {
             check(it["ok"]?.jsonPrimitive?.booleanOrNull == true)
         }

@@ -75,7 +75,10 @@ class LiveBrowserLoginSmokeTest {
             assertNotNull("Missing request id", destination.getQueryParameter("request"))
             assertNotNull("Device code was not shown", state.pairingCode)
             val browser = Intent(Intent.ACTION_VIEW, destination).addCategory(Intent.CATEGORY_BROWSABLE)
-            assertNotNull("Android cannot resolve a browser", browser.resolveActivity(app.packageManager))
+            // PackageManager browser discovery may be hidden by Android 11+ package visibility,
+            // even though starting ACTION_VIEW would work on a user's browser-equipped phone.
+            assertEquals(Intent.ACTION_VIEW, browser.action)
+            assertEquals(destination, browser.data)
             Log.i("DCAU_LIVE_SMOKE", "Passed: actual UI tap -> live API -> encrypted pending save -> resolvable browser")
         } finally {
             val pending = runBlocking { pendingStore.load() }

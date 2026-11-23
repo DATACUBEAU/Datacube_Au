@@ -3,6 +3,7 @@ package au.datacube.app.ui.auth
 import android.app.Application
 import android.net.Uri
 import android.util.Log
+import java.io.IOException
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -15,6 +16,7 @@ import au.datacube.app.auth.MobileAuthorizationLifetimeMillis
 import au.datacube.app.auth.MobileAuthorizationRequestId
 import au.datacube.app.auth.MobileAuthorizationStatus
 import au.datacube.app.auth.MobileAuthorizationUnavailable
+import au.datacube.app.auth.MobileAuthorizationHttpFailure
 import au.datacube.app.auth.PendingMobileAuthorization
 import au.datacube.app.auth.PendingMobileAuthorizationStore
 import au.datacube.app.auth.mobileAuthorizationChallenge
@@ -115,6 +117,7 @@ class AuthViewModel internal constructor(
         if (!canStartSignIn()) return
         _state.value = _state.value.copy(isLoading = true, error = null)
         viewModelScope.launch {
+            var stage = "api"
             try {
                 val verifier = newMobileAuthorizationVerifier()
                 val created = mobileAuthorization.create(mobileAuthorizationChallenge(verifier))
@@ -126,15 +129,27 @@ class AuthViewModel internal constructor(
                     minOf(created.expiresAt, currentTime + MobileAuthorizationLifetimeMillis)
                 )
                 check(request.expiresAt > currentTime)
+                stage = "secure_storage"
                 pendingStore.save(request)
                 pending = request
                 _state.value = _state.value.copy(isLoading = false, pairingCode = request.pairingCode)
                 openPendingSignIn(openBrowser)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
-                Log.w(TAG, "mobile_request_creation_failed")
-                _state.value = _state.value.copy(isLoading = false, error = "Couldn’t start sign-in. Check your connection and try again.")
+            } catch (failure: Exception) {
+                val status = (failure as? MobileAuthorizationHttpFailure)?.statusCode
+                val reason = failure.javaClass.simpleName
+                // No credentials, request identifiers, device verifiers or raw exception bodies in logs.
+                Log.w(TAG, "mobile_request_creation_failed stage=$stage reason=$reason status=${status ?: 0}")
+                val feedback = when {
+                    stage == "secure_storage" -> "Couldn’t securely save sign-in (STORAGE). Restart the app and retry."
+                    status != null -> "Sign-in server returned HTTP $status. Please retry or report this code."
+                    failure is MobileAuthorizationUnavailable -> "Sign-in server rejected the request (AUTH). Try again."
+                    failure is IOException || reason.contains("Timeout", ignoreCase = true) ->
+                        "Couldn’t reach the sign-in server (NETWORK). Try Wi-Fi or mobile data."
+                    else -> "Couldn’t start sign-in (APP). Please report this code."
+                }
+                _state.value = _state.value.copy(isLoading = false, error = feedback)
             }
         }
     }
