@@ -51,7 +51,8 @@ class DocumentTextExtractionWorker(
 
         val notifications = LocalNotificationService(applicationContext)
         var trackedDocumentId: String? = null
-        return try {
+        var indexDocumentId: String? = null
+        val outcome = try {
             val documentId = JSONObject(job.payloadJson)
                 .optString("documentId")
                 .takeIf { it.isNotBlank() }
@@ -104,8 +105,7 @@ class DocumentTextExtractionWorker(
                 )
             } else {
                 notifications.showTextReady(documentId)
-                // Non-blocking keyword index: full extracted text, no AI model required.
-                LexicalIndexWorker.schedule(applicationContext, documentId)
+                indexDocumentId = documentId
             }
             Result.success()
         } catch (cancelled: CancellationException) {
@@ -143,6 +143,12 @@ class DocumentTextExtractionWorker(
         } finally {
             trackedDocumentId?.let(notifications::clearDocumentProgress)
         }
+        // Start follow-up indexing only after extraction clears its own
+        // notification; the two workers must not cancel each other's status.
+        indexDocumentId?.let { id ->
+            runCatching { LexicalIndexWorker.schedule(applicationContext, id) }
+        }
+        return outcome
     }
 
     companion object {
