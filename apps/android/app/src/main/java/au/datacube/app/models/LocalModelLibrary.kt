@@ -12,7 +12,7 @@ import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-enum class ModelRole { EMBEDDING, GENERATION }
+enum class ModelRole { EMBEDDING, GENERATION, VOICE }
 
 /** Licensed weights are obtained on the publisher's website, then imported through Android. */
 data class ModelSpec(
@@ -26,6 +26,11 @@ data class ModelSpec(
 
 object ModelCatalog {
     val models = listOf(
+        ModelSpec(
+            "kokoro-82m-cpu", "Kokoro · Neural voices", ModelRole.VOICE,
+            "https://huggingface.co/litert-community/Kokoro-82M",
+            4, "Natural offline narration · 54 voices"
+        ),
         ModelSpec(
             "embeddinggemma-2-270m", "EmbeddingGemma 2 · 270M", ModelRole.EMBEDDING,
             "https://huggingface.co/litert-community/embeddinggemma-2-text-270m-litert-lm",
