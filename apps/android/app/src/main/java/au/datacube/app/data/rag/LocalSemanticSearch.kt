@@ -52,6 +52,10 @@ class LocalSemanticSearch(private val context: Context) {
     suspend fun search(documentId: String, query: String, maxResults: Int = 4): List<SemanticSearchHit> =
         withContext(Dispatchers.IO) {
             if (!supported() || query.isBlank()) return@withContext emptyList()
+            // Do not load/run the embedding model when this document has no vector index.
+            if (database.semanticChunks().sourceHash(documentId, LocalEmbeddingRuntime.MODEL_ID) == null) {
+                return@withContext emptyList()
+            }
             val queryVector = LocalEmbeddingRuntime.embed(app, query.take(6_000))
             val count = maxResults.coerceIn(1, 12)
             val best = PriorityQueue<SemanticSearchHit>(compareBy { it.score })
