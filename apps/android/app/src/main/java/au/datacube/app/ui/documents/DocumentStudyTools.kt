@@ -57,8 +57,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import androidx.work.WorkInfo
-import au.datacube.app.ui.voice.OfflineVoiceInputButton
-import au.datacube.app.ui.voice.mergeVoicePrompt
+import au.datacube.app.ui.voice.VoiceNoteInputButton
+import au.datacube.app.ui.voice.VoiceNotePlayback
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -324,6 +324,125 @@ fun DocumentChatWorkspace(
         }
     }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
+    fun submitQuestion(
+        cleanPrompt: String,
+        displayQuestion: String = cleanPrompt,
+        audioPath: String? = null,
+        alreadyAdded: Boolean = false
+    ) {
+                        if (cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
+                            if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
+                            if (audioPath == null) prompt = ""
+                            session.searching = true
+                            // The response belongs to the document/thread session, not
+                            // this Compose screen; navigation must not cancel it.
+                            session.scope.launch { threads.nameFromQuestion(documentId, threadId, cleanPrompt) }
+                            session.activeRequest = session.scope.launch {
+                                val events = mutableListOf<String>()
+                                try {
+                                    session.searchingStage = "Understanding your question"
+                                    val plan = DocumentQueryInterpreter.understand(cleanPrompt, textPreview.orEmpty())
+                                    if (plan.correctedTerms.isNotEmpty()) events += "Resolved wording against document terms"
+                                    val matches: List<SourceSnippet>
+                                    var usedSemantic = false
+                                    if (plan.overview) {
+                                        session.searchingStage = "Collecting source excerpts"
+                                        matches = StudyContentQuality.chooseOverview(
+                                            sourceSnippets(textPreview).map { RagEvidence(it.text, it.page) }
+                                        ).map { SourceSnippet(it.text, it.page) }
+                                        events += "Selected source passages for an overview"
+                                    } else {
+                                        session.searchingStage = "Searching document text"
+                                        val bm25 = findRelevantSnippets(plan.retrievalQuery, textPreview)
+                                        events += "Ranked extracted text with BM25"
+                                        val vectorMatches = if (semanticSupported && !indexing) {
+                                            session.searchingStage = "Checking semantic matches"
+                                            events += "Queried the on-device vector index"
+                                            runCatching { semanticSearch.search(documentId, plan.retrievalQuery, 6) }
+                                                .getOrDefault(emptyList())
+                                        } else emptyList()
+                                        usedSemantic = vectorMatches.isNotEmpty()
+                                        matches = GroundedRagPlanner.fuse(
+                                            bm25.map { RagEvidence(it.text, it.page) },
+                                            vectorMatches.map { RagEvidence(it.text, it.page) }
+                                        ).map { SourceSnippet(it.text, it.page) }
+                                        if (usedSemantic) events += "Combined BM25 and vector ranks"
+                                    }
+                                    events += "Linked ${matches.size} source passage(s)"
+                                    val resultIndex = messages.size
+                                    messages.add(ChatMessage(
+                                        question = cleanPrompt, matches = matches, isUser = false,
+                                        semantic = usedSemantic, overview = plan.overview,
+                                        steps = events.toList(), corrected = plan.correctedTerms,
+                                        generating = llmInstalled && matches.isNotEmpty()
+                                    ))
+                                    if (llmInstalled && matches.isNotEmpty()) {
+                                        session.searchingStage = "AI is preparing the answer"
+                                        val previous = messages.take(resultIndex)
+                                            .filter { !it.isUser && it.answer.isNotBlank() }
+                                            .takeLast(3)
+                                            .map { RagTurn(it.question, it.answer) }
+                                        val grounded = GroundedRagPlanner.build(
+                                            cleanPrompt, previous,
+                                            matches.map { RagEvidence(it.text, it.page) }
+                                        )
+                                        events += "Built context from ${grounded.evidence.size} source passages"
+                                        var generated = ""
+                                        var lastUpdate = 0L
+                                        try {
+                                            session.searchingStage = "AI is thinking"
+                                            LocalGenerativeEngine.generate(context, grounded.value) { part ->
+                                                generated += part
+                                                val now = SystemClock.elapsedRealtime()
+                                                if (now - lastUpdate > 90L) {
+                                                    withContext(Dispatchers.Main) {
+                                                        messages[resultIndex] = messages[resultIndex].copy(
+                                                            answer = ModelOutputCleaner.visible(generated, matches.size)
+                                                        )
+                                                    }
+                                                    lastUpdate = now
+                                                }
+                                            }
+                                            events += "Generated an answer using the selected local chat model on this device"
+                                            messages[resultIndex] = messages[resultIndex].copy(
+                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
+                                                generating = false,
+                                                steps = events.toList()
+                                            )
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (generationError: Exception) {
+                                            events += "Local generation failed; retrieved sources remain available"
+                                            messages[resultIndex] = messages[resultIndex].copy(
+                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
+                                                generating = false,
+                                                generationError = generationError.message
+                                                    ?: "AU could not finish the answer.",
+                                                steps = events.toList()
+                                            )
+                                        }
+                                    }
+                                } catch (cancelled: CancellationException) {
+                                    val lastIndex = messages.lastIndex
+                                    if (lastIndex >= 0 && !messages[lastIndex].isUser) {
+                                        messages[lastIndex] = messages[lastIndex].copy(
+                                            generating = false,
+                                            generationError = "Generation stopped."
+                                        )
+                                    }
+                                    throw cancelled
+                                } catch (error: Exception) {
+                                    events += "Search could not finish: ${error.message ?: "unknown error"}"
+                                    messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList()))
+                                } finally {
+                                    session.searching = false
+                                    session.searchingStage = ""
+                                }
+                            }
+                        }
+                    
+    }
+
     tappedTerm?.let { info ->
         DataCubeDialog(
             onDismissRequest = {
@@ -466,7 +585,12 @@ fun DocumentChatWorkspace(
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                                Text(message.question, Modifier.padding(13.dp), color = MaterialTheme.colorScheme.onSurface)
+                                if (message.audioPath != null) {
+                                    VoiceNotePlayback(message.audioPath, message.question)
+                                } else {
+                                    Text(message.question, Modifier.padding(13.dp),
+                                        color = MaterialTheme.colorScheme.onSurface)
+                                }
                             }
                         }
                     } else {
@@ -665,125 +789,41 @@ fun DocumentChatWorkspace(
                     placeholder = { Text("Ask AU about this document…") }, shape = RoundedCornerShape(18.dp), maxLines = 4
                 )
                 Spacer(Modifier.width(4.dp))
-                OfflineVoiceInputButton(
-                    enabled = historyReady && !session.searching,
-                    onTranscript = { spoken -> prompt = mergeVoicePrompt(prompt, spoken) }
+                VoiceNoteInputButton(
+                    ownerId = documentId,
+                    enabled = historyReady && !session.searching && threadIndex != null &&
+                        userTurns < ConversationWindow.MAX_USER_TURNS,
+                    supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
+                    onReady = { note ->
+                        val label = "Voice note · ${note.durationSeconds}s"
+                        messages.add(ChatMessage(label, emptyList(), true,
+                            audioPath = note.file.absolutePath))
+                        session.searching = true
+                        session.searchingStage = "AI is listening"
+                        session.activeRequest = session.scope.launch {
+                            try {
+                                val words = LocalGenerativeEngine.understandVoiceNote(
+                                    context, note.file)
+                                session.searching = false
+                                session.searchingStage = ""
+                                submitQuestion(words, label, note.file.absolutePath,
+                                    alreadyAdded = true)
+                            } catch (cancelled: CancellationException) {
+                                session.searching = false
+                                session.searchingStage = ""
+                                throw cancelled
+                            } catch (error: Exception) {
+                                session.searching = false
+                                session.searchingStage = ""
+                                messages.add(ChatMessage(label, emptyList(), false,
+                                    generationError = error.message ?: "AU could not understand the audio."))
+                            }
+                        }
+                    }
                 )
                 Spacer(Modifier.width(4.dp))
                 FilledIconButton(
-                    onClick = {
-                        val cleanPrompt = prompt.trim()
-                        if (cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && userTurns < ConversationWindow.MAX_USER_TURNS) {
-                            messages.add(ChatMessage(cleanPrompt, emptyList(), true))
-                            prompt = ""
-                            session.searching = true
-                            // The response belongs to the document/thread session, not
-                            // this Compose screen; navigation must not cancel it.
-                            scope.launch { threads.nameFromQuestion(documentId, threadId, cleanPrompt) }
-                            session.activeRequest = session.scope.launch {
-                                val events = mutableListOf<String>()
-                                try {
-                                    session.searchingStage = "Understanding your question"
-                                    val plan = DocumentQueryInterpreter.understand(cleanPrompt, textPreview.orEmpty())
-                                    if (plan.correctedTerms.isNotEmpty()) events += "Resolved wording against document terms"
-                                    val matches: List<SourceSnippet>
-                                    var usedSemantic = false
-                                    if (plan.overview) {
-                                        session.searchingStage = "Collecting source excerpts"
-                                        matches = StudyContentQuality.chooseOverview(
-                                            sourceSnippets(textPreview).map { RagEvidence(it.text, it.page) }
-                                        ).map { SourceSnippet(it.text, it.page) }
-                                        events += "Selected source passages for an overview"
-                                    } else {
-                                        session.searchingStage = "Searching document text"
-                                        val bm25 = findRelevantSnippets(plan.retrievalQuery, textPreview)
-                                        events += "Ranked extracted text with BM25"
-                                        val vectorMatches = if (semanticSupported && !indexing) {
-                                            session.searchingStage = "Checking semantic matches"
-                                            events += "Queried the on-device vector index"
-                                            runCatching { semanticSearch.search(documentId, plan.retrievalQuery, 6) }
-                                                .getOrDefault(emptyList())
-                                        } else emptyList()
-                                        usedSemantic = vectorMatches.isNotEmpty()
-                                        matches = GroundedRagPlanner.fuse(
-                                            bm25.map { RagEvidence(it.text, it.page) },
-                                            vectorMatches.map { RagEvidence(it.text, it.page) }
-                                        ).map { SourceSnippet(it.text, it.page) }
-                                        if (usedSemantic) events += "Combined BM25 and vector ranks"
-                                    }
-                                    events += "Linked ${matches.size} source passage(s)"
-                                    val resultIndex = messages.size
-                                    messages.add(ChatMessage(
-                                        question = cleanPrompt, matches = matches, isUser = false,
-                                        semantic = usedSemantic, overview = plan.overview,
-                                        steps = events.toList(), corrected = plan.correctedTerms,
-                                        generating = llmInstalled && matches.isNotEmpty()
-                                    ))
-                                    if (llmInstalled && matches.isNotEmpty()) {
-                                        session.searchingStage = "AI is preparing the answer"
-                                        val previous = messages.take(resultIndex)
-                                            .filter { !it.isUser && it.answer.isNotBlank() }
-                                            .takeLast(3)
-                                            .map { RagTurn(it.question, it.answer) }
-                                        val grounded = GroundedRagPlanner.build(
-                                            cleanPrompt, previous,
-                                            matches.map { RagEvidence(it.text, it.page) }
-                                        )
-                                        events += "Built context from ${grounded.evidence.size} source passages"
-                                        var generated = ""
-                                        var lastUpdate = 0L
-                                        try {
-                                            session.searchingStage = "AI is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value) { part ->
-                                                generated += part
-                                                val now = SystemClock.elapsedRealtime()
-                                                if (now - lastUpdate > 90L) {
-                                                    withContext(Dispatchers.Main) {
-                                                        messages[resultIndex] = messages[resultIndex].copy(
-                                                            answer = ModelOutputCleaner.visible(generated, matches.size)
-                                                        )
-                                                    }
-                                                    lastUpdate = now
-                                                }
-                                            }
-                                            events += "Generated an answer using the selected local chat model on this device"
-                                            messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
-                                                generating = false,
-                                                steps = events.toList()
-                                            )
-                                        } catch (cancelled: CancellationException) {
-                                            throw cancelled
-                                        } catch (generationError: Exception) {
-                                            events += "Local generation failed; retrieved sources remain available"
-                                            messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
-                                                generating = false,
-                                                generationError = generationError.message
-                                                    ?: "Local model could not generate an answer.",
-                                                steps = events.toList()
-                                            )
-                                        }
-                                    }
-                                } catch (cancelled: CancellationException) {
-                                    val lastIndex = messages.lastIndex
-                                    if (lastIndex >= 0 && !messages[lastIndex].isUser) {
-                                        messages[lastIndex] = messages[lastIndex].copy(
-                                            generating = false,
-                                            generationError = "Generation stopped."
-                                        )
-                                    }
-                                    throw cancelled
-                                } catch (error: Exception) {
-                                    events += "Search could not finish: ${error.message ?: "unknown error"}"
-                                    messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList()))
-                                } finally {
-                                    session.searching = false
-                                    session.searchingStage = ""
-                                }
-                            }
-                        }
-                    },
+                    onClick = { submitQuestion(prompt.trim()) },
                     enabled = historyReady && threadIndex != null && userTurns < ConversationWindow.MAX_USER_TURNS && prompt.isNotBlank() && !textPreview.isNullOrBlank() && !session.searching, modifier = Modifier.size(52.dp)
                 ) { Icon(Icons.Outlined.Send, contentDescription = "Search document") }
             }
