@@ -73,14 +73,16 @@ fun DiscsScreen(
     // Migrate older imports in small batches; new imports index after extraction.
     LaunchedEffect(library.map { it.id }) {
         withContext(Dispatchers.IO) {
-            val index = LocalPassageIndex(context)
-            try {
-                library.filter { document ->
-                    val file = ExtractedTextStore.fileFor(context.filesDir, document.id)
-                    file.isFile && !index.hasCurrent(document.id, file)
-                }.take(8).forEach { LexicalIndexWorker.schedule(context, it.id) }
-            } finally {
-                index.close()
+            runCatching {
+                val index = LocalPassageIndex(context)
+                try {
+                    library.filter { document ->
+                        val file = ExtractedTextStore.fileFor(context.filesDir, document.id)
+                        file.isFile && !index.hasCurrent(document.id, file)
+                    }.take(8).forEach { LexicalIndexWorker.schedule(context, it.id) }
+                } finally {
+                    index.close()
+                }
             }
         }
     }
