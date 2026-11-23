@@ -42,18 +42,24 @@ import kotlinx.coroutines.withContext
  */
 @Composable
 fun DiscsScreen(
+    accountId: String,
     documents: List<LocalDocumentProcessing>,
     onBack: () -> Unit,
     onOpenDocument: (String) -> Unit,
     onOpenDocuments: () -> Unit
 ) {
     val context = LocalContext.current
+    // Scope every conversation to the current authenticated account.
+    val ownerId = remember(accountId) {
+        require(accountId.matches(Regex("[A-Za-z0-9_-]{8,64}"))) { "Authenticated account required." }
+        "global-$accountId"
+    }
     val uiScope = rememberCoroutineScope()
     val threads = remember(context) { LocalConversationThreads(context) }
     var index by remember { mutableStateOf<ConversationThreadIndex?>(null) }
-    LaunchedEffect(Unit) { index = runCatching { threads.list(OWNER_ID) }.getOrNull() }
+    LaunchedEffect(Unit) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
-    val session = remember(threadId) { DocumentChatSessions.get(OWNER_ID, threadId, context) }
+    val session = remember(threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
@@ -66,7 +72,7 @@ fun DiscsScreen(
 
     fun newChat() {
         uiScope.launch {
-            runCatching { threads.create(OWNER_ID) }.onSuccess { index = it; historyOpen = false }
+            runCatching { threads.create(ownerId) }.onSuccess { index = it; historyOpen = false }
         }
     }
     if (historyOpen) {
@@ -84,7 +90,7 @@ fun DiscsScreen(
                             Surface(
                                 onClick = {
                                     uiScope.launch {
-                                        index = threads.activate(OWNER_ID, item.id)
+                                        index = threads.activate(ownerId, item.id)
                                         historyOpen = false
                                     }
                                 },
@@ -122,7 +128,7 @@ fun DiscsScreen(
         session.activeRequest = session.scope.launch {
             val events = mutableListOf<String>()
             try {
-                threads.nameFromQuestion(OWNER_ID, threadId, question)
+                threads.nameFromQuestion(ownerId, threadId, question)
                 val isLibraryQuery = Regex(
                     """(?i)\b(?:list|show|which|what)\b.*\b(?:my|uploaded|saved)\b.*\bdocuments?\b"""
                 ).containsMatchIn(question)
@@ -385,4 +391,3 @@ fun DiscsScreen(
     }
 }
 
-private const val OWNER_ID = "global"
