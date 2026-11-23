@@ -464,6 +464,7 @@ private fun AuthenticatedWorkspace(
             }
             composable(Screen.Discs.route) {
                 DiscsScreen(
+                    accountId = requireNotNull(authState.user).id,
                     documents = documents,
                     onBack = { navController.popBackStack() },
                     onOpenDocument = { id -> navController.navigate("document/$id") },
