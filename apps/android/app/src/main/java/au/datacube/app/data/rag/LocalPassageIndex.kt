@@ -102,7 +102,7 @@ class LocalPassageIndex(context: Context) :
                 insert.bindString(4, cleaned)
                 insert.executeInsert()
                 ordinal += 1
-                if (ordinal % 25 == 0) {
+                if (ordinal % 100 == 0) {
                     currentCoroutineContext().ensureActive()
                     onProgress(ordinal)
                 }
@@ -124,22 +124,47 @@ class LocalPassageIndex(context: Context) :
                 }
             }
 
+            suspend fun acceptTextLine(raw: String) {
+                val text = raw.trim()
+                val found = marker.matchEntire(text)
+                if (found != null) {
+                    flush(true)
+                    page = found.groupValues[1].toIntOrNull()
+                    return
+                }
+                if (text.isBlank()) return
+                if (buffer.isNotEmpty()) buffer.append(' ')
+                buffer.append(text.replace(whitespace, " "))
+                flush(false)
+            }
+
+            // Never allocate a whole unbounded line: some extracted PDFs contain
+            // enormous newline-free text streams.
             source.bufferedReader(Charsets.UTF_8).use { reader ->
+                val block = CharArray(4096)
+                val line = StringBuilder(4096)
                 while (true) {
                     currentCoroutineContext().ensureActive()
-                    val line = reader.readLine() ?: break
-                    val text = line.trim()
-                    val found = marker.matchEntire(text)
-                    if (found != null) {
-                        flush(true)
-                        page = found.groupValues[1].toIntOrNull()
-                        continue
+                    val read = reader.read(block)
+                    if (read < 0) break
+                    for (i in 0 until read) {
+                        when (val ch = block[i]) {
+                            '\\n' -> {
+                                acceptTextLine(line.toString())
+                                line.setLength(0)
+                            }
+                            '\\r' -> Unit
+                            else -> {
+                                line.append(ch)
+                                if (line.length >= 4096) {
+                                    acceptTextLine(line.toString())
+                                    line.setLength(0)
+                                }
+                            }
+                        }
                     }
-                    if (text.isBlank()) continue
-                    if (buffer.isNotEmpty()) buffer.append(' ')
-                    buffer.append(text.replace(whitespace, " "))
-                    flush(false)
                 }
+                if (line.isNotEmpty()) acceptTextLine(line.toString())
             }
             flush(true)
             check(ordinal > 0) { "No readable passages found for indexing." }
