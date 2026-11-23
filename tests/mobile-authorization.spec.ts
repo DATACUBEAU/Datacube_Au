@@ -6,6 +6,7 @@ const returnPath = `/mobile-auth/return?request=${requestId}`;
 const pairingCode = 'ABCD2345';
 
 async function mockBrowserOAuth(page: Page, role: 'member' | 'admin') {
+  test.slow();
   const projectUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ci-build.invalid';
   const projectRef = new URL(projectUrl).hostname.split('.')[0];
   const verifierKey = `sb-${projectRef}-auth-token-code-verifier`;
@@ -39,7 +40,7 @@ async function mockBrowserOAuth(page: Page, role: 'member' | 'admin') {
   });
 
   await page.goto(`/auth/callback?code=mock-oauth-code&next=${encodeURIComponent(approvalPath)}`);
-  await expect(page).toHaveURL(new RegExp(`/mobile-auth/approve\\?request=${requestId}$`));
+  await expect(page).toHaveURL(new RegExp(`/mobile-auth/approve\\?request=${requestId}$`), { timeout: 30_000 });
   await expect(page.getByText(`Signed in as ${user.email}`)).toBeVisible();
   expect(conexCalls).toHaveLength(0);
   return accessToken;

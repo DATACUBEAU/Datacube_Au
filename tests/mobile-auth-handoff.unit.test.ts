@@ -52,7 +52,7 @@ assert.match(androidRepository, /idToken = idToken/);
 assert.match(androidRepository, /nonce = rawNonce/);
 assert.match(picker, /setNonce\(googleNonceDigest\(rawNonce\)\)/);
 assert.match(androidRepository, /clearCredentialState\(ClearCredentialStateRequest\(\)\)/);
-assert.match(androidRepository, /sessionStore\.persist\(user\)/);
+assert.match(androidRepository, /sessionStore\.persist\(auth\.currentUserOrNull\(\)\)/);
 assert.match(androidRepository, /restoreSession/);
 assert.match(androidRepository, /signOut\(\)/);
 assert.doesNotMatch(androidRepository, /AUTH_WEBSITE_URL|mobile-handoff|HttpClient|PendingMobileAuthStore/);
@@ -60,6 +60,10 @@ assert.doesNotMatch(androidRepository, /AUTH_WEBSITE_URL|mobile-handoff|HttpClie
 assert.match(androidManifest, /android:icon="@mipmap\/ic_launcher"/);
 assert.match(androidManifest, /android:roundIcon="@mipmap\/ic_launcher_round"/);
 assert.doesNotMatch(androidManifest, /auth-callback/);
+assert.match(androidManifest, /android:autoVerify="true"/);
+assert.match(androidManifest, /android:scheme="https"/);
+assert.match(androidManifest, /android:host="datacube-au.vercel.app"/);
+assert.match(androidManifest, /android:path="\/mobile-auth\/return"/);
 assert.doesNotMatch(androidActivity, /handleAuthIntent|completeWebsiteAuthentication|createWebsiteLoginUrl/);
 assert.match(androidViewModel, /signInWithGoogle/);
 assert.match(androidViewModel, /restoreSession/);
@@ -89,4 +93,4 @@ assert.match(completion, /codeChallenge/);
 assert.match(fallback, /intentUrl && !appMissing/);
 assert.match(middleware, /isRetiredWebProductPath/);
 
-console.log('PASS native Android Google auth, isolated legacy handoff compatibility, and DataCube AU cube branding');
+console.log('PASS native Google auth, verified App Link declaration, legacy handoff compatibility, and DataCube AU cube branding');
