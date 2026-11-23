@@ -24,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
@@ -225,6 +226,7 @@ private fun AuthenticatedWorkspace(
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
+    var modelRevision by remember { mutableIntStateOf(0) }
     var modelImportTarget by remember { mutableStateOf<ModelSpec?>(null) }
     var vaultRevision by remember { mutableIntStateOf(0) }
     var selectedRestoreUri by remember { mutableStateOf<Uri?>(null) }
@@ -292,7 +294,6 @@ private fun AuthenticatedWorkspace(
                 }
         }
     }
-    var modelRevision by remember { mutableIntStateOf(0) }
     val modelStore = remember(context) { LocalModelLibrary(context.applicationContext) }
     val installedModelIds = remember(modelRevision) {
         ModelCatalog.models.filter { modelStore.installed(it.id) }.map { it.id }.toSet()
