@@ -10,7 +10,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-data class SavedSource(val text: String, val page: Int?)
+data class SavedSource(val text: String, val page: Int?, val documentId: String? = null, val documentName: String? = null)
 data class SavedDocumentTurn(
     val question: String,
     val answer: String,
@@ -47,7 +47,9 @@ class LocalDocumentChatHistory(filesDir: File) {
                         SavedSource(
                             text = source.optString("text").take(1500),
                             page = if (source.has("page") && !source.isNull("page"))
-                                source.optInt("page") else null
+                                source.optInt("page") else null,
+                            documentId = source.optString("documentId").takeIf { it.isNotBlank() }?.take(80),
+                            documentName = source.optString("documentName").takeIf { it.isNotBlank() }?.take(160)
                         )
                     }
                     val steps = entry.optJSONArray("steps") ?: JSONArray()
@@ -89,7 +91,9 @@ class LocalDocumentChatHistory(filesDir: File) {
                 val matches = JSONArray()
                 turn.matches.take(6).forEach { src ->
                     matches.put(JSONObject().put("text", src.text.take(1500))
-                        .put("page", src.page ?: JSONObject.NULL))
+                        .put("page", src.page ?: JSONObject.NULL)
+                        .put("documentId", src.documentId ?: JSONObject.NULL)
+                        .put("documentName", src.documentName ?: JSONObject.NULL))
                 }
                 value.put("sources", matches)
                 val steps = JSONArray()
