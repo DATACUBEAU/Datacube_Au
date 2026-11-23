@@ -55,6 +55,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import androidx.work.WorkInfo
+import au.datacube.app.ui.voice.OfflineVoiceInputButton
+import au.datacube.app.ui.voice.mergeVoicePrompt
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
 import kotlinx.coroutines.launch
@@ -583,7 +585,12 @@ fun DocumentChatWorkspace(
                     value = prompt, onValueChange = { prompt = it.take(500) }, Modifier.weight(1f),
                     placeholder = { Text("Ask AU about this document…") }, shape = RoundedCornerShape(18.dp), maxLines = 4
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(4.dp))
+                OfflineVoiceInputButton(
+                    enabled = historyReady && !searching,
+                    onTranscript = { spoken -> prompt = mergeVoicePrompt(prompt, spoken) }
+                )
+                Spacer(Modifier.width(4.dp))
                 FilledIconButton(
                     onClick = {
                         val cleanPrompt = prompt.trim()
@@ -655,7 +662,7 @@ fun DocumentChatWorkspace(
                                                     lastUpdate = now
                                                 }
                                             }
-                                            events += "Generated an answer using Qwen3 on this device"
+                                            events += "Generated an answer using the selected local chat model on this device"
                                             messages[resultIndex] = messages[resultIndex].copy(
                                                 answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
                                                 generating = false,
