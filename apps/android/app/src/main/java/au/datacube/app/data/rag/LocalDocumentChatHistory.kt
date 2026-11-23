@@ -20,7 +20,8 @@ data class SavedDocumentTurn(
     val overview: Boolean = false,
     val steps: List<String> = emptyList(),
     val corrections: Map<String, String> = emptyMap(),
-    val interrupted: Boolean = false
+    val interrupted: Boolean = false,
+    val audioPath: String? = null
 )
 
 /** Local conversation history, scoped to a document ID. No network writes or cloud sync. */
@@ -66,7 +67,9 @@ class LocalDocumentChatHistory(filesDir: File) {
                         steps = (0 until minOf(steps.length(), 12))
                             .map { steps.optString(it).take(200) },
                         corrections = map,
-                        interrupted = entry.optBoolean("interrupted")
+                        interrupted = entry.optBoolean("interrupted"),
+                        audioPath = entry.optString("audioPath").takeIf { it.isNotBlank() }
+                            ?.take(280)
                     )
                 }
             }.getOrDefault(emptyList())
@@ -88,6 +91,7 @@ class LocalDocumentChatHistory(filesDir: File) {
                     .put("semantic", turn.semantic)
                     .put("overview", turn.overview)
                     .put("interrupted", turn.interrupted)
+                    .put("audioPath", turn.audioPath ?: JSONObject.NULL)
                 val matches = JSONArray()
                 turn.matches.take(6).forEach { src ->
                     matches.put(JSONObject().put("text", src.text.take(1500))
