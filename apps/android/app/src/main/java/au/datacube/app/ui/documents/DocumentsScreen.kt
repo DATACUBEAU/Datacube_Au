@@ -191,16 +191,22 @@ fun DocumentsScreen(
                 val document = processing.document
                 val extension = document.extension.lowercase()
                 val tint = DataCubeColors.Blue
+                val preparing = processing.extractionStatus == null ||
+                    processing.extractionStatus == LocalJobStatus.QUEUED ||
+                    processing.extractionStatus == LocalJobStatus.RETRYABLE ||
+                    processing.extractionStatus == LocalJobStatus.RUNNING
+                val progress = processing.extractionProgress?.toFloat()?.coerceIn(0f, 1f)
                 val status = when (processing.extractionStatus) {
-                    LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Processing queued"
-                    LocalJobStatus.RUNNING -> "Processing…"
-                    LocalJobStatus.COMPLETED -> "Ready"
-                    LocalJobStatus.FAILED -> processing.extractionError ?: "Processing failed"
-                    LocalJobStatus.CANCELLED -> "Cancelled"
-                    else -> "Imported"
+                    LocalJobStatus.QUEUED, LocalJobStatus.RETRYABLE -> "Queued for document extraction"
+                    LocalJobStatus.RUNNING -> "Extracting text · ${((progress ?: 0f) * 100).toInt()}%"
+                    LocalJobStatus.COMPLETED -> "Ready to study"
+                    LocalJobStatus.FAILED -> processing.extractionError ?: "Extraction failed · Open for details"
+                    LocalJobStatus.CANCELLED -> "Extraction cancelled · Open for details"
+                    else -> "Preparing document"
                 }
                 Surface(
-                    modifier = Modifier.fillMaxWidth().animateContentSize().clickable { onOpenDocument(document.id) },
+                    modifier = Modifier.fillMaxWidth().animateContentSize()
+                        .clickable(enabled = !preparing) { onOpenDocument(document.id) },
                     shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -210,7 +216,24 @@ fun DocumentsScreen(
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(document.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("$status  ·  ${document.sizeBytes / 1024} KB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("$status  ·  ${document.sizeBytes / 1024} KB",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            if (preparing) {
+                                Spacer(Modifier.height(7.dp))
+                                if (progress == null || processing.extractionStatus != LocalJobStatus.RUNNING) {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                                } else {
+                                    LinearProgressIndicator(
+                                        progress = { progress },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                }
+                                Text("Opens when text is ready",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary)
+                            }
                         }
                         IconButton(onClick = { deleteDocument = document.id }) { Icon(Icons.Outlined.DeleteOutline, "Delete document") }
                     }
