@@ -13,6 +13,10 @@ interface LocalJobDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertIfAbsent(job: LocalJob): Long
 
+    // UUID-based document linkage in persisted worker payloads. Covers legacy job IDs.
+    @Query("SELECT * FROM local_jobs WHERE payloadJson LIKE '%' || :documentId || '%'")
+    suspend fun findForDocument(documentId: String): List<LocalJob>
+
     @Query("SELECT * FROM local_jobs WHERE id = :id LIMIT 1")
     suspend fun find(id: String): LocalJob?
 
