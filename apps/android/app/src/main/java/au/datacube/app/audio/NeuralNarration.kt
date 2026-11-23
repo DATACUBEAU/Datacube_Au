@@ -49,7 +49,13 @@ object NeuralNarration {
             "models/installed/$MODEL_ID/${artifact.fileName}").isFile
     }
 
-    suspend fun speak(context: Context, text: String, voice: String, speed: Float) =
+    suspend fun speak(
+        context: Context,
+        text: String,
+        voice: String,
+        speed: Float,
+        onStage: suspend (String) -> Unit = {}
+    ) =
         withContext(Dispatchers.IO) {
             require(installed(context)) { "Install Kokoro in Models to use neural voices." }
             require(text.isNotBlank()) { "No narration text." }
@@ -57,12 +63,17 @@ object NeuralNarration {
             require(speed in 0.7f..1.5f) { "Unsupported narration speed." }
             mutex.withLock {
                 currentCoroutineContext().ensureActive()
+                onStage("Verifying Kokoro and preparing the on-device engine")
                 val task = load(context)
+                val segments = NeuralTextSegmenter.split(text)
+                require(segments.isNotEmpty()) { "There is no speakable text." }
                 val options = SynthesisOptions(voice, null)
                 var player: AudioTrack? = null
                 var totalSamples = 0L
                 try {
-                    task.synthesizeStream(text.take(2_000), options).collect { chunk ->
+                    segments.forEachIndexed { index, segment ->
+                        onStage("Generating neural speech ${index + 1} of ${segments.size}")
+                        task.synthesizeStream(segment, options).collect { chunk ->
                         currentCoroutineContext().ensureActive()
                         if (chunk.samples.isEmpty()) return@collect
                         val sampleRate = chunk.sampleRateHz
@@ -86,6 +97,7 @@ object NeuralNarration {
                                 .build()
                             audio = player
                             player?.play()
+                            onStage("Playing Kokoro neural narration")
                         }
                         val samples = chunk.samples
                         if (speed != 1f) player?.playbackRate = (sampleRate * speed).toInt()
@@ -99,6 +111,7 @@ object NeuralNarration {
                             consumed += result
                         }
                         totalSamples += samples.size
+                        }
                     }
                     // Draining matters: AudioTrack.write copies to its buffer before playback
                     // completes. Do not truncate the final spoken words after synthesis finishes.
