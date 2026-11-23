@@ -252,6 +252,9 @@ fun DocumentChatWorkspace(
     LaunchedEffect(documentId) {
         threadIndex = runCatching { threads.list(documentId) }.getOrNull()
     }
+    LaunchedEffect(showHistoryPicker) {
+        if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
+    }
     val threadId = threadIndex?.activeId ?: "main"
     val session = remember(documentId, threadId) {
         DocumentChatSessions.get(documentId, threadId, context)
@@ -308,8 +311,8 @@ fun DocumentChatWorkspace(
         )
     }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
-    var expandedSteps by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var expandedSources by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var expandedSteps by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var expandedSources by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
     var explainingTerm by remember(documentId) { mutableStateOf(false) }
@@ -414,8 +417,8 @@ fun DocumentChatWorkspace(
                 Text(when {
                     indexing -> "Indexing"
                     llmInstalled -> "AU ready"
-                    semanticSupported -> "Local semantic + BM25"
-                    else -> "Local BM25"
+                    semanticSupported -> "Search ready"
+                    else -> "Search ready"
 
                 })
             })
@@ -441,7 +444,7 @@ fun DocumentChatWorkspace(
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        if (llmInstalled) "Ask AU. Answers are generated offline from cited document passages."
+                        if (llmInstalled) "Ask AU. Answers use your document and link to supporting passages."
                         else "Read local source passages. Install a chat model in Models to enable answers.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
                     )
@@ -592,15 +595,45 @@ fun DocumentChatWorkspace(
                                 }) {
                                     Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
                                     Spacer(Modifier.width(5.dp))
-                                    Text("How AU found this")
+                                    Text("How AU worked")
                                 }
                             }
                             if (messages.indexOf(message) in expandedSteps) {
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     message.steps.forEachIndexed { i, step ->
-                                        Text("${i + 1}. $step",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Text("${i + 1}", Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold)
+                                            }
+                                            Column(Modifier.weight(1f)) {
+                                                Text(
+                                                    when {
+                                                        step.contains("search", ignoreCase = true) ||
+                                                            step.contains("rank", ignoreCase = true) -> "Searching"
+                                                        step.contains("source", ignoreCase = true) ||
+                                                            step.contains("evidence", ignoreCase = true) -> "Checking sources"
+                                                        step.contains("generat", ignoreCase = true) -> "Answering"
+                                                        else -> "Preparing"
+                                                    },
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(step,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
                                     }
                                 }
                             }
