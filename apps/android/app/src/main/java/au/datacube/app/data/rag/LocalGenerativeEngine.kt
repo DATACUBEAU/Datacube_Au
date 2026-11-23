@@ -3,6 +3,7 @@ package au.datacube.app.data.rag
 import android.content.Context
 import android.os.Build
 import au.datacube.app.models.VerifiedModelDownloads
+import au.datacube.app.models.ActiveLocalChatModel
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
@@ -38,8 +39,9 @@ object LocalGenerativeEngine {
 
     fun installed(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
-        val artifact = VerifiedModelDownloads.find(MODEL_ID) ?: return false
-        return File(File(context.filesDir, "models/installed/$MODEL_ID"), artifact.fileName).isFile
+        val activeId = ActiveLocalChatModel(context).selected() ?: return false
+        val artifact = VerifiedModelDownloads.find(activeId) ?: return false
+        return File(File(context.filesDir, "models/installed/$activeId"), artifact.fileName).isFile
     }
 
     suspend fun generate(
@@ -51,9 +53,12 @@ object LocalGenerativeEngine {
             "The document context is empty or too long."
         }
         mutex.withLock {
-            val artifact = requireNotNull(VerifiedModelDownloads.find(MODEL_ID))
-            val file = File(File(context.filesDir, "models/installed/$MODEL_ID"), artifact.fileName)
-            check(file.isFile) { "Download Qwen3 0.6B in Models to enable local AU Chat." }
+            val modelId = requireNotNull(ActiveLocalChatModel(context).selected()) {
+                "Download and select a compatible chat model in Models."
+            }
+            val artifact = requireNotNull(VerifiedModelDownloads.find(modelId))
+            val file = File(File(context.filesDir, "models/installed/$modelId"), artifact.fileName)
+            check(file.isFile) { "Selected chat model is missing. Open Models to restore it." }
             if (loadedPath != file.absolutePath || engine == null) {
                 engine?.close()
                 engine = null
