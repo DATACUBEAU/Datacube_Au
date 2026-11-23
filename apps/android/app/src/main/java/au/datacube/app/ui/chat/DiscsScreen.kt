@@ -22,9 +22,9 @@ import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.data.rag.ConversationThreadIndex
 import au.datacube.app.data.rag.ConversationWindow
 import au.datacube.app.data.rag.CrossDocumentSearch
-import au.datacube.app.data.rag.LocalPassageIndex
-import au.datacube.app.data.rag.LexicalIndexWorker
-import au.datacube.app.data.ExtractedTextStore
+import au.datacube.app.data.rag.GistIntent
+import au.datacube.app.data.rag.GistRequestRouter
+import au.datacube.app.data.rag.GistPrompt
 import au.datacube.app.data.rag.LocalConversationThreads
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
@@ -44,8 +44,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Discs: independent, private chat that can retrieve cited passages across
- * imported documents. It also supports ordinary model conversation.
+ * Gist: independent private chat for general AU knowledge, with opt-in
+ * document lookup when the user explicitly references their local library.
  * No cloud requests and no automatic model downloads.
  */
 @Composable
@@ -73,22 +73,6 @@ fun DiscsScreen(
     val userTurns = turns.count { it.isUser }
     val modelReady = LocalGenerativeEngine.installed(context)
     val library = documents.map { it.document }
-    // Migrate older imports in small batches; new imports index after extraction.
-    LaunchedEffect(library.map { it.id }) {
-        withContext(Dispatchers.IO) {
-            runCatching {
-                val index = LocalPassageIndex(context)
-                try {
-                    library.filter { document ->
-                        val file = ExtractedTextStore.fileFor(context.filesDir, document.id)
-                        file.isFile && !index.hasCurrent(document.id, file)
-                    }.take(8).forEach { LexicalIndexWorker.schedule(context, it.id) }
-                } finally {
-                    index.close()
-                }
-            }
-        }
-    }
     var prompt by remember(threadId) { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
     var expandedSources by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
@@ -103,7 +87,7 @@ fun DiscsScreen(
     if (historyOpen) {
         DataCubeDialog(
             onDismissRequest = { historyOpen = false },
-            title = { Text("Discs history", style = MaterialTheme.typography.titleLarge) },
+            title = { Text("Gist history", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Independent private conversations. Each new chat starts with a fresh context.",
@@ -159,32 +143,46 @@ fun DiscsScreen(
             val events = session.activitySteps
             try {
                 threads.nameFromQuestion(ownerId, threadId, question)
-                val isLibraryQuery = Regex(
-                    """(?i)\b(?:list|show|which|what)\b.*\b(?:my|uploaded|saved)\b.*\bdocuments?\b"""
-                ).containsMatchIn(question)
-                if (isLibraryQuery) {
-                    val listing = if (library.isEmpty()) "No documents have been imported yet."
-                    else library.take(40).joinToString("\n") { "• " + it.name }
-                    events += "Listed imported document titles"
+                val intent = GistRequestRouter.classify(question)
+                if (intent == GistIntent.LIBRARY_COUNT || intent == GistIntent.LIBRARY_LIST) {
+                    events += "Checked local document library"
                     turns.add(ChatMessage(question, emptyList(), false,
-                        answer = "You have ${library.size} imported document(s).\n$listing",
+                        answer = GistRequestRouter.libraryReply(intent, library.map { it.name }),
                         steps = events.toList()))
                 } else {
-                    session.searchingStage = "Searching your documents"
-                    val sourceResults = CrossDocumentSearch(context).search(library, question)
-                    events += "Searched extracted text across ${library.size} document(s)"
+                    val searchDocuments = intent == GistIntent.DOCUMENT_SEARCH
+                    session.searchingStage = if (searchDocuments) "Searching your documents" else "Preparing a reply"
+                    val sourceResults = if (searchDocuments) {
+                        CrossDocumentSearch(context).search(library, question)
+                    } else emptyList()
+                    if (searchDocuments) {
+                        events += "Searched extracted text across ${library.size} document(s)"
+                    } else {
+                        events += "Prepared a general AU conversation without document search"
+                    }
                     val matches = sourceResults.map {
                         SourceSnippet(it.text, it.page, it.documentId, it.documentName)
                     }
-                    events += "Selected ${matches.size} supporting passage(s)"
+                    if (searchDocuments) events += "Selected ${matches.size} supporting passage(s)"
                     val answerIndex = turns.size
                     turns.add(ChatMessage(question, matches, false,
-                        generating = modelReady, steps = events.toList()))
+                        generating = modelReady && (!searchDocuments || matches.isNotEmpty()),
+                        steps = events.toList()))
                     if (!modelReady) {
                         turns[answerIndex] = turns[answerIndex].copy(
-                            answer = if (matches.isEmpty())
-                                "No matching passages found. Install and select an AI model in Models to enable conversation."
+                            answer = if (!searchDocuments)
+                                "Install and select an AU chat model in Models to use Gist offline."
+                            else if (matches.isEmpty())
+                                "I couldn't find a matching passage in your imported documents. Try another keyword or open a specific document."
                             else "I found related passages in ${matches.mapNotNull { it.documentName }.distinct().size} documents. Open Sources to inspect them. Install a chat model for a synthesized answer.",
+                            steps = events.toList()
+                        )
+                    } else if (searchDocuments && matches.isEmpty()) {
+                        turns[answerIndex] = turns[answerIndex].copy(
+                            answer = if (library.isEmpty())
+                                "You haven't imported documents yet. Gist can still answer general questions without files."
+                            else "I couldn't verify that in your imported documents. Try another term or specify which file you mean.",
+                            generating = false,
                             steps = events.toList()
                         )
                     } else {
@@ -198,22 +196,30 @@ fun DiscsScreen(
                         }.joinToString("\n\n")
                         val lastAnswers = turns.take(answerIndex).filter { !it.isUser && it.answer.isNotBlank() }
                             .takeLast(2).joinToString("\n") { "Previous reply: ${it.answer.take(240)}" }
-                        val input = """
+                        val input = if (searchDocuments) {
+                            """
                             QUESTION: ${question.take(700)}
                             PREVIOUS CHAT (not source evidence):
                             $lastAnswers
                             DOCUMENT SEARCH RESULTS:
                             $evidenceText
 
-                            Answer the question clearly in a conversational study-assistant style.
-                            When relying on documents, cite a matching numbered source [1], [2] and name the document.
-                            If the search has no relevant results, answer using general knowledge and say that this was not found in the user's documents.
-                            Keep answers concise; never invent document details or citations.
-                        """.trimIndent().take(13_000)
+                            Answer clearly using the numbered document passages.
+                            Cite only passages that support the claim. If passages
+                            are inconclusive, ask which document or term was intended.
+                            Do not invent sources or add unsupported document facts.
+                            """.trimIndent().take(13_000)
+                        } else {
+                            val contextPairs = turns.take(answerIndex)
+                                .filter { !it.isUser && it.answer.isNotBlank() }
+                                .takeLast(3).map { it.question to it.answer }
+                            GistPrompt.build(question, contextPairs)
+                        }
                         var raw = ""
                         var lastUpdate = 0L
                         try {
-                            LocalGenerativeEngine.generate(context, input, allowGeneral = true) { text ->
+                            LocalGenerativeEngine.generate(context, input, allowGeneral = true,
+                                generalOnly = !searchDocuments) { text ->
                                 raw += text
                                 val now = SystemClock.elapsedRealtime()
                                 if (now - lastUpdate > 120L) {
@@ -224,7 +230,9 @@ fun DiscsScreen(
                                     lastUpdate = now
                                 }
                             }
-                            events += "AU generated a response from the available evidence"
+                            events += if (searchDocuments)
+                                "AU generated a document-grounded response"
+                            else "AU generated a general-knowledge response"
                             turns[answerIndex] = turns[answerIndex].copy(
                                 answer = ModelOutputCleaner.visible(raw, matches.size).trim(),
                                 generating = false,
@@ -235,7 +243,7 @@ fun DiscsScreen(
                         } catch (error: Exception) {
                             turns[answerIndex] = turns[answerIndex].copy(
                                 generating = false,
-                                generationError = error.message ?: "AI could not finish the reply."
+                                generationError = error.message ?: "AU could not finish the reply."
                             )
                         }
                     }
@@ -249,7 +257,7 @@ fun DiscsScreen(
                 throw cancelled
             } catch (error: Exception) {
                 turns.add(ChatMessage(question, emptyList(), false,
-                    generationError = "The search could not finish."))
+                    generationError = "AU could not finish this request."))
             } finally {
                 session.searching = false
                 session.searchingStage = ""
@@ -266,17 +274,21 @@ fun DiscsScreen(
                 verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") }
                 Column(Modifier.weight(1f)) {
-                    Text("Discs", fontWeight = FontWeight.Bold,
+                    Text("Gist", fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleLarge)
-                    Text("${library.size} documents · ${if (modelReady) "AI ready" else "Document search"}",
+                    Text(if (modelReady) "AU ready · Offline chat" else "Install an AU model to chat",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = ::newChat, enabled = ready) {
-                    Icon(Icons.Outlined.AddCircleOutline, "New conversation")
+                TextButton(onClick = ::newChat, enabled = ready, contentPadding = PaddingValues(horizontal = 5.dp)) {
+                    Icon(Icons.Outlined.Add, "New Gist chat", modifier = Modifier.size(19.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text("New")
                 }
-                IconButton(onClick = { historyOpen = true }) {
-                    Icon(Icons.Outlined.MoreVert, "Conversation history")
+                TextButton(onClick = { historyOpen = true }, contentPadding = PaddingValues(horizontal = 5.dp)) {
+                    Icon(Icons.Outlined.History, "Gist history", modifier = Modifier.size(19.dp))
+                    Spacer(Modifier.width(3.dp))
+                    Text("History")
                 }
             }
         }
@@ -289,10 +301,10 @@ fun DiscsScreen(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(48.dp))
                 Spacer(Modifier.height(12.dp))
-                Text("One chat. All your documents.", fontWeight = FontWeight.Bold,
+                Text("What’s on your mind?", fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(6.dp))
-                Text("Ask naturally, compare your study materials and inspect where answers came from.",
+                Text("Gist with AU about anything. Ask about your documents only when you want to.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(20.dp))
@@ -421,11 +433,11 @@ fun DiscsScreen(
             value = prompt,
             onValueChange = { prompt = it.take(700) },
             onSend = { send() },
-            placeholder = "Ask AU or search your documents…",
+            placeholder = "Ask Gist anything…",
             enabled = ready && !session.searching,
             sendEnabled = ready && !session.searching && prompt.isNotBlank() &&
                 userTurns < ConversationWindow.MAX_USER_TURNS,
-            sendDescription = "Send question",
+            sendDescription = "Send Gist message",
             actions = {
                 VoiceNoteInputButton(
                     ownerId = ownerId,
