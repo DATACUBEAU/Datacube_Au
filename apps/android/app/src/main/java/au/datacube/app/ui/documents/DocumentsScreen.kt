@@ -117,8 +117,8 @@ fun DocumentsScreen(
     ) {
         item {
             Column {
-                Text("Documents", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                Text("Upload files or create collections to organize your documents.", color = DataCubeColors.TextSecondary)
+                Text("Documents", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                Text("Upload files or create collections to organize your documents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         item {
@@ -137,18 +137,18 @@ fun DocumentsScreen(
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Collections", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Text("Collections", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = { createDialog = true }) { Text("Create") }
             }
         }
         if (collections.isEmpty()) {
             item {
-                Surface(shape = RoundedCornerShape(18.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Outlined.FolderOpen, null, tint = DataCubeColors.Blue, modifier = Modifier.size(40.dp))
-                        Text("No collections yet", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                        Text("Create a collection to organize multiple documents.", color = DataCubeColors.TextSecondary)
+                        Text("No collections yet", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Create a collection to organize multiple documents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(10.dp))
                         OutlinedButton(onClick = { createDialog = true }) { Icon(Icons.Outlined.Add, null); Text(" Create Collection") }
                     }
@@ -158,7 +158,7 @@ fun DocumentsScreen(
             items(collections, key = { it.id }) { collection ->
                 Surface(
                     modifier = Modifier.fillMaxWidth().animateContentSize().clickable { onOpenCollection(collection.id) },
-                    shape = RoundedCornerShape(17.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)
+                    shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Row(Modifier.padding(15.dp), verticalAlignment = Alignment.CenterVertically) {
                         Surface(shape = RoundedCornerShape(13.dp), color = DataCubeColors.BlueLight) {
@@ -166,21 +166,21 @@ fun DocumentsScreen(
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(collection.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${collection.documentCount} documents", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                            Text(collection.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${collection.documentCount} documents", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         }
                         IconButton(onClick = { deleteCollection = collection.id }) { Icon(Icons.Outlined.MoreVert, "Collection actions") }
                     }
                 }
             }
         }
-        item { Text("Recent Documents", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy) }
+        item { Text("Recent Documents", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface) }
         if (documents.isEmpty()) {
             item {
-                Surface(shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Outlined.Description, null, tint = DataCubeColors.Blue, modifier = Modifier.size(36.dp))
-                        Text("Your documents will appear here", color = DataCubeColors.TextSecondary)
+                        Text("Your documents will appear here", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Button(onClick = onImport) { Text("Upload a document") }
                     }
                 }
@@ -200,7 +200,7 @@ fun DocumentsScreen(
                 }
                 Surface(
                     modifier = Modifier.fillMaxWidth().animateContentSize().clickable { onOpenDocument(document.id) },
-                    shape = RoundedCornerShape(16.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)
+                    shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Surface(shape = RoundedCornerShape(13.dp), color = tint.copy(alpha = .12f)) {
@@ -208,8 +208,8 @@ fun DocumentsScreen(
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(document.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("$status  ·  ${document.sizeBytes / 1024} KB", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(document.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("$status  ·  ${document.sizeBytes / 1024} KB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         IconButton(onClick = { deleteDocument = document.id }) { Icon(Icons.Outlined.DeleteOutline, "Delete document") }
                     }
