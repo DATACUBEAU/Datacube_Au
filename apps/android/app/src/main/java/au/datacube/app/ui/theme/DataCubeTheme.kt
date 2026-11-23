@@ -147,8 +147,12 @@ fun DataCubeTheme(darkTheme: Boolean = false, content: @Composable () -> Unit) {
  * The curves are drawn once behind the viewport rather than being composed
  * as image assets or repeated per list item.
  */
-fun Modifier.dataCubeBackdrop(): Modifier = this
-    .background(
+@Composable
+fun Modifier.dataCubeBackdrop(): Modifier {
+    if (MaterialTheme.colorScheme.background != DataCubeColors.BluePale) {
+        return this.background(MaterialTheme.colorScheme.background)
+    }
+    return this.background(
         Brush.linearGradient(
             colorStops = arrayOf(
                 0.0f to Color(0xFFFBFDFF),
@@ -208,3 +212,5 @@ fun Modifier.dataCubeBackdrop(): Modifier = this
         }
         drawPath(frontWave, Color(0xFF8FC2FF).copy(alpha = 0.16f))
     }
+
+}
