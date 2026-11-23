@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -68,4 +69,45 @@ class LocalPassageIndexTest {
             file.delete()
         }
     }
+    @Test
+    fun transactionRollsBackIfIndexingIsInterruptedDuringProgress() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val id = "test-" + UUID.randomUUID()
+        val file = File(context.cacheDir, "$id.txt")
+        val index = LocalPassageIndex(context)
+        try {
+            file.writeText("----- Page 1 -----\n" +
+                ("A stable baseline describes magnetic resonance techniques. ").repeat(300))
+            val originalCount = index.build(id, file)
+            assertTrue(originalCount > 0)
+
+            file.writeText("----- Page 2 -----\n" +
+                ("The new, interrupted revision discusses photovoltaic cells. ").repeat(2_000))
+
+            var callbacks = 0
+            val interrupted = runCatching {
+                index.build(id, file) { completed ->
+                    callbacks++
+                    if (completed >= 100) throw CancellationException("Stop indexing")
+                }
+            }.exceptionOrNull()
+
+            assertTrue(interrupted is CancellationException)
+            assertTrue(callbacks >= 1)
+            // No uncommitted replacement passages survive the interruption.
+            index.readableDatabase.rawQuery(
+                "SELECT COUNT(*) FROM passages WHERE documentId = ?",
+                arrayOf(id)
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertTrue(cursor.getInt(0) == originalCount)
+            }
+            assertFalse(index.hasCurrent(id, file))
+        } finally {
+            index.remove(id)
+            index.close()
+            file.delete()
+        }
+    }
+
 }

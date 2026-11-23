@@ -60,7 +60,7 @@ class LocalPassageIndex(context: Context) :
     suspend fun build(
         documentId: String,
         source: File,
-        onProgress: suspend (Int) -> Unit = {}
+        onProgress: (Int) -> Unit = {}
     ): Int {
         require(validId(documentId)) { "Invalid document ID." }
         require(source.isFile && source.length() in 1L..MAX_SOURCE_BYTES) {
@@ -69,11 +69,15 @@ class LocalPassageIndex(context: Context) :
         val bytes = source.length()
         val modified = source.lastModified()
         val hash = hashFile(source)
+        // Android SQLite transactions are thread-affine: do not suspend once begun.
+        val indexingContext = currentCoroutineContext()
+        indexingContext.ensureActive()
         if (hasCurrent(documentId, source) && hasMatchingHash(documentId, hash)) {
             return passageCount(documentId)
         }
 
         val db = writableDatabase
+        var publishedCount = 0
         db.beginTransactionNonExclusive()
         try {
             db.execSQL("DELETE FROM passages WHERE documentId = ?", arrayOf(documentId))
@@ -88,7 +92,7 @@ class LocalPassageIndex(context: Context) :
             var page: Int? = null
             var ordinal = 0
 
-            suspend fun publish(text: String) {
+            fun publish(text: String) {
                 val cleaned = text.trim()
                 if (cleaned.length < 24) return
                 check(ordinal < MAX_PASSAGES) {
@@ -103,12 +107,12 @@ class LocalPassageIndex(context: Context) :
                 insert.executeInsert()
                 ordinal += 1
                 if (ordinal % 100 == 0) {
-                    currentCoroutineContext().ensureActive()
+                    indexingContext.ensureActive()
                     onProgress(ordinal)
                 }
             }
 
-            suspend fun flush(finishPage: Boolean) {
+            fun flush(finishPage: Boolean) {
                 while (buffer.length >= TARGET_CHARS) {
                     var end = TARGET_CHARS
                     val space = buffer.lastIndexOf(' ', TARGET_CHARS)
@@ -124,7 +128,7 @@ class LocalPassageIndex(context: Context) :
                 }
             }
 
-            suspend fun acceptTextLine(raw: String) {
+            fun acceptTextLine(raw: String) {
                 val text = raw.trim()
                 val found = marker.matchEntire(text)
                 if (found != null) {
@@ -144,7 +148,7 @@ class LocalPassageIndex(context: Context) :
                 val block = CharArray(4096)
                 val line = StringBuilder(4096)
                 while (true) {
-                    currentCoroutineContext().ensureActive()
+                    indexingContext.ensureActive()
                     val read = reader.read(block)
                     if (read < 0) break
                     for (i in 0 until read) {
@@ -176,12 +180,15 @@ class LocalPassageIndex(context: Context) :
                     " VALUES (?, ?, ?, ?, ?)",
                 arrayOf<Any>(documentId, bytes, modified, hash, ordinal)
             )
+            indexingContext.ensureActive()
             db.setTransactionSuccessful()
-            onProgress(ordinal)
-            return ordinal
+            publishedCount = ordinal
         } finally {
             db.endTransaction()
         }
+        // Completion runs only after the transaction has committed and closed.
+        onProgress(publishedCount)
+        return publishedCount
     }
 
     fun search(documentId: String, question: String, source: File, limit: Int = 5): List<IndexedPassage> {
