@@ -20,6 +20,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -27,6 +31,7 @@ import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.rag.RagTextChunker
 import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.data.rag.LocalSemanticSearch
+import au.datacube.app.data.rag.DocumentQueryInterpreter
 import androidx.work.WorkInfo
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
@@ -38,7 +43,10 @@ private data class ChatMessage(
     val question: String,
     val matches: List<SourceSnippet>,
     val isUser: Boolean,
-    val semantic: Boolean = false
+    val semantic: Boolean = false,
+    val overview: Boolean = false,
+    val steps: List<String> = emptyList(),
+    val corrected: Map<String, String> = emptyMap()
 )
 
 private fun sourceSnippets(raw: String?): List<SourceSnippet> {
@@ -196,6 +204,7 @@ fun DocumentChatWorkspace(
     extractionStatus: String?, extractionProgress: Double?, extractionError: String?
 ) {
     val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     val semanticSearch = remember(context) { LocalSemanticSearch(context) }
     val semanticSupported = semanticSearch.supported()
@@ -203,6 +212,9 @@ fun DocumentChatWorkspace(
     val indexingWorks by indexingFlow.collectAsState(initial = emptyList())
     val indexing = indexingWorks.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
     var searching by remember(documentId) { mutableStateOf(false) }
+    var searchingStage by remember(documentId) { mutableStateOf("") }
+    var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
+    var expandedSteps by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
     LaunchedEffect(documentId, textPreview, semanticSupported) {
         if (semanticSupported && !textPreview.isNullOrBlank()) {
             semanticSearch.scheduleIndex(documentId)
@@ -210,6 +222,28 @@ fun DocumentChatWorkspace(
     }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
     val messages = remember(documentName) { mutableStateListOf<ChatMessage>() }
+
+    openedEvidence?.let { evidence ->
+        AlertDialog(
+            onDismissRequest = { openedEvidence = null },
+            title = {
+                Text(evidence.page?.let { "Source · Page $it" } ?: "Source · Extracted text")
+            },
+            text = {
+                Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState())) {
+                    SelectionContainer { Text(evidence.text) }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { openedEvidence = null }) { Text("Close") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(evidence.text)) }) {
+                    Text("Copy")
+                }
+            }
+        )
+    }
 
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -237,7 +271,7 @@ fun DocumentChatWorkspace(
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                     Text(
-                        "Uses on-device semantic search when indexed, with BM25 fallback and page references. No generative answer yet.",
+                        "Ask about the document. Results include source passages and page references.",
                         color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -262,23 +296,87 @@ fun DocumentChatWorkspace(
                         }
                     } else {
                         ToolCard {
-                            Text(if (message.semantic) "Semantic matches from your document" else "Matches from your document",
-                                fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                            Text(
+                                when {
+                                    message.overview -> "Overview · source excerpts"
+                                    message.semantic -> "Semantic matches from your document"
+                                    else -> "Matches from your document"
+                                },
+                                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
+                            )
+                            if (message.corrected.isNotEmpty()) {
+                                Text("Matched: " + message.corrected.entries.joinToString { "${it.key} → ${it.value}" },
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.labelSmall)
+                            }
                             Spacer(Modifier.height(8.dp))
                             if (message.matches.isEmpty()) {
-                                Text("No matching passage was found. Try different wording or a more specific term.", color = DataCubeColors.TextSecondary)
+                                Text("No supported source passage found. Try asking about a specific section.",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
                                 message.matches.forEachIndexed { index, snippet ->
-                                    SelectionContainer { Text(snippet.text, color = DataCubeColors.Navy, style = MaterialTheme.typography.bodyMedium) }
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Outlined.Description, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(15.dp))
-                                        Spacer(Modifier.width(5.dp))
-                                        Text(
-                                            snippet.page?.let { "$documentName · Page $it" } ?: "$documentName · Local text",
-                                            style = MaterialTheme.typography.labelSmall, color = DataCubeColors.TextSecondary
-                                        )
+                                    val phrase = message.question.split(Regex("[^\\p{L}\\p{N}]+"))
+                                        .filter { it.length >= 4 }.distinct().take(8)
+                                    val highlighted = buildAnnotatedString {
+                                        append(snippet.text)
+                                        phrase.forEach { term ->
+                                            Regex(Regex.escape(term), RegexOption.IGNORE_CASE)
+                                                .findAll(snippet.text).take(10).forEach { match ->
+                                                    addStyle(
+                                                        SpanStyle(background = MaterialTheme.colorScheme.primaryContainer),
+                                                        match.range.first, match.range.last + 1
+                                                    )
+                                                }
+                                        }
                                     }
-                                    if (index != message.matches.lastIndex) HorizontalDivider(Modifier.padding(vertical = 8.dp), color = DataCubeColors.Divider)
+                                    SelectionContainer {
+                                        Text(highlighted, color = MaterialTheme.colorScheme.onSurface,
+                                            style = MaterialTheme.typography.bodyMedium)
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Outlined.Description, contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(15.dp))
+                                        Spacer(Modifier.width(5.dp))
+                                        TextButton(onClick = { openedEvidence = snippet }) {
+                                            Text(snippet.page?.let { "Page $it · View source" } ?: "View source passage")
+                                        }
+                                    }
+                                    if (index != message.matches.lastIndex) {
+                                        HorizontalDivider(Modifier.padding(vertical = 8.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant)
+                                    }
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = {
+                                    clipboard.setText(AnnotatedString(message.matches.joinToString("\n\n") { evidence ->
+                                        evidence.text + (evidence.page?.let { "\nPage $it" } ?: "")
+                                    }))
+                                }) {
+                                    Icon(Icons.Outlined.ContentCopy, null, Modifier.size(17.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Copy")
+                                }
+                                Spacer(Modifier.weight(1f))
+                                TextButton(onClick = {
+                                    expandedSteps = if (message.steps.isEmpty()) expandedSteps
+                                    else if (messages.indexOf(message) in expandedSteps) {
+                                        expandedSteps - messages.indexOf(message)
+                                    } else expandedSteps + messages.indexOf(message)
+                                }) {
+                                    Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Search activity")
+                                }
+                            }
+                            if (messages.indexOf(message) in expandedSteps) {
+                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    message.steps.forEachIndexed { i, step ->
+                                        Text("${i + 1}. $step",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }
@@ -286,8 +384,18 @@ fun DocumentChatWorkspace(
                 }
             }
         }
+        if (searching) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text(searchingStage, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
         Surface(
-            color = Color.White, shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
             border = BorderStroke(1.dp, DataCubeColors.Divider), tonalElevation = 2.dp
         ) {
             Row(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
@@ -304,17 +412,53 @@ fun DocumentChatWorkspace(
                             prompt = ""
                             searching = true
                             scope.launch {
-                                val semanticMatches = if (semanticSupported && !indexing) {
-                                    runCatching { semanticSearch.search(documentId, cleanPrompt) }.getOrDefault(emptyList())
-                                } else emptyList()
-                                val useSemantic = semanticMatches.isNotEmpty()
-                                val matches = if (useSemantic) {
-                                    semanticMatches.map { SourceSnippet(it.text, it.page) }
-                                } else {
-                                    findRelevantSnippets(cleanPrompt, textPreview)
+                                val events = mutableListOf<String>()
+                                try {
+                                    searchingStage = "Understanding your question"
+                                    val plan = DocumentQueryInterpreter.understand(cleanPrompt, textPreview.orEmpty())
+                                    if (plan.correctedTerms.isNotEmpty()) events += "Resolved wording against document terms"
+                                    val matches: List<SourceSnippet>
+                                    var usedSemantic = false
+                                    if (plan.overview) {
+                                        searchingStage = "Collecting an overview of the document"
+                                        matches = sourceSnippets(textPreview).take(4)
+                                        events += "Selected available source passages for an overview"
+                                    } else {
+                                        searchingStage = "Checking the document index"
+                                        val semanticMatches = if (semanticSupported && !indexing) {
+                                            events += "Queried the on-device semantic index"
+                                            runCatching {
+                                                semanticSearch.search(documentId, plan.retrievalQuery)
+                                            }.getOrDefault(emptyList())
+                                        } else emptyList()
+                                        usedSemantic = semanticMatches.isNotEmpty()
+                                        matches = if (usedSemantic) {
+                                            semanticMatches.map { SourceSnippet(it.text, it.page) }
+                                        } else {
+                                            searchingStage = "Searching document text"
+                                            events += "Ranked document passages with local BM25"
+                                            findRelevantSnippets(plan.retrievalQuery, textPreview)
+                                        }
+                                    }
+                                    events += "Linked ${matches.size} result(s) to their source text"
+                                    messages.add(
+                                        ChatMessage(
+                                            question = cleanPrompt,
+                                            matches = matches,
+                                            isUser = false,
+                                            semantic = usedSemantic,
+                                            overview = plan.overview,
+                                            steps = events.toList(),
+                                            corrected = plan.correctedTerms
+                                        )
+                                    )
+                                } catch (error: Exception) {
+                                    events += "Search could not finish: ${error.message ?: "unknown error"}"
+                                    messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList()))
+                                } finally {
+                                    searching = false
+                                    searchingStage = ""
                                 }
-                                messages.add(ChatMessage(cleanPrompt, matches, false, semantic = useSemantic))
-                                searching = false
                             }
                         }
                     },
