@@ -108,9 +108,9 @@ fun HomeScreen(
                                 border = BorderStroke(1.dp, Color(0xFF81ACDA)),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White, containerColor = Color(0xB0123659))
                             ) {
-                                Icon(Icons.Outlined.School, null, Modifier.size(18.dp))
+                                Icon(Icons.Outlined.Forum, null, Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Study")
+                                Text("Discs")
                             }
                         }
                     }
@@ -178,6 +178,7 @@ fun HomeScreen(
         onHome = {},
         onDocuments = onNavigateToDocuments,
         onSettings = onNavigateSettings,
+        onDiscs = onNavigateToStudy,
         modifier = Modifier.align(Alignment.TopCenter).zIndex(2f)
             .padding(horizontal = 18.dp, vertical = 10.dp)
     )
@@ -255,7 +256,7 @@ fun HomeScreen(
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onImportDocument) {
-                    Icon(Icons.Outlined.Add, "Upload documents", tint = DataCubeColors.Navy)
+                    Icon(Icons.Outlined.Add, "Upload documents", tint = MaterialTheme.colorScheme.onSurface)
                 }
                 Text("Document AU", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.weight(1f))
