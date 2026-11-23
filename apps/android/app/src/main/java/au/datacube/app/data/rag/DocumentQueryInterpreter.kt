@@ -7,7 +7,9 @@ import kotlin.math.min
 data class DocumentQueryPlan(
     val retrievalQuery: String,
     val overview: Boolean,
-    val correctedTerms: Map<String, String>
+    val correctedTerms: Map<String, String>,
+    val clarification: String? = null,
+    val contextualQuestion: String? = null
 )
 
 object DocumentQueryInterpreter {
@@ -26,35 +28,109 @@ object DocumentQueryInterpreter {
         "then", "than", "into", "also", "very", "more", "here", "show", "me"
     )
 
-    fun understand(query: String, documentText: String): DocumentQueryPlan {
+    /**
+     * Corrects only when a matching term is supported by the document preview.
+     * Real-word ambiguity is resolved using the source, never by guessing facts.
+     * Short referential follow-ups may inherit the prior question in this thread.
+     */
+    fun understand(
+        query: String,
+        documentText: String,
+        previousQuestion: String? = null
+    ): DocumentQueryPlan {
         val queryTokens = tokens(query)
-        if (queryTokens.isEmpty()) return DocumentQueryPlan("", false, emptyMap())
+        if (queryTokens.isEmpty()) {
+            return DocumentQueryPlan(query.trim(), false, emptyMap(),
+                clarification = "What would you like to know about this document?")
+        }
+        val referential = isReferentialFollowUp(query, queryTokens)
+        val previous = previousQuestion?.takeIf { it.isNotBlank() && it != query }
+        if (referential && previous == null) {
+            return DocumentQueryPlan(query.trim(), false, emptyMap(),
+                clarification = "Which topic or part of the document do you mean?")
+        }
+        val contextualQuestion = if (referential && previous != null)
+            "Earlier question: ${previous.take(220)}. Follow-up: ${query.trim().take(350)}"
+        else null
+        val searchTerms = if (contextualQuestion != null) {
+            tokens(previous.orEmpty()) + queryTokens
+        } else queryTokens
+
         val overview = (queryTokens.any { it in overviewTerms || near(it, "document") } &&
             queryTokens.any { it in overviewActions }) ||
             (queryTokens.contains("summarize") && queryTokens.size <= 8) ||
             (queryTokens.contains("overview") && queryTokens.size <= 8) ||
             (queryTokens.contains("summary") && queryTokens.size <= 8)
-        if (overview) return DocumentQueryPlan(query.trim(), true, emptyMap())
+        if (overview) return DocumentQueryPlan(query.trim(), true, emptyMap(),
+            contextualQuestion = contextualQuestion)
+
+        // The preview is intentionally bounded; never imply that these
+        // corrections cover all the vocabulary of a larger extracted document.
         val frequency = tokens(documentText.take(64_000))
             .filter { it.length >= 4 && it !in ignore }
             .groupingBy { it }.eachCount()
-        val vocabulary = frequency.keys.take(2400)
+        val vocabulary = frequency.keys.take(2_400)
         val corrected = mutableMapOf<String, String>()
-        queryTokens.filter { it.length >= 4 && it !in ignore && it !in frequency }
-            .distinct().forEach { term ->
-                val limit = if (term.length >= 8) 2 else 1
-                val nearMatches = vocabulary
-                    .filter { kotlin.math.abs(it.length - term.length) <= limit }
+        val suggestions = mutableListOf<String>()
+        searchTerms.filter { it.length >= 4 && it !in ignore && it !in frequency }
+            .distinct().take(12).forEach { term ->
+                val maxDistance = if (term.length >= 5) 2 else 1
+                val nearMatches = vocabulary.asSequence()
+                    .filter { kotlin.math.abs(it.length - term.length) <= maxDistance }
                     .mapNotNull { word ->
-                        val distance = distance(term, word, limit)
-                        if (distance in 1..limit) word to distance else null
+                        val edit = distance(term, word, maxDistance)
+                        if (edit in 1..maxDistance) word to edit else null
+                    }.toList()
+                val bestDistance = nearMatches.minOfOrNull { it.second } ?: return@forEach
+                val best = nearMatches.filter { it.second == bestDistance }
+                if (best.size == 1) {
+                    val candidate = best.single().first
+                    if (bestDistance == 1 || (term.length >= 5 &&
+                            (frequency[candidate] ?: 0) >= 2)) {
+                        corrected[term] = candidate
+                    } else if (suggestions.isEmpty()) {
+                        suggestions += "Did you mean '$candidate' instead of '$term'?"
                     }
-                val closestDistance = nearMatches.minOfOrNull { it.second } ?: return@forEach
-                val best = nearMatches.filter { it.second == closestDistance }
-                if (best.size == 1) corrected[term] = best.single().first
+                } else if (bestDistance == 1 && best.size in 2..3 && suggestions.isEmpty()) {
+                    suggestions += "Did you mean " +
+                        best.joinToString(" or ") { "'${it.first}'" } + "?"
+                }
             }
-        val resolved = queryTokens.joinToString(" ") { corrected[it] ?: it }
-        return DocumentQueryPlan(resolved, false, corrected)
+        val retrievalQuery = searchTerms.joinToString(" ") { corrected[it] ?: it }
+        val clarifiedQuestion = if (contextualQuestion == null && corrected.isEmpty()) null
+            else buildString {
+                if (contextualQuestion != null) appendLine(contextualQuestion)
+                else appendLine("Original question: ${query.trim().take(350)}")
+                if (corrected.isNotEmpty()) {
+                    appendLine("Source-supported query spelling: " +
+                        queryTokens.joinToString(" ") { corrected[it] ?: it })
+                }
+                append("Use source evidence; ask if the interpretation is uncertain.")
+            }
+        return DocumentQueryPlan(
+            retrievalQuery = retrievalQuery,
+            overview = false,
+            correctedTerms = corrected,
+            clarification = suggestions.firstOrNull()?.takeIf {
+                // Ask only on very short prompts where guessing would mislead.
+                queryTokens.size <= 4
+            },
+            contextualQuestion = clarifiedQuestion
+        )
+    }
+
+    private fun isReferentialFollowUp(query: String, terms: List<String>): Boolean {
+        if (terms.size > 6) return false
+        val text = query.lowercase(Locale.ROOT).trim()
+        if (text.startsWith("what about ") || text.startsWith("and what about ") ||
+            text.startsWith("tell me more") || text.startsWith("explain that") ||
+            text.startsWith("and why") || text.startsWith("and how")) return true
+        val vague = setOf(
+            "why", "how", "it", "that", "this", "these", "those", "more",
+            "and", "what", "about", "then", "again", "please", "explain",
+            "elaborate", "details", "detail", "can", "you", "does", "do", "so"
+        )
+        return terms.size <= 4 && terms.all { it in vague }
     }
 
     private fun tokens(input: String): List<String> =
