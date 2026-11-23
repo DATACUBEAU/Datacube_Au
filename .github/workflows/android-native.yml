@@ -29,7 +29,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-native-${{ github.head_ref || github.ref_name }}${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release(android): personal-signed browser-only APK'))) && '-personal-signing' || github.event_name == 'workflow_dispatch' && inputs.startup_benchmark && '-startup' || '' }}
+  group: android-native-${{ github.head_ref || github.ref_name }}${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) && '-personal-signing' || github.event_name == 'workflow_dispatch' && inputs.startup_benchmark && '-startup' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -58,7 +58,7 @@ jobs:
           gradle-version: wrapper
 
       - name: Restore personal debug signer
-        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release(android): personal-signed browser-only APK'))) }}
+        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         shell: bash
         env:
           PERSONAL_KEYSTORE: ${{ secrets.ANDROID_PERSONAL_DEBUG_KEYSTORE_BASE64 }}
@@ -115,7 +115,7 @@ jobs:
 
       # Never label a temporary CI-signed APK as a personal Google OAuth test build.
       - name: Verify personal APK certificate and package
-        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release(android): personal-signed browser-only APK'))) }}
+        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         run: |
           apk=app/build/outputs/apk/debug/app-debug.apk
           signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
@@ -153,7 +153,7 @@ jobs:
       # Ordinary PR and push artifacts have transient CI signatures. They are not
       # guaranteed to be accepted by a Google Cloud Android OAuth client.
       - name: Upload CI debug APK (temporary signer)
-        if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release(android): personal-signed browser-only APK'))) }}
+        if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         uses: actions/upload-artifact@v4
         with:
           name: datacube-au-android-ci-debug-unregistered-signer
@@ -163,7 +163,7 @@ jobs:
 
       # A certificate-checked APK can be requested manually or by a tightly scoped release commit.
       - name: Upload personal Google sign-in test APK
-        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release(android): personal-signed browser-only APK'))) }}
+        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         uses: actions/upload-artifact@v4
         with:
           name: datacube-au-android-personal-google-test-signed
