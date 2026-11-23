@@ -11,6 +11,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -42,6 +43,13 @@ import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.models.ModelBackupManager
+import au.datacube.app.models.LocalModelLibrary
+import au.datacube.app.models.ModelCatalog
+import au.datacube.app.models.ModelSpec
+import au.datacube.app.models.DeviceCapabilityScanner
+import au.datacube.app.ui.models.ModelsScreen
+import au.datacube.app.ui.theme.ThemePreference
+import au.datacube.app.ui.theme.ThemePreferenceStore
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.theme.DataCubeTheme
@@ -64,12 +72,25 @@ class MainActivity : ComponentActivity() {
         receiveMobileSignInIntent(intent, "cold")
 
         setContent {
-            DataCubeTheme {
+            val themeStore = remember { ThemePreferenceStore(applicationContext) }
+            var displayMode by remember { mutableStateOf(themeStore.get()) }
+            val systemDark = isSystemInDarkTheme()
+            val dark = when (displayMode) {
+                ThemePreference.DARK -> true
+                ThemePreference.LIGHT -> false
+                ThemePreference.SYSTEM -> systemDark
+            }
+            DataCubeTheme(darkTheme = dark) {
                 DataCubeRoot(
                     authViewModel,
                     { documentsViewModel },
                     openBrowser = ::openBrowser,
-                    onWorkspaceDrawn = ::recoverWorkspaceJobs
+                    onWorkspaceDrawn = ::recoverWorkspaceJobs,
+                    themePreference = displayMode,
+                    onThemeChange = { selected ->
+                        themeStore.set(selected)
+                        displayMode = selected
+                    }
                 )
             }
         }
@@ -142,6 +163,7 @@ private sealed class Screen(val route: String) {
     object Collection : Screen("collection/{id}")
     object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
     object Settings : Screen("settings")
+    object Models : Screen("models")
 }
 
 // ── Root composable ───────────────────────────────────────────────────────────
@@ -151,7 +173,9 @@ internal fun DataCubeRoot(
     authViewModel: AuthViewModel,
     documentsViewModel: () -> DataCubeViewModel,
     openBrowser: (Uri) -> Unit = {},
-    onWorkspaceDrawn: () -> Unit = {}
+    onWorkspaceDrawn: () -> Unit = {},
+    themePreference: ThemePreference = ThemePreference.SYSTEM,
+    onThemeChange: (ThemePreference) -> Unit = {}
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     ReportDrawnWhen { authState.sessionRestored && !authState.isLoading }
@@ -165,7 +189,7 @@ internal fun DataCubeRoot(
     }
 
     key(authState.user?.id) {
-        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel())
+        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel(), themePreference, onThemeChange)
         val view = LocalView.current
         DisposableEffect(view) {
             val listener = view.doOnPreDraw { view.post { onWorkspaceDrawn() } }
@@ -178,7 +202,9 @@ internal fun DataCubeRoot(
 private fun AuthenticatedWorkspace(
     authState: au.datacube.app.ui.auth.AuthState,
     authViewModel: AuthViewModel,
-    documentsViewModel: DataCubeViewModel
+    documentsViewModel: DataCubeViewModel,
+    themePreference: ThemePreference,
+    onThemeChange: (ThemePreference) -> Unit
 ) {
     val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
     val collections by documentsViewModel.collections.collectAsStateWithLifecycle()
@@ -188,6 +214,58 @@ private fun AuthenticatedWorkspace(
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
+    var modelImportTarget by remember { mutableStateOf<ModelSpec?>(null) }
+    var modelRevision by remember { mutableIntStateOf(0) }
+    val modelStore = remember(context) { LocalModelLibrary(context.applicationContext) }
+    val installedModelIds = remember(modelRevision) {
+        ModelCatalog.models.filter { modelStore.installed(it.id) }.map { it.id }.toSet()
+    }
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        scope.launch { snackbar.showSnackbar(if (granted) "Task notifications enabled." else "Notifications remain off.") }
+    }
+    val setupPrefs = remember(context) {
+        context.getSharedPreferences("datacube_model_setup", android.content.Context.MODE_PRIVATE)
+    }
+    val userSetupKey = "offered_" + authState.user?.id.orEmpty()
+    var setupStep by remember(userSetupKey) {
+        mutableIntStateOf(if (setupPrefs.getBoolean(userSetupKey, false)) -1 else 0)
+    }
+    if (setupStep >= 0) {
+        val capability = remember(setupStep) {
+            if (setupStep == 1) DeviceCapabilityScanner.scan(context) else null
+        }
+        AlertDialog(
+            onDismissRequest = {
+                setupPrefs.edit().putBoolean(userSetupKey, true).apply()
+                setupStep = -1
+            },
+            title = { Text(if (setupStep == 0) "Set up local models?" else "Your device") },
+            text = {
+                Text(
+                    if (capability == null) "Check memory and free space to recommend a model. No personal files are scanned."
+                    else "${capability.ramGb} GB memory · ${capability.freeStorageGb} GB free. Suggested: ${capability.recommendedModel}."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (setupStep == 0) setupStep = 1
+                    else {
+                        setupPrefs.edit().putBoolean(userSetupKey, true).apply()
+                        setupStep = -1
+                        navController.navigate(Screen.Models.route)
+                    }
+                }) { Text(if (setupStep == 0) "Check device" else "View models") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    setupPrefs.edit().putBoolean(userSetupKey, true).apply()
+                    setupStep = -1
+                }) { Text("Not now") }
+            }
+        )
+    }
 
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
     val mimeTypes = arrayOf(
@@ -221,6 +299,7 @@ private fun AuthenticatedWorkspace(
             scope.launch {
                 runCatching { ModelBackupManager(context).restoreBackup(source) }
                     .onSuccess { summary ->
+                        modelRevision += 1
                         snackbar.showSnackbar(
                             "Restored ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
                         )
@@ -228,6 +307,24 @@ private fun AuthenticatedWorkspace(
                     .onFailure { error ->
                         snackbar.showSnackbar(error.message ?: "Could not restore the model backup.")
                     }
+            }
+        }
+    }
+
+    val modelImportPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        val target = modelImportTarget
+        modelImportTarget = null
+        if (target != null && uris.isNotEmpty()) {
+            scope.launch {
+                try {
+                    LocalModelLibrary(context.applicationContext).install(target, uris)
+                    modelRevision += 1
+                    snackbar.showSnackbar("${target.name} files imported. Runtime activation comes next.")
+                } catch (error: Exception) {
+                    snackbar.showSnackbar(error.message ?: "Model import failed.")
+                }
             }
         }
     }
@@ -401,7 +498,33 @@ private fun AuthenticatedWorkspace(
                     },
                     onRestoreModels = {
                         modelRestoreLauncher.launch(arrayOf(ModelBackupManager.BACKUP_MIME_TYPE))
+                    },
+                    themePreference = themePreference,
+                    onThemeChange = onThemeChange,
+                    onOpenModels = { navController.navigate(Screen.Models.route) },
+                    onOpenSubscription = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(BuildConfig.AUTH_WEBSITE_URL)))
+                    },
+                    onEnableNotifications = {
+                        if (android.os.Build.VERSION.SDK_INT >= 33) {
+                            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            scope.launch { snackbar.showSnackbar("Notifications are controlled in Android settings.") }
+                        }
                     }
+                )
+            }
+            composable(Screen.Models.route) {
+                ModelsScreen(
+                    installed = { id -> id in installedModelIds },
+                    onGet = { model ->
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(model.sourcePage)))
+                    },
+                    onImport = { model ->
+                        modelImportTarget = model
+                        modelImportPicker.launch(arrayOf("*/*"))
+                    },
+                    onBack = { navController.popBackStack() }
                 )
             }
         }
