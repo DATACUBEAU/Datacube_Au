@@ -99,7 +99,7 @@ jobs:
           fi
 
       - name: Run unit tests
-        run: bash ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --no-daemon
+        run: bash ./gradlew :app:testDebugUnitTest :app:compileDebugAndroidTestKotlin --no-daemon --stacktrace --info
 
       - name: Build debug APK
         run: bash ./gradlew :app:assembleDebug --no-daemon
