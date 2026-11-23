@@ -13,6 +13,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -702,6 +705,24 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
     val topics = remember(textPreview) { documentTopics(textPreview) }
     val summary = remember(textPreview) { documentSummary(textPreview) }
     val snippets = remember(textPreview) { sourceSnippets(textPreview) }
+    val clipboard = LocalClipboardManager.current
+    var selectedSource by remember(documentName) { mutableStateOf<SourceSnippet?>(null) }
+
+    selectedSource?.let { evidence ->
+        AlertDialog(
+            onDismissRequest = { selectedSource = null },
+            title = { Text(evidence.page?.let { "Source · Page $it" } ?: "Source") },
+            text = {
+                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
+                    SelectionContainer { Text(evidence.text) }
+                }
+            },
+            confirmButton = { TextButton(onClick = { selectedSource = null }) { Text("Done") } },
+            dismissButton = {
+                TextButton(onClick = { clipboard.setText(AnnotatedString(evidence.text)) }) { Text("Copy") }
+            }
+        )
+    }
 
     ToolPage("Smart Note", "Organize key ideas extracted from $documentName. Content stays on this device.") {
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null) else {
@@ -727,10 +748,15 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
                             Surface(shape = RoundedCornerShape(50), color = DataCubeColors.BlueLight) {
                                 Text((index + 1).toString(), Modifier.padding(horizontal = 11.dp, vertical = 6.dp), color = DataCubeColors.BlueDark, fontWeight = FontWeight.Bold)
                             }
-                            Spacer(Modifier.width(9.dp)); Text(topic, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                            Spacer(Modifier.width(9.dp))
+                            Text(topic, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                         }
                         snippets.firstOrNull { it.text.contains(topic, ignoreCase = true) }?.let { evidence ->
-                            Spacer(Modifier.height(8.dp)); Text(evidence.text, color = DataCubeColors.TextSecondary)
+                            Spacer(Modifier.height(8.dp))
+                            Text(evidence.text, color = DataCubeColors.TextSecondary, maxLines = 4)
+                            TextButton(onClick = { selectedSource = evidence }) {
+                                Text(evidence.page?.let { "View page $it" } ?: "View source")
+                            }
                         }
                     }
                 }
@@ -740,22 +766,73 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
                 }
             } else {
                 ToolCard {
-                    Text("Concept map", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                    Text("Main themes found in the extracted text", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(16.dp))
-                    Surface(shape = RoundedCornerShape(16.dp), color = DataCubeColors.BlueLight, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
-                        Text(documentName, Modifier.fillMaxWidth().padding(14.dp), color = DataCubeColors.Navy, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.AccountTree, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Source concept map", style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold)
                     }
-                    if (topics.isEmpty()) Text("No distinct headings or repeated terms were detected.", Modifier.padding(10.dp), color = DataCubeColors.TextSecondary)
-                    else topics.forEach { topic ->
-                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("│", color = DataCubeColors.Blue)
-                                Surface(shape = RoundedCornerShape(14.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
-                                    Text(topic, Modifier.padding(horizontal = 16.dp, vertical = 11.dp), color = DataCubeColors.Navy, fontWeight = FontWeight.SemiBold)
+                    Text("Tap a concept to see its passage.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(14.dp))
+                    Surface(
+                        shape = RoundedCornerShape(18.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Outlined.MenuBook, null,
+                                tint = MaterialTheme.colorScheme.primary)
+                            Text(documentName, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    if (topics.isEmpty()) {
+                        Text("No concepts detected in the available source text.",
+                            style = MaterialTheme.typography.bodySmall)
+                    } else {
+                        val lineColor = MaterialTheme.colorScheme.primary
+                        Canvas(Modifier.fillMaxWidth().height(26.dp)) {
+                            val midpoint = size.width / 2f
+                            drawLine(lineColor, Offset(midpoint, 0f), Offset(midpoint, size.height), 2.dp.toPx())
+                            drawCircle(lineColor, radius = 4.dp.toPx(), center = Offset(midpoint, size.height))
+                        }
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            topics.take(10).forEachIndexed { index, topic ->
+                                val evidence = snippets.firstOrNull { it.text.contains(topic, ignoreCase = true) }
+                                OutlinedCard(
+                                    onClick = { if (evidence != null) selectedSource = evidence },
+                                    enabled = evidence != null,
+                                    modifier = Modifier.width(174.dp),
+                                    shape = RoundedCornerShape(16.dp)
+                                ) {
+                                    Column(Modifier.padding(13.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("${index + 1}", color = MaterialTheme.colorScheme.primary,
+                                                fontWeight = FontWeight.Bold)
+                                            Spacer(Modifier.weight(1f))
+                                            Icon(Icons.Outlined.Hub, null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp))
+                                        }
+                                        Text(topic, fontWeight = FontWeight.SemiBold, maxLines = 3)
+                                        Text(evidence?.page?.let { "Page $it · Open" }
+                                            ?: "No linked page",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
                             }
                         }
+                        Text("Concepts come from extracted text; diagrams are not generated illustrations.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
