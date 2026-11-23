@@ -136,6 +136,7 @@ class LocalDocumentRepository(
         val threads = LocalConversationThreads(filesDir)
         threads.clear(id)
         threads.redactDeletedDocument(id)
+        au.datacube.app.ui.voice.LocalVoiceNoteRecorder.clearOwner(filesDir, id)
     }
 
     companion object {
