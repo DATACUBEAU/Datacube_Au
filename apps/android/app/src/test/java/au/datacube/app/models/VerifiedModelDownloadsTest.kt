@@ -38,6 +38,13 @@ class VerifiedModelDownloadsTest {
         assertNull(VerifiedModelDownloads.find("unknown-model"))
     }
 
+    @Test fun kokoroHasPinnedPublisherDigestAndOptionalVoiceRole() {
+        val model = requireNotNull(VerifiedModelDownloads.find("kokoro-82m-cpu"))
+        assertEquals("e7b931ee5d4b7104012a838c9eee240d19ea69cb3ca269041a3274f83dbb7fa1", model.sha256)
+        assertTrue(model.url.contains("/resolve/81e43a025bccabcbbd487f08bc3ebd65b5fc7295/"))
+        assertEquals(ModelRole.VOICE, ModelCatalog.find("kokoro-82m-cpu").role)
+    }
+
     @Test fun invalidManifestCannotBeRegistered() {
         assertThrows(IllegalArgumentException::class.java) {
             VerifiedModelArtifact(
