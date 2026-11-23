@@ -37,9 +37,10 @@ fun ModelsScreen(
                 Text("Search model", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("For local semantic document search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            item {
-                val spec = ModelCatalog.models.first { it.role == ModelRole.EMBEDDING }
-                ModelCard(spec, { installed(spec.id) }, onGet, onImport)
+            ModelCatalog.models.filter { it.role == ModelRole.EMBEDDING }.forEach { spec ->
+                item(key = spec.id) {
+                    ModelCard(spec, { installed(spec.id) }, onGet, onImport)
+                }
             }
             item {
                 Spacer(Modifier.height(4.dp))
