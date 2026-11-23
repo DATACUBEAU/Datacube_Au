@@ -325,14 +325,16 @@ fun DocumentChatWorkspace(
         if (!textPreview.isNullOrBlank()) {
             // Backfill existing documents only if a complete FTS index is absent.
             withContext(Dispatchers.IO) {
-                val index = LocalPassageIndex(context)
-                try {
-                    val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
-                    if (source.isFile && !index.hasCurrent(documentId, source)) {
-                        LexicalIndexWorker.schedule(context, documentId)
+                runCatching {
+                    val index = LocalPassageIndex(context)
+                    try {
+                        val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
+                        if (source.isFile && !index.hasCurrent(documentId, source)) {
+                            LexicalIndexWorker.schedule(context, documentId)
+                        }
+                    } finally {
+                        index.close()
                     }
-                } finally {
-                    index.close()
                 }
             }
             if (semanticSupported) semanticSearch.scheduleIndex(documentId)
@@ -363,13 +365,15 @@ fun DocumentChatWorkspace(
                                     if (plan.overview) {
                                         session.searchingStage = "Collecting source excerpts"
                                         val indexedOverview = withContext(Dispatchers.IO) {
-                                            val index = LocalPassageIndex(context)
-                                            try {
-                                                val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
-                                                index.overview(documentId, source, limit = 8)
-                                            } finally {
-                                                index.close()
-                                            }
+                                            runCatching {
+                                                val index = LocalPassageIndex(context)
+                                                try {
+                                                    val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
+                                                    index.overview(documentId, source, limit = 8)
+                                                } finally {
+                                                    index.close()
+                                                }
+                                            }.getOrDefault(emptyList())
                                         }
                                         val overviewCandidates = if (indexedOverview.isNotEmpty()) {
                                             indexedOverview.map { RagEvidence(it.text, it.page) }
@@ -384,15 +388,17 @@ fun DocumentChatWorkspace(
                                     } else {
                                         session.searchingStage = "Searching document text"
                                         val indexedMatches = withContext(Dispatchers.IO) {
-                                            val index = LocalPassageIndex(context)
-                                            try {
-                                                val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
-                                                if (index.hasCurrent(documentId, source)) {
-                                                    index.search(documentId, plan.retrievalQuery, source, limit = 6)
-                                                } else null
-                                            } finally {
-                                                index.close()
-                                            }
+                                            runCatching {
+                                                val index = LocalPassageIndex(context)
+                                                try {
+                                                    val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
+                                                    if (index.hasCurrent(documentId, source)) {
+                                                        index.search(documentId, plan.retrievalQuery, source, limit = 6)
+                                                    } else null
+                                                } finally {
+                                                    index.close()
+                                                }
+                                            }.getOrNull()
                                         }
                                         val keywordMatches = if (indexedMatches != null) {
                                             indexedMatches.map { SourceSnippet(it.text, it.page) }
