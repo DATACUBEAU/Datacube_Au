@@ -29,7 +29,7 @@ class VerifiedModelDownloadManager(context: Context) {
     fun start(id: String, wifiOnly: Boolean) {
         requireNotNull(VerifiedModelDownloads.find(id)) { "No verified download for this model." }
         require(!LocalModelLibrary(app).installed(id)) { "Model files already exist." }
-        preferences.edit().putBoolean("paused_$id", false).apply()
+        preferences.edit().putBoolean("paused_$id", false).putBoolean("wifi_$id", wifiOnly).apply()
         val request = OneTimeWorkRequestBuilder<VerifiedModelDownloadWorker>()
             .setInputData(workDataOf(
                 VerifiedModelDownloadWorker.KEY_MODEL_ID to id
@@ -46,6 +46,8 @@ class VerifiedModelDownloadManager(context: Context) {
             .build()
         work.enqueueUniqueWork(workName(id), ExistingWorkPolicy.REPLACE, request)
     }
+
+    fun resume(id: String) = start(id, wifiOnly = preferences.getBoolean("wifi_$id", true))
 
     suspend fun pause(id: String) = withContext(Dispatchers.IO) {
         preferences.edit().putBoolean("paused_$id", true).commit()
