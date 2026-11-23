@@ -11,7 +11,7 @@ data class DocumentQueryPlan(
 )
 
 object DocumentQueryInterpreter {
-    private val words = Regex("[\p{L}\p{N}]{2,}")
+    private val words = Regex("""[\p{L}\p{N}]{2,}""")
     private val overviewTerms = setOf(
         "document", "doc", "file", "pdf", "book", "chapter", "content", "notes", "text"
     )
