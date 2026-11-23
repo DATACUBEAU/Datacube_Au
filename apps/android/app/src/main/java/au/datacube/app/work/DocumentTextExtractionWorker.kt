@@ -12,6 +12,7 @@ import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.PdfDocumentTextExtractor
 import au.datacube.app.data.PlainTextDocumentExtractor
 import au.datacube.app.data.TextExtractionRejectedException
+import au.datacube.app.notifications.LocalNotificationService
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -47,11 +48,14 @@ class DocumentTextExtractionWorker(
             return Result.failure()
         }
 
+        val notifications = LocalNotificationService(applicationContext)
+        var trackedDocumentId: String? = null
         return try {
             val documentId = JSONObject(job.payloadJson)
                 .optString("documentId")
                 .takeIf { it.isNotBlank() }
                 ?: throw TextExtractionRejectedException("The document reference is missing.")
+            trackedDocumentId = documentId
             val document = database.documents().find(documentId)
                 ?: throw TextExtractionRejectedException("The imported document no longer exists.")
             val extractor: DocumentTextExtractor = when (document.extension.lowercase()) {
@@ -70,12 +74,17 @@ class DocumentTextExtractionWorker(
             }
 
             val destination = ExtractedTextStore.fileFor(applicationContext.filesDir, documentId)
+            var lastNotified = -5
+            notifications.showDocumentExtraction(documentId, 0)
             extractor.extract(source, destination) { progress ->
-                database.jobs().updateProgress(
-                    jobId,
-                    progress.coerceIn(0.0, 0.95),
-                    System.currentTimeMillis()
-                )
+                val bounded = progress.coerceIn(0.0, 0.95)
+                database.jobs().updateProgress(jobId, bounded, System.currentTimeMillis())
+                val percentage = (bounded * 100).toInt()
+                if (percentage - lastNotified >= 5 || percentage >= 95 && lastNotified < 95) {
+                    // Replaces the same silent status, not dozens of notification dots.
+                    notifications.showDocumentExtraction(documentId, percentage)
+                    lastNotified = percentage
+                }
             }
 
             val completed = database.withTransaction {
@@ -92,6 +101,8 @@ class DocumentTextExtractionWorker(
                     "The document was removed before extraction completed.",
                     System.currentTimeMillis()
                 )
+            } else {
+                notifications.showTextReady(documentId)
             }
             Result.success()
         } catch (cancelled: CancellationException) {
@@ -126,6 +137,8 @@ class DocumentTextExtractionWorker(
                 System.currentTimeMillis()
             )
             Result.failure()
+        } finally {
+            trackedDocumentId?.let(notifications::clearDocumentProgress)
         }
     }
 
