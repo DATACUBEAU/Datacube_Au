@@ -145,6 +145,16 @@ object NeuralNarration {
         runCatching { audio?.flush() }
     }
 
+    /** Release the large neural engine when its screen is no longer visible. */
+    suspend fun release() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            stop()
+            runCatching { synth?.close() }
+            synth = null
+            loadedPath = null
+        }
+    }
+
     private suspend fun load(context: Context): TextToSpeech {
         val artifact = requireNotNull(VerifiedModelDownloads.find(MODEL_ID))
         val model = File(context.filesDir,
