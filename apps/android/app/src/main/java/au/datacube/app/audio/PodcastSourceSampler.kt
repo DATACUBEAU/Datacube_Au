@@ -58,11 +58,12 @@ object PodcastSourceSampler {
         for (piece in pieces) {
             currentCoroutineContext().ensureActive()
             val chunks = RagTextChunker(maxChunks = 18).chunk(documentId, piece)
-            val best = chunks.map { RagEvidence(it.text, null) }
+            val candidates = chunks.map { RagEvidence(it.text, null) }
                 .filter { StudyContentQuality.score(it.text) > 0 }
-                .maxByOrNull { StudyContentQuality.score(it.text) }
-            if (best != null) {
-                val clean = StudyContentQuality.cleanExcerpt(best.text).take(950)
+                .sortedByDescending { StudyContentQuality.score(it.text) }
+                .take(if (pieces.size == 1) 3 else 1)
+            for (candidate in candidates) {
+                val clean = StudyContentQuality.cleanExcerpt(candidate.text).take(950)
                 val key = clean.lowercase()
                 if (clean.length >= 80 && dedupe.add(key)) {
                     selected += RagEvidence(clean, null)
