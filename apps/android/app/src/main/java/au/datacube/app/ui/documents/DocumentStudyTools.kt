@@ -40,9 +40,9 @@ import au.datacube.app.data.rag.LocalSemanticSearch
 import au.datacube.app.data.rag.DocumentQueryInterpreter
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
-import au.datacube.app.data.rag.LocalDocumentChatHistory
-import au.datacube.app.data.rag.SavedDocumentTurn
-import au.datacube.app.data.rag.SavedSource
+import au.datacube.app.data.rag.LocalConversationThreads
+import au.datacube.app.data.rag.ConversationThreadIndex
+import au.datacube.app.data.rag.ConversationWindow
 import au.datacube.app.data.rag.SourceTermGrounding
 import au.datacube.app.data.rag.TermContext
 import kotlinx.coroutines.delay
@@ -63,9 +63,9 @@ import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
 import kotlinx.coroutines.launch
 
-private data class SourceSnippet(val text: String, val page: Int?)
+internal data class SourceSnippet(val text: String, val page: Int?, val documentId: String? = null, val documentName: String? = null)
 private data class StudyQuestion(val prompt: String, val reference: String, val page: Int?, val topic: String)
-private data class ChatMessage(
+internal data class ChatMessage(
     val question: String,
     val matches: List<SourceSnippet>,
     val isUser: Boolean,
@@ -234,7 +234,9 @@ private fun SourceUnavailableCard(
 fun DocumentChatWorkspace(
     documentId: String,
     documentName: String, initialPrompt: String? = null, textPreview: String?, previewLoading: Boolean, previewError: String?,
-    extractionStatus: String?, extractionProgress: Double?, extractionError: String?
+    extractionStatus: String?, extractionProgress: Double?, extractionError: String?,
+    showHistoryPicker: Boolean = false,
+    onDismissHistory: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -245,12 +247,72 @@ fun DocumentChatWorkspace(
     val indexingFlow = remember(documentId) { semanticSearch.observeIndex(documentId) }
     val indexingWorks by indexingFlow.collectAsState(initial = emptyList())
     val indexing = indexingWorks.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
-    var searching by remember(documentId) { mutableStateOf(false) }
-    var searchingStage by remember(documentId) { mutableStateOf("") }
-    var activeRequest by remember(documentId) { mutableStateOf<Job?>(null) }
+    val threads = remember(context) { LocalConversationThreads(context) }
+    var threadIndex by remember(documentId) { mutableStateOf<ConversationThreadIndex?>(null) }
+    LaunchedEffect(documentId) {
+        threadIndex = runCatching { threads.list(documentId) }.getOrNull()
+    }
+    LaunchedEffect(showHistoryPicker) {
+        if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
+    }
+    val threadId = threadIndex?.activeId ?: "main"
+    val session = remember(documentId, threadId) {
+        DocumentChatSessions.get(documentId, threadId, context)
+    }
+    val messages = session.messages
+    val historyReady = session.historyReady
+    val userTurns = messages.count { it.isUser }
+    fun startNewChat() {
+        scope.launch {
+            runCatching { threads.create(documentId) }
+                .onSuccess { threadIndex = it; onDismissHistory() }
+        }
+    }
+    if (showHistoryPicker) {
+        DataCubeDialog(
+            onDismissRequest = onDismissHistory,
+            title = { Text("Your chat history", style = MaterialTheme.typography.titleLarge) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Each chat has its own context. Running replies keep working when you switch chats.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall)
+                    Column(Modifier.fillMaxWidth().heightIn(max = 330.dp).verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        (threadIndex?.threads.orEmpty()).sortedByDescending { it.updatedAt }.forEach { item ->
+                            Surface(
+                                onClick = {
+                                    scope.launch {
+                                        threadIndex = threads.activate(documentId, item.id)
+                                        onDismissHistory()
+                                    }
+                                },
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (item.id == threadId) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Row(Modifier.fillMaxWidth().padding(13.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text(item.title, Modifier.weight(1f), maxLines = 2,
+                                        color = MaterialTheme.colorScheme.onSurface)
+                                    if (item.id == threadId) Icon(Icons.Outlined.Check, null,
+                                        tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = ::startNewChat) { Text("New chat") } },
+            dismissButton = { TextButton(onClick = onDismissHistory) { Text("Close") } }
+        )
+    }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
-    var expandedSteps by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var expandedSources by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var expandedSteps by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var expandedSources by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
     var explainingTerm by remember(documentId) { mutableStateOf(false) }
@@ -261,52 +323,6 @@ fun DocumentChatWorkspace(
         }
     }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
-    val messages = remember(documentId) { mutableStateListOf<ChatMessage>() }
-    val historyStore = remember(context) { LocalDocumentChatHistory(context) }
-    var historyReady by remember(documentId) { mutableStateOf(false) }
-    LaunchedEffect(documentId) {
-        historyReady = false
-        val saved = historyStore.load(documentId)
-        messages.clear()
-        messages.addAll(saved.map { turn ->
-            ChatMessage(
-                question = turn.question,
-                matches = turn.matches.map { SourceSnippet(it.text, it.page) },
-                isUser = turn.isUser,
-                semantic = turn.semantic,
-                overview = turn.overview,
-                steps = turn.steps,
-                corrected = turn.corrections,
-                answer = turn.answer,
-                generationError = if (turn.interrupted) "Local generation was interrupted." else null
-            )
-        })
-        historyReady = true
-    }
-    LaunchedEffect(documentId, historyReady) {
-        if (historyReady) {
-            snapshotFlow { messages.toList() }.collectLatest { list ->
-                // Debounced atomic writes: do not hit flash storage for every generated token.
-                delay(750)
-                runCatching {
-                    historyStore.save(documentId, list.map { item ->
-                        SavedDocumentTurn(
-                            question = item.question,
-                            answer = item.answer,
-                            isUser = item.isUser,
-                            matches = item.matches.map { SavedSource(it.text, it.page) },
-                            semantic = item.semantic,
-                            overview = item.overview,
-                            steps = item.steps,
-                            corrections = item.corrected,
-                            interrupted = item.generating
-                        )
-                    })
-                }
-            }
-        }
-    }
-
     tappedTerm?.let { info ->
         DataCubeDialog(
             onDismissRequest = {
@@ -400,12 +416,23 @@ fun DocumentChatWorkspace(
             AssistChip(onClick = {}, enabled = false, label = {
                 Text(when {
                     indexing -> "Indexing"
-                    llmInstalled -> "Local AU model"
-                    semanticSupported -> "Local semantic + BM25"
-                    else -> "Local BM25"
+                    llmInstalled -> "AU ready"
+                    semanticSupported -> "Search ready"
+                    else -> "Search ready"
 
                 })
             })
+        }
+        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            ConversationWindow.warning(userTurns)?.let { warning ->
+                Text(warning, Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall)
+            } ?: Spacer(Modifier.weight(1f))
+            IconButton(onClick = ::startNewChat, enabled = threadIndex != null) {
+                Icon(Icons.Outlined.AddCircleOutline, contentDescription = "Start new chat")
+            }
         }
         if (textPreview.isNullOrBlank()) {
             Box(Modifier.weight(1f).fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
@@ -417,7 +444,7 @@ fun DocumentChatWorkspace(
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Text(
-                        if (llmInstalled) "Ask AU. Answers are generated offline from cited document passages."
+                        if (llmInstalled) "Ask AU. Answers use your document and link to supporting passages."
                         else "Read local source passages. Install a chat model in Models to enable answers.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
                     )
@@ -445,8 +472,8 @@ fun DocumentChatWorkspace(
                         ToolCard {
                             Text(
                                 when {
-                                    message.answer.isNotBlank() -> "AU · local answer"
-                                    message.generating -> "AU · generating locally"
+                                    message.answer.isNotBlank() -> "AU"
+                                    message.generating -> "AU is thinking"
                                     message.overview -> "Overview · source excerpts"
                                     message.semantic -> "Semantic matches from your document"
                                     else -> "Matches from your document"
@@ -568,15 +595,45 @@ fun DocumentChatWorkspace(
                                 }) {
                                     Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
                                     Spacer(Modifier.width(5.dp))
-                                    Text("How AU found this")
+                                    Text("How AU worked")
                                 }
                             }
                             if (messages.indexOf(message) in expandedSteps) {
                                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                     message.steps.forEachIndexed { i, step ->
-                                        Text("${i + 1}. $step",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(
+                                            verticalAlignment = Alignment.Top,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                        ) {
+                                            Surface(
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = MaterialTheme.colorScheme.primaryContainer
+                                            ) {
+                                                Text("${i + 1}", Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.Bold)
+                                            }
+                                            Column(Modifier.weight(1f)) {
+                                                Text(
+                                                    when {
+                                                        step.contains("search", ignoreCase = true) ||
+                                                            step.contains("rank", ignoreCase = true) -> "Searching"
+                                                        step.contains("source", ignoreCase = true) ||
+                                                            step.contains("evidence", ignoreCase = true) -> "Checking sources"
+                                                        step.contains("generat", ignoreCase = true) -> "Answering"
+                                                        else -> "Preparing"
+                                                    },
+                                                    color = MaterialTheme.colorScheme.primary,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                                Text(step,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -585,15 +642,15 @@ fun DocumentChatWorkspace(
                 }
             }
         }
-        if (searching) {
+        if (session.searching) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
-                Text(searchingStage, modifier = Modifier.weight(1f),
+                Text(session.searchingStage, modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = { activeRequest?.cancel() }) { Text("Stop") }
+                TextButton(onClick = { session.activeRequest?.cancel() }) { Text("Stop") }
             }
         }
         Surface(
@@ -608,37 +665,40 @@ fun DocumentChatWorkspace(
                 )
                 Spacer(Modifier.width(4.dp))
                 OfflineVoiceInputButton(
-                    enabled = historyReady && !searching,
+                    enabled = historyReady && !session.searching,
                     onTranscript = { spoken -> prompt = mergeVoicePrompt(prompt, spoken) }
                 )
                 Spacer(Modifier.width(4.dp))
                 FilledIconButton(
                     onClick = {
                         val cleanPrompt = prompt.trim()
-                        if (cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !searching) {
+                        if (cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && userTurns < ConversationWindow.MAX_USER_TURNS) {
                             messages.add(ChatMessage(cleanPrompt, emptyList(), true))
                             prompt = ""
-                            searching = true
-                            activeRequest = scope.launch {
+                            session.searching = true
+                            // The response belongs to the document/thread session, not
+                            // this Compose screen; navigation must not cancel it.
+                            scope.launch { threads.nameFromQuestion(documentId, threadId, cleanPrompt) }
+                            session.activeRequest = session.scope.launch {
                                 val events = mutableListOf<String>()
                                 try {
-                                    searchingStage = "Understanding your question"
+                                    session.searchingStage = "Understanding your question"
                                     val plan = DocumentQueryInterpreter.understand(cleanPrompt, textPreview.orEmpty())
                                     if (plan.correctedTerms.isNotEmpty()) events += "Resolved wording against document terms"
                                     val matches: List<SourceSnippet>
                                     var usedSemantic = false
                                     if (plan.overview) {
-                                        searchingStage = "Collecting source excerpts"
+                                        session.searchingStage = "Collecting source excerpts"
                                         matches = StudyContentQuality.chooseOverview(
                                             sourceSnippets(textPreview).map { RagEvidence(it.text, it.page) }
                                         ).map { SourceSnippet(it.text, it.page) }
                                         events += "Selected source passages for an overview"
                                     } else {
-                                        searchingStage = "Searching document text"
+                                        session.searchingStage = "Searching document text"
                                         val bm25 = findRelevantSnippets(plan.retrievalQuery, textPreview)
                                         events += "Ranked extracted text with BM25"
                                         val vectorMatches = if (semanticSupported && !indexing) {
-                                            searchingStage = "Checking semantic matches"
+                                            session.searchingStage = "Checking semantic matches"
                                             events += "Queried the on-device vector index"
                                             runCatching { semanticSearch.search(documentId, plan.retrievalQuery, 6) }
                                                 .getOrDefault(emptyList())
@@ -659,7 +719,7 @@ fun DocumentChatWorkspace(
                                         generating = llmInstalled && matches.isNotEmpty()
                                     ))
                                     if (llmInstalled && matches.isNotEmpty()) {
-                                        searchingStage = "Loading local AU model"
+                                        session.searchingStage = "AI is preparing the answer"
                                         val previous = messages.take(resultIndex)
                                             .filter { !it.isUser && it.answer.isNotBlank() }
                                             .takeLast(3)
@@ -672,7 +732,7 @@ fun DocumentChatWorkspace(
                                         var generated = ""
                                         var lastUpdate = 0L
                                         try {
-                                            searchingStage = "Generating an offline answer"
+                                            session.searchingStage = "AI is thinking"
                                             LocalGenerativeEngine.generate(context, grounded.value) { part ->
                                                 generated += part
                                                 val now = SystemClock.elapsedRealtime()
@@ -717,13 +777,13 @@ fun DocumentChatWorkspace(
                                     events += "Search could not finish: ${error.message ?: "unknown error"}"
                                     messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList()))
                                 } finally {
-                                    searching = false
-                                    searchingStage = ""
+                                    session.searching = false
+                                    session.searchingStage = ""
                                 }
                             }
                         }
                     },
-                    enabled = historyReady && prompt.isNotBlank() && !textPreview.isNullOrBlank() && !searching, modifier = Modifier.size(52.dp)
+                    enabled = historyReady && threadIndex != null && userTurns < ConversationWindow.MAX_USER_TURNS && prompt.isNotBlank() && !textPreview.isNullOrBlank() && !session.searching, modifier = Modifier.size(52.dp)
                 ) { Icon(Icons.Outlined.Send, contentDescription = "Search document") }
             }
         }
