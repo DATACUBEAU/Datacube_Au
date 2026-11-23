@@ -139,7 +139,7 @@ jobs:
               .target.namespace == "android_app" and .target.package_name == "au.datacube.app" and
               any(.target.sha256_cert_fingerprints[]; gsub(":"; "") == $signer)
             )' ../../public/.well-known/assetlinks.json > /dev/null
-          printf 'Verified Android OAuth identity: au.datacube.app / %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Verified Android package identity: au.datacube.app / %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
           printf 'Verified App Links APK certificate SHA-256: %s\n' "$apk_sha256" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run lint
@@ -162,11 +162,11 @@ jobs:
           retention-days: 14
 
       # A certificate-checked APK can be requested manually or by a tightly scoped release commit.
-      - name: Upload personal Google sign-in test APK
+      - name: Upload personally signed browser authentication APK
         if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         uses: actions/upload-artifact@v4
         with:
-          name: datacube-au-android-personal-google-test-signed
+          name: datacube-au-android-browser-auth-personal-signed
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
