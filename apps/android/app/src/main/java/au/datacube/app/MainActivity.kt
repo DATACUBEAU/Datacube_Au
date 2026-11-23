@@ -43,6 +43,9 @@ import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.models.ModelBackupManager
+import au.datacube.app.models.ModelBackupPreview
+import au.datacube.app.models.ModelVaultStore
+import au.datacube.app.ui.models.ModelVaultScreen
 import au.datacube.app.models.LocalModelLibrary
 import au.datacube.app.models.ModelCatalog
 import au.datacube.app.models.ModelSpec
@@ -164,6 +167,7 @@ private sealed class Screen(val route: String) {
     object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
     object Settings : Screen("settings")
     object Models : Screen("models")
+    object ModelVault : Screen("model-vault")
 }
 
 // ── Root composable ───────────────────────────────────────────────────────────
@@ -222,6 +226,72 @@ private fun AuthenticatedWorkspace(
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
     var modelImportTarget by remember { mutableStateOf<ModelSpec?>(null) }
+    var vaultRevision by remember { mutableIntStateOf(0) }
+    var selectedRestoreUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedRestorePreview by remember { mutableStateOf<ModelBackupPreview?>(null) }
+    val vaultStore = remember(context) { ModelVaultStore(context.applicationContext) }
+    fun offerRestore(uri: Uri) {
+        scope.launch {
+            runCatching { ModelBackupManager(context).inspectBackup(uri) }
+                .onSuccess { preview ->
+                    selectedRestoreUri = uri
+                    selectedRestorePreview = preview
+                }
+                .onFailure { error ->
+                    snackbar.showSnackbar(error.message ?: "Unrecognized model archive.")
+                }
+        }
+    }
+    if (selectedRestoreUri != null && selectedRestorePreview != null) {
+        val archiveUri = requireNotNull(selectedRestoreUri)
+        val preview = requireNotNull(selectedRestorePreview)
+        AlertDialog(
+            onDismissRequest = {
+                selectedRestoreUri = null
+                selectedRestorePreview = null
+            },
+            title = { Text("Restore models?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text(preview.labels.joinToString("\n"))
+                    Text("${preview.fileCount} files · ${preview.totalBytes / (1024 * 1024)} MB")
+                    Text("Files will be checked before installation. Existing models will not be replaced.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    selectedRestoreUri = null
+                    selectedRestorePreview = null
+                    scope.launch {
+                        runCatching { ModelBackupManager(context).restoreBackup(archiveUri) }
+                            .onSuccess { summary ->
+                                modelRevision += 1
+                                snackbar.showSnackbar("Restored ${summary.modelCount} model(s) with verified files.")
+                            }.onFailure { error ->
+                                snackbar.showSnackbar(error.message ?: "Could not restore the archive.")
+                            }
+                    }
+                }) { Text("Restore") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    selectedRestoreUri = null
+                    selectedRestorePreview = null
+                }) { Text("Cancel") }
+            }
+        )
+    }
+    val modelVaultFolderPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri != null) {
+            runCatching { vaultStore.selectFolder(uri) }
+                .onSuccess { vaultRevision += 1 }
+                .onFailure { error ->
+                    scope.launch { snackbar.showSnackbar(error.message ?: "Cannot use this folder.") }
+                }
+        }
+    }
     var modelRevision by remember { mutableIntStateOf(0) }
     val modelStore = remember(context) { LocalModelLibrary(context.applicationContext) }
     val installedModelIds = remember(modelRevision) {
@@ -302,20 +372,7 @@ private fun AuthenticatedWorkspace(
     val modelRestoreLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { source ->
-        if (source != null) {
-            scope.launch {
-                runCatching { ModelBackupManager(context).restoreBackup(source) }
-                    .onSuccess { summary ->
-                        modelRevision += 1
-                        snackbar.showSnackbar(
-                            "Restored ${summary.modelCount} model(s), ${summary.fileCount} file(s)."
-                        )
-                    }
-                    .onFailure { error ->
-                        snackbar.showSnackbar(error.message ?: "Could not restore the model backup.")
-                    }
-            }
-        }
+        if (source != null) offerRestore(source)
     }
 
     val modelImportPicker = rememberLauncherForActivityResult(
@@ -509,6 +566,7 @@ private fun AuthenticatedWorkspace(
                     themePreference = themePreference,
                     onThemeChange = onThemeChange,
                     onOpenModels = { navController.navigate(Screen.Models.route) },
+                    onOpenVault = { navController.navigate(Screen.ModelVault.route) },
                     onOpenSubscription = {
                         val url = BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/dashboard/settings/subscription"
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -526,9 +584,23 @@ private fun AuthenticatedWorkspace(
                     }
                 )
             }
+            composable(Screen.ModelVault.route) {
+                ModelVaultScreen(
+                    folderRevision = vaultRevision,
+                    installedRevision = modelRevision,
+                    installed = { id -> modelStore.installed(id) },
+                    onChooseFolder = { modelVaultFolderPicker.launch(null) },
+                    onRestoreArchive = { uri -> offerRestore(uri) },
+                    onOpenArchive = {
+                        modelRestoreLauncher.launch(arrayOf(ModelBackupManager.BACKUP_MIME_TYPE))
+                    },
+                    onBack = { navController.popBackStack() }
+                )
+            }
             composable(Screen.Models.route) {
                 ModelsScreen(
                     installed = { id -> modelStore.installed(id) },
+                    onOpenVault = { navController.navigate(Screen.ModelVault.route) },
                     onGet = { model ->
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(model.sourcePage)))
                     },
