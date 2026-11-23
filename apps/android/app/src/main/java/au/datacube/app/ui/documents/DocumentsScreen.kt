@@ -1,5 +1,6 @@
 package au.datacube.app.ui.documents
 
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -47,7 +48,7 @@ fun DocumentsScreen(
     var deleteDocument by remember { mutableStateOf<String?>(null) }
 
     if (createDialog) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { if (!creating) createDialog = false },
             title = { Text("Create Collection") },
             text = {
@@ -77,7 +78,7 @@ fun DocumentsScreen(
         )
     }
     deleteCollection?.let { id ->
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { deleteCollection = null },
             title = { Text("Delete collection?") },
             text = { Text("Documents remain in your library; only this collection grouping is deleted.") },
@@ -88,7 +89,7 @@ fun DocumentsScreen(
 
     deleteDocument?.let { id ->
         val target = documents.firstOrNull { it.document.id == id }?.document
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { deleteDocument = null },
             title = { Text("Delete document?") },
             text = {
