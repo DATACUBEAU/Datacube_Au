@@ -29,6 +29,9 @@ class VerifiedModelDownloadManager(context: Context) {
     fun start(id: String, wifiOnly: Boolean) {
         requireNotNull(VerifiedModelDownloads.find(id)) { "No verified download for this model." }
         require(!LocalModelLibrary(app).installed(id)) { "Model files already exist." }
+        check(ModelVaultStore(app).folder() != null) {
+            "Choose your model folder before downloading."
+        }
         preferences.edit().putBoolean("paused_$id", false).putBoolean("wifi_$id", wifiOnly).apply()
         val request = OneTimeWorkRequestBuilder<VerifiedModelDownloadWorker>()
             .setInputData(workDataOf(
