@@ -96,9 +96,12 @@ fun ModelsScreen(
             }
             item {
                 Text("3 · Voice", style = MaterialTheme.typography.titleMedium)
-                Text("Offline Android voices are in Podcast. Neural voices are not yet available.",
+                Text("Natural narration · optional offline pack",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                val spec = ModelCatalog.find("kokoro-82m-cpu")
+                ModelCard(spec, { installed(spec.id) }, onGet, onImport,
+                    canDownload = hasFolder, onChooseFolder = onChooseFolder)
             }
             item {
                 OutlinedButton(onClick = onOpenVault, modifier = Modifier.fillMaxWidth()) {
@@ -113,7 +116,9 @@ fun ModelsScreen(
             }
             if (advanced) {
                 ModelCatalog.models.filter {
-                    it.id != recommendedChat.id && it.id != ModelRecommendations.bestSearchModel()
+                    it.id != recommendedChat.id &&
+                        it.id != ModelRecommendations.bestSearchModel() &&
+                        it.id != "kokoro-82m-cpu"
                 }.forEach { spec ->
                     item(key = spec.id) {
                         ModelCard(spec, { installed(spec.id) }, onGet, onImport,
@@ -201,8 +206,11 @@ private fun ModelCard(
             }
             Text(
                 when {
-                    complete -> if (model.role == ModelRole.EMBEDDING) "Ready for local indexing"
-                        else if (isActive) "Active chat model" else "Installed"
+                    complete -> when (model.role) {
+                        ModelRole.EMBEDDING -> "Ready for local indexing"
+                        ModelRole.VOICE -> "Ready for Podcast"
+                        ModelRole.GENERATION -> if (isActive) "Active chat model" else "Installed"
+                    }
                     verified != null -> verified.displaySize + " · " + verified.license
                     else -> "Suggested RAM: " + model.minRamGb + " GB+"
                 }, style = MaterialTheme.typography.labelMedium,
