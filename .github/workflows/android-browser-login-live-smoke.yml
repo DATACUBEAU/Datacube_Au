@@ -27,6 +27,16 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: wrapper
+      - name: Route CI-only Maven dependencies through Google Cloud mirror
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('settings.gradle.kts')
+          source = p.read_text()
+          mirror = 'maven { url = uri("https://maven-central.storage-download.googleapis.com/maven2/") }; mavenCentral()'
+          assert source.count('mavenCentral()') == 2
+          p.write_text(source.replace('mavenCentral()', mirror))
+          PY
       - name: Configure test client
         run: |
           echo "sdk.dir=$ANDROID_HOME" >> local.properties
