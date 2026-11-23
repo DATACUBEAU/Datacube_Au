@@ -174,7 +174,7 @@ class LocalPassageIndex(context: Context) :
             db.execSQL(
                 "INSERT INTO indexed_documents (documentId, sourceBytes, sourceModified, sourceSha256, passageCount)" +
                     " VALUES (?, ?, ?, ?, ?)",
-                arrayOf(documentId, bytes, modified, hash, ordinal)
+                arrayOf<Any>(documentId, bytes, modified, hash, ordinal)
             )
             db.setTransactionSuccessful()
             onProgress(ordinal)
