@@ -84,7 +84,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                             overview = item.overview,
                             steps = item.steps,
                             corrections = item.corrected,
-                            interrupted = item.generating
+                            interrupted = item.generating,
+                            audioPath = item.audioPath
                         )
                     })
                 } catch (cancelled: CancellationException) {
