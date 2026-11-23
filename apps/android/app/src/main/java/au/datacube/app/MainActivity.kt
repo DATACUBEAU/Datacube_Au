@@ -521,7 +521,7 @@ private fun AuthenticatedWorkspace(
             }
             composable(Screen.Models.route) {
                 ModelsScreen(
-                    installed = { id -> id in installedModelIds },
+                    installed = { id -> modelStore.installed(id) },
                     onGet = { model ->
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(model.sourcePage)))
                     },
