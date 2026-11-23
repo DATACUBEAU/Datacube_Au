@@ -582,7 +582,7 @@ private fun AuthenticatedWorkspace(
                 ProfileScreen(
                     user = authState.user,
                     onBack = { navController.popBackStack() },
-                    onSignOut = { DocumentChatSessions.releaseAll(); authViewModel.signOut() },
+                    onSignOut = { DocumentChatSessions.releaseAll(); au.datacube.app.audio.PodcastOverviewSession.stopAll(); authViewModel.signOut() },
                     onBackupModels = {
                         modelBackupLauncher.launch(
                             "${ModelBackupManager.BACKUP_FILE_PREFIX}-${System.currentTimeMillis()}.zip"

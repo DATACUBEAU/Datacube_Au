@@ -1181,7 +1181,7 @@ private fun ChoiceDropdown(value: String, options: List<String>, onSelect: (Stri
 }
 
 @Composable
-fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading: Boolean) {
+fun PodcastWorkspace(documentId: String, documentName: String, textPreview: String?, previewLoading: Boolean) {
     val context = LocalContext.current
     val narratorScope = rememberCoroutineScope()
     val neuralInstalled = remember(context) { NeuralNarration.installed(context) }
@@ -1201,6 +1201,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
     var speechError by remember { mutableStateOf<String?>(null) }
     var neuralStage by remember { mutableStateOf("") }
     var activeChapter by remember(documentName) { mutableIntStateOf(0) }
+    var podcastMode by remember(documentId) { mutableIntStateOf(0) }
     val voicePreferences = remember(context) { OfflineNarrationPreferences(context) }
     var speechRate by remember { mutableFloatStateOf(voicePreferences.speed) }
     var speechPitch by remember { mutableFloatStateOf(voicePreferences.pitch) }
@@ -1321,9 +1322,43 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
         } else speaking = true
     }
 
-    ToolPage("Podcast", "Listen to $documentName with an installed offline voice.") {
+    ToolPage("Podcast", "Review $documentName through a guided conversation or a narrated summary.") {
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null)
         else {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                listOf("Conversation", "Narration").forEachIndexed { index, title ->
+                    Surface(
+                        onClick = { podcastMode = index },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (podcastMode == index)
+                            MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surface,
+                        border = BorderStroke(1.dp,
+                            if (podcastMode == index) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Text(title,
+                            Modifier.padding(vertical = 14.dp, horizontal = 6.dp),
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (podcastMode == index)
+                                MaterialTheme.colorScheme.onPrimaryContainer
+                            else MaterialTheme.colorScheme.onSurface)
+                    }
+                }
+            }
+            if (podcastMode == 0) {
+                PodcastConversationPanel(
+                    documentId = documentId,
+                    documentName = documentName,
+                    textPreview = textPreview,
+                    playbackSpeed = speechRate
+                )
+            } else {
             ToolCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
@@ -1516,7 +1551,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                     Surface(
                         onClick = { activeChapter = index; speak(chapter.first.text) },
                         shape = RoundedCornerShape(14.dp),
-                        color = if (activeChapter == index) MaterialTheme.colorScheme.primaryContainer else Color.White,
+                        color = if (activeChapter == index) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), enabled = narrationReady
                     ) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1534,6 +1569,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
             ToolCard {
                 Text("Audio summary text", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.height(7.dp)); Text(summary, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             }
         }
     }
