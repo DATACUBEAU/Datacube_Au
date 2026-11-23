@@ -317,13 +317,14 @@ fun DocumentChatWorkspace(
                                 message.matches.forEachIndexed { index, snippet ->
                                     val phrase = message.question.split(Regex("[^\\p{L}\\p{N}]+"))
                                         .filter { it.length >= 4 }.distinct().take(8)
+                                    val highlightColor = MaterialTheme.colorScheme.primaryContainer
                                     val highlighted = buildAnnotatedString {
                                         append(snippet.text)
                                         phrase.forEach { term ->
                                             Regex(Regex.escape(term), RegexOption.IGNORE_CASE)
                                                 .findAll(snippet.text).take(10).forEach { match ->
                                                     addStyle(
-                                                        SpanStyle(background = MaterialTheme.colorScheme.primaryContainer),
+                                                        SpanStyle(background = highlightColor),
                                                         match.range.first, match.range.last + 1
                                                     )
                                                 }
