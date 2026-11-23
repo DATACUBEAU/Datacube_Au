@@ -38,13 +38,13 @@ object ModelCatalog {
         ),
         ModelSpec(
             "gemma-4-e2b", "Gemma 4 E2B", ModelRole.GENERATION,
-            "https://huggingface.co/google/gemma-4-E2B",
-            3, "Smaller on-device chat model"
+            "https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm",
+            6, "Balanced offline chat"
         ),
         ModelSpec(
             "gemma-4-e4b", "Gemma 4 E4B", ModelRole.GENERATION,
-            "https://huggingface.co/google/gemma-4-E4B",
-            5, "More capable, needs more memory"
+            "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm",
+            8, "Advanced offline chat"
         ),
         ModelSpec(
             "qwen3-0.6b-litert", "Qwen3 0.6B", ModelRole.GENERATION,
@@ -69,9 +69,9 @@ object DeviceCapabilityScanner {
         val freeBytes = StatFs(context.filesDir.path).availableBytes
         val ramGb = (memoryInfo.totalMem / 1_073_741_824L).toInt().coerceAtLeast(1)
         val freeGb = (freeBytes / 1_073_741_824L).toInt().coerceAtLeast(0)
-        val recommended = if (ramGb >= 6 && freeGb >= 5) "Gemma 4 E4B"
-            else if (ramGb >= 4 && freeGb >= 3) "Gemma 4 E2B"
-            else "Search model only"
+        val recommended = ModelRecommendations.bestChatModel(ramGb, freeGb)?.let {
+            ModelCatalog.find(it).name
+        } ?: "Search model only"
         return DeviceCapability(
             ramGb, freeGb, Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", recommended
         )
