@@ -79,6 +79,19 @@ object VerifiedModelDownloads {
         license = "Apache-2.0"
     )
 
+    /** CPU portable Kokoro 82M MediaPipe Text-to-Speech bundle, Apache-2.0.
+     * Pinned Hugging Face revision and upstream SHA-256 (2026-11-23).
+     */
+    private val kokoroCpu = VerifiedModelArtifact(
+        modelId = "kokoro-82m-cpu",
+        fileName = "kokoro_int8_fp16.litertlm",
+        url = "https://huggingface.co/litert-community/Kokoro-82M/resolve/81e43a025bccabcbbd487f08bc3ebd65b5fc7295/kokoro_int8_fp16.litertlm",
+        sha256 = "e7b931ee5d4b7104012a838c9eee240d19ea69cb3ca269041a3274f83dbb7fa1",
+        maximumBytes = 360_000_000L,
+        displaySize = "295 MB",
+        license = "Apache-2.0"
+    )
+
     /** Older EmbeddingGemma v1 remains publisher/import only. */
 
     fun find(modelId: String): VerifiedModelArtifact? =
@@ -87,6 +100,7 @@ object VerifiedModelDownloads {
             embeddingGemma2.modelId -> embeddingGemma2
             gemma4E2B.modelId -> gemma4E2B
             gemma4E4B.modelId -> gemma4E4B
+            kokoroCpu.modelId -> kokoroCpu
             else -> null
         }
 }

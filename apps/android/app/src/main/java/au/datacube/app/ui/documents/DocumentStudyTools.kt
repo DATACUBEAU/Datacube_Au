@@ -3,6 +3,7 @@ package au.datacube.app.ui.documents
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import au.datacube.app.audio.OfflineNarrationPreferences
+import au.datacube.app.audio.NeuralNarration
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -1031,6 +1032,19 @@ private fun ChoiceDropdown(value: String, options: List<String>, onSelect: (Stri
 @Composable
 fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading: Boolean) {
     val context = LocalContext.current
+    val narratorScope = rememberCoroutineScope()
+    val neuralInstalled = remember(context) { NeuralNarration.installed(context) }
+    val neuralPrefs = remember(context) {
+        context.getSharedPreferences("datacube_neural_voice", android.content.Context.MODE_PRIVATE)
+    }
+    var useNeural by remember(context) {
+        mutableStateOf(neuralInstalled && neuralPrefs.getBoolean("enabled", true))
+    }
+    var neuralVoice by remember(context) {
+        mutableStateOf(neuralPrefs.getString("voice", NeuralNarration.DEFAULT_VOICE)
+            ?: NeuralNarration.DEFAULT_VOICE)
+    }
+    var neuralJob by remember { mutableStateOf<Job?>(null) }
     var speechReady by remember { mutableStateOf(false) }
     var speaking by remember { mutableStateOf(false) }
     var speechError by remember { mutableStateOf<String?>(null) }
@@ -1040,6 +1054,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
     var speechPitch by remember { mutableFloatStateOf(voicePreferences.pitch) }
     var selectedVoiceName by remember { mutableStateOf(voicePreferences.voiceName) }
     var offlineVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
+    val narrationReady = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty()
     var voiceMenuExpanded by remember { mutableStateOf(false) }
     var voiceRefresh by remember { mutableIntStateOf(0) }
     val snippets = remember(textPreview) { sourceSnippets(textPreview) }
@@ -1067,7 +1082,12 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                 speechError = "Narration could not be played by the installed speech engine."
             }
         })
-        onDispose { tts.stop(); tts.shutdown() }
+        onDispose {
+            neuralJob?.cancel()
+            NeuralNarration.stop()
+            tts.stop()
+            tts.shutdown()
+        }
     }
 
     LaunchedEffect(tts, speechReady, voiceRefresh) {
@@ -1096,7 +1116,31 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
     }
 
     fun speak(text: String) {
-        if (!speechReady || text.isBlank()) return
+        if (text.isBlank()) return
+        if (useNeural) {
+            if (!neuralInstalled) {
+                speechError = "Download Kokoro in Settings → Models."
+                return
+            }
+            neuralJob?.cancel()
+            NeuralNarration.stop()
+            tts.stop()
+            speechError = null
+            speaking = true
+            neuralJob = narratorScope.launch {
+                try {
+                    NeuralNarration.speak(context, text, neuralVoice, speechRate)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    speechError = error.message ?: "The neural voice could not play."
+                } finally {
+                    speaking = false
+                }
+            }
+            return
+        }
+        if (!speechReady) return
         val voice = offlineVoices.firstOrNull { it.name == selectedVoiceName }
         if (voice == null) {
             speechError = "Select an installed offline voice first."
@@ -1133,21 +1177,53 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                Text("Voice engine", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = !useNeural,
+                        onClick = {
+                            neuralJob?.cancel()
+                            NeuralNarration.stop()
+                            useNeural = false
+                            neuralPrefs.edit().putBoolean("enabled", false).apply()
+                            speaking = false
+                        },
+                        label = { Text("Android offline") }
+                    )
+                    FilterChip(
+                        selected = useNeural,
+                        enabled = neuralInstalled,
+                        onClick = {
+                            tts.stop()
+                            useNeural = true
+                            neuralPrefs.edit().putBoolean("enabled", true).apply()
+                            speaking = false
+                        },
+                        label = { Text("Kokoro neural") }
+                    )
+                }
+                if (!neuralInstalled) {
+                    Text("Kokoro: optional download in Settings → Models",
+                        color = DataCubeColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall)
+                }
                 Text("Voice", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
                 Spacer(Modifier.height(6.dp))
                 Box(Modifier.fillMaxWidth()) {
                     OutlinedButton(
                         onClick = { voiceMenuExpanded = true },
-                        enabled = speechReady && offlineVoices.isNotEmpty(),
+                        enabled = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty(),
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
                     ) {
                         Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(
-                            offlineVoices.firstOrNull { it.name == selectedVoiceName }?.let { voice ->
+                            if (useNeural)
+                                NeuralNarration.presetVoices[neuralVoice] ?: "Select Kokoro voice"
+                            else offlineVoices.firstOrNull { it.name == selectedVoiceName }?.let { voice ->
                                 "${voice.locale.displayName} · ${voice.name}"
-                            } ?: "No downloaded offline voices",
+                            } ?: "No installed offline voices",
                             Modifier.weight(1f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -1158,7 +1234,24 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                         expanded = voiceMenuExpanded,
                         onDismissRequest = { voiceMenuExpanded = false }
                     ) {
-                        offlineVoices.forEach { voice ->
+                        if (useNeural) {
+                            NeuralNarration.presetVoices.forEach { (id, label) ->
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        neuralJob?.cancel()
+                                        NeuralNarration.stop()
+                                        speaking = false
+                                        neuralVoice = id
+                                        neuralPrefs.edit().putString("voice", id).apply()
+                                        voiceMenuExpanded = false
+                                    },
+                                    leadingIcon = {
+                                        if (id == neuralVoice) Icon(Icons.Outlined.Check, null)
+                                    }
+                                )
+                            }
+                        } else offlineVoices.forEach { voice ->
                             DropdownMenuItem(
                                 text = { Text("${voice.locale.displayName} · ${voice.name}", maxLines = 2) },
                                 onClick = {
@@ -1176,14 +1269,16 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                     }
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${offlineVoices.size} available on this device", style = MaterialTheme.typography.labelSmall, color = DataCubeColors.TextSecondary, modifier = Modifier.weight(1f))
+                    Text(if (useNeural) "Offline neural · 4 voices"
+                        else "${offlineVoices.size} installed voices", style = MaterialTheme.typography.labelSmall,
+                        color = DataCubeColors.TextSecondary, modifier = Modifier.weight(1f))
                     TextButton(
                         onClick = { voiceRefresh += 1 },
-                        enabled = speechReady
+                        enabled = !useNeural && speechReady
                     ) { Text("Refresh voices") }
                     TextButton(
                         onClick = { speak("Welcome to DataCube AU. Let's review your study notes.") },
-                        enabled = speechReady && offlineVoices.isNotEmpty()
+                        enabled = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty()
                     ) { Text("Preview") }
                 }
                 Text("Narration speed", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
@@ -1200,6 +1295,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                         )
                     }
                 }
+                if (!useNeural) {
                 Text("Voice tone", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(0.9f, 1.0f, 1.1f).forEach { pitch ->
@@ -1214,27 +1310,33 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                         )
                     }
                 }
+                }
                 Spacer(Modifier.height(14.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = {
-                            if (speaking) { tts.stop(); speaking = false }
+                            if (speaking) {
+                                neuralJob?.cancel()
+                                NeuralNarration.stop()
+                                tts.stop()
+                                speaking = false
+                            }
                             else speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
                         },
-                        enabled = speechReady && offlineVoices.isNotEmpty() && summary.isNotBlank(),
+                        enabled = narrationReady && summary.isNotBlank(),
                         modifier = Modifier.weight(1f).heightIn(min = 50.dp)
                     ) {
                         Icon(if (speaking) Icons.Outlined.Stop else Icons.Outlined.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(7.dp)); Text(if (speaking) "Stop narration" else "Play summary")
                     }
-                    OutlinedButton(onClick = { activeChapter = 0; speak(summary) }, enabled = speechReady && offlineVoices.isNotEmpty() && summary.isNotBlank()) { Text("Full summary") }
+                    OutlinedButton(onClick = { activeChapter = 0; speak(summary) }, enabled = narrationReady && summary.isNotBlank()) { Text("Full summary") }
                 }
                 speechError?.let { Spacer(Modifier.height(8.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (!speechReady && speechError == null) {
                     Spacer(Modifier.height(8.dp)); Text("Preparing the installed Android speech engine…", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    "Only installed offline voices are used. Neural voice packs will be added separately. No audio is uploaded.",
+                    "All narration runs on this device. Kokoro requires an optional model download.",
                     Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary
                 )
             }
@@ -1248,7 +1350,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                         onClick = { activeChapter = index; speak(chapter.first.text) },
                         shape = RoundedCornerShape(14.dp),
                         color = if (activeChapter == index) DataCubeColors.BlueLight else Color.White,
-                        border = BorderStroke(1.dp, DataCubeColors.Divider), enabled = speechReady && offlineVoices.isNotEmpty()
+                        border = BorderStroke(1.dp, DataCubeColors.Divider), enabled = narrationReady
                     ) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (activeChapter == index && speaking) Icons.Outlined.VolumeUp else Icons.Outlined.PlayArrow, contentDescription = "Play " + chapter.second, tint = DataCubeColors.Blue)

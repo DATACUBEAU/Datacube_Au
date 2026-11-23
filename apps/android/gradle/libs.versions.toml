@@ -15,6 +15,7 @@ coil = "2.7.0"
 splashscreen = "1.0.1"
 pdfium = "1.0.30"
 mediapipe-retrieval = "1.1.1"
+mediapipe-audio = "1.2.3"
 litert-lm = "0.18.1"
 junit = "4.13.2"
 androidx-test-core = "1.6.1"
@@ -54,6 +55,7 @@ coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "splashscreen" }
 pdfium-android = { module = "io.legere:pdfiumandroid", version.ref = "pdfium" }
 mediapipe-retrieval = { module = "com.google.mediapipe:tasks-retrieval", version.ref = "mediapipe-retrieval" }
+mediapipe-audio = { module = "com.google.mediapipe:tasks-audio", version.ref = "mediapipe-audio" }
 litert-lm = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litert-lm" }
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-test-core = { module = "androidx.test:core", version.ref = "androidx-test-core" }
