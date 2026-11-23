@@ -29,6 +29,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import au.datacube.app.data.LocalDocumentProcessing
+import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.ui.theme.DataCubeColors
 import au.datacube.app.ui.theme.dataCubeBackdrop
 import io.github.jan.supabase.auth.user.UserInfo
@@ -59,6 +60,7 @@ fun HomeScreen(
     var documentMenuExpanded by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     val selectedDocument = recentDocuments.firstOrNull { it.document.id == selectedDocumentId }
         ?: recentDocuments.firstOrNull()
+    val selectedReady = selectedDocument?.extractionStatus == LocalJobStatus.COMPLETED
 
     androidx.compose.runtime.LaunchedEffect(recentDocuments) {
         if (recentDocuments.none { it.document.id == selectedDocumentId }) {
@@ -142,7 +144,11 @@ fun HomeScreen(
                 val doc = entry.document
                 val ext = doc.extension.lowercase()
                 val tint = DataCubeColors.Blue
-                Surface(onClick = { onOpenDocument(doc.id) }, shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                val ready = entry.extractionStatus == LocalJobStatus.COMPLETED
+                Surface(onClick = { onOpenDocument(doc.id) }, enabled = ready,
+                    shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.surface,
+                    shadowElevation = 2.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(tint.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                             Text(ext.uppercase().take(3), color = tint, fontWeight = FontWeight.Bold)
@@ -150,7 +156,25 @@ fun HomeScreen(
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(doc.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${ext.uppercase()}  ·  ${doc.sizeBytes / 1024} KB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                if (ready) "${ext.uppercase()} · Ready to study"
+                                else if (entry.extractionStatus == LocalJobStatus.RUNNING)
+                                    "Extracting text · ${((entry.extractionProgress ?: 0.0) * 100).toInt()}%"
+                                else "Preparing document",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (!ready) {
+                                Spacer(Modifier.height(6.dp))
+                                val progress = entry.extractionProgress?.toFloat()
+                                if (progress != null && entry.extractionStatus == LocalJobStatus.RUNNING) {
+                                    LinearProgressIndicator(
+                                        progress = { progress.coerceIn(0f, 1f) },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                } else {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                                }
+                            }
                         }
                         Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -240,14 +264,14 @@ fun HomeScreen(
             BasicTextField(
                 value = quickPrompt,
                 onValueChange = { quickPrompt = it.take(500) },
-                enabled = selectedDocument != null,
+                enabled = selectedReady,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
                 textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
                 maxLines = 4,
                 decorationBox = { content ->
                     Box {
                         if (quickPrompt.isBlank()) Text(
-                            if (selectedDocument == null) "Upload a document to start asking…" else "Ask anything about your document…",
+                            if (selectedDocument == null) "Upload a document to start asking…" else if (!selectedReady) "Document is preparing…" else "Ask anything about your document…",
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         content()
@@ -261,7 +285,7 @@ fun HomeScreen(
                 Text("Document AU", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.weight(1f))
                 FilledIconButton(
-                    enabled = selectedDocument != null && quickPrompt.isNotBlank(),
+                    enabled = selectedReady && quickPrompt.isNotBlank(),
                     colors = IconButtonDefaults.filledIconButtonColors(containerColor = DataCubeColors.Blue),
                     onClick = {
                         val target = selectedDocument

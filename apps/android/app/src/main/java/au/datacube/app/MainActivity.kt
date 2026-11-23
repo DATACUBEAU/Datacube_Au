@@ -46,6 +46,8 @@ import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.ui.chat.DiscsScreen
 import au.datacube.app.data.LocalDocument
+import au.datacube.app.data.LocalJobStatus
+import au.datacube.app.ui.documents.DocumentPreparationScreen
 import au.datacube.app.models.ModelBackupManager
 import au.datacube.app.models.ModelBackupPreview
 import au.datacube.app.models.ModelVaultStore
@@ -545,7 +547,18 @@ private fun AuthenticatedWorkspace(
                     }
                 }
 
-                if (selectedDocument != null) {
+                val extractionReady = when (selectedProcessing?.extractionStatus) {
+                    LocalJobStatus.COMPLETED, LocalJobStatus.FAILED, LocalJobStatus.CANCELLED -> true
+                    else -> !textPreview.isNullOrBlank()
+                }
+                if (selectedDocument != null && !extractionReady) {
+                    DocumentPreparationScreen(
+                        documentName = selectedDocument.name,
+                        extractionStatus = selectedProcessing?.extractionStatus,
+                        extractionProgress = selectedProcessing?.extractionProgress,
+                        onBack = { navController.popBackStack() }
+                    )
+                } else if (selectedDocument != null) {
                     DocumentWorkspaceScreen(
                         document = selectedDocument,
                         initialPrompt = initialPrompt,
