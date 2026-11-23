@@ -41,7 +41,7 @@ fun HomeScreen(
     recentDocuments: List<LocalDocumentProcessing>,
     onImportDocument: () -> Unit,
     onNavigateToDocuments: () -> Unit,
-    onNavigateToStudy: () -> Unit,
+    onNavigateToGist: () -> Unit,
     onNavigateToChat: () -> Unit,
     onOpenDocument: (String) -> Unit,
     onNavigateSettings: () -> Unit,
@@ -53,7 +53,7 @@ fun HomeScreen(
     val chatScale by animateFloatAsState(if (chatPressed) .97f else 1f, label = "AU Chat press")
     val studyPress = androidx.compose.runtime.remember { MutableInteractionSource() }
     val studyPressed by studyPress.collectIsPressedAsState()
-    val studyScale by animateFloatAsState(if (studyPressed) .97f else 1f, label = "Study button press")
+    val studyScale by animateFloatAsState(if (studyPressed) .97f else 1f, label = "Gist button press")
     var selectedDocumentId by androidx.compose.runtime.remember {
         androidx.compose.runtime.mutableStateOf<String?>(null)
     }
@@ -87,7 +87,7 @@ fun HomeScreen(
                         Column(Modifier.fillMaxWidth(.69f)) {
                             Text("DataCube AU", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = Color.White)
                             Spacer(Modifier.height(5.dp))
-                            Text("Chat, analyze, and get insights from your documents.", color = Color(0xFFD4E6FA), style = MaterialTheme.typography.bodyMedium)
+                            Text("Explore your documents or just chat with AU.", color = Color(0xFFD4E6FA), style = MaterialTheme.typography.bodyMedium)
                         }
                         Spacer(Modifier.height(22.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -103,7 +103,7 @@ fun HomeScreen(
                                 Text("AU Chat")
                             }
                             OutlinedButton(
-                                onClick = onNavigateToStudy,
+                                onClick = onNavigateToGist,
                                 modifier = Modifier.weight(1f).heightIn(min = 48.dp).scale(studyScale),
                                 interactionSource = studyPress,
                                 contentPadding = PaddingValues(horizontal = 8.dp),
@@ -112,7 +112,7 @@ fun HomeScreen(
                             ) {
                                 Icon(Icons.Outlined.Forum, null, Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Discs")
+                                Text("Gist")
                             }
                         }
                     }
@@ -185,7 +185,7 @@ fun HomeScreen(
             Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column(Modifier.fillMaxWidth().padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Your study workspace", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Your document workspace", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     }
                     Spacer(Modifier.height(6.dp))
                     Text("Keep your documents organized and open AU Chat whenever you are ready to explore them.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -202,7 +202,7 @@ fun HomeScreen(
         onHome = {},
         onDocuments = onNavigateToDocuments,
         onSettings = onNavigateSettings,
-        onDiscs = onNavigateToStudy,
+        onDiscs = onNavigateToGist,
         modifier = Modifier.align(Alignment.TopCenter).zIndex(2f)
             .padding(horizontal = 18.dp, vertical = 10.dp)
     )
