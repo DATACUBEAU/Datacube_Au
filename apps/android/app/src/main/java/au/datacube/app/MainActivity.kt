@@ -26,9 +26,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.credentials.Credential
-import androidx.credentials.CredentialManager
-import androidx.credentials.GetCredentialRequest
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.doOnPreDraw
 import androidx.lifecycle.lifecycleScope
@@ -77,10 +74,7 @@ class MainActivity : ComponentActivity() {
                     { documentsViewModel },
                     openBrowser = ::openBrowser,
                     onWorkspaceDrawn = ::recoverWorkspaceJobs
-                ) { request ->
-                    CredentialManager.create(this@MainActivity)
-                        .getCredential(this@MainActivity, request).credential
-                }
+                )
             }
         }
     }
@@ -177,8 +171,7 @@ internal fun DataCubeRoot(
     authViewModel: AuthViewModel,
     documentsViewModel: () -> DataCubeViewModel,
     openBrowser: (Uri) -> Unit = {},
-    onWorkspaceDrawn: () -> Unit = {},
-    getGoogleCredential: suspend (GetCredentialRequest) -> Credential
+    onWorkspaceDrawn: () -> Unit = {}
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     ReportDrawnWhen { authState.sessionRestored && !authState.isLoading }
@@ -186,8 +179,7 @@ internal fun DataCubeRoot(
     if (!authState.sessionRestored || authState.user == null) {
         AuthScreen(
             viewModel = authViewModel,
-            openBrowser = openBrowser,
-            getGoogleCredential = getGoogleCredential
+            openBrowser = openBrowser
         )
         return
     }

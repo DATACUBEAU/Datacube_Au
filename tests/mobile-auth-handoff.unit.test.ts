@@ -17,7 +17,6 @@ const androidManifest = read('apps', 'android', 'app', 'src', 'main', 'AndroidMa
 const androidActivity = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'MainActivity.kt');
 const androidViewModel = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'ui', 'auth', 'AuthViewModel.kt');
 const androidLogo = readFileSync('apps/android/app/src/main/res/drawable-nodpi/datacube_logo.png');
-const picker = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'auth', 'GoogleAccountPicker.kt');
 const launcherIcon = read('apps', 'android', 'app', 'src', 'main', 'res', 'mipmap-anydpi-v26', 'ic_launcher.xml');
 const profileScreen = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'ui', 'profile', 'ProfileScreen.kt');
 const websiteLogin = read('src', 'app', 'login', 'page.tsx');
@@ -29,34 +28,17 @@ const brandIcon = read('public', 'icon.svg');
 const middleware = read('src', 'middleware.ts');
 
 assert.match(androidAuthScreen, /Continue with Google/);
-assert.match(androidActivity, /getCredential\(this@MainActivity, request\)/);
-assert.match(picker, /GetSignInWithGoogleOption/);
-assert.match(picker, /GetSignInWithGoogleOption\.Builder\(BuildConfig\.GOOGLE_WEB_CLIENT_ID\)/);
-assert.match(picker, /GoogleIdTokenCredential\.createFrom/);
-assert.match(picker, /GetCredentialCancellationException/);
-assert.match(androidAuthScreen, /signInWithGoogle/);
-assert.doesNotMatch(androidAuthScreen, /onOpenWebsite|createWebsiteLoginUrl|mobile-handoff|AUTH_WEBSITE_URL/);
-
-assert.match(androidGradle, /GOOGLE_WEB_CLIENT_ID/);
-assert.match(androidGradle, /libs\.credentials/);
-assert.match(androidGradle, /libs\.googleid/);
-assert.match(androidGradle, /local\.properties/);
+assert.match(androidAuthScreen, /startMobileSignIn/);
+assert.doesNotMatch(androidAuthScreen, /Use Google on this device|viewModel\.signInWithGoogle/);
+assert.doesNotMatch(androidActivity, /CredentialManager|getCredential/);
+assert.doesNotMatch(androidRepository, /signInWith\(IDToken\)|providers\.Google/);
+assert.doesNotMatch(androidGradle, /GOOGLE_WEB_CLIENT_ID|libs\.googleid|libs\.credentials/);
 assert.match(androidGradle, /NEXT_PUBLIC_SUPABASE_URL/);
 assert.match(androidGradle, /NEXT_PUBLIC_SUPABASE_ANON_KEY/);
 assert.match(androidGradle, /GradleException/);
-
-assert.match(androidRepository, /providers\.builtin\.IDToken/);
-assert.match(androidRepository, /signInWith\(IDToken\)/);
-assert.match(androidRepository, /provider = Google/);
-assert.match(androidRepository, /idToken = idToken/);
-assert.match(androidRepository, /nonce = rawNonce/);
-assert.match(picker, /setNonce\(googleNonceDigest\(rawNonce\)\)/);
-assert.match(androidRepository, /clearCredentialState\(ClearCredentialStateRequest\(\)\)/);
-assert.match(androidRepository, /sessionStore\.persist\(auth\.currentUserOrNull\(\)\)/);
+assert.match(androidRepository, /completeMobileSignIn/);
 assert.match(androidRepository, /restoreSession/);
 assert.match(androidRepository, /signOut\(\)/);
-assert.doesNotMatch(androidRepository, /AUTH_WEBSITE_URL|mobile-handoff|HttpClient|PendingMobileAuthStore/);
-
 assert.match(androidManifest, /android:icon="@mipmap\/ic_launcher"/);
 assert.match(androidManifest, /android:roundIcon="@mipmap\/ic_launcher_round"/);
 assert.doesNotMatch(androidManifest, /auth-callback/);
@@ -65,7 +47,8 @@ assert.match(androidManifest, /android:scheme="https"/);
 assert.match(androidManifest, /android:host="datacube-au.vercel.app"/);
 assert.match(androidManifest, /android:path="\/mobile-auth\/return"/);
 assert.doesNotMatch(androidActivity, /handleAuthIntent|completeWebsiteAuthentication|createWebsiteLoginUrl/);
-assert.match(androidViewModel, /signInWithGoogle/);
+assert.match(androidViewModel, /startMobileSignIn/);
+assert.doesNotMatch(androidViewModel, /signInWithGoogle|chooseGoogleAccount/);
 assert.match(androidViewModel, /restoreSession/);
 
 assert.deepEqual(androidLogo, Buffer.from(brandIcon.match(/data:image\/png;base64,([^"]+)/)![1], 'base64'));
@@ -93,4 +76,4 @@ assert.match(completion, /codeChallenge/);
 assert.match(fallback, /intentUrl && !appMissing/);
 assert.match(middleware, /isRetiredWebProductPath/);
 
-console.log('PASS native Google auth, verified App Link declaration, legacy handoff compatibility, and DataCube AU cube branding');
+console.log('PASS browser-only Android auth, verified App Link declaration, legacy handoff compatibility, and DataCube AU cube branding');

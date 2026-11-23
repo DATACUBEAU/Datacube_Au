@@ -1,35 +1,21 @@
 package au.datacube.app.auth
 
 import android.util.Log
-import androidx.credentials.ClearCredentialStateRequest
-import androidx.credentials.CredentialManager
-import androidx.credentials.exceptions.ClearCredentialException
 import kotlinx.coroutines.CancellationException
 import au.datacube.app.BuildConfig
 import io.github.jan.supabase.auth.Auth
 import io.github.jan.supabase.auth.user.UserSession
-import io.github.jan.supabase.exceptions.RestException
-import io.github.jan.supabase.auth.providers.Google
-import io.github.jan.supabase.auth.providers.builtin.IDToken
 import kotlinx.datetime.Clock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-/**
- * Native Android authentication backed by Supabase Auth.
- * Google credentials are acquired by Android Credential Manager in AuthScreen;
- * only the resulting ID token is exchanged with Supabase.
- */
+/** Browser-approved device sessions and secure restoration backed by Supabase Auth. */
 class AuthRepository(
     private val sessionStore: AuthSessionStore,
-    private val resetGoogleAccount: suspend () -> Unit,
     authProvider: () -> Auth = { SupabaseClient.auth }
 ) {
     private val auth by lazy(authProvider)
     private val displayAccountMutex = Mutex()
-
-    constructor(store: AuthSessionStore, manager: CredentialManager) :
-        this(store, { manager.clearCredentialState(ClearCredentialStateRequest()) })
 
     sealed class AuthResult {
         data object Success : AuthResult()
@@ -49,41 +35,6 @@ class AuthRepository(
         auth.currentUserOrNull()
     }.getOrNull()
 
-    suspend fun signInWithGoogle(idToken: String, rawNonce: String): AuthResult {
-        configurationError()?.let { return AuthResult.Error(it) }
-        if (idToken.isBlank() || rawNonce.isBlank()) return AuthResult.Error("Google didn't finish verifying the account. Please try again.")
-
-        return try {
-            Log.i(TAG, "exchange_started")
-            auth.signInWith(IDToken) {
-                this.idToken = idToken
-                provider = Google
-                nonce = rawNonce
-            }
-            if (auth.currentUserOrNull() == null) {
-                Log.w(TAG, "session_missing")
-                auth.clearSession()
-                return AuthResult.Error("Your account was selected, but sign-in didn’t finish. Please try again.")
-            }
-            syncDisplayAccount()
-            Log.i(TAG, "session_ready")
-            AuthResult.Success
-        } catch (error: RestException) {
-            Log.w(TAG, "exchange_rejected status=${error.statusCode}")
-            val feedback = when (error.statusCode) {
-                429 -> "Too many sign-in attempts. Wait a moment and try again."
-                in 500..599 -> "DataCube AU couldn’t complete sign-in right now. Please try again shortly."
-                else -> "DataCube AU couldn’t verify this Google sign-in. Try again or contact support if it continues."
-            }
-            AuthResult.Error(feedback)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            Log.w(TAG, "exchange_failed")
-            AuthResult.Error("Sign-in couldn’t finish. Check your connection and try again.")
-        }
-    }
-
     suspend fun signOut(): AuthResult {
         try {
             auth.signOut()
@@ -98,17 +49,8 @@ class AuthRepository(
                 return AuthResult.Error("The app could not securely clear its local session. Please try again.")
             }
         }
-        return try {
-            syncDisplayAccount()
-            resetGoogleAccount()
-            AuthResult.Success
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: ClearCredentialException) {
-            AuthResult.Error("Signed out of DataCube AU. Google could not reset its account selection.")
-        } catch (_: Exception) {
-            AuthResult.Error("Signed out of DataCube AU. Local account preferences could not be cleared.")
-        }
+        syncDisplayAccount()
+        return AuthResult.Success
     }
 
     internal suspend fun completeMobileSignIn(session: UserSession, expectedUserId: String?): AuthResult {

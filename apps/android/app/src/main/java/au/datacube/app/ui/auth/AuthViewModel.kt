@@ -3,8 +3,6 @@ package au.datacube.app.ui.auth
 import android.app.Application
 import android.net.Uri
 import android.util.Log
-import androidx.credentials.Credential
-import androidx.credentials.GetCredentialRequest
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
@@ -19,8 +17,6 @@ import au.datacube.app.auth.MobileAuthorizationStatus
 import au.datacube.app.auth.MobileAuthorizationUnavailable
 import au.datacube.app.auth.PendingMobileAuthorization
 import au.datacube.app.auth.PendingMobileAuthorizationStore
-import au.datacube.app.auth.PickerFailure
-import au.datacube.app.auth.chooseGoogleAccount
 import au.datacube.app.auth.mobileAuthorizationChallenge
 import au.datacube.app.auth.newMobileAuthorizationVerifier
 import io.github.jan.supabase.auth.status.SessionStatus
@@ -87,14 +83,12 @@ class AuthViewModel internal constructor(
             val expired = savedRequest != null && savedRequest.expiresAt <= now()
             if (savedRequest != null && (expired || user != null)) clearPendingStorage()
             pending = savedRequest.takeUnless { expired || user != null }
-            val interrupted = savedState.remove<Boolean>("googleSignInPending") == true && user == null
             _state.value = AuthState(
                 isLoading = false,
                 user = user,
                 sessionRestored = true,
                 error = when {
                     expired && user == null -> expiredSignInMessage
-                    interrupted -> "Sign-in was interrupted. Please try again."
                     else -> null
                 },
                 pairingCode = pending?.pairingCode
@@ -157,7 +151,7 @@ class AuthViewModel internal constructor(
             openBrowser(mobileAuthorization.approvalPage(request.requestId))
         } catch (_: Exception) {
             Log.w(TAG, "mobile_browser_unavailable")
-            _state.value = _state.value.copy(error = "Couldn’t open your browser. Try again or cancel to use Google on this device.")
+            _state.value = _state.value.copy(error = "Couldn’t open your browser. Check your browser settings, then try again.")
         }
     }
 
@@ -314,37 +308,6 @@ class AuthViewModel internal constructor(
 
     private fun canStartSignIn(): Boolean = _state.value.let {
         it.sessionRestored && !it.isLoading && it.user == null && pending == null && repository.configurationError() == null
-    }
-
-    fun signInWithGoogle(getCredential: suspend (GetCredentialRequest) -> Credential) {
-        if (!canStartSignIn()) return
-        savedState["googleSignInPending"] = true
-        _state.value = _state.value.copy(isLoading = true, error = null)
-        viewModelScope.launch {
-            try {
-                Log.i("DataCubeAuth", "picker_started")
-                val account = chooseGoogleAccount(getCredential)
-                Log.i("DataCubeAuth", "credential_received")
-                val result = repository.signInWithGoogle(account.token, account.rawNonce)
-                val user = repository.currentUser()
-                val error = when (result) {
-                    AuthRepository.AuthResult.Success -> if (user == null) "Your sign-in didn’t finish. Please try again." else null
-                    is AuthRepository.AuthResult.Error -> result.message
-                }
-                _state.value = AuthState(user = user, sessionRestored = true, error = error)
-            } catch (failure: PickerFailure) {
-                Log.w("DataCubeAuth", failure.diagnostic)
-                _state.value = _state.value.copy(isLoading = false, error = failure.feedback)
-            } catch (cancelled: CancellationException) {
-                _state.value = _state.value.copy(isLoading = false, error = "Sign-in was interrupted. Please try again.")
-                throw cancelled
-            } catch (_: Exception) {
-                Log.w("DataCubeAuth", "sign_in_interrupted")
-                _state.value = _state.value.copy(isLoading = false, error = "Sign-in couldn’t finish. Please try again.")
-            } finally {
-                savedState.remove<Boolean>("googleSignInPending")
-            }
-        }
     }
 
     fun signOut() {

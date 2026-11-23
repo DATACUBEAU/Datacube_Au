@@ -2,6 +2,8 @@ package au.datacube.app.auth
 
 import android.net.Uri
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -61,7 +63,7 @@ class HybridMobileSignInTest {
             install(Auth) { sessionManager = sessionStore; alwaysAutoRefresh = false }
         }
     }
-    private val repository by lazy { AuthRepository(AuthSessionStore(app), {}) { supabase.auth } }
+    private val repository by lazy { AuthRepository(AuthSessionStore(app)) { supabase.auth } }
     private val httpClient by lazy {
         HttpClient(MockEngine { request ->
             assertEquals("/api/auth/mobile-authorization", request.url.encodedPath)
@@ -139,11 +141,12 @@ class HybridMobileSignInTest {
         val model = newModel()
         ui.setContent {
             DataCubeTheme {
-                AuthScreen(model, { browserUri = it }) { error("Unexpected native account picker") }
+                AuthScreen(model, { browserUri = it })
             }
         }
         waitForRestore(model)
         ui.onNodeWithText("Yo, welcome.").assertIsDisplayed()
+        ui.onAllNodesWithText("Use Google on this device").assertCountEquals(0)
         ui.onNodeWithText("Continue with Google").performClick()
         ui.waitUntil(10_000) { browserUri != null }
 

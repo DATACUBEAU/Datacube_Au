@@ -55,8 +55,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.credentials.Credential
-import androidx.credentials.GetCredentialRequest
 import au.datacube.app.R
 import au.datacube.app.ui.WireframeCube
 import au.datacube.app.ui.rememberAmbientMotionEnabled
@@ -69,8 +67,7 @@ private val AuthBlue = Color(0xFF318BFF)
 @Composable
 fun AuthScreen(
     viewModel: AuthViewModel,
-    openBrowser: (Uri) -> Unit,
-    getGoogleCredential: suspend (GetCredentialRequest) -> Credential
+    openBrowser: (Uri) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     val motionEnabled = rememberAmbientMotionEnabled()
@@ -172,11 +169,7 @@ fun AuthScreen(
                 }
                 Text(if (pairingCode == null) "Continue with Google" else "Open browser", fontWeight = FontWeight.SemiBold)
             }
-            if (pairingCode == null) {
-                TextButton(onClick = { viewModel.signInWithGoogle(getGoogleCredential) }, enabled = canContinue) {
-                    Text("Use Google on this device", color = Color(0xFF92E0FF))
-                }
-            } else {
+            if (pairingCode != null) {
                 TextButton(onClick = { viewModel.resumeMobileSignIn() }, enabled = canContinue) {
                     Text("Check sign-in", color = Color(0xFF92E0FF))
                 }

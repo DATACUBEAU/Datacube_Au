@@ -86,8 +86,6 @@ jobs:
           SUPABASE_URL: https://dhmukdeljiwvvwjdcxgn.supabase.co
           SUPABASE_ANON_KEY: sb_publishable_6N4nuBJIaXzOVYYUXSzomA_R8TB1vc_
           AUTH_WEBSITE_URL: https://datacube-au.vercel.app
-          # Built-in public project audience is used when no override is configured.
-          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID || secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "::error::Android build needs Supabase project URL and publishable key."
@@ -98,9 +96,6 @@ jobs:
           echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> local.properties
           if [ -n "$AUTH_WEBSITE_URL" ]; then
             echo "AUTH_WEBSITE_URL=$AUTH_WEBSITE_URL" >> local.properties
-          fi
-          if [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
-            echo "GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID" >> local.properties
           fi
 
       - name: Run unit tests

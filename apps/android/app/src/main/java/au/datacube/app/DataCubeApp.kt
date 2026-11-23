@@ -1,8 +1,6 @@
 package au.datacube.app
 
 import android.app.Application
-import androidx.credentials.ClearCredentialStateRequest
-import androidx.credentials.CredentialManager
 import androidx.work.Configuration
 import au.datacube.app.auth.AuthRepository
 import au.datacube.app.auth.AuthSessionStore
@@ -18,12 +16,7 @@ import au.datacube.app.data.DataCubeDatabase
  */
 class DataCubeApp : Application(), Configuration.Provider {
     val authSessionStore by lazy { AuthSessionStore(this) }
-    private val credentialManager by lazy { CredentialManager.create(this) }
-    val authRepository by lazy {
-        AuthRepository(authSessionStore, resetGoogleAccount = {
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
-        })
-    }
+    val authRepository by lazy { AuthRepository(authSessionStore) }
     val database by lazy { DataCubeDatabase.get(this) }
 
     override val workManagerConfiguration: Configuration
