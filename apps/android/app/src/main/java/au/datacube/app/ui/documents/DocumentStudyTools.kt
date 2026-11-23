@@ -37,6 +37,9 @@ import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.rag.RagTextChunker
 import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.data.rag.LocalSemanticSearch
+import au.datacube.app.data.rag.LocalPassageIndex
+import au.datacube.app.data.rag.LexicalIndexWorker
+import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.data.rag.DocumentQueryInterpreter
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
@@ -319,8 +322,20 @@ fun DocumentChatWorkspace(
     var explainingTerm by remember(documentId) { mutableStateOf(false) }
     var termRequest by remember(documentId) { mutableStateOf<Job?>(null) }
     LaunchedEffect(documentId, textPreview, semanticSupported) {
-        if (semanticSupported && !textPreview.isNullOrBlank()) {
-            semanticSearch.scheduleIndex(documentId)
+        if (!textPreview.isNullOrBlank()) {
+            // Backfill existing documents only if a complete FTS index is absent.
+            withContext(Dispatchers.IO) {
+                val index = LocalPassageIndex(context)
+                try {
+                    val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
+                    if (source.isFile && !index.hasCurrent(documentId, source)) {
+                        LexicalIndexWorker.schedule(context, documentId)
+                    }
+                } finally {
+                    index.close()
+                }
+            }
+            if (semanticSupported) semanticSearch.scheduleIndex(documentId)
         }
     }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
@@ -347,14 +362,44 @@ fun DocumentChatWorkspace(
                                     var usedSemantic = false
                                     if (plan.overview) {
                                         session.searchingStage = "Collecting source excerpts"
-                                        matches = StudyContentQuality.chooseOverview(
+                                        val indexedOverview = withContext(Dispatchers.IO) {
+                                            val index = LocalPassageIndex(context)
+                                            try {
+                                                val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
+                                                index.overview(documentId, source, limit = 8)
+                                            } finally {
+                                                index.close()
+                                            }
+                                        }
+                                        val overviewCandidates = if (indexedOverview.isNotEmpty()) {
+                                            indexedOverview.map { RagEvidence(it.text, it.page) }
+                                        } else {
                                             sourceSnippets(textPreview).map { RagEvidence(it.text, it.page) }
-                                        ).map { SourceSnippet(it.text, it.page) }
-                                        events += "Selected source passages for an overview"
+                                        }
+                                        matches = StudyContentQuality.chooseOverview(overviewCandidates)
+                                            .map { SourceSnippet(it.text, it.page) }
+                                        events += if (indexedOverview.isNotEmpty())
+                                            "Sampled passages across the complete document index"
+                                        else "Selected source passages from the available preview"
                                     } else {
                                         session.searchingStage = "Searching document text"
-                                        val bm25 = findRelevantSnippets(plan.retrievalQuery, textPreview)
-                                        events += "Ranked extracted text with BM25"
+                                        val indexedMatches = withContext(Dispatchers.IO) {
+                                            val index = LocalPassageIndex(context)
+                                            try {
+                                                val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
+                                                if (index.hasCurrent(documentId, source)) {
+                                                    index.search(documentId, plan.retrievalQuery, source, limit = 6)
+                                                } else null
+                                            } finally {
+                                                index.close()
+                                            }
+                                        }
+                                        val keywordMatches = if (indexedMatches != null) {
+                                            indexedMatches.map { SourceSnippet(it.text, it.page) }
+                                        } else findRelevantSnippets(plan.retrievalQuery, textPreview)
+                                        events += if (indexedMatches != null)
+                                            "Searched and ranked full-document passages"
+                                        else "Ranked available preview excerpts using BM25"
                                         val vectorMatches = if (semanticSupported && !indexing) {
                                             session.searchingStage = "Checking semantic matches"
                                             events += "Queried the on-device vector index"
@@ -363,10 +408,10 @@ fun DocumentChatWorkspace(
                                         } else emptyList()
                                         usedSemantic = vectorMatches.isNotEmpty()
                                         matches = GroundedRagPlanner.fuse(
-                                            bm25.map { RagEvidence(it.text, it.page) },
+                                            keywordMatches.map { RagEvidence(it.text, it.page) },
                                             vectorMatches.map { RagEvidence(it.text, it.page) }
                                         ).map { SourceSnippet(it.text, it.page) }
-                                        if (usedSemantic) events += "Combined BM25 and vector ranks"
+                                        if (usedSemantic) events += "Combined keyword and vector results"
                                     }
                                     events += "Linked ${matches.size} source passage(s)"
                                     val resultIndex = messages.size
@@ -377,7 +422,7 @@ fun DocumentChatWorkspace(
                                         generating = llmInstalled && matches.isNotEmpty()
                                     ))
                                     if (llmInstalled && matches.isNotEmpty()) {
-                                        session.searchingStage = "AI is preparing the answer"
+                                        session.searchingStage = "AU is preparing an answer"
                                         val previous = messages.take(resultIndex)
                                             .filter { !it.isUser && it.answer.isNotBlank() }
                                             .takeLast(3)
@@ -390,7 +435,7 @@ fun DocumentChatWorkspace(
                                         var generated = ""
                                         var lastUpdate = 0L
                                         try {
-                                            session.searchingStage = "AI is thinking"
+                                            session.searchingStage = "AU is thinking"
                                             LocalGenerativeEngine.generate(context, grounded.value) { part ->
                                                 generated += part
                                                 val now = SystemClock.elapsedRealtime()
@@ -403,7 +448,7 @@ fun DocumentChatWorkspace(
                                                     lastUpdate = now
                                                 }
                                             }
-                                            events += "Generated an answer using the selected local chat model on this device"
+                                            events += "AU generated an answer using the selected evidence"
                                             messages[resultIndex] = messages[resultIndex].copy(
                                                 answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
                                                 generating = false,
@@ -412,7 +457,7 @@ fun DocumentChatWorkspace(
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
                                         } catch (generationError: Exception) {
-                                            events += "Local generation failed; retrieved sources remain available"
+                                            events += "AU response failed; retrieved sources remain available"
                                             messages[resultIndex] = messages[resultIndex].copy(
                                                 answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
                                                 generating = false,
@@ -799,7 +844,7 @@ fun DocumentChatWorkspace(
                         messages.add(ChatMessage(label, emptyList(), true,
                             audioPath = note.file.absolutePath))
                         session.searching = true
-                        session.searchingStage = "AI is listening"
+                        session.searchingStage = "AU is listening"
                         session.activeRequest = session.scope.launch {
                             try {
                                 val words = LocalGenerativeEngine.understandVoiceNote(
