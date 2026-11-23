@@ -1098,6 +1098,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
     var speechReady by remember { mutableStateOf(false) }
     var speaking by remember { mutableStateOf(false) }
     var speechError by remember { mutableStateOf<String?>(null) }
+    var neuralStage by remember { mutableStateOf("") }
     var activeChapter by remember(documentName) { mutableIntStateOf(0) }
     val voicePreferences = remember(context) { OfflineNarrationPreferences(context) }
     var speechRate by remember { mutableFloatStateOf(voicePreferences.speed) }
@@ -1119,7 +1120,9 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
     val tts = remember(context) {
         TextToSpeech(context.applicationContext) { status ->
             speechReady = status == TextToSpeech.SUCCESS
-            if (status != TextToSpeech.SUCCESS) speechError = "The Android speech engine could not be initialized."
+            if (status != TextToSpeech.SUCCESS && !useNeural) {
+                speechError = "The Android offline speech engine could not be initialized."
+            }
         }
     }
 
@@ -1135,6 +1138,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
         onDispose {
             neuralJob?.cancel()
             NeuralNarration.stop()
+            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { NeuralNarration.release() }
             tts.stop()
             tts.shutdown()
         }
@@ -1176,15 +1180,20 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
             NeuralNarration.stop()
             tts.stop()
             speechError = null
+            neuralStage = "Preparing Kokoro on your device"
             speaking = true
             neuralJob = narratorScope.launch {
                 try {
-                    NeuralNarration.speak(context, text, neuralVoice, speechRate)
+                    NeuralNarration.speak(context, text, neuralVoice, speechRate) { stage ->
+                        withContext(Dispatchers.Main) { neuralStage = stage }
+                    }
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
-                    speechError = error.message ?: "The neural voice could not play."
+                    speechError = "Kokoro neural playback failed: " +
+                        (error.message ?: "The model or device runtime could not synthesize audio.")
                 } finally {
+                    neuralStage = ""
                     speaking = false
                 }
             }
@@ -1223,7 +1232,14 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                     Column(Modifier.weight(1f)) {
                         Text("$documentName · Audio Summary", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                         Text(chapters.size.toString() + " chapters · Text-to-speech", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                        Text(if (speaking) "Narration playing" else "Ready to play", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                        Text(
+                            if (speaking) {
+                                if (useNeural) neuralStage.ifBlank { "Preparing neural voice" }
+                                else "Android offline narration playing"
+                            } else "Ready to play",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelMedium
+                        )
                     }
                 }
                 Spacer(Modifier.height(16.dp))
@@ -1382,11 +1398,11 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                     OutlinedButton(onClick = { activeChapter = 0; speak(summary) }, enabled = narrationReady && summary.isNotBlank()) { Text("Full summary") }
                 }
                 speechError?.let { Spacer(Modifier.height(8.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                if (!speechReady && speechError == null) {
+                if (!useNeural && !speechReady && speechError == null) {
                     Spacer(Modifier.height(8.dp)); Text("Preparing the installed Android speech engine…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    "All narration runs on this device. Kokoro requires an optional model download.",
+                    "Kokoro plays only through the downloaded neural model. No automatic Android-voice fallback. If neural synthesis fails, review the error above.",
                     Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
