@@ -1054,6 +1054,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
     var speechPitch by remember { mutableFloatStateOf(voicePreferences.pitch) }
     var selectedVoiceName by remember { mutableStateOf(voicePreferences.voiceName) }
     var offlineVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
+    val narrationReady = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty()
     var voiceMenuExpanded by remember { mutableStateOf(false) }
     var voiceRefresh by remember { mutableIntStateOf(0) }
     val snippets = remember(textPreview) { sourceSnippets(textPreview) }
@@ -1311,7 +1312,6 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                 }
                 }
                 Spacer(Modifier.height(14.dp))
-                val narrationReady = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty()
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Button(
                         onClick = {
