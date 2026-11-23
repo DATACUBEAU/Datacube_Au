@@ -1,6 +1,9 @@
 package au.datacube.app.ui.documents
 
 import au.datacube.app.ui.common.DataCubeDialog
+import au.datacube.app.ui.common.AuComposer
+import au.datacube.app.ui.common.AuActivityTimeline
+import au.datacube.app.ui.common.AuWorkingStatus
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import au.datacube.app.audio.OfflineNarrationPreferences
@@ -720,47 +723,11 @@ fun DocumentChatWorkspace(
                                 }) {
                                     Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
                                     Spacer(Modifier.width(5.dp))
-                                    Text("How AU worked")
+                                    Text("AU activity")
                                 }
                             }
                             if (messages.indexOf(message) in expandedSteps) {
-                                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    message.steps.forEachIndexed { i, step ->
-                                        Row(
-                                            verticalAlignment = Alignment.Top,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
-                                        ) {
-                                            Surface(
-                                                shape = RoundedCornerShape(12.dp),
-                                                color = MaterialTheme.colorScheme.primaryContainer
-                                            ) {
-                                                Text("${i + 1}", Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                                    style = MaterialTheme.typography.labelMedium,
-                                                    fontWeight = FontWeight.Bold)
-                                            }
-                                            Column(Modifier.weight(1f)) {
-                                                Text(
-                                                    when {
-                                                        step.contains("search", ignoreCase = true) ||
-                                                            step.contains("rank", ignoreCase = true) -> "Searching"
-                                                        step.contains("source", ignoreCase = true) ||
-                                                            step.contains("evidence", ignoreCase = true) -> "Checking sources"
-                                                        step.contains("generat", ignoreCase = true) -> "Answering"
-                                                        else -> "Preparing"
-                                                    },
-                                                    color = MaterialTheme.colorScheme.primary,
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontWeight = FontWeight.SemiBold
-                                                )
-                                                Text(step,
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            }
-                                        }
-                                    }
-                                }
+                                AuActivityTimeline(message.steps)
                             }
                         }
                     }
@@ -768,46 +735,39 @@ fun DocumentChatWorkspace(
             }
         }
         if (session.searching) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(10.dp))
-                Text(session.searchingStage, modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = { session.activeRequest?.cancel() }) { Text("Stop") }
-            }
+            AuWorkingStatus(
+                stage = session.searchingStage,
+                onStop = { session.activeRequest?.cancel() }
+            )
         }
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), tonalElevation = 2.dp
-        ) {
-            Row(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(10.dp), verticalAlignment = Alignment.Bottom) {
-                OutlinedTextField(
-                    value = prompt, onValueChange = { prompt = it.take(500) }, Modifier.weight(1f),
-                    placeholder = { Text("Ask AU about this document…") }, shape = RoundedCornerShape(18.dp), maxLines = 4
-                )
-                Spacer(Modifier.width(4.dp))
+        AuComposer(
+            value = prompt,
+            onValueChange = { prompt = it.take(500) },
+            onSend = { submitQuestion(prompt.trim()) },
+            placeholder = "Ask AU about this document…",
+            enabled = historyReady && threadIndex != null && !session.searching,
+            sendEnabled = historyReady && threadIndex != null &&
+                userTurns < ConversationWindow.MAX_USER_TURNS && prompt.isNotBlank() &&
+                !textPreview.isNullOrBlank() && !session.searching,
+            sendDescription = "Search document",
+            actions = {
                 VoiceNoteInputButton(
                     ownerId = documentId,
                     enabled = historyReady && !session.searching && threadIndex != null &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->
-                        val label = "Voice note · ${note.durationSeconds}s"
+                        val label = "Voice note · " + note.durationSeconds + "s"
                         messages.add(ChatMessage(label, emptyList(), true,
                             audioPath = note.file.absolutePath))
                         session.searching = true
-                        session.searchingStage = "AI is listening"
+                        session.searchingStage = "AU is listening"
                         session.activeRequest = session.scope.launch {
                             try {
-                                val words = LocalGenerativeEngine.understandVoiceNote(
-                                    context, note.file)
+                                val words = LocalGenerativeEngine.understandVoiceNote(context, note.file)
                                 session.searching = false
                                 session.searchingStage = ""
-                                submitQuestion(words, label, note.file.absolutePath,
-                                    alreadyAdded = true)
+                                submitQuestion(words, label, note.file.absolutePath, alreadyAdded = true)
                             } catch (cancelled: CancellationException) {
                                 session.searching = false
                                 session.searchingStage = ""
@@ -821,13 +781,8 @@ fun DocumentChatWorkspace(
                         }
                     }
                 )
-                Spacer(Modifier.width(4.dp))
-                FilledIconButton(
-                    onClick = { submitQuestion(prompt.trim()) },
-                    enabled = historyReady && threadIndex != null && userTurns < ConversationWindow.MAX_USER_TURNS && prompt.isNotBlank() && !textPreview.isNullOrBlank() && !session.searching, modifier = Modifier.size(52.dp)
-                ) { Icon(Icons.Outlined.Send, contentDescription = "Search document") }
             }
-        }
+        )
     }
 }
 
