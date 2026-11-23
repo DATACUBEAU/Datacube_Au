@@ -21,7 +21,7 @@ object GistRequestRouter {
         """\b(?:list|show|name|which|what|display)\b"""
     )
     private val explicitDocumentSearch = Regex(
-        """\b(?:search|find|compare|summarize|quote|check|look\s+up|according\s+to|based\s+on|inside|from|in)\b"""
+        """\b(?:search|find|compare|summarize|quote|check|contain|contains|mention|mentions|say|says|about|read|explain|look\s+up|according\s+to|based\s+on|inside|from|in)\b"""
     )
 
     fun classify(input: String): GistIntent {
