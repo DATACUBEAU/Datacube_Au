@@ -30,6 +30,8 @@ import au.datacube.app.ui.documents.ChatMessage
 import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.ui.documents.SourceSnippet
 import au.datacube.app.ui.theme.dataCubeBackdrop
+import au.datacube.app.ui.voice.VoiceNoteInputButton
+import au.datacube.app.ui.voice.VoiceNotePlayback
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -117,12 +119,16 @@ fun DiscsScreen(
         )
     }
 
-    fun send() {
-        val question = prompt.trim()
+    fun send(
+        question: String = prompt.trim(),
+        label: String = question,
+        audioPath: String? = null,
+        alreadyAdded: Boolean = false
+    ) {
         if (!ready || session.searching || question.isBlank() ||
-            userTurns >= ConversationWindow.MAX_USER_TURNS) return
-        prompt = ""
-        turns.add(ChatMessage(question, emptyList(), true))
+            (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
+        if (audioPath == null) prompt = ""
+        if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
         session.searching = true
         session.searchingStage = "Planning your search"
         session.activeRequest = session.scope.launch {
@@ -280,8 +286,12 @@ fun DiscsScreen(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(color = MaterialTheme.colorScheme.primaryContainer,
                                 shape = RoundedCornerShape(20.dp, 20.dp, 5.dp, 20.dp)) {
-                                Text(message.question, Modifier.padding(15.dp),
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                if (message.audioPath != null) {
+                                    VoiceNotePlayback(message.audioPath, message.question)
+                                } else {
+                                    Text(message.question, Modifier.padding(15.dp),
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                }
                             }
                         }
                     } else {
@@ -379,8 +389,41 @@ fun DiscsScreen(
                     shape = RoundedCornerShape(18.dp),
                     maxLines = 5
                 )
-                Spacer(Modifier.width(8.dp))
-                FilledIconButton(onClick = ::send,
+                Spacer(Modifier.width(4.dp))
+                VoiceNoteInputButton(
+                    ownerId = ownerId,
+                    enabled = ready && !session.searching &&
+                        userTurns < ConversationWindow.MAX_USER_TURNS,
+                    supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
+                    onReady = { note ->
+                        val label = "Voice note · ${note.durationSeconds}s"
+                        turns.add(ChatMessage(label, emptyList(), true,
+                            audioPath = note.file.absolutePath))
+                        session.searching = true
+                        session.searchingStage = "AI is listening"
+                        session.activeRequest = session.scope.launch {
+                            try {
+                                val question = LocalGenerativeEngine.understandVoiceNote(
+                                    context, note.file)
+                                session.searching = false
+                                session.searchingStage = ""
+                                send(question, label, note.file.absolutePath,
+                                    alreadyAdded = true)
+                            } catch (cancelled: CancellationException) {
+                                session.searching = false
+                                session.searchingStage = ""
+                                throw cancelled
+                            } catch (error: Exception) {
+                                session.searching = false
+                                session.searchingStage = ""
+                                turns.add(ChatMessage(label, emptyList(), false,
+                                    generationError = error.message ?: "AU could not understand this audio."))
+                            }
+                        }
+                    }
+                )
+                Spacer(Modifier.width(4.dp))
+                FilledIconButton(onClick = { send() },
                     enabled = ready && !session.searching && prompt.isNotBlank() &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     modifier = Modifier.size(52.dp)) {
