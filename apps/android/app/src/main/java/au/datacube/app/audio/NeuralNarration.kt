@@ -15,6 +15,7 @@ import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
@@ -59,6 +60,7 @@ object NeuralNarration {
                 val task = load(context)
                 val options = SynthesisOptions(voice, null)
                 var player: AudioTrack? = null
+                var totalSamples = 0L
                 try {
                     task.synthesizeStream(text.take(2_000), options).collect { chunk ->
                         currentCoroutineContext().ensureActive()
@@ -95,6 +97,18 @@ object NeuralNarration {
                             ) ?: error("Audio output was stopped.")
                             check(result > 0) { "Audio output failed." }
                             consumed += result
+                        }
+                        totalSamples += samples.size
+                    }
+                    // Draining matters: AudioTrack.write copies to its buffer before playback
+                    // completes. Do not truncate the final spoken words after synthesis finishes.
+                    val track = player
+                    if (track != null) {
+                        var polls = 0
+                        while (track.playState == AudioTrack.PLAYSTATE_PLAYING &&
+                            track.playbackHeadPosition.toLong() < totalSamples && polls++ < 750) {
+                            currentCoroutineContext().ensureActive()
+                            delay(40)
                         }
                     }
                 } catch (cancelled: CancellationException) {
