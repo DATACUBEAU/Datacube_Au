@@ -58,7 +58,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                         steps = turn.steps,
                         corrected = turn.corrections,
                         answer = turn.answer,
-                        generationError = if (turn.interrupted) "Previous response stopped before completion." else null
+                        generationError = if (turn.interrupted) "Previous response stopped before completion." else null,
+                        audioPath = turn.audioPath
                     )
                 })
             } catch (cancelled: CancellationException) {
