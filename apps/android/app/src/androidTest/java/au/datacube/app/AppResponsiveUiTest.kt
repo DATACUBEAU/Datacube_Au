@@ -64,7 +64,7 @@ class AppResponsiveUiTest {
                         recentDocuments = emptyList(),
                         onImportDocument = {},
                         onNavigateToDocuments = {},
-                        onNavigateToStudy = {},
+                        onNavigateToGist = {},
                         onNavigateToChat = {},
                         onOpenDocument = {},
                         onNavigateSettings = {}
