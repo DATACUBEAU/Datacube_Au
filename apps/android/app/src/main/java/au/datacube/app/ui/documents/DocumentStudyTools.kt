@@ -1,6 +1,8 @@
 package au.datacube.app.ui.documents
 
 import android.speech.tts.TextToSpeech
+import android.speech.tts.Voice
+import au.datacube.app.audio.OfflineNarrationPreferences
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -22,6 +24,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalJobStatus
+import au.datacube.app.data.rag.RagTextChunker
+import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
 
@@ -105,15 +109,11 @@ private fun suggestedStudyQuestions(raw: String?, count: Int = 5): List<StudyQue
 }
 
 private fun findRelevantSnippets(query: String, raw: String?): List<SourceSnippet> {
-    val terms = Regex("[\\p{L}\\p{N}]{3,}").findAll(query.lowercase())
-        .map { it.value }.filterNot { it in ignoredTerms }.toSet()
-    if (terms.isEmpty()) return emptyList()
-    return sourceSnippets(raw).map { snippet ->
-        val words = Regex("[\\p{L}\\p{N}]{3,}").findAll(snippet.text.lowercase()).map { it.value }.toSet()
-        snippet to terms.count { it in words }
-    }.filter { it.second > 0 }
-        .sortedWith(compareByDescending<Pair<SourceSnippet, Int>> { it.second }.thenByDescending { it.first.text.length })
-        .map { it.first }.distinctBy { it.text }.take(4)
+    val text = raw?.take(48_000).orEmpty()
+    if (query.isBlank() || text.isBlank()) return emptyList()
+    val chunks = RagTextChunker().chunk("document-preview", text)
+    return RagBm25Index(chunks).search(query, limit = 4)
+        .map { SourceSnippet(it.text, it.page) }
 }
 
 @Composable
@@ -209,7 +209,7 @@ fun DocumentChatWorkspace(
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                     Text(
-                        "Searches extracted text and returns matching passages with page references. This local search does not invent an AI answer.",
+                        "Searches extracted text with local BM25 ranking and page references. It does not generate an AU answer.",
                         color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -545,7 +545,13 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
     var speaking by remember { mutableStateOf(false) }
     var speechError by remember { mutableStateOf<String?>(null) }
     var activeChapter by remember(documentName) { mutableIntStateOf(0) }
-    var speechRate by remember(documentName) { mutableFloatStateOf(1.0f) }
+    val voicePreferences = remember(context) { OfflineNarrationPreferences(context) }
+    var speechRate by remember { mutableFloatStateOf(voicePreferences.speed) }
+    var speechPitch by remember { mutableFloatStateOf(voicePreferences.pitch) }
+    var selectedVoiceName by remember { mutableStateOf(voicePreferences.voiceName) }
+    var offlineVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
+    var voiceMenuExpanded by remember { mutableStateOf(false) }
+    var voiceRefresh by remember { mutableIntStateOf(0) }
     val snippets = remember(textPreview) { sourceSnippets(textPreview) }
     val chapters = remember(textPreview) {
         snippets.chunked(5).mapIndexed { index, group ->
@@ -574,20 +580,45 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
         onDispose { tts.stop(); tts.shutdown() }
     }
 
-    LaunchedEffect(tts, speechReady) {
+    LaunchedEffect(tts, speechReady, voiceRefresh) {
         if (speechReady) {
-            val languageResult = tts.setLanguage(Locale.getDefault())
-            if (languageResult == TextToSpeech.LANG_MISSING_DATA || languageResult == TextToSpeech.LANG_NOT_SUPPORTED) {
-                speechError = "The installed speech engine does not support your device language."
-                speechReady = false
+            offlineVoices = runCatching {
+                tts.voices.orEmpty()
+                    .filter { !it.isNetworkConnectionRequired }
+                    .sortedWith(
+                        compareByDescending<Voice> { it.locale.language == Locale.getDefault().language }
+                            .thenBy { it.locale.displayLanguage }
+                            .thenBy { it.name }
+                    )
+            }.getOrDefault(emptyList())
+            if (offlineVoices.isEmpty()) {
+                speechError = "No offline voices installed. Download an offline voice in Android speech settings."
+            } else {
+                val match = offlineVoices.firstOrNull { it.name == selectedVoiceName }
+                    ?: offlineVoices.first()
+                if (selectedVoiceName != match.name) {
+                    selectedVoiceName = match.name
+                    voicePreferences.voiceName = match.name
+                }
+                speechError = null
             }
         }
     }
 
     fun speak(text: String) {
         if (!speechReady || text.isBlank()) return
+        val voice = offlineVoices.firstOrNull { it.name == selectedVoiceName }
+        if (voice == null) {
+            speechError = "Select an installed offline voice first."
+            return
+        }
         tts.stop()
+        if (tts.setVoice(voice) == TextToSpeech.ERROR) {
+            speechError = "This offline voice is unavailable. Try another voice."
+            return
+        }
         tts.setSpeechRate(speechRate)
+        tts.setPitch(speechPitch)
         speechError = null
         val result = tts.speak(text.take(4_000), TextToSpeech.QUEUE_FLUSH, null, "datacube-document-audio")
         if (result == TextToSpeech.ERROR) {
@@ -596,7 +627,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
         } else speaking = true
     }
 
-    ToolPage("Podcast", "Listen to a spoken summary of $documentName using your Android speech engine.") {
+    ToolPage("Podcast", "Listen to $documentName with an installed offline voice.") {
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null)
         else {
             ToolCard {
@@ -612,10 +643,85 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                Text("Voice", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Spacer(Modifier.height(6.dp))
+                Box(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = { voiceMenuExpanded = true },
+                        enabled = speechReady && offlineVoices.isNotEmpty(),
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            offlineVoices.firstOrNull { it.name == selectedVoiceName }?.let { voice ->
+                                "${voice.locale.displayName} · ${voice.name}"
+                            } ?: "No downloaded offline voices",
+                            Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Choose offline voice")
+                    }
+                    DropdownMenu(
+                        expanded = voiceMenuExpanded,
+                        onDismissRequest = { voiceMenuExpanded = false }
+                    ) {
+                        offlineVoices.forEach { voice ->
+                            DropdownMenuItem(
+                                text = { Text("${voice.locale.displayName} · ${voice.name}", maxLines = 2) },
+                                onClick = {
+                                    tts.stop()
+                                    speaking = false
+                                    selectedVoiceName = voice.name
+                                    voicePreferences.voiceName = voice.name
+                                    voiceMenuExpanded = false
+                                },
+                                leadingIcon = {
+                                    if (voice.name == selectedVoiceName) Icon(Icons.Outlined.Check, contentDescription = null)
+                                }
+                            )
+                        }
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("${offlineVoices.size} available on this device", style = MaterialTheme.typography.labelSmall, color = DataCubeColors.TextSecondary, modifier = Modifier.weight(1f))
+                    TextButton(
+                        onClick = { voiceRefresh += 1 },
+                        enabled = speechReady
+                    ) { Text("Refresh voices") }
+                    TextButton(
+                        onClick = { speak("Welcome to DataCube AU. Let's review your study notes.") },
+                        enabled = speechReady && offlineVoices.isNotEmpty()
+                    ) { Text("Preview") }
+                }
                 Text("Narration speed", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(0.8f, 1.0f, 1.2f).forEach { rate ->
-                        FilterChip(selected = speechRate == rate, onClick = { speechRate = rate; if (speaking) speak(summary) }, label = { Text(rate.toString() + "x") })
+                        FilterChip(
+                            selected = speechRate == rate,
+                            onClick = {
+                                speechRate = rate
+                                voicePreferences.speed = rate
+                                if (speaking) speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
+                            },
+                            label = { Text(rate.toString() + "x") }
+                        )
+                    }
+                }
+                Text("Voice tone", fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(0.9f, 1.0f, 1.1f).forEach { pitch ->
+                        FilterChip(
+                            selected = speechPitch == pitch,
+                            onClick = {
+                                speechPitch = pitch
+                                voicePreferences.pitch = pitch
+                                if (speaking) speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
+                            },
+                            label = { Text(when (pitch) { 0.9f -> "Lower"; 1.1f -> "Higher"; else -> "Normal" }) }
+                        )
                     }
                 }
                 Spacer(Modifier.height(14.dp))
@@ -625,20 +731,20 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                             if (speaking) { tts.stop(); speaking = false }
                             else speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
                         },
-                        enabled = speechReady && summary.isNotBlank(),
+                        enabled = speechReady && offlineVoices.isNotEmpty() && summary.isNotBlank(),
                         modifier = Modifier.weight(1f).heightIn(min = 50.dp)
                     ) {
                         Icon(if (speaking) Icons.Outlined.Stop else Icons.Outlined.PlayArrow, contentDescription = null)
                         Spacer(Modifier.width(7.dp)); Text(if (speaking) "Stop narration" else "Play summary")
                     }
-                    OutlinedButton(onClick = { activeChapter = 0; speak(summary) }, enabled = speechReady && summary.isNotBlank()) { Text("Full summary") }
+                    OutlinedButton(onClick = { activeChapter = 0; speak(summary) }, enabled = speechReady && offlineVoices.isNotEmpty() && summary.isNotBlank()) { Text("Full summary") }
                 }
                 speechError?.let { Spacer(Modifier.height(8.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 if (!speechReady && speechError == null) {
                     Spacer(Modifier.height(8.dp)); Text("Preparing the installed Android speech engine…", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
                 }
                 Text(
-                    "Speech is played through the installed Android text-to-speech engine. No audio file is created or uploaded by this screen.",
+                    "Only installed offline voices are used. Neural voice packs will be added separately. No audio is uploaded.",
                     Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary
                 )
             }
@@ -652,7 +758,7 @@ fun PodcastWorkspace(documentName: String, textPreview: String?, previewLoading:
                         onClick = { activeChapter = index; speak(chapter.first.text) },
                         shape = RoundedCornerShape(14.dp),
                         color = if (activeChapter == index) DataCubeColors.BlueLight else Color.White,
-                        border = BorderStroke(1.dp, DataCubeColors.Divider), enabled = speechReady
+                        border = BorderStroke(1.dp, DataCubeColors.Divider), enabled = speechReady && offlineVoices.isNotEmpty()
                     ) {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (activeChapter == index && speaking) Icons.Outlined.VolumeUp else Icons.Outlined.PlayArrow, contentDescription = "Play " + chapter.second, tint = DataCubeColors.Blue)

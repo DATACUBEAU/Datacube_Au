@@ -15,11 +15,11 @@ Native Kotlin + Jetpack Compose application. The Flutter project in `apps/mobile
 - Local PDF text extraction using PDFium, preserving page boundaries for citations (up to 100 MB).
 - Extracted text is written atomically to app-private storage, not to Room or cloud storage.
 - Document workspace with AU Chat, Smart Note, Prediction, Practice and Podcast tabs.
-- AU Chat currently performs local lexical matching against extracted text and shows page references; it is not yet semantic RAG or generative AI.
+- AU Chat currently uses a page-aware local text chunker and BM25 keyword ranking against extracted text previews, showing page references; it is not yet semantic RAG or generative AU.
 - Smart Note currently builds extractive notes and a heuristic concept map from detected headings and recurring terms.
 - Prediction currently builds a revision outline and prompts from detected topics; it does not provide probability scores or claim to forecast an exam.
 - Practice currently provides configurable self-study prompts, answer capture and source-passage review; it does not automatically grade answers.
-- Podcast currently uses Android TextToSpeech to narrate extracted passages; it does not create or upload an audio file.
+- Podcast currently uses user-selectable installed **offline** Android voices, with voice preview, speed and pitch persisted on-device. It does not yet have a neural voice engine, create an audio file, or upload text/audio.
 - Empty, loading and extraction error states are surfaced in the relevant document tools.
 - Compose UI tests cover Home, Documents, collection workspace and document study-tool interactions.
 
@@ -67,7 +67,7 @@ The CI release bundle is an unsigned preflight artifact, not a Play Store-ready 
 ## Remaining migration and product gaps
 
 - DOCX/RTF parsing and OCR for scanned PDFs.
-- Chunking, embeddings, local vector indexing and semantic retrieval.
+- Durable full-document indexing, embeddings, local vector indexing and semantic retrieval (a page-aware preview chunker and BM25 baseline now exist).
 - Production RAG chat and model gateway integration for document-aware AI.
 - AI-generated Smart Notes, actual exam prediction and generated/streamable podcast audio.
 - Automatic practice grading and durable study-session history.
@@ -75,3 +75,7 @@ The CI release bundle is an unsigned preflight artifact, not a Play Store-ready 
 - Additional device testing across Android versions, screen sizes, accessibility settings and real hardware.
 
 Authentication, import and local processing have native implementations, but production readiness still requires the full CI gate, real-device verification and review of backend/entitlement boundaries.
+
+## Active implementation roadmap
+
+See `docs/android-local-rag-neural-voice-implementation.md` for the ordered offline model downloader, actual vector embedding, local LLM, Smart Note diagram and optional neural TTS integration plan. Payment remains deferred in issue #50.
