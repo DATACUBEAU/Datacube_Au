@@ -103,7 +103,8 @@ class DocumentIntegrityWorker(
 
             val completedAt = System.currentTimeMillis()
             val committed = database.withTransaction {
-                if (database.jobs().markCompleted(jobId, completedAt) != 1) {
+                if (database.documents().find(documentId) == null ||
+                    database.jobs().markCompleted(jobId, completedAt) != 1) {
                     false
                 } else {
                     database.documents().updateSha256(document.id, fingerprint)
@@ -112,7 +113,7 @@ class DocumentIntegrityWorker(
             }
             if (committed) {
                 LocalNotificationService(applicationContext)
-                    .showDocumentCheckComplete(jobId)
+                    .showDocumentCheckComplete(jobId, documentId)
             }
             Result.success()
         } catch (cancelled: CancellationException) {
