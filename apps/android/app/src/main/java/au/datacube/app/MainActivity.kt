@@ -602,6 +602,8 @@ private fun AuthenticatedWorkspace(
                 ModelsScreen(
                     installed = { id -> modelStore.installed(id) },
                     onOpenVault = { navController.navigate(Screen.ModelVault.route) },
+                    onChooseFolder = { modelVaultFolderPicker.launch(null) },
+                    folderRevision = vaultRevision,
                     onGet = { model ->
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(model.sourcePage)))
                     },

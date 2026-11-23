@@ -24,47 +24,107 @@ fun ModelsScreen(
     onGet: (ModelSpec) -> Unit,
     onImport: (ModelSpec) -> Unit,
     onOpenVault: () -> Unit = {},
+    onChooseFolder: () -> Unit = {},
+    folderRevision: Int = 0,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val device = remember(context) { DeviceCapabilityScanner.scan(context) }
+    val bestChatId = remember(device) {
+        ModelRecommendations.bestChatModel(device.ramGb, device.freeStorageGb)
+    }
+    val recommendedChat = bestChatId?.let(ModelCatalog::find)
+        ?: ModelCatalog.find("qwen3-0.6b-litert")
+    val hasFolder = remember(context, folderRevision) { ModelVaultStore(context).folder() != null }
+    var advanced by remember { mutableStateOf(false) }
+    var activeRevision by remember { mutableIntStateOf(0) }
+    val activeChat = remember(context, activeRevision) { ActiveLocalChatModel(context).selected() }
     Scaffold(modifier = modifier, topBar = {
         TopAppBar(title = { Text("On-device models", fontWeight = FontWeight.Bold) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } })
     }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding),
+        LazyColumn(
+            Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
             item {
-                OutlinedButton(
-                    onClick = onOpenVault,
-                    modifier = Modifier.fillMaxWidth()
+                Surface(
+                    shape = RoundedCornerShape(18.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer
                 ) {
-                    Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Recommended for your device", fontWeight = FontWeight.SemiBold)
+                        Text("${device.ramGb} GB RAM · ${device.freeStorageGb} GB free",
+                            style = MaterialTheme.typography.bodySmall)
+                        Text("One chat model + one search model. Voice is optional.",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
+            item {
+                Text("Model folder", style = MaterialTheme.typography.titleMedium)
+                OutlinedButton(onClick = onChooseFolder, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.FolderOpen, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Model Vault · backups and restore")
+                    Text(if (hasFolder) "Change model folder" else "Choose folder before download")
+                }
+                Text(if (hasFolder) "Downloaded models are backed up here."
+                    else "Choose Documents or SD card. No downloads start automatically.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            item {
+                Text("1 · Document search", style = MaterialTheme.typography.titleMedium)
+                val spec = ModelCatalog.find(ModelRecommendations.bestSearchModel())
+                ModelCard(spec, { installed(spec.id) }, onGet, onImport,
+                    canDownload = hasFolder, onChooseFolder = onChooseFolder)
+            }
+            item {
+                Text("2 · Chat & reasoning", style = MaterialTheme.typography.titleMedium)
+                Text(if (bestChatId == null) "Limited free memory. Model may not run smoothly."
+                    else "Suggested for this device", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                ModelCard(recommendedChat, { installed(recommendedChat.id) }, onGet, onImport,
+                    canDownload = hasFolder, onChooseFolder = onChooseFolder,
+                    isActive = activeChat == recommendedChat.id,
+                    onUse = {
+                        ActiveLocalChatModel(context).setSelected(recommendedChat.id)
+                        activeRevision++
+                    })
+            }
+            item {
+                Text("3 · Voice", style = MaterialTheme.typography.titleMedium)
+                Text("Offline Android voices are in Podcast. Neural voices are not yet available.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            item {
+                OutlinedButton(onClick = onOpenVault, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Inventory2, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Restore existing models")
+                }
+                TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (advanced) "Hide other models" else "Other models")
+                    Icon(if (advanced) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore, null)
                 }
             }
-            item {
-                Text("Search model", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text("For local semantic document search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            ModelCatalog.models.filter { it.role == ModelRole.EMBEDDING }.forEach { spec ->
-                item(key = spec.id) {
-                    ModelCard(spec, { installed(spec.id) }, onGet, onImport)
+            if (advanced) {
+                ModelCatalog.models.filter {
+                    it.id != recommendedChat.id && it.id != ModelRecommendations.bestSearchModel()
+                }.forEach { spec ->
+                    item(key = spec.id) {
+                        ModelCard(spec, { installed(spec.id) }, onGet, onImport,
+                            canDownload = hasFolder, onChooseFolder = onChooseFolder,
+                            isActive = activeChat == spec.id,
+                            onUse = {
+                                ActiveLocalChatModel(context).setSelected(spec.id)
+                                activeRevision++
+                            })
+                    }
                 }
-            }
-            item {
-                Spacer(Modifier.height(4.dp))
-                Text("Chat models", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text("Optional. Choose based on device memory.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            ModelCatalog.models.filter { it.role == ModelRole.GENERATION }.forEach { spec ->
-                item(key = spec.id) { ModelCard(spec, { installed(spec.id) }, onGet, onImport) }
-            }
-            item {
-                Text("Models stay on your device. EmbeddingGemma 2 enables semantic retrieval when indexing finishes. Chat generation models are not active yet.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(4.dp))
             }
         }
     }
@@ -75,7 +135,11 @@ private fun ModelCard(
     model: ModelSpec,
     installed: () -> Boolean,
     onGet: (ModelSpec) -> Unit,
-    onImport: (ModelSpec) -> Unit
+    onImport: (ModelSpec) -> Unit,
+    canDownload: Boolean,
+    onChooseFolder: () -> Unit,
+    isActive: Boolean = false,
+    onUse: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -104,7 +168,7 @@ private fun ModelCard(
             onDismissRequest = { chooseNetwork = false },
             title = { Text("Download " + model.name + "?") },
             text = { Text(verified.displaySize + " · " + verified.license +
-                ". Model files are saved privately. You can pause or resume.") },
+                ". Installed locally and backed up to your chosen folder. Needs space for two copies.") },
             confirmButton = {
                 Column {
                     Button(onClick = {
@@ -137,12 +201,16 @@ private fun ModelCard(
             }
             Text(
                 when {
-                    complete -> if (model.id == "embeddinggemma-2-270m") "Search model installed · indexing starts when opening AU Chat" else "Files saved · local inference not enabled yet"
+                    complete -> if (model.role == ModelRole.EMBEDDING) "Ready for local indexing"
+                        else if (isActive) "Active chat model" else "Installed"
                     verified != null -> verified.displaySize + " · " + verified.license
                     else -> "Suggested RAM: " + model.minRamGb + " GB+"
                 }, style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (complete && model.role == ModelRole.GENERATION && !isActive) {
+                Button(onClick = onUse, modifier = Modifier.fillMaxWidth()) { Text("Use for AU Chat") }
+            }
             if (working && !complete) {
                 Text(if (work?.state == WorkInfo.State.RUNNING)
                     work.progress.getString(VerifiedModelDownloadWorker.KEY_STAGE) ?: "Downloading"
@@ -179,10 +247,13 @@ private fun ModelCard(
                     Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
                 if (verified != null) {
-                    Button(onClick = { chooseNetwork = true }, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = {
+                        if (canDownload) chooseNetwork = true else onChooseFolder()
+                    }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.Download, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text(if (work?.state == WorkInfo.State.FAILED) "Retry download" else "Download")
+                        Text(if (!canDownload) "Choose folder to download"
+                        else if (work?.state == WorkInfo.State.FAILED) "Retry download" else "Download")
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
