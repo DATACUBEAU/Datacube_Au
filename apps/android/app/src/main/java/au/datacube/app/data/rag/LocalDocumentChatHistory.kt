@@ -24,8 +24,10 @@ data class SavedDocumentTurn(
 )
 
 /** Local conversation history, scoped to a document ID. No network writes or cloud sync. */
-class LocalDocumentChatHistory(context: Context) {
-    private val root = File(context.filesDir, "document-chat-history")
+class LocalDocumentChatHistory(filesDir: File) {
+    constructor(context: Context) : this(context.filesDir)
+
+    private val root = File(filesDir, "document-chat-history")
     private val lock = Mutex()
 
     suspend fun load(documentId: String): List<SavedDocumentTurn> = withContext(Dispatchers.IO) {
