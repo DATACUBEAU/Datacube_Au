@@ -5,6 +5,7 @@ import android.os.Build
 import au.datacube.app.models.VerifiedModelDownloads
 import au.datacube.app.models.ActiveLocalChatModel
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
@@ -36,6 +37,7 @@ object LocalGenerativeEngine {
     private val mutex = Mutex()
     private var engine: Engine? = null
     private var loadedPath: String? = null
+    private var loadedWithAudio = false
 
     fun installed(context: Context): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
@@ -43,6 +45,90 @@ object LocalGenerativeEngine {
         val artifact = VerifiedModelDownloads.find(activeId) ?: return false
         return File(File(context.filesDir, "models/installed/$activeId"), artifact.fileName).isFile
     }
+
+    /** Voice note input is possible only with a compatible, selected Gemma 4. */
+    fun supportsVoiceNotes(context: Context): Boolean {
+        val id = ActiveLocalChatModel(context).selected()
+        return (id == "gemma-4-e2b" || id == "gemma-4-e4b") && installed(context)
+    }
+
+    /**
+     * Internal audio understanding for retrieval and Q&A. We never replace
+     * the user's recorded note in the visible chat bubble with a transcript.
+     * Audio remains private and must originate from the app-owned recorder.
+     */
+    suspend fun understandVoiceNote(context: Context, file: File): String =
+        withContext(dispatcher) {
+            val baseFolder = File(context.filesDir, "voice-notes").canonicalFile
+            val canonical = file.canonicalFile
+            require(canonical.path.startsWith(baseFolder.path + File.separator) &&
+                canonical.extension == "wav" &&
+                canonical.isFile && canonical.length() in 16044L..1_500_000L
+            ) { "Voice note is missing or not a supported private WAV recording." }
+            mutex.withLock {
+                val selectedId = requireNotNull(ActiveLocalChatModel(context).selected()) {
+                    "Select a Gemma 4 model to understand a voice note."
+                }
+                require(selectedId == "gemma-4-e2b" || selectedId == "gemma-4-e4b") {
+                    "This model does not support audio. Select Gemma 4 E2B or E4B."
+                }
+                val artifact = requireNotNull(VerifiedModelDownloads.find(selectedId))
+                val source = File(context.filesDir,
+                    "models/installed/$selectedId/${artifact.fileName}")
+                check(source.isFile) { "Restore the selected Gemma 4 model in Models." }
+                if (engine == null || loadedPath != source.absolutePath || !loadedWithAudio) {
+                    engine?.close()
+                    engine = null
+                    loadedPath = null
+                    loadedWithAudio = false
+                    check(sha256(source) == artifact.sha256) {
+                        "Selected Gemma 4 model failed publisher verification."
+                    }
+                    val candidate = Engine(EngineConfig(
+                        modelPath = source.absolutePath,
+                        backend = Backend.CPU(),
+                        audioBackend = Backend.CPU(),
+                        cacheDir = context.cacheDir.absolutePath
+                    ))
+                    candidate.initialize()
+                    engine = candidate
+                    loadedPath = source.absolutePath
+                    loadedWithAudio = true
+                }
+                currentCoroutineContext().ensureActive()
+                val conversation = checkNotNull(engine).createConversation(
+                    ConversationConfig(
+                        systemInstruction = Contents.of(
+                            "Interpret the incoming audio speech. Transcribe the spoken question " +
+                                "in its original language. Output only the spoken words, without any " +
+                                "explanation, citations or formatting. If unintelligible, output EMPTY."
+                        )
+                    )
+                )
+                try {
+                    val output = StringBuilder()
+                    conversation.sendMessageAsync(Contents.of(
+                        Content.AudioFile(canonical.absolutePath),
+                        Content.Text("Transcribe this voice note exactly.")
+                    )).collect { message ->
+                        currentCoroutineContext().ensureActive()
+                        output.append(message.toString())
+                    }
+                    val text = ModelOutputCleaner.visible(output.toString(), 0).trim()
+                        .removeSurrounding("\"")
+                        .take(1_400)
+                    require(text.isNotBlank() && text != "EMPTY") {
+                        "No clear speech could be understood. Try recording your note again."
+                    }
+                    text
+                } catch (cancelled: CancellationException) {
+                    runCatching { conversation.cancelProcess() }
+                    throw cancelled
+                } finally {
+                    conversation.close()
+                }
+            }
+        }
 
     suspend fun generate(
         context: Context,
@@ -64,6 +150,7 @@ object LocalGenerativeEngine {
                 engine?.close()
                 engine = null
                 loadedPath = null
+                loadedWithAudio = false
                 check(sha256(file) == artifact.sha256) {
                     "The local chat model failed publisher integrity verification. Re-download it."
                 }
@@ -76,6 +163,7 @@ object LocalGenerativeEngine {
                 candidate.initialize()
                 engine = candidate
                 loadedPath = file.absolutePath
+                loadedWithAudio = false
             }
             currentCoroutineContext().ensureActive()
             val conversation = checkNotNull(engine).createConversation(
@@ -133,6 +221,7 @@ object LocalGenerativeEngine {
             engine?.close()
             engine = null
             loadedPath = null
+            loadedWithAudio = false
         }
     }
 }
