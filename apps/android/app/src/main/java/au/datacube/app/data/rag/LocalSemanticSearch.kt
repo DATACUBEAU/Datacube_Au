@@ -11,6 +11,9 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
 import java.util.concurrent.TimeUnit
+import java.util.PriorityQueue
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -39,25 +42,48 @@ class LocalSemanticSearch(private val context: Context) {
         work.enqueueUniqueWork(workName(documentId), ExistingWorkPolicy.KEEP, request)
     }
 
+    fun cancelIndex(documentId: String) {
+        work.cancelUniqueWork(workName(documentId))
+    }
+
     fun observeIndex(documentId: String): Flow<List<WorkInfo>> =
         work.getWorkInfosForUniqueWorkFlow(workName(documentId))
 
     suspend fun search(documentId: String, query: String, maxResults: Int = 4): List<SemanticSearchHit> =
         withContext(Dispatchers.IO) {
             if (!supported() || query.isBlank()) return@withContext emptyList()
-            val chunks = database.semanticChunks().chunks(documentId, LocalEmbeddingRuntime.MODEL_ID)
-            if (chunks.isEmpty()) return@withContext emptyList()
+            // Do not load/run the embedding model when this document has no vector index.
+            if (database.semanticChunks().sourceHash(documentId, LocalEmbeddingRuntime.MODEL_ID) == null) {
+                return@withContext emptyList()
+            }
             val queryVector = LocalEmbeddingRuntime.embed(app, query.take(6_000))
-            chunks.mapNotNull { chunk ->
-                if (queryVector.size != chunk.dimension) return@mapNotNull null
-                runCatching {
-                    val score = DenseVectorCodec.cosine(
-                        queryVector, DenseVectorCodec.decode(chunk.vectorBytes, chunk.dimension)
-                    )
-                    if (score.isFinite()) SemanticSearchHit(chunk.text, chunk.page, score)
-                    else null
-                }.getOrNull()
-            }.sortedByDescending { it.score }.take(maxResults.coerceIn(1, 12))
+            val count = maxResults.coerceIn(1, 12)
+            val best = PriorityQueue<SemanticSearchHit>(compareBy { it.score })
+            var offset = 0
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val page = database.semanticChunks().chunkPage(
+                    documentId, LocalEmbeddingRuntime.MODEL_ID, 64, offset
+                )
+                if (page.isEmpty()) break
+                for (chunk in page) {
+                    if (queryVector.size != chunk.dimension) continue
+                    val score = runCatching {
+                        DenseVectorCodec.cosine(
+                            queryVector, DenseVectorCodec.decode(chunk.vectorBytes, chunk.dimension)
+                        )
+                    }.getOrNull() ?: continue
+                    if (!score.isFinite()) continue
+                    val candidate = SemanticSearchHit(chunk.text, chunk.page, score)
+                    if (best.size < count) best.add(candidate)
+                    else if (score > best.peek().score) {
+                        best.poll()
+                        best.add(candidate)
+                    }
+                }
+                offset += page.size
+            }
+            best.toList().sortedByDescending { it.score }
         }
 
     companion object {

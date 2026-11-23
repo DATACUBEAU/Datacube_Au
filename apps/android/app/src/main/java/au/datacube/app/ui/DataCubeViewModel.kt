@@ -6,6 +6,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import au.datacube.app.DataCubeApp
 import au.datacube.app.notifications.LocalNotificationService
+import au.datacube.app.data.rag.LexicalIndexWorker
+import au.datacube.app.data.rag.LocalPassageIndex
+import au.datacube.app.data.rag.LocalSemanticSearch
 import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.LocalDocumentProcessing
@@ -241,7 +244,15 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
                 jobScheduler.cancel(job.id)
                 database.jobs().markCancelled(job.id, System.currentTimeMillis())
             }
+            LexicalIndexWorker.cancel(getApplication(), id)
+            LocalSemanticSearch(getApplication()).cancelIndex(id)
             repository.delete(id)
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val index = LocalPassageIndex(getApplication())
+                    try { index.remove(id) } finally { index.close() }
+                }
+            }
             LocalNotificationService(getApplication())
                 .cancelDocument(id, jobs.map { it.id })
         }

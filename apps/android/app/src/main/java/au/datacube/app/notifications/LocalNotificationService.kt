@@ -38,6 +38,22 @@ class LocalNotificationService(private val context: Context) {
         postProgress(documentId, progress, "Extracting document text · $progress%")
     }
 
+    fun showDocumentSearchIndexing(documentId: String, indexedPassages: Int) {
+        val service = manager() ?: return
+        val notification = Notification.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification_datacube)
+            .setContentTitle("Preparing document search")
+            .setContentText("Indexed " + indexedPassages.coerceAtLeast(0) + " passages")
+            .setProgress(0, 0, true)
+            .setOnlyAlertOnce(true)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .build()
+        service.notify(tag(documentId), PROGRESS_ID, notification)
+    }
+
     fun showDocumentIndexing(documentId: String, indexedChunks: Int, totalChunks: Int) {
         if (totalChunks <= 0) return
         val done = indexedChunks.coerceIn(0, totalChunks)

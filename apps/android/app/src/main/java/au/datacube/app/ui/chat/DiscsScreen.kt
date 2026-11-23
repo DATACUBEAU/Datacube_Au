@@ -22,6 +22,9 @@ import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.data.rag.ConversationThreadIndex
 import au.datacube.app.data.rag.ConversationWindow
 import au.datacube.app.data.rag.CrossDocumentSearch
+import au.datacube.app.data.rag.LocalPassageIndex
+import au.datacube.app.data.rag.LexicalIndexWorker
+import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.data.rag.LocalConversationThreads
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
@@ -70,6 +73,22 @@ fun DiscsScreen(
     val userTurns = turns.count { it.isUser }
     val modelReady = LocalGenerativeEngine.installed(context)
     val library = documents.map { it.document }
+    // Migrate older imports in small batches; new imports index after extraction.
+    LaunchedEffect(library.map { it.id }) {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val index = LocalPassageIndex(context)
+                try {
+                    library.filter { document ->
+                        val file = ExtractedTextStore.fileFor(context.filesDir, document.id)
+                        file.isFile && !index.hasCurrent(document.id, file)
+                    }.take(8).forEach { LexicalIndexWorker.schedule(context, it.id) }
+                } finally {
+                    index.close()
+                }
+            }
+        }
+    }
     var prompt by remember(threadId) { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
     var expandedSources by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
@@ -152,7 +171,7 @@ fun DiscsScreen(
                         steps = events.toList()))
                 } else {
                     session.searchingStage = "Searching your documents"
-                    val sourceResults = CrossDocumentSearch(context.filesDir).search(library, question)
+                    val sourceResults = CrossDocumentSearch(context).search(library, question)
                     events += "Searched extracted text across ${library.size} document(s)"
                     val matches = sourceResults.map {
                         SourceSnippet(it.text, it.page, it.documentId, it.documentName)
@@ -169,7 +188,7 @@ fun DiscsScreen(
                             steps = events.toList()
                         )
                     } else {
-                        session.searchingStage = "AI is thinking"
+                        session.searchingStage = "AU is thinking"
                         val evidenceText = if (matches.isEmpty()) {
                             "No relevant passages were retrieved from the imported documents."
                         } else matches.mapIndexed { i, source ->
@@ -205,7 +224,7 @@ fun DiscsScreen(
                                     lastUpdate = now
                                 }
                             }
-                            events += "Generated an answer using the selected AI"
+                            events += "AU generated a response from the available evidence"
                             turns[answerIndex] = turns[answerIndex].copy(
                                 answer = ModelOutputCleaner.visible(raw, matches.size).trim(),
                                 generating = false,
