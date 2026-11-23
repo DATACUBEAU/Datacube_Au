@@ -316,6 +316,7 @@ fun DocumentChatWorkspace(
     }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
     var expandedSteps by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var liveActivityOpen by remember(documentId, threadId) { mutableStateOf(false) }
     var expandedSources by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
@@ -337,11 +338,12 @@ fun DocumentChatWorkspace(
                             if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
                             if (audioPath == null) prompt = ""
                             session.searching = true
+                            session.activitySteps.clear()
                             // The response belongs to the document/thread session, not
                             // this Compose screen; navigation must not cancel it.
                             session.scope.launch { threads.nameFromQuestion(documentId, threadId, cleanPrompt) }
                             session.activeRequest = session.scope.launch {
-                                val events = mutableListOf<String>()
+                                val events = session.activitySteps
                                 try {
                                     session.searchingStage = "Understanding your question"
                                     val plan = DocumentQueryInterpreter.understand(cleanPrompt, textPreview.orEmpty())
@@ -440,6 +442,7 @@ fun DocumentChatWorkspace(
                                 } finally {
                                     session.searching = false
                                     session.searchingStage = ""
+                                    session.activitySteps.clear()
                                 }
                             }
                         }
@@ -735,6 +738,28 @@ fun DocumentChatWorkspace(
             }
         }
         if (session.searching) {
+            if (session.activitySteps.isNotEmpty()) {
+                TextButton(
+                    onClick = { liveActivityOpen = !liveActivityOpen },
+                    modifier = Modifier.padding(horizontal = 12.dp)
+                ) {
+                    Icon(Icons.Outlined.AccountTree, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("AU activity (" + session.activitySteps.size + ")")
+                    Icon(
+                        if (liveActivityOpen) Icons.Outlined.ExpandLess
+                        else Icons.Outlined.ExpandMore, null
+                    )
+                }
+                if (liveActivityOpen) {
+                    AuActivityTimeline(
+                        session.activitySteps.toList(),
+                        modifier = Modifier.heightIn(max = 220.dp)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp)
+                    )
+                }
+            }
             AuWorkingStatus(
                 stage = session.searchingStage,
                 onStop = { session.activeRequest?.cancel() }
