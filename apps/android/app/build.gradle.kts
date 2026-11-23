@@ -4,7 +4,7 @@ plugins {
  alias(libs.plugins.android.application)
  alias(libs.plugins.kotlin.android)
  alias(libs.plugins.kotlin.compose)
- alias(libs.plugins.kotlin.kapt)
+ alias(libs.plugins.ksp)
  alias(libs.plugins.kotlin.serialization)
 }
 
@@ -76,7 +76,7 @@ android {
 
 }
 
-kapt {
+ksp {
     arguments {
         arg("room.schemaLocation", "$projectDir/schemas")
     }
@@ -107,7 +107,7 @@ dependencies {
  implementation(libs.splashscreen)
  implementation(libs.pdfium.android)
  implementation(libs.mediapipe.retrieval)
- kapt(libs.room.compiler)
+ ksp(libs.room.compiler)
  testImplementation(libs.junit)
  androidTestImplementation(libs.androidx.test.core)
  androidTestImplementation(libs.androidx.test.runner)
