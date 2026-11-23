@@ -106,6 +106,7 @@ dependencies {
  implementation(libs.coil.compose)
  implementation(libs.splashscreen)
  implementation(libs.pdfium.android)
+ implementation(libs.mediapipe.retrieval)
  kapt(libs.room.compiler)
  testImplementation(libs.junit)
  androidTestImplementation(libs.androidx.test.core)
