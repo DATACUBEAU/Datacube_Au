@@ -6,7 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 
 class LocalNotificationService(private val context: Context) {
-    fun showDocumentCheckComplete(jobId: String) {
+    fun showDocumentCheckComplete(jobId: String, documentId: String) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -28,7 +28,14 @@ class LocalNotificationService(private val context: Context) {
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .build()
-        manager.notify(jobId.hashCode() and Int.MAX_VALUE, notification)
+        manager.notify("document-$documentId", 1, notification)
+    }
+
+    fun cancelDocument(documentId: String, legacyJobIds: Collection<String>) {
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        manager.cancel("document-$documentId", 1)
+        // Older versions posted using bare job hashes; remove those badges too.
+        legacyJobIds.forEach { id -> manager.cancel(id.hashCode() and Int.MAX_VALUE) }
     }
 
     companion object {
