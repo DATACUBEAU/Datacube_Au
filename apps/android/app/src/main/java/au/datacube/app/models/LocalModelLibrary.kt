@@ -40,6 +40,11 @@ object ModelCatalog {
             "gemma-4-e4b", "Gemma 4 E4B", ModelRole.GENERATION,
             "https://huggingface.co/google/gemma-4-E4B",
             5, "More capable, needs more memory"
+        ),
+        ModelSpec(
+            "qwen3-0.6b-litert", "Qwen3 0.6B", ModelRole.GENERATION,
+            "https://huggingface.co/litert-community/Qwen3-0.6B",
+            3, "Lightweight model · verified public download"
         )
     )
     fun find(id: String): ModelSpec = requireNotNull(models.firstOrNull { it.id == id })
