@@ -180,7 +180,14 @@ internal fun DataCubeRoot(
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     ReportDrawnWhen { authState.sessionRestored && !authState.isLoading }
 
-    if (!authState.sessionRestored || authState.user == null) {
+    // Never flash Welcome while an existing encrypted session is still loading.
+    if (!authState.sessionRestored) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+    if (authState.user == null) {
         AuthScreen(
             viewModel = authViewModel,
             openBrowser = openBrowser
