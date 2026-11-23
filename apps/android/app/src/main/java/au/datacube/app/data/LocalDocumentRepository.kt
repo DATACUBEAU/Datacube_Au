@@ -133,7 +133,9 @@ class LocalDocumentRepository(
             ExtractedTextStore.fileFor(filesDir, id).delete()
         }
         // Erase persisted chat turns and citations even after an interrupted prior deletion.
-        LocalConversationThreads(filesDir).clear(id)
+        val threads = LocalConversationThreads(filesDir)
+        threads.clear(id)
+        threads.redactDeletedDocument(id)
     }
 
     companion object {
