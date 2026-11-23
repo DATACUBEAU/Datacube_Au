@@ -771,7 +771,7 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
                         Icon(Icons.Outlined.AccountTree, contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
-                        Text("Source concept map", style = MaterialTheme.typography.titleLarge,
+                        Text("Concept map", style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold)
                     }
                     Text("Tap a concept to see its passage.",
