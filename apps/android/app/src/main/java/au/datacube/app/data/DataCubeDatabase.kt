@@ -4,18 +4,21 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import au.datacube.app.data.rag.SemanticVectorChunk
+import au.datacube.app.data.rag.SemanticChunkDao
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [LocalDocument::class, LocalJob::class, LocalCollection::class, LocalCollectionDocument::class],
-    version = 3,
+    entities = [LocalDocument::class, LocalJob::class, LocalCollection::class, LocalCollectionDocument::class, SemanticVectorChunk::class],
+    version = 4,
     exportSchema = true
 )
 abstract class DataCubeDatabase : RoomDatabase() {
     abstract fun documents(): LocalDocumentDao
     abstract fun jobs(): LocalJobDao
     abstract fun collections(): LocalCollectionDao
+    abstract fun semanticChunks(): SemanticChunkDao
 
     companion object {
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -70,6 +73,29 @@ abstract class DataCubeDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("""
+                    CREATE TABLE IF NOT EXISTS local_semantic_chunks (
+                        documentId TEXT NOT NULL,
+                        modelId TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        page INTEGER,
+                        text TEXT NOT NULL,
+                        sourceHash TEXT NOT NULL,
+                        dimension INTEGER NOT NULL,
+                        vectorBytes BLOB NOT NULL,
+                        PRIMARY KEY(documentId, modelId, ordinal),
+                        FOREIGN KEY(documentId) REFERENCES local_documents(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_local_semantic_chunks_documentId_modelId " +
+                        "ON local_semantic_chunks(documentId, modelId)"
+                )
+            }
+        }
+
         @Volatile
         private var instance: DataCubeDatabase? = null
 
@@ -80,7 +106,7 @@ abstract class DataCubeDatabase : RoomDatabase() {
                     DataCubeDatabase::class.java,
                     "datacube-local.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .build()
                     .also { instance = it }
             }

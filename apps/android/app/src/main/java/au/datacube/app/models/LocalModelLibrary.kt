@@ -27,6 +27,11 @@ data class ModelSpec(
 object ModelCatalog {
     val models = listOf(
         ModelSpec(
+            "embeddinggemma-2-270m", "EmbeddingGemma 2 · 270M", ModelRole.EMBEDDING,
+            "https://huggingface.co/litert-community/embeddinggemma-2-text-270m-litert-lm",
+            3, "Offline semantic search · downloadable"
+        ),
+        ModelSpec(
             "embeddinggemma-300m", "EmbeddingGemma 300M", ModelRole.EMBEDDING,
             "https://huggingface.co/litert-community/embeddinggemma-300m",
             2, "For local document search"

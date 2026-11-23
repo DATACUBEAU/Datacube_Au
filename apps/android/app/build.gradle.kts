@@ -4,7 +4,7 @@ plugins {
  alias(libs.plugins.android.application)
  alias(libs.plugins.kotlin.android)
  alias(libs.plugins.kotlin.compose)
- alias(libs.plugins.kotlin.kapt)
+ alias(libs.plugins.ksp)
  alias(libs.plugins.kotlin.serialization)
 }
 
@@ -73,13 +73,11 @@ android {
      sourceCompatibility = JavaVersion.VERSION_17
      targetCompatibility = JavaVersion.VERSION_17
  }
- kotlinOptions { jvmTarget = "17" }
+
 }
 
-kapt {
-    arguments {
-        arg("room.schemaLocation", "$projectDir/schemas")
-    }
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {
@@ -106,7 +104,8 @@ dependencies {
  implementation(libs.coil.compose)
  implementation(libs.splashscreen)
  implementation(libs.pdfium.android)
- kapt(libs.room.compiler)
+ implementation(libs.mediapipe.retrieval)
+ ksp(libs.room.compiler)
  testImplementation(libs.junit)
  androidTestImplementation(libs.androidx.test.core)
  androidTestImplementation(libs.androidx.test.runner)
@@ -118,4 +117,11 @@ dependencies {
  androidTestImplementation(libs.pdfbox.android)
  debugImplementation(libs.compose.tooling)
  debugImplementation(libs.compose.ui.test.manifest)
+}
+
+// Kotlin 2.4 requires the compilerOptions DSL.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }

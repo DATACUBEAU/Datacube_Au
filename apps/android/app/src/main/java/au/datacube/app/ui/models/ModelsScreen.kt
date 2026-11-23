@@ -37,9 +37,10 @@ fun ModelsScreen(
                 Text("Search model", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("For local semantic document search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            item {
-                val spec = ModelCatalog.models.first { it.role == ModelRole.EMBEDDING }
-                ModelCard(spec, { installed(spec.id) }, onGet, onImport)
+            ModelCatalog.models.filter { it.role == ModelRole.EMBEDDING }.forEach { spec ->
+                item(key = spec.id) {
+                    ModelCard(spec, { installed(spec.id) }, onGet, onImport)
+                }
             }
             item {
                 Spacer(Modifier.height(4.dp))
@@ -50,7 +51,7 @@ fun ModelsScreen(
                 item(key = spec.id) { ModelCard(spec, { installed(spec.id) }, onGet, onImport) }
             }
             item {
-                Text("Model files remain on your device. Downloading does not enable generation or semantic search until their local runtimes are connected.",
+                Text("Models stay on your device. EmbeddingGemma 2 enables semantic retrieval when indexing finishes. Chat generation models are not active yet.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(4.dp))
             }
@@ -125,7 +126,7 @@ private fun ModelCard(
             }
             Text(
                 when {
-                    complete -> "Files saved · local inference not enabled yet"
+                    complete -> if (model.id == "embeddinggemma-2-270m") "Search model installed · indexing starts when opening AU Chat" else "Files saved · local inference not enabled yet"
                     verified != null -> verified.displaySize + " · " + verified.license
                     else -> "Suggested RAM: " + model.minRamGb + " GB+"
                 }, style = MaterialTheme.typography.labelMedium,

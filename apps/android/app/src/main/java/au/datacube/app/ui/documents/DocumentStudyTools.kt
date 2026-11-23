@@ -26,12 +26,20 @@ import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.rag.RagTextChunker
 import au.datacube.app.data.rag.RagBm25Index
+import au.datacube.app.data.rag.LocalSemanticSearch
+import androidx.work.WorkInfo
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 private data class SourceSnippet(val text: String, val page: Int?)
 private data class StudyQuestion(val prompt: String, val reference: String, val page: Int?, val topic: String)
-private data class ChatMessage(val question: String, val matches: List<SourceSnippet>, val isUser: Boolean)
+private data class ChatMessage(
+    val question: String,
+    val matches: List<SourceSnippet>,
+    val isUser: Boolean,
+    val semantic: Boolean = false
+)
 
 private fun sourceSnippets(raw: String?): List<SourceSnippet> {
     val content = raw?.take(48_000)?.trim().orEmpty()
@@ -183,9 +191,23 @@ private fun SourceUnavailableCard(
 
 @Composable
 fun DocumentChatWorkspace(
+    documentId: String,
     documentName: String, initialPrompt: String? = null, textPreview: String?, previewLoading: Boolean, previewError: String?,
     extractionStatus: String?, extractionProgress: Double?, extractionError: String?
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val semanticSearch = remember(context) { LocalSemanticSearch(context) }
+    val semanticSupported = semanticSearch.supported()
+    val indexingFlow = remember(documentId) { semanticSearch.observeIndex(documentId) }
+    val indexingWorks by indexingFlow.collectAsState(initial = emptyList())
+    val indexing = indexingWorks.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    var searching by remember(documentId) { mutableStateOf(false) }
+    LaunchedEffect(documentId, textPreview, semanticSupported) {
+        if (semanticSupported && !textPreview.isNullOrBlank()) {
+            semanticSearch.scheduleIndex(documentId)
+        }
+    }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
     val messages = remember(documentName) { mutableStateListOf<ChatMessage>() }
 
@@ -197,7 +219,13 @@ fun DocumentChatWorkspace(
                 Text("Searching in", style = MaterialTheme.typography.labelMedium, color = DataCubeColors.TextSecondary)
                 Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy)
             }
-            AssistChip(onClick = {}, enabled = false, label = { Text("On device") })
+            AssistChip(onClick = {}, enabled = false, label = {
+                Text(when {
+                    indexing -> "Indexing"
+                    semanticSupported -> "Local semantic + BM25"
+                    else -> "Local BM25"
+                })
+            })
         }
         if (textPreview.isNullOrBlank()) {
             Box(Modifier.weight(1f).fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
@@ -209,7 +237,7 @@ fun DocumentChatWorkspace(
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                     Text(
-                        "Searches extracted text with local BM25 ranking and page references. It does not generate an AU answer.",
+                        "Uses on-device semantic search when indexed, with BM25 fallback and page references. No generative answer yet.",
                         color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -234,7 +262,8 @@ fun DocumentChatWorkspace(
                         }
                     } else {
                         ToolCard {
-                            Text("Matches from your document", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                            Text(if (message.semantic) "Semantic matches from your document" else "Matches from your document",
+                                fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                             Spacer(Modifier.height(8.dp))
                             if (message.matches.isEmpty()) {
                                 Text("No matching passage was found. Try different wording or a more specific term.", color = DataCubeColors.TextSecondary)
@@ -270,13 +299,26 @@ fun DocumentChatWorkspace(
                 FilledIconButton(
                     onClick = {
                         val cleanPrompt = prompt.trim()
-                        if (cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank()) {
+                        if (cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !searching) {
                             messages.add(ChatMessage(cleanPrompt, emptyList(), true))
-                            messages.add(ChatMessage(cleanPrompt, findRelevantSnippets(cleanPrompt, textPreview), false))
                             prompt = ""
+                            searching = true
+                            scope.launch {
+                                val semanticMatches = if (semanticSupported && !indexing) {
+                                    runCatching { semanticSearch.search(documentId, cleanPrompt) }.getOrDefault(emptyList())
+                                } else emptyList()
+                                val useSemantic = semanticMatches.isNotEmpty()
+                                val matches = if (useSemantic) {
+                                    semanticMatches.map { SourceSnippet(it.text, it.page) }
+                                } else {
+                                    findRelevantSnippets(cleanPrompt, textPreview)
+                                }
+                                messages.add(ChatMessage(cleanPrompt, matches, false, semantic = useSemantic))
+                                searching = false
+                            }
                         }
                     },
-                    enabled = prompt.isNotBlank() && !textPreview.isNullOrBlank(), modifier = Modifier.size(52.dp)
+                    enabled = prompt.isNotBlank() && !textPreview.isNullOrBlank() && !searching, modifier = Modifier.size(52.dp)
                 ) { Icon(Icons.Outlined.Send, contentDescription = "Search document") }
             }
         }

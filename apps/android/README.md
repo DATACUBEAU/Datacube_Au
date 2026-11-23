@@ -15,7 +15,7 @@ Native Kotlin + Jetpack Compose application. The Flutter project in `apps/mobile
 - Local PDF text extraction using PDFium, preserving page boundaries for citations (up to 100 MB).
 - Extracted text is written atomically to app-private storage, not to Room or cloud storage.
 - Document workspace with AU Chat, Smart Note, Prediction, Practice and Podcast tabs.
-- AU Chat currently uses a page-aware local text chunker and BM25 keyword ranking against extracted text previews, showing page references; it is not yet semantic RAG or generative AU.
+- AU Chat uses page-aware BM25 keyword ranking. On Android 9+ it can also use real EmbeddingGemma 2 vectors from a downloaded and verified model after background indexing, returning source-page matches with BM25 fallback. This is retrieval only; generative AU answers are not yet enabled.
 - Smart Note currently builds extractive notes and a heuristic concept map from detected headings and recurring terms.
 - Prediction currently builds a revision outline and prompts from detected topics; it does not provide probability scores or claim to forecast an exam.
 - Practice currently provides configurable self-study prompts, answer capture and source-passage review; it does not automatically grade answers.
@@ -69,7 +69,7 @@ The CI release bundle is an unsigned preflight artifact, not a Play Store-ready 
 ## Remaining migration and product gaps
 
 - DOCX/RTF parsing and OCR for scanned PDFs.
-- Durable full-document indexing, embeddings, local vector indexing and semantic retrieval (a page-aware preview chunker and BM25 baseline now exist).
+- Large-document streaming/indexing optimization, Android 9+ EmbeddingGemma 2 hardware validation and semantic-retrieval quality benchmarks. The initial version already includes a model-backed local index and Room vector persistence.
 - Production RAG chat and model gateway integration for document-aware AI.
 - AI-generated Smart Notes, actual exam prediction and generated/streamable podcast audio.
 - Automatic practice grading and durable study-session history.
