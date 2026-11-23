@@ -231,6 +231,14 @@ async function loadMiddlewareSubject(
 }
 
 function isRetiredWebProductPath(pathname: string): boolean {
+  if (
+    process.env.NODE_ENV === 'development' &&
+    process.env.DATACUBE_PLAYWRIGHT_FIXTURES === '1' &&
+    (pathname === '/test/billing-refresh' || pathname === '/test/account-snapshot')
+  ) {
+    return false;
+  }
+
   if (pathname === '/dashboard' || pathname.startsWith('/dashboard/')) {
     // Account, subscription, billing and usage settings remain web-managed.
     return !(pathname === '/dashboard/settings' || pathname.startsWith('/dashboard/settings/'));

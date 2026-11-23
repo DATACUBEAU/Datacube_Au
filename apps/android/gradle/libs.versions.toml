@@ -45,6 +45,7 @@ datastore-preferences = { module = "androidx.datastore:datastore-preferences", v
 supabase-auth = { module = "io.github.jan-tennert.supabase:auth-kt", version.ref = "supabase" }
 supabase-postgrest = { module = "io.github.jan-tennert.supabase:postgrest-kt", version.ref = "supabase" }
 supabase-compose-auth = { module = "io.github.jan-tennert.supabase:compose-auth", version.ref = "supabase" }
+ktor-client-mock = { module = "io.ktor:ktor-client-mock", version.ref = "ktor" }
 ktor-client-android = { module = "io.ktor:ktor-client-android", version.ref = "ktor" }
 coil-compose = { module = "io.coil-kt:coil-compose", version.ref = "coil" }
 splashscreen = { module = "androidx.core:core-splashscreen", version.ref = "splashscreen" }

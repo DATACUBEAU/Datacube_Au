@@ -1,26 +1,53 @@
 package au.datacube.app
 
+import android.content.Context
+import android.graphics.BitmapFactory
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.InsetDrawable
+import android.os.Build
+import android.util.TypedValue
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asAndroidBitmap
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.DeviceConfigurationOverride
 import androidx.compose.ui.test.ForcedSize
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.test.core.app.ApplicationProvider
 import au.datacube.app.data.LocalDocument
 import au.datacube.app.data.LocalJobStatus
+import au.datacube.app.ui.auth.AuthBackdrop
+import au.datacube.app.ui.auth.AuthLogo
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
 import au.datacube.app.ui.documents.PracticeWorkspace
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.home.HomeScreen
+import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.theme.DataCubeTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import kotlin.math.PI
 
 class AppResponsiveUiTest {
     @get:Rule
@@ -48,6 +75,61 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("DataCube AU").assertIsDisplayed()
         composeRule.onNodeWithText("Active Documents").assertIsDisplayed()
         composeRule.onNodeWithText("No documents yet").assertIsDisplayed()
+    }
+
+    @Test
+    fun splashThemeUsesOriginalArtwork() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val resources = context.resources
+        val theme = resources.newTheme().apply { applyStyle(R.style.Theme_DataCubeAU, true) }
+        val splashIcon = TypedValue()
+        val iconAttribute = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            android.R.attr.windowSplashScreenAnimatedIcon
+        } else {
+            androidx.core.splashscreen.R.attr.windowSplashScreenAnimatedIcon
+        }
+        assertTrue(theme.resolveAttribute(iconAttribute, splashIcon, true))
+        assertEquals(R.drawable.ic_splash_logo, splashIcon.resourceId)
+
+        val inset = resources.getDrawable(splashIcon.resourceId, theme) as InsetDrawable
+        val displayedArtwork = (inset.drawable as BitmapDrawable).bitmap
+        val originalArtwork = BitmapFactory.decodeResource(resources, R.drawable.datacube_logo)
+        assertTrue(displayedArtwork.sameAs(originalArtwork))
+    }
+
+    @Test
+    fun profileDisplaysDataCubeArtwork() {
+        composeRule.setContent {
+            DataCubeTheme {
+                ProfileScreen(
+                    user = null,
+                    onSignOut = {},
+                    onBackupModels = {},
+                    onRestoreModels = {}
+                )
+            }
+        }
+        composeRule.onNodeWithContentDescription("DataCube AU").assertIsDisplayed()
+    }
+
+    @Test
+    fun loginBackdropAndLogoRenderDifferentAnimationFrames() {
+        val phase = mutableFloatStateOf(0f)
+        composeRule.setContent {
+            Column(Modifier.background(Color(0xFF06101F))) {
+                Box(Modifier.size(180.dp).testTag("backdrop")) { AuthBackdrop(phase) }
+                Box(Modifier.testTag("logo")) { AuthLogo(phase) }
+            }
+        }
+        val backdrop = composeRule.onNodeWithTag("backdrop")
+        val logo = composeRule.onNodeWithTag("logo")
+        val backdropBefore = backdrop.captureToImage().asAndroidBitmap()
+        val logoBefore = logo.captureToImage().asAndroidBitmap()
+
+        composeRule.runOnIdle { phase.floatValue = (PI / 2).toFloat() }
+
+        assertFalse(backdropBefore.sameAs(backdrop.captureToImage().asAndroidBitmap()))
+        assertFalse(logoBefore.sameAs(logo.captureToImage().asAndroidBitmap()))
     }
 
     @Test
@@ -150,7 +232,8 @@ class AppResponsiveUiTest {
                 }
             }
         }
-        composeRule.onNodeWithText("Study notes.pdf").assertIsDisplayed()
+        // The workspace header precedes the second copy inside the chat panel.
+        composeRule.onAllNodesWithText("Study notes.pdf").onFirst().assertIsDisplayed()
         composeRule.onNodeWithText("AU Chat").assertIsDisplayed()
         composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
     }

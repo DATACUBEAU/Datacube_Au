@@ -23,6 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.credentials.Credential
+import androidx.credentials.CredentialManager
+import androidx.credentials.GetCredentialRequest
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -65,7 +68,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             DataCubeTheme {
-                DataCubeRoot(authViewModel, documentsViewModel)
+                DataCubeRoot(authViewModel, documentsViewModel) { request ->
+                    CredentialManager.create(this@MainActivity)
+                        .getCredential(this@MainActivity, request).credential
+                }
             }
         }
     }
@@ -103,17 +109,44 @@ private val bottomNavItems = listOf(
 // ── Root composable ───────────────────────────────────────────────────────────
 
 @Composable
-private fun DataCubeRoot(
+internal fun DataCubeRoot(
+    authViewModel: AuthViewModel,
+    documentsViewModel: DataCubeViewModel,
+    getGoogleCredential: suspend (GetCredentialRequest) -> Credential
+) {
+    val authState by authViewModel.state.collectAsStateWithLifecycle()
+    // Loading / session-restore gate
+    if (!authState.sessionRestored) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+
+    // If not authenticated, show auth screen
+    if (authState.user == null) {
+        AuthScreen(viewModel = authViewModel, getGoogleCredential = getGoogleCredential)
+        return
+    }
+
+    key(authState.user?.id) {
+        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel)
+    }
+}
+
+@Composable
+private fun AuthenticatedWorkspace(
+    authState: au.datacube.app.ui.auth.AuthState,
     authViewModel: AuthViewModel,
     documentsViewModel: DataCubeViewModel
 ) {
-    val authState by authViewModel.state.collectAsStateWithLifecycle()
     val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
     val collections by documentsViewModel.collections.collectAsStateWithLifecycle()
     val navController = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
 
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
@@ -185,20 +218,6 @@ private fun DataCubeRoot(
                 }
             }
         }
-    }
-
-    // Loading / session-restore gate
-    if (!authState.sessionRestored) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
-
-    // If not authenticated, show auth screen
-    if (authState.user == null) {
-        AuthScreen(viewModel = authViewModel)
-        return
     }
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()

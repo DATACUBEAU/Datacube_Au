@@ -1,5 +1,7 @@
 package au.datacube.app.data
 
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
@@ -32,7 +34,12 @@ class PdfDocumentTextExtractorTest {
 
     @Before
     fun initializePdfBox() {
-        PDFBoxResourceLoader.init(InstrumentationRegistry.getInstrumentation().targetContext)
+        // PDFBox looks up fonts via applicationContext.assets. Its resources are
+        // packaged in the instrumentation APK, since it is an androidTest dependency.
+        val fixtureContext = object : ContextWrapper(InstrumentationRegistry.getInstrumentation().context) {
+            override fun getApplicationContext(): Context = this
+        }
+        PDFBoxResourceLoader.init(fixtureContext)
     }
 
     @Test

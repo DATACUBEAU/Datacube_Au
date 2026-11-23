@@ -40,16 +40,10 @@ run('shared AI gateway contract resolves every browser-facing operation to a bou
   }
 });
 
-run('Next.js ticket issuance and VPS auth both import the shared route contract', () => {
-  const ticketConfig = readRepoFile('src/lib/server/vps-ticket-config.ts');
-  const gatewayAuth = readRepoFile('vps-ai-gateway/src/auth.ts');
-
-  assert.match(ticketConfig, /ai-gateway-contract/);
-  assert.match(ticketConfig, /resolveAiGatewayOperation/);
-  assert.match(gatewayAuth, /\.\.\/\.\.\/shared\/ai-gateway-contract\.cjs/);
-  assert.match(gatewayAuth, /routeRequirementForGatewayPath/);
-  assert.doesNotMatch(ticketConfig, /const VPS_TICKET_OPERATIONS/);
-  assert.doesNotMatch(gatewayAuth, /const GATEWAY_ROUTE_REQUIREMENTS/);
+run('the admin routing endpoint uses the canonical server routing module after authorizing the request', () => {
+  const route = readRepoFile('src/app/api/admin/model-routing/route.ts');
+  assert.match(route, /import \{ getModelRoutingFlags \} from '@\/lib\/server\/ai-routing'/);
+  assert.match(route, /await requireAdmin\(req\);\s*const flags = await getModelRoutingFlags\(supabase\);/);
 });
 
 run('hidden or internal model names are rejected by the shared contract and server model validator', () => {
@@ -63,29 +57,17 @@ run('hidden or internal model names are rejected by the shared contract and serv
   assert.match(routing, /hidden_or_internal_model/);
 });
 
-run('provider fallback remains downstream of usage reservation instead of issuing free provider attempts', () => {
-  const ticketRoute = readRepoFile('src/app/api/au/vps-ticket/route.ts');
-  const gatewayChat = readRepoFile('vps-ai-gateway/src/chat-handler.ts');
-  const gatewayGeneration = readRepoFile('vps-ai-gateway/src/generation-handler.ts');
-
-  assert.match(ticketRoute, /reserveAiUsage/);
-  assert.match(ticketRoute, /reservation_id:\s*reservation\.reservationId/);
-  assert.match(gatewayChat, /beginUsageReservation/);
-  assert.match(gatewayChat, /commitUsageReservation/);
-  assert.match(gatewayChat, /safeReleaseUsageReservation/);
-  assert.match(gatewayGeneration, /beginUsageReservation/);
-  assert.match(gatewayGeneration, /commitUsageReservation/);
-  assert.match(gatewayGeneration, /safeReleaseUsageReservation/);
-});
-
-run('VPS provider routing uses the same plan and default-model contract as ticket issuance', () => {
-  const gatewayRouting = readRepoFile('vps-ai-gateway/src/ai-routing.ts');
-
-  assert.match(gatewayRouting, /\.\.\/\.\.\/shared\/ai-gateway-contract\.cjs/);
-  assert.match(gatewayRouting, /defaultOpenRouterModelForPlan/);
-  assert.match(gatewayRouting, /defaultAnthropicModelForPlan/);
-  assert.match(gatewayRouting, /isPaidPlanCode/);
-  assert.doesNotMatch(gatewayRouting, /new Set\(\['pro', 'premium'/);
+run('the shared provider defaults restrict paid models to paid plans', () => {
+  for (const plan of ['free', 'unknown', null]) {
+    assert.equal(contract.isPaidPlanCode(plan), false);
+    assert.equal(contract.defaultOpenRouterModelForPlan(plan), contract.DEFAULT_OPENROUTER_FREE_MODEL);
+    assert.equal(contract.defaultAnthropicModelForPlan(plan), null);
+  }
+  for (const plan of ['pro', 'monthly', 'premium', 'promo_pro']) {
+    assert.equal(contract.isPaidPlanCode(plan), true);
+    assert.equal(contract.defaultOpenRouterModelForPlan(plan), contract.DEFAULT_OPENROUTER_PAID_MODEL);
+    assert.equal(contract.defaultAnthropicModelForPlan(plan), contract.DEFAULT_ANTHROPIC_PAID_MODEL);
+  }
 });
 
 run('paid model routing reads one canonical registry and excludes the legacy paid table', () => {

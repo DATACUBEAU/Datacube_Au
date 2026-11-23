@@ -26,24 +26,21 @@ async function main() {
     assert.match(nextConfig, /clientsClaim: false/);
   });
 
-  await run('custom worker claims clients only inside activate waitUntil and catches claim errors', () => {
-    const worker = readRepoFile('worker', 'index.js');
-    assert.match(worker, /async function claimActiveClients\(\)/);
-    assert.match(worker, /await self\.clients\.claim\(\)/);
-    assert.match(worker, /catch \{/);
-    assert.match(worker, /self\.addEventListener\("activate", \(event\) => \{/);
-    assert.match(worker, /event\.waitUntil\(\(async \(\) => \{/);
-    const activateIndex = worker.indexOf('self.addEventListener("activate"');
-    const claimCallIndex = worker.indexOf('await claimActiveClients()', activateIndex);
-    assert.ok(claimCallIndex > activateIndex, 'activate handler must call claimActiveClients');
+  await run('registration checks and recovers the existing worker before installing a fresh script', () => {
+    const client = readRepoFile('src', 'lib', 'pwa', 'service-worker-client.ts');
+    const registration = client.slice(client.indexOf('export async function ensureHealthyServiceWorkerRegistration'));
+    assert.match(registration, /isBrokenServiceWorkerScript\(scriptText, importedScriptTexts\)\)\s*\{\s*await recoverBrokenServiceWorkerRuntime\(\);\s*return null;/);
+    assert.match(registration, /!\(await hasHealthyExistingServiceWorker\(\)\)[\s\S]*?await recoverBrokenServiceWorkerRuntime\(\)[\s\S]*?navigator\.serviceWorker\.register\(scriptUrl/);
+    assert.match(registration, /updateViaCache: 'none'/);
   });
 
-  await run('SKIP_WAITING message never claims clients directly', () => {
-    const worker = readRepoFile('worker', 'index.js');
-    const messageIndex = worker.indexOf('self.addEventListener("message"');
-    const messageBlock = worker.slice(messageIndex);
-    assert.match(messageBlock, /self\.skipWaiting\(\)/);
-    assert.doesNotMatch(messageBlock, /clients\.claim\(/);
+  await run('registration and refresh ask only the waiting worker to activate', () => {
+    const client = readRepoFile('src', 'lib', 'pwa', 'service-worker-client.ts');
+    const registration = readRepoFile('src', 'components', 'service-worker-register.tsx');
+    for (const source of [client, registration]) {
+      assert.match(source, /if \(registration\.waiting\)\s*\{\s*registration\.waiting\.postMessage\(\{ type: ['"]SKIP_WAITING['"] \}\);/);
+      assert.doesNotMatch(source, /clients\.claim\(|registration\.active\.postMessage\(\{ type: ['"]SKIP_WAITING/);
+    }
   });
 
   await run('protected/private responses remain excluded from runtime caching', () => {

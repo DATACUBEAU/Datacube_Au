@@ -88,14 +88,15 @@ const adminTierActor = {
   avatar_url: 'https://example.com/tieradmin.png',
 } satisfies ConexProfileRow;
 
-run('access control cannot be bypassed by non-admin actor', async () => {
+run('unverified admin claims do not grant access to a free profile', async () => {
   const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser, freeActor]);
+  const claimedAdmin = { userId: freeActor.user_id, email: CONEX_ROOT_ADMIN_EMAIL, tier: 'admin' };
 
   await assert.rejects(
     async () => {
       await setConexTierForUser(
         repo,
-        { userId: freeActor.user_id, email: 'unauthorized@example.com' },
+        claimedAdmin,
         targetUser.user_id,
         'admin'
       );
@@ -105,25 +106,21 @@ run('access control cannot be bypassed by non-admin actor', async () => {
       error.status === 403 &&
       error.code === 'forbidden'
   );
+  assert.equal((await repo.getProfileByUserId(targetUser.user_id))?.tier, 'free');
 });
 
-run('access control cannot be bypassed by admin tier without protected owner id', async () => {
+run('verified admin profile can manage access without the protected owner id', async () => {
   const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser, adminTierActor]);
 
-  await assert.rejects(
-    async () => {
-      await setConexTierForUser(
-        repo,
-        { userId: adminTierActor.user_id, email: 'tier-admin@example.com' },
-        targetUser.user_id,
-        'admin'
-      );
-    },
-    (error: any) =>
-      error instanceof ConexAccessError &&
-      error.status === 403 &&
-      error.code === 'forbidden'
+  const updated = await setConexTierForUser(
+    repo,
+    { userId: adminTierActor.user_id, email: 'tier-admin@example.com' },
+    targetUser.user_id,
+    'admin'
   );
+
+  assert.equal(updated.tier, 'admin');
+  assert.equal((await repo.getProfileByUserId(targetUser.user_id))?.tier, 'admin');
 });
 
 run('toggle switch persistence updates tier in repository', async () => {

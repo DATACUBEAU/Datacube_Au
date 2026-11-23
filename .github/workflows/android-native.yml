@@ -13,18 +13,25 @@ on:
       - ".github/workflows/android-native.yml"
       - "tests/mobile-auth-handoff.unit.test.ts"
   workflow_dispatch:
+    inputs:
+      personal_test_signer:
+        description: Use the persistent personal debug signer
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-native-${{ github.head_ref || github.ref_name }}
+  group: android-native-${{ github.head_ref || github.ref_name }}${{ github.event_name == 'workflow_dispatch' && inputs.personal_test_signer && '-personal-signing' || '' }}
   cancel-in-progress: true
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      PERSONAL_TEST_SHA1: DF81CB825B6FA1C414A74AAFC4199E0C9BB704FC
     defaults:
       run:
         working-directory: apps/android
@@ -43,6 +50,28 @@ jobs:
         with:
           gradle-version: wrapper
 
+      - name: Restore personal debug signer
+        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        shell: bash
+        env:
+          PERSONAL_KEYSTORE: ${{ secrets.ANDROID_PERSONAL_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [[ -z "$PERSONAL_KEYSTORE" ]]; then
+            echo "::error::The personal debug signing keystore is missing."
+            exit 1
+          fi
+          umask 077
+          keystore="$RUNNER_TEMP/datacube-personal-debug.keystore"
+          printf '%s' "$PERSONAL_KEYSTORE" | base64 --decode > "$keystore"
+          fingerprint=$(keytool -exportcert -keystore "$keystore" -alias androiddebugkey -storepass android |
+            sha1sum | cut -d ' ' -f 1 | tr '[:lower:]' '[:upper:]')
+          printf 'Persistent debug certificate SHA-1: %s\n' "$fingerprint" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ "$fingerprint" != "$PERSONAL_TEST_SHA1" ]]; then
+            echo "::error::The stored key does not match the expected personal test certificate."
+            exit 1
+          fi
+          printf 'ANDROID_PERSONAL_DEBUG_KEYSTORE_PATH=%s\n' "$keystore" >> "$GITHUB_ENV"
+
       - name: Write Android build properties
         env:
           # Supabase project URL and publishable key are public client credentials.
@@ -50,7 +79,8 @@ jobs:
           SUPABASE_URL: https://dhmukdeljiwvvwjdcxgn.supabase.co
           SUPABASE_ANON_KEY: sb_publishable_6N4nuBJIaXzOVYYUXSzomA_R8TB1vc_
           AUTH_WEBSITE_URL: https://datacube-au.vercel.app
-          GOOGLE_WEB_CLIENT_ID: ${{ secrets.GOOGLE_WEB_CLIENT_ID }}
+          # Built-in public project audience is used when no override is configured.
+          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID || secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "::error::Android build needs Supabase project URL and publishable key."
@@ -72,6 +102,35 @@ jobs:
       - name: Build debug APK
         run: bash ./gradlew :app:assembleDebug --no-daemon
 
+      - name: Record debug APK identity
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          certificates=$("$signer" verify --verbose --print-certs "$apk")
+          digests=$(grep 'certificate SHA-1 digest:' <<< "$certificates")
+          printf '%s\n' "$digests" | tee -a "$GITHUB_STEP_SUMMARY"
+          sha256sum "$apk" >> "$GITHUB_STEP_SUMMARY"
+
+      # Never label a temporary CI-signed APK as a personal Google OAuth test build.
+      - name: Verify personal APK certificate and package
+        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        run: |
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
+          certificates=$("$signer" verify --verbose --print-certs "$apk")
+          actual=$(sed -nE '/^[[:space:]]*Source Stamp/!s/^.*certificate SHA-1 digest:[[:space:]]*([[:xdigit:]:]+)[[:space:]]*$/\1/p' <<< "$certificates" |
+            tr '[:lower:]' '[:upper:]' | tr -d ':' | sort -u)
+          if [ "$actual" != "$PERSONAL_TEST_SHA1" ]; then
+            echo "::error::APK signer $actual does not match the expected personal test certificate."
+            exit 1
+          fi
+          badging=$("$(dirname "$signer")/aapt" dump badging "$apk")
+          if ! grep -q "^package: name='au.datacube.app' " <<< "$badging"; then
+            echo "::error::The APK package does not match the personal Google OAuth configuration."
+            exit 1
+          fi
+          printf 'Verified Android OAuth identity: au.datacube.app / %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
 
@@ -80,10 +139,23 @@ jobs:
       - name: Build release bundle (unsigned preflight)
         run: bash ./gradlew :app:bundleRelease --no-daemon
 
-      - name: Upload debug APK
+      # Ordinary PR and push artifacts have transient CI signatures. They are not
+      # guaranteed to be accepted by a Google Cloud Android OAuth client.
+      - name: Upload CI debug APK (temporary signer)
+        if: github.event_name != 'workflow_dispatch' || !inputs.personal_test_signer
         uses: actions/upload-artifact@v4
         with:
-          name: datacube-au-android-debug
+          name: datacube-au-android-ci-debug-unregistered-signer
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # Only a manually requested, certificate-checked APK gets this artifact name.
+      - name: Upload personal Google sign-in test APK
+        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-personal-google-test-signed
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -104,6 +176,17 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Enable KVM for the hosted emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          if [[ ! -w /dev/kvm ]]; then
+            echo "Hosted runner has no writable KVM device. Using software emulation."
+            echo "ANDROID_I_WANT_MY_TCG=yes" >> "$GITHUB_ENV"
+          fi
+
       - name: Run Compose UI tests on Android emulator
         id: android-ui-tests
         uses: reactivecircus/android-emulator-runner@v2
@@ -111,19 +194,18 @@ jobs:
           api-level: 35
           target: google_apis
           arch: x86_64
+          working-directory: apps/android
+          emulator-boot-timeout: 1200
           profile: pixel_2
           disable-animations: true
-          script: |
-            mkdir -p app/build/diagnostics
-            adb logcat -c
-            set +e
-            bash ./gradlew :app:connectedDebugAndroidTest --no-daemon
-            test_status=$?
-            set -e
-            adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true
-            adb devices -l > app/build/diagnostics/adb-devices.txt || true
-            printf 'connectedDebugAndroidTest_exit_code=%s\\n' "$test_status" > app/build/diagnostics/test-exit-code.txt
-            exit "$test_status"
+          script: >-
+            mkdir -p app/build/diagnostics && adb logcat -c &&
+            { test_status=0; bash ./gradlew :app:connectedDebugAndroidTest --no-daemon || test_status=$?;
+            for screen in launcher login home; do adb pull "/data/local/tmp/datacube-$screen.png" app/build/diagnostics/ || test_status=1; done;
+            adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true;
+            adb devices -l > app/build/diagnostics/adb-devices.txt || true;
+            echo "connectedDebugAndroidTest_exit_code=$test_status" > app/build/diagnostics/test-exit-code.txt;
+            exit "$test_status"; }
 
       - name: Upload emulator UI test diagnostics
         if: always()
@@ -131,6 +213,7 @@ jobs:
         with:
           name: datacube-au-android-ui-test-diagnostics
           path: |
+            apps/android/app/build/test-results/testDebugUnitTest/TEST-*.xml
             apps/android/app/build/diagnostics/**
             apps/android/app/build/reports/androidTests/connected/**
             apps/android/app/build/outputs/androidTest-results/connected/**

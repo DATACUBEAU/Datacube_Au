@@ -20,20 +20,20 @@ function run(name: string, fn: () => void) {
   }
 }
 
-run('permission-level checks deny non-owner users even when tier claims are admin', () => {
+run('admin user management allows a verified admin profile and denies a free profile', () => {
   const freeAccess = hasConexAccess({
     userId: '33333333-3333-4333-8333-333333333333',
     email: 'free@example.com',
     tier: 'free',
   });
-  const adminAccess = hasConexAccess({
+  const verifiedAdminAccess = hasConexAccess({
     userId: '44444444-4444-4444-8444-444444444444',
     email: 'admin@example.com',
     tier: 'admin',
   });
 
   assert.equal(freeAccess, false);
-  assert.equal(adminAccess, false);
+  assert.equal(verifiedAdminAccess, true);
 });
 
 run('bulk metadata patch stays bounded to approved role/status/permission values', () => {

@@ -23,7 +23,7 @@ assert.doesNotMatch(mobileAuthInstall, /Your account is authenticated on the web
 assert.match(login, /signInWithGoogle/);
 assert.match(login, /Continue with Google/);
 assert.doesNotMatch(login, /signInWithPassword|signUp\(|handleEmailAuth|PasswordInput|type="password"|TabsTrigger/);
-assert.match(login, /sanitizeLocalRedirectPath\(redirectToParam, '\/'\)/);
+assert.match(login, /sanitizeRedirectTarget\(\s*redirectToParam,\s*typeof window === 'undefined' \? null : window\.location\.origin,\s*'\/',?\s*\)/);
 assert.match(login, /isConexDestination \|\| safeRedirectPath === '\/'/);
 assert.match(login, /\/conex\/users\?mode=access/);
 assert.match(login, /router\.replace\('\/conex'\)/);

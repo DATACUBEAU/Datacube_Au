@@ -63,7 +63,7 @@ class EncryptedSupabaseSessionManager(context: Context) : SessionManager {
             // ciphertext. Remove the unusable alias as well, so the next successful
             // sign-in can generate a fresh key instead of failing on every save.
             runCatching { deleteKey() }
-                .onFailure { Log.e(TAG, "Could not remove the unusable Supabase session key.", it) }
+                .onFailure { Log.e(TAG, "keystore_reset_failed") }
             null
         }
     }
