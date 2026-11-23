@@ -73,7 +73,7 @@ android {
      sourceCompatibility = JavaVersion.VERSION_17
      targetCompatibility = JavaVersion.VERSION_17
  }
- kotlinOptions { jvmTarget = "17" }
+
 }
 
 kapt {
@@ -119,4 +119,11 @@ dependencies {
  androidTestImplementation(libs.pdfbox.android)
  debugImplementation(libs.compose.tooling)
  debugImplementation(libs.compose.ui.test.manifest)
+}
+
+// Kotlin 2.4 requires the compilerOptions DSL.
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
 }
