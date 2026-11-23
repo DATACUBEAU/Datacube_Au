@@ -23,6 +23,7 @@ fun ModelsScreen(
     installed: (String) -> Boolean,
     onGet: (ModelSpec) -> Unit,
     onImport: (ModelSpec) -> Unit,
+    onOpenVault: () -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -33,6 +34,16 @@ fun ModelsScreen(
         LazyColumn(Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            item {
+                OutlinedButton(
+                    onClick = onOpenVault,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Model Vault · backups and restore")
+                }
+            }
             item {
                 Text("Search model", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text("For local semantic document search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
