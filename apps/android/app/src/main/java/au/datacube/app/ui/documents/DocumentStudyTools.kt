@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -37,6 +38,8 @@ import au.datacube.app.data.rag.ModelOutputCleaner
 import au.datacube.app.data.rag.LocalDocumentChatHistory
 import au.datacube.app.data.rag.SavedDocumentTurn
 import au.datacube.app.data.rag.SavedSource
+import au.datacube.app.data.rag.SourceTermGrounding
+import au.datacube.app.data.rag.TermContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.Job
@@ -235,6 +238,10 @@ fun DocumentChatWorkspace(
     var activeRequest by remember(documentId) { mutableStateOf<Job?>(null) }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
     var expandedSteps by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
+    var termExplanation by remember(documentId) { mutableStateOf("") }
+    var explainingTerm by remember(documentId) { mutableStateOf(false) }
+    var termRequest by remember(documentId) { mutableStateOf<Job?>(null) }
     LaunchedEffect(documentId, textPreview, semanticSupported) {
         if (semanticSupported && !textPreview.isNullOrBlank()) {
             semanticSearch.scheduleIndex(documentId)
@@ -285,6 +292,66 @@ fun DocumentChatWorkspace(
                 }
             }
         }
+    }
+
+    tappedTerm?.let { info ->
+        AlertDialog(
+            onDismissRequest = {
+                termRequest?.cancel()
+                tappedTerm = null
+                explainingTerm = false
+            },
+            title = { Text(info.term) },
+            text = {
+                Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(info.page?.let { "Source · Page $it" } ?: "Source",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary)
+                    SelectionContainer { Text(info.excerpt) }
+                    if (termExplanation.isNotBlank()) {
+                        HorizontalDivider()
+                        Text(termExplanation, style = MaterialTheme.typography.bodyMedium)
+                    }
+                    if (explainingTerm) LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {
+                if (llmInstalled && !explainingTerm && termExplanation.isBlank()) {
+                    TextButton(onClick = {
+                        explainingTerm = true
+                        termRequest = scope.launch {
+                            val grounded = GroundedRagPlanner.build(
+                                "Explain the meaning of '${info.term}' as used in this passage, in 1-2 sentences.",
+                                emptyList(), listOf(RagEvidence(info.excerpt, info.page))
+                            )
+                            try {
+                                var raw = ""
+                                LocalGenerativeEngine.generate(context, grounded.value) { part ->
+                                    raw += part
+                                    withContext(Dispatchers.Main) {
+                                        termExplanation = ModelOutputCleaner.visible(raw, 1).take(1200)
+                                    }
+                                }
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                termExplanation = "Could not explain this term with the local model."
+                            } finally {
+                                explainingTerm = false
+                            }
+                        }
+                    }) { Text("Explain locally") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    termRequest?.cancel()
+                    tappedTerm = null
+                    explainingTerm = false
+                }) { Text("Close") }
+            }
+        )
     }
 
     openedEvidence?.let { evidence ->
@@ -380,10 +447,25 @@ fun DocumentChatWorkspace(
                             }
                             Spacer(Modifier.height(8.dp))
                             if (message.answer.isNotBlank()) {
-                                SelectionContainer {
-                                    Text(message.answer, style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface)
-                                }
+                                ClickableText(
+                                    text = AnnotatedString(message.answer),
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    ),
+                                    onClick = { offset ->
+                                        val term = SourceTermGrounding.wordAt(message.answer, offset)
+                                        val source = term?.let { key ->
+                                            SourceTermGrounding.find(
+                                                key, message.matches.map { RagEvidence(it.text, it.page) }
+                                            )
+                                        }
+                                        if (source != null) {
+                                            termRequest?.cancel()
+                                            termExplanation = ""
+                                            tappedTerm = source
+                                        }
+                                    }
+                                )
                                 Spacer(Modifier.height(10.dp))
                                 Text("Source passages", style = MaterialTheme.typography.labelLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
