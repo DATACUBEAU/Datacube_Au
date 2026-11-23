@@ -248,8 +248,10 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
             LocalSemanticSearch(getApplication()).cancelIndex(id)
             repository.delete(id)
             withContext(Dispatchers.IO) {
-                val index = LocalPassageIndex(getApplication())
-                try { index.remove(id) } finally { index.close() }
+                runCatching {
+                    val index = LocalPassageIndex(getApplication())
+                    try { index.remove(id) } finally { index.close() }
+                }
             }
             LocalNotificationService(getApplication())
                 .cancelDocument(id, jobs.map { it.id })
