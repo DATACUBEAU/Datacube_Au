@@ -126,7 +126,7 @@ private fun ModelCard(
             }
             Text(
                 when {
-                    complete -> "Files saved · local inference not enabled yet"
+                    complete -> if (model.id == "embeddinggemma-2-270m") "Search model installed · indexing starts when opening AU Chat" else "Files saved · local inference not enabled yet"
                     verified != null -> verified.displaySize + " · " + verified.license
                     else -> "Suggested RAM: " + model.minRamGb + " GB+"
                 }, style = MaterialTheme.typography.labelMedium,
