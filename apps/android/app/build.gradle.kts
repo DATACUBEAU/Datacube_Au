@@ -105,6 +105,7 @@ dependencies {
  implementation(libs.splashscreen)
  implementation(libs.pdfium.android)
  implementation(libs.mediapipe.retrieval)
+ implementation(libs.litert.lm)
  ksp(libs.room.compiler)
  testImplementation(libs.junit)
  androidTestImplementation(libs.androidx.test.core)
