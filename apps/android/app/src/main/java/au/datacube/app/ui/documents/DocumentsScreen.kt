@@ -33,6 +33,7 @@ fun DocumentsScreen(
     onImport: () -> Unit,
     onNavigateHome: () -> Unit,
     onNavigateSettings: () -> Unit,
+    onNavigateToDiscs: () -> Unit = {},
     onCreateCollection: (String, (Result<String>) -> Unit) -> Unit,
     onOpenCollection: (String) -> Unit,
     onDeleteCollection: (String) -> Unit,
@@ -222,6 +223,7 @@ fun DocumentsScreen(
         onHome = onNavigateHome,
         onDocuments = {},
         onSettings = onNavigateSettings,
+        onDiscs = onNavigateToDiscs,
         modifier = Modifier.align(Alignment.TopCenter).zIndex(2f)
             .padding(horizontal = 18.dp, vertical = 10.dp)
     )
