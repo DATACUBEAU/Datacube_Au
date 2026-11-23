@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.AutoAwesome
@@ -19,9 +21,11 @@ import androidx.compose.ui.unit.dp
  * Categorizes observed retrieval events, never model-private reasoning.
  * These labels must not be presented as unobserved agent actions.
  */
-internal enum class AuActivityKind { SEARCH, EVIDENCE, ANSWER, OTHER }
+internal enum class AuActivityKind { SEARCH, EVIDENCE, ANSWER, ERROR, OTHER }
 
 internal fun classifyAuActivity(event: String): AuActivityKind = when {
+    listOf("fail", "error", "could not", "interrupted")
+        .any { event.contains(it, ignoreCase = true) } -> AuActivityKind.ERROR
     listOf("search", "index", "rank", "bm25", "vector", "semantic", "retriev")
         .any { event.contains(it, ignoreCase = true) } -> AuActivityKind.SEARCH
     listOf("source", "passage", "excerpt", "evidence", "filter", "ground")
@@ -62,7 +66,7 @@ fun AuActivityTimeline(
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    steps.size.toString() + " completed",
+                    steps.size.toString() + " recorded",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall
                 )
@@ -73,12 +77,14 @@ fun AuActivityTimeline(
                     AuActivityKind.SEARCH -> "Retrieval" to Icons.Outlined.Search
                     AuActivityKind.EVIDENCE -> "Evidence" to Icons.Outlined.FactCheck
                     AuActivityKind.ANSWER -> "Response" to Icons.Outlined.AutoAwesome
-                    AuActivityKind.OTHER -> "Preparation" to Icons.Outlined.CheckCircle
+                    AuActivityKind.ERROR -> "Attention" to Icons.Outlined.ErrorOutline
+                    AuActivityKind.OTHER -> "Preparation" to Icons.Outlined.Circle
                 }
                 val accent = when (kind) {
                     AuActivityKind.SEARCH -> MaterialTheme.colorScheme.primary
                     AuActivityKind.EVIDENCE -> MaterialTheme.colorScheme.tertiary
                     AuActivityKind.ANSWER -> MaterialTheme.colorScheme.primary
+                    AuActivityKind.ERROR -> MaterialTheme.colorScheme.error
                     AuActivityKind.OTHER -> MaterialTheme.colorScheme.secondary
                 }
                 Row(
@@ -105,10 +111,20 @@ fun AuActivityTimeline(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    val finished = listOf(
+                        "linked", "generated", "selected", "combined", "ranked",
+                        "searched", "built", "resolved", "listed", "sampled"
+                    ).any { step.contains(it, ignoreCase = true) }
+                    val failed = kind == AuActivityKind.ERROR
                     Icon(
-                        Icons.Outlined.CheckCircle,
-                        contentDescription = "Completed",
-                        tint = Color(0xFF239A75),
+                        if (failed) Icons.Outlined.ErrorOutline
+                        else if (finished) Icons.Outlined.CheckCircle
+                        else Icons.Outlined.Circle,
+                        contentDescription = if (failed) "Failed"
+                            else if (finished) "Completed" else "Recorded",
+                        tint = if (failed) MaterialTheme.colorScheme.error
+                            else if (finished) Color(0xFF239A75)
+                            else MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(17.dp)
                     )
                 }
