@@ -1,5 +1,6 @@
 package au.datacube.app.ui.documents
 
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
@@ -47,7 +48,7 @@ fun DocumentWorkspaceScreen(
     var showDetails by remember(document.id) { mutableStateOf(false) }
 
     if (showDetails) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { showDetails = false },
             title = { Text("Document details") },
             text = {
