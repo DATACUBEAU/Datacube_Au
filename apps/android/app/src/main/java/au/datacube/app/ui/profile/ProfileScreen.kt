@@ -1,5 +1,6 @@
 package au.datacube.app.ui.profile
 
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -39,7 +40,7 @@ fun ProfileScreen(
     var showBackups by remember { mutableStateOf(false) }
 
     if (showProfile) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { showProfile = false },
             title = { Text("Profile") },
             text = {
@@ -53,7 +54,7 @@ fun ProfileScreen(
     }
 
     if (showBackups) {
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = { showBackups = false },
             title = { Text("Model backups") },
             text = { Text("Keep a copy of your downloaded models.") },
