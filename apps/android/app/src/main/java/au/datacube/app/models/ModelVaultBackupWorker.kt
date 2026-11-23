@@ -45,10 +45,19 @@ class ModelVaultBackupWorker(
                     notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             } else ForegroundInfo(NOTIFICATION_ID + (modelId.hashCode() and 0x0fff), notification)
             setForeground(info)
-            setProgress(workDataOf(KEY_STAGE to "Saving model archive"))
-            val summary = ModelVaultStore(applicationContext).save(modelId)
+            setProgress(workDataOf(KEY_STAGE to "Checking model files"))
+            val summary = ModelVaultStore(applicationContext).save(modelId) { written, total ->
+                setProgress(workDataOf(
+                    KEY_STAGE to "Saving model archive",
+                    KEY_WRITTEN to written,
+                    KEY_TOTAL to total
+                ))
+            }
             Result.success(workDataOf(
-                KEY_STAGE to "Backed up", KEY_FILES to summary.fileCount
+                KEY_STAGE to "Backed up",
+                KEY_FILES to summary.fileCount,
+                KEY_WRITTEN to summary.totalBytes,
+                KEY_TOTAL to summary.totalBytes
             ))
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -61,6 +70,8 @@ class ModelVaultBackupWorker(
         const val KEY_MODEL = "modelId"
         const val KEY_STAGE = "stage"
         const val KEY_FILES = "files"
+        const val KEY_WRITTEN = "writtenBytes"
+        const val KEY_TOTAL = "totalBytes"
         const val KEY_ERROR = "error"
         private const val CHANNEL = "datacube_model_backups"
         private const val NOTIFICATION_ID = 61000

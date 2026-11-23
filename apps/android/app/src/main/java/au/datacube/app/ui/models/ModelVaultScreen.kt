@@ -172,6 +172,10 @@ private fun VaultModelRow(
     val work = infos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
         ?: infos.lastOrNull()
     val active = work?.state == WorkInfo.State.RUNNING || work?.state == WorkInfo.State.ENQUEUED
+    val written = work?.progress?.getLong(ModelVaultBackupWorker.KEY_WRITTEN, -1L) ?: -1L
+    val total = work?.progress?.getLong(ModelVaultBackupWorker.KEY_TOTAL, -1L) ?: -1L
+    val percentage = if (total > 0 && written >= 0)
+        (written * 100.0 / total).toInt().coerceIn(0, 100) else null
     LaunchedEffect(work?.id, work?.state) {
         if (work?.state == WorkInfo.State.SUCCEEDED) onFinished()
     }
@@ -185,8 +189,16 @@ private fun VaultModelRow(
             Text("${spec.id} · ${spec.role.name.lowercase()}",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (active) {
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text("Saving to your folder…", style = MaterialTheme.typography.bodySmall)
+                if (percentage != null) {
+                    LinearProgressIndicator(progress = { percentage / 100f }, modifier = Modifier.fillMaxWidth())
+                } else {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+                Text(
+                    (work?.progress?.getString(ModelVaultBackupWorker.KEY_STAGE) ?: "Preparing model archive") +
+                        (percentage?.let { " · $it%" } ?: ""),
+                    style = MaterialTheme.typography.bodySmall
+                )
                 OutlinedButton(onClick = { jobs.cancel(spec.id) }) { Text("Cancel") }
             } else {
                 if (work?.state == WorkInfo.State.FAILED) {

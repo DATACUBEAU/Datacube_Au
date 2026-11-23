@@ -49,7 +49,10 @@ class ModelVaultStore(context: Context) {
      * Writes to a .partial document; only verified, fully finished backups are renamed .zip.
      * The archive includes the model ID, path, file sizes and SHA-256 hashes.
      */
-    suspend fun save(modelId: String): ModelBackupSummary = withContext(Dispatchers.IO) {
+    suspend fun save(
+        modelId: String,
+        onProgress: suspend (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): ModelBackupSummary = withContext(Dispatchers.IO) {
         check(ModelCatalog.models.any { it.id == modelId }) { "Unknown model type." }
         val dir = requireNotNull(folder()) { "Select your model folder first." }
         // Abandoned copies from an interrupted earlier backup cannot be mistaken for archives.
@@ -67,7 +70,7 @@ class ModelVaultStore(context: Context) {
             resolver, parent, "application/octet-stream", partialName
         ) ?: error("This folder cannot create a model archive.")
         try {
-            val summary = ModelBackupManager(app).exportBackup(destination, modelId)
+            val summary = ModelBackupManager(app).exportBackup(destination, modelId, onProgress)
             val finalName = partialName.removeSuffix(".partial") + ".zip"
             check(DocumentsContract.renameDocument(resolver, destination, finalName) != null) {
                 "The storage provider could not finish the archive."

@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
@@ -107,5 +108,31 @@ class ModelBackupManagerInstrumentedTest {
         assertTrue(!File(installedModels, "qwen3-0.6b-litert").exists())
     }
 
+
+
+    @Test
+    fun archiveProgressReportsVerifiedByteTotalAndCanBeCancelled() = runBlocking {
+        val model = File(installedModels, "qwen3-0.6b-litert")
+        assertTrue(model.mkdirs())
+        val bytes = ByteArray(256 * 1024) { (it % 127).toByte() }
+        File(model, "weights.bin").writeBytes(bytes)
+        val updates = mutableListOf<Pair<Long, Long>>()
+        val manager = ModelBackupManager(context)
+        manager.exportBackup(Uri.fromFile(backupFile), "qwen3-0.6b-litert") { copied, total ->
+            updates.add(copied to total)
+        }
+        val expected = bytes.size.toLong()
+        assertEquals(0L to expected, updates.first())
+        assertEquals(expected to expected, updates.last())
+
+        backupFile.delete()
+        val cancelled = runCatching {
+            manager.exportBackup(Uri.fromFile(backupFile), "qwen3-0.6b-litert") { _, _ ->
+                throw CancellationException("User stopped the export")
+            }
+        }
+        assertTrue(cancelled.exceptionOrNull() is CancellationException)
+        assertTrue(!backupFile.exists())
+    }
 
 }
