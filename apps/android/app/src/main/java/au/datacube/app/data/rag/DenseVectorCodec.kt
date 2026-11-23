@@ -9,7 +9,7 @@ object DenseVectorCodec {
         require(source.isNotEmpty() && source.size <= 4096) { "Invalid embedding dimension." }
         require(source.all { it.isFinite() }) { "Non-finite embedding values." }
         val buffer = ByteBuffer.allocate(source.size * 4).order(ByteOrder.LITTLE_ENDIAN)
-        source.forEach(buffer::putFloat)
+        source.forEach { buffer.putFloat(it) }
         return buffer.array()
     }
 
