@@ -331,6 +331,10 @@ function DashboardSidebarToggle() {
 
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  // Android hands users to this existing, authenticated website for usage and
+  // checkout. The retired full dashboard navigation must not obscure billing.
+  const focusedBilling = pathname === '/dashboard/settings/usage' ||
+    pathname === '/dashboard/settings/subscription';
   const router = useRouter();
 
   const [user, , isUserLoading] = useSupabaseUser();
@@ -713,6 +717,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       </AlertDialog>
 
         <div className="flex min-h-dvh w-full bg-transparent">
+          {!focusedBilling && (
           <Sidebar collapsible="icon" side="left" variant="sidebar" className="group-data-[variant=sidebar]:border-r">
             <SidebarHeader className="border-b p-1.5 group-data-[collapsible=icon]:px-1.5">
               <div className="flex min-h-11 w-full items-center gap-2 group-data-[collapsible=icon]:min-h-[5rem] group-data-[collapsible=icon]:flex-col group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-2">
@@ -741,9 +746,12 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               onOpenGuide={() => setIsSiteGuideOpen(true)}
             />
           </Sidebar>
+          )}
 
           {/* Main content */}
           <div className="flex flex-1 flex-col">
+            {!focusedBilling && (
+              <>
             <header className="sticky top-0 z-20 flex h-14 items-center justify-between border-b bg-background/80 px-4 backdrop-blur-sm md:hidden">
               <SidebarTrigger />
               <span className="font-semibold">{currentPageTitle}</span>
@@ -776,6 +784,8 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
                 <ThemeToggle />
               </div>
             </header>
+              </>
+            )}
 
             <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto">
               <div className="relative mx-auto w-full max-w-7xl min-w-0">
