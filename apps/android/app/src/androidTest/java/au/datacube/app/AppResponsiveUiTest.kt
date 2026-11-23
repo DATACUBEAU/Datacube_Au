@@ -294,7 +294,7 @@ class AppResponsiveUiTest {
 
         composeRule.onNodeWithText("Smart Note").performClick()
         composeRule.onAllNodesWithText("Study notes").onFirst().assertIsDisplayed()
-        composeRule.onAllNodesWithText("Concept map").onFirst().performClick()
+        composeRule.onNodeWithText("Diagram").performClick()
         composeRule.onAllNodesWithText("Concept map").onFirst().assertIsDisplayed()
 
         composeRule.onNodeWithText("Prediction").performClick()
