@@ -26,7 +26,14 @@ class VerifiedModelDownloadsTest {
     }
 
     @Test fun neverDownloadsGatedOrUnreviewedModel() {
-        assertNull(VerifiedModelDownloads.find("gemma-4-e2b"))
+        assertEquals(
+            "ab7838cdfc8f77e54d8ca45eadceb20452d9f01e4bfade03e5dce27911b27e42",
+            requireNotNull(VerifiedModelDownloads.find("gemma-4-e2b")).sha256
+        )
+        assertEquals(
+            "0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0",
+            requireNotNull(VerifiedModelDownloads.find("gemma-4-e4b")).sha256
+        )
         assertNull(VerifiedModelDownloads.find("embeddinggemma-300m"))
         assertNull(VerifiedModelDownloads.find("unknown-model"))
     }
