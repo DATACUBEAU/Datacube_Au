@@ -62,7 +62,7 @@ class ModelVaultStore(context: Context) {
         val parent = DocumentsContract.buildDocumentUriUsingTree(dir, id)
         val partialName = ModelBackupManager.suggestedName(modelId).removeSuffix(".zip") + ".partial"
         val destination = DocumentsContract.createDocument(
-            resolver, parent, ModelBackupManager.BACKUP_MIME_TYPE, partialName
+            resolver, parent, "application/octet-stream", partialName
         ) ?: error("This folder cannot create a model archive.")
         try {
             val summary = ModelBackupManager(app).exportBackup(destination, modelId)
