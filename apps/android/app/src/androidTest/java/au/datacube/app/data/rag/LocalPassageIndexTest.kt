@@ -76,12 +76,12 @@ class LocalPassageIndexTest {
         val file = File(context.cacheDir, "$id.txt")
         val index = LocalPassageIndex(context)
         try {
-            file.writeText("----- Page 1 -----\\n" +
+            file.writeText("----- Page 1 -----\n" +
                 ("A stable baseline describes magnetic resonance techniques. ").repeat(300))
             val originalCount = index.build(id, file)
             assertTrue(originalCount > 0)
 
-            file.writeText("----- Page 2 -----\\n" +
+            file.writeText("----- Page 2 -----\n" +
                 ("The new, interrupted revision discusses photovoltaic cells. ").repeat(2_000))
 
             var callbacks = 0
