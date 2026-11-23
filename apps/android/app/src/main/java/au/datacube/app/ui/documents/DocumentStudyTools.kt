@@ -33,6 +33,8 @@ import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.data.rag.LocalSemanticSearch
 import au.datacube.app.data.rag.DocumentQueryInterpreter
 import au.datacube.app.data.rag.LocalGenerativeEngine
+import au.datacube.app.data.rag.ModelOutputCleaner
+import kotlinx.coroutines.Job
 import au.datacube.app.data.rag.GroundedRagPlanner
 import au.datacube.app.data.rag.RagEvidence
 import au.datacube.app.data.rag.RagTurn
@@ -225,6 +227,7 @@ fun DocumentChatWorkspace(
     val indexing = indexingWorks.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
     var searching by remember(documentId) { mutableStateOf(false) }
     var searchingStage by remember(documentId) { mutableStateOf("") }
+    var activeRequest by remember(documentId) { mutableStateOf<Job?>(null) }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
     var expandedSteps by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
     LaunchedEffect(documentId, textPreview, semanticSupported) {
@@ -376,7 +379,7 @@ fun DocumentChatWorkspace(
                                             modifier = Modifier.size(15.dp))
                                         Spacer(Modifier.width(5.dp))
                                         TextButton(onClick = { openedEvidence = snippet }) {
-                                            Text(snippet.page?.let { "Page $it · View source" } ?: "View source passage")
+                                            Text(snippet.page?.let { "[${index + 1}] Page $it · View source" } ?: "[${index + 1}] View source")
                                         }
                                     }
                                     if (index != message.matches.lastIndex) {
@@ -429,8 +432,10 @@ fun DocumentChatWorkspace(
                 verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(10.dp))
-                Text(searchingStage, style = MaterialTheme.typography.bodySmall,
+                Text(searchingStage, modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = { activeRequest?.cancel() }) { Text("Stop") }
             }
         }
         Surface(
@@ -451,7 +456,7 @@ fun DocumentChatWorkspace(
                             messages.add(ChatMessage(cleanPrompt, emptyList(), true))
                             prompt = ""
                             searching = true
-                            scope.launch {
+                            activeRequest = scope.launch {
                                 val events = mutableListOf<String>()
                                 try {
                                     searchingStage = "Understanding your question"
@@ -509,7 +514,7 @@ fun DocumentChatWorkspace(
                                                 if (now - lastUpdate > 90L) {
                                                     withContext(Dispatchers.Main) {
                                                         messages[resultIndex] = messages[resultIndex].copy(
-                                                            answer = generated.take(12_000)
+                                                            answer = ModelOutputCleaner.visible(generated, matches.size)
                                                         )
                                                     }
                                                     lastUpdate = now
@@ -517,7 +522,7 @@ fun DocumentChatWorkspace(
                                             }
                                             events += "Generated an answer using Qwen3 on this device"
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = generated.take(12_000).trim(),
+                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
                                                 generating = false,
                                                 steps = events.toList()
                                             )
@@ -526,7 +531,7 @@ fun DocumentChatWorkspace(
                                         } catch (generationError: Exception) {
                                             events += "Local generation failed; retrieved sources remain available"
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = generated.take(12_000).trim(),
+                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
                                                 generating = false,
                                                 generationError = generationError.message
                                                     ?: "Local model could not generate an answer.",
@@ -534,6 +539,15 @@ fun DocumentChatWorkspace(
                                             )
                                         }
                                     }
+                                } catch (cancelled: CancellationException) {
+                                    val lastIndex = messages.lastIndex
+                                    if (lastIndex >= 0 && !messages[lastIndex].isUser) {
+                                        messages[lastIndex] = messages[lastIndex].copy(
+                                            generating = false,
+                                            generationError = "Generation stopped."
+                                        )
+                                    }
+                                    throw cancelled
                                 } catch (error: Exception) {
                                     events += "Search could not finish: ${error.message ?: "unknown error"}"
                                     messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList()))
