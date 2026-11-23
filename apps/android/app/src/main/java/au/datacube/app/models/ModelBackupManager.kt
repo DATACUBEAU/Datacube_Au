@@ -16,6 +16,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 data class ModelBackupPreview(val modelIds: List<String>, val fileCount: Int, val totalBytes: Long) {
@@ -48,7 +50,11 @@ class ModelBackupManager(context: Context) {
     private val modelsParent = File(appContext.filesDir, "models")
 
     /** Export only one model when an ID is supplied; older all-model backups stay supported. */
-    suspend fun exportBackup(destination: Uri, modelId: String? = null): ModelBackupSummary = withContext(Dispatchers.IO) {
+    suspend fun exportBackup(
+        destination: Uri,
+        modelId: String? = null,
+        onProgress: suspend (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): ModelBackupSummary = withContext(Dispatchers.IO) {
         require(modelId == null || MODEL_ID.matches(modelId)) { "Invalid model identifier." }
         val models = installedModelFiles().filter { modelId == null || it.id == modelId }
         require(models.isNotEmpty()) { "There are no installed models to back up yet." }
@@ -67,6 +73,7 @@ class ModelBackupManager(context: Context) {
         require(fileRecords.size <= MAX_FILES) { "Too many model files for one backup." }
         val totalBytes = fileRecords.sumOf { it.size }
         require(totalBytes <= MAX_TOTAL_BYTES) { "The installed models exceed the supported backup size." }
+        onProgress(0, totalBytes)
 
         val output = appContext.contentResolver.openOutputStream(destination, "wt")
             ?: error("The selected backup destination could not be opened.")
@@ -79,7 +86,10 @@ class ModelBackupManager(context: Context) {
                 zip.write(manifest)
                 zip.closeEntry()
 
+                var writtenBytes = 0L
+                var reportedBytes = 0L
                 for (record in fileRecords) {
+                    currentCoroutineContext().ensureActive()
                     val modelDirectory = File(modelRoot, record.modelId).canonicalFile
                     val file = File(modelDirectory, record.relativePath).canonicalFile
                     require(file.path.startsWith(modelDirectory.path + File.separator)) {
@@ -94,11 +104,18 @@ class ModelBackupManager(context: Context) {
                     FileInputStream(file).buffered().use { input ->
                         val buffer = ByteArray(BUFFER_SIZE)
                         while (true) {
+                            currentCoroutineContext().ensureActive()
                             val count = input.read(buffer)
                             if (count < 0) break
                             zip.write(buffer, 0, count)
                             digest.update(buffer, 0, count)
                             copied += count
+                            writtenBytes += count
+                            if (writtenBytes - reportedBytes >= 32L * 1024 * 1024 ||
+                                writtenBytes == totalBytes) {
+                                onProgress(writtenBytes, totalBytes)
+                                reportedBytes = writtenBytes
+                            }
                         }
                     }
                     zip.closeEntry()
@@ -106,9 +123,11 @@ class ModelBackupManager(context: Context) {
                         "A model file changed during backup. Try again."
                     }
                 }
+                currentCoroutineContext().ensureActive()
                 zip.finish()
             }
         }
+        onProgress(totalBytes, totalBytes)
 
         ModelBackupSummary(
             modelCount = fileRecords.map { it.modelId }.distinct().size,
@@ -176,6 +195,7 @@ class ModelBackupManager(context: Context) {
                     var restoredBytes = 0L
                     var entry = zip.nextEntry
                     while (entry != null) {
+                        currentCoroutineContext().ensureActive()
                         require(!entry.isDirectory && entry.name != MANIFEST_NAME) {
                             "The backup contains an unexpected archive entry."
                         }
@@ -193,6 +213,7 @@ class ModelBackupManager(context: Context) {
                         FileOutputStream(target).buffered().use { output ->
                             val buffer = ByteArray(BUFFER_SIZE)
                             while (true) {
+                                currentCoroutineContext().ensureActive()
                                 val count = zip.read(buffer)
                                 if (count < 0) break
                                 copied += count
@@ -220,6 +241,7 @@ class ModelBackupManager(context: Context) {
                     val committed = mutableListOf<Pair<File, File>>()
                     try {
                         for (id in modelIds) {
+                            currentCoroutineContext().ensureActive()
                             val stagedModel = File(staging, id)
                             val installedModel = File(modelRoot, id)
                             require(!installedModel.exists()) {
@@ -230,6 +252,7 @@ class ModelBackupManager(context: Context) {
                             }
                             committed += installedModel to stagedModel
                         }
+                        currentCoroutineContext().ensureActive()
                     } catch (error: Exception) {
                         committed.asReversed().forEach { (installed, staged) ->
                             staged.parentFile?.mkdirs()
@@ -352,12 +375,13 @@ class ModelBackupManager(context: Context) {
         return output.toByteArray()
     }
 
-    private fun digestFile(file: File): Pair<Long, String> {
+    private suspend fun digestFile(file: File): Pair<Long, String> {
         val digest = MessageDigest.getInstance("SHA-256")
         var size = 0L
         FileInputStream(file).buffered().use { input ->
             val buffer = ByteArray(BUFFER_SIZE)
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val count = input.read(buffer)
                 if (count < 0) break
                 size += count
