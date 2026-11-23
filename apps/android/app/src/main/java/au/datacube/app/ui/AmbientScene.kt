@@ -1,24 +1,32 @@
 package au.datacube.app.ui
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -26,23 +34,42 @@ import kotlin.math.sin
 internal fun rememberAmbientMotionEnabled(): Boolean {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val stage by lifecycle.currentStateFlow.collectAsState()
-    val resolver = LocalContext.current.contentResolver
-    val setting = Settings.Global.ANIMATOR_DURATION_SCALE
-    fun motionAllowed() = Settings.Global.getFloat(resolver, setting, 1f) > 0f
-
-    var enabled by remember(resolver) { mutableStateOf(motionAllowed()) }
-    DisposableEffect(resolver) {
-        val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
-            override fun onChange(selfChange: Boolean) {
-                enabled = motionAllowed()
-            }
-        }
-        resolver.registerContentObserver(Settings.Global.getUriFor(setting), false, observer)
-        enabled = motionAllowed()
-        onDispose { resolver.unregisterContentObserver(observer) }
-    }
+    val context = LocalContext.current.applicationContext
+    val enabled by remember(context) { observeAmbientMotion(context) }.collectAsState(initial = false)
     return enabled && stage.isAtLeast(Lifecycle.State.RESUMED)
 }
+
+private fun observeAmbientMotion(context: Context) = callbackFlow {
+    val resolver = context.contentResolver
+    val setting = Settings.Global.ANIMATOR_DURATION_SCALE
+
+    val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+            trySend(Unit)
+        }
+    }
+    val receiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            trySend(Unit)
+        }
+    }
+    resolver.registerContentObserver(Settings.Global.getUriFor(setting), false, observer)
+    ContextCompat.registerReceiver(
+        context,
+        receiver,
+        IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+        ContextCompat.RECEIVER_NOT_EXPORTED
+    )
+    trySend(Unit)
+    awaitClose {
+        resolver.unregisterContentObserver(observer)
+        context.unregisterReceiver(receiver)
+    }
+}.map {
+    val powerManager = context.getSystemService(PowerManager::class.java)
+    powerManager?.isPowerSaveMode != true &&
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
+}.flowOn(Dispatchers.IO)
 
 internal class WireframeCube {
     private val face = Path()

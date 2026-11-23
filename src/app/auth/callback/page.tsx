@@ -6,7 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-client/client';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { markAuthSessionRestored, markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
-import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { isMobileAuthorizationDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
 // A callback can be mounted more than once (for example during React remounts).
 // PKCE authorization codes are single-use, so share one exchange promise per code.
@@ -38,9 +38,11 @@ export default function AuthCallbackPage() {
   const searchParams = useSearchParams();
   const [message, setMessage] = useState('Completing sign in...');
   const nextPath = useMemo(() => sanitizeLocalRedirectPath(searchParams.get('next'), '/'), [searchParams]);
+  const isMobileDestination = isMobileAuthorizationDestination(nextPath);
 
   useEffect(() => {
     let cancelled = false;
+    const debugPath = isMobileDestination ? '/mobile-auth' : nextPath;
 
     async function completeAuth() {
       const code = searchParams.get('code');
@@ -49,7 +51,7 @@ export default function AuthCallbackPage() {
       debugAuthCallback('start', {
         hasCode: Boolean(code),
         hasError: Boolean(authError),
-        nextPath,
+        nextPath: debugPath,
       });
 
       if (authError) {
@@ -65,10 +67,10 @@ export default function AuthCallbackPage() {
         markAuthUnauthenticated('auth-callback', 'missing_code');
         debugAuthCallback('missing_code', {
           hasSession: false,
-          nextPath,
+          nextPath: debugPath,
         });
         if (!cancelled) {
-          setMessage('No authentication code was found.');
+          setMessage('Sign-in did not finish. Please try again.');
           router.replace(safeLoginRedirect(nextPath, 'session_expired'));
         }
         return;
@@ -83,7 +85,7 @@ export default function AuthCallbackPage() {
         if (!session?.access_token || !session.user?.id) {
           markAuthUnauthenticated('auth-callback', 'session_missing');
           if (!cancelled) {
-            setMessage('No active session was created.');
+            setMessage('Sign-in did not finish. Please try again.');
             router.replace(safeLoginRedirect(nextPath, 'session_expired'));
           }
           return;
@@ -94,10 +96,14 @@ export default function AuthCallbackPage() {
         debugAuthCallback('success', {
           hasSession: true,
           hasUser: Boolean(session.user?.id),
-          nextPath,
+          nextPath: debugPath,
         });
 
         if (!cancelled) {
+          if (isMobileDestination) {
+            router.replace(nextPath);
+            return;
+          }
           setMessage('Checking account access...');
           const isConexDestination = nextPath === '/conex' || nextPath.startsWith('/conex/');
           let accessResponse: Response | null = null;
@@ -140,7 +146,7 @@ export default function AuthCallbackPage() {
         markAuthUnauthenticated('auth-callback', 'exchange_failed');
         debugAuthCallback('failed', {
           hasSession: false,
-          nextPath,
+          nextPath: debugPath,
         });
         if (!cancelled) {
           setMessage('Authentication could not be completed.');
@@ -154,7 +160,7 @@ export default function AuthCallbackPage() {
     return () => {
       cancelled = true;
     };
-  }, [nextPath, router, searchParams]);
+  }, [isMobileDestination, nextPath, router, searchParams]);
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">

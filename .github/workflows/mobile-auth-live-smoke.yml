@@ -1,0 +1,52 @@
+name: Production Mobile Authorization Smoke
+
+on:
+  push:
+    branches: [fix/android-hybrid-auth]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  create-and-cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify deployed device authorization API
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { randomBytes, createHash } from 'node:crypto';
+          import assert from 'node:assert/strict';
+
+          const endpoint = 'https://datacube-au.vercel.app/api/auth/mobile-authorization';
+          const verifier = randomBytes(32).toString('base64url');
+          const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
+
+          async function request(body) {
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+              body: JSON.stringify(body),
+              redirect: 'manual',
+              signal: AbortSignal.timeout(15_000),
+            });
+            let payload = {};
+            try { payload = await response.json(); } catch {}
+            console.log('Mobile authorization API: HTTP ' + response.status + ' / ' + String(payload.code ?? payload.status ?? 'no-json-code'));
+            if (!response.ok || payload.ok !== true) {
+              throw new Error('Mobile authorization API did not accept ' + body.action + ' (HTTP ' + response.status + ', code ' + String(payload.code ?? 'unknown') + ')');
+            }
+            return payload;
+          }
+          const created = await request({ action: 'create', challenge });
+          assert.match(created.requestId, /^[A-Za-z0-9_-]{43}$/);
+          assert.match(created.pairingCode, /^[A-Z2-9]{8}$/);
+          try {
+            const cancelled = await request({ action: 'cancel', requestId: created.requestId, verifier });
+            assert.equal(cancelled.status, 'cancelled');
+          } finally {
+            console.log('Smoke test finished; no Supabase user session was created.');
+          }
+          NODE

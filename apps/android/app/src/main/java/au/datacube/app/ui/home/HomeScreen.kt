@@ -5,6 +5,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.background
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -21,8 +22,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.ui.theme.DataCubeColors
 import au.datacube.app.ui.theme.dataCubeBackdrop
@@ -64,7 +67,7 @@ fun HomeScreen(
     Box(modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().dataCubeBackdrop(),
-        contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 190.dp),
+        contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 230.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         item {
@@ -178,82 +181,97 @@ fun HomeScreen(
         }
     }
 
-    if (recentDocuments.isNotEmpty()) {
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp)
-                .navigationBarsPadding()
-                .imePadding(),
-            shape = RoundedCornerShape(24.dp),
-            color = Color.White,
-            border = BorderStroke(1.dp, DataCubeColors.Divider),
-            shadowElevation = 5.dp
-        ) {
-            Column(Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Searching in", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.width(8.dp))
-                    Box {
-                        OutlinedButton(
-                            onClick = { documentMenuExpanded = true },
-                            shape = RoundedCornerShape(20.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
-                        ) {
-                            Icon(Icons.Outlined.Description, contentDescription = null, tint = DataCubeColors.Blue, modifier = Modifier.size(17.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                selectedDocument?.document?.name ?: "Choose a document",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = DataCubeColors.Navy,
-                                style = MaterialTheme.typography.labelLarge
+
+    // The composer is always reachable; document selection is required before sending.
+    Surface(
+        modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .navigationBarsPadding().imePadding(),
+        shape = RoundedCornerShape(26.dp),
+        color = Color.White,
+        border = BorderStroke(1.5.dp, DataCubeColors.Blue.copy(alpha = .45f)),
+        shadowElevation = 5.dp
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Searching in", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.width(8.dp))
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(
+                        onClick = { if (recentDocuments.isEmpty()) onImportDocument() else documentMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 9.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Icon(Icons.Outlined.Description, null, Modifier.size(18.dp), tint = DataCubeColors.Blue)
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            selectedDocument?.document?.name ?: "Upload a document",
+                            modifier = Modifier.weight(1f),
+                            color = DataCubeColors.Navy,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Icon(Icons.Outlined.ArrowDropDown, "Choose document")
+                    }
+                    DropdownMenu(expanded = documentMenuExpanded, onDismissRequest = { documentMenuExpanded = false }) {
+                        recentDocuments.forEach { entry ->
+                            DropdownMenuItem(
+                                text = { Text(entry.document.name, maxLines = 1) },
+                                onClick = {
+                                    selectedDocumentId = entry.document.id
+                                    documentMenuExpanded = false
+                                },
+                                leadingIcon = { Icon(Icons.Outlined.Description, null) }
                             )
-                            Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Choose document")
                         }
-                        DropdownMenu(expanded = documentMenuExpanded, onDismissRequest = { documentMenuExpanded = false }) {
-                            recentDocuments.forEach { entry ->
-                                DropdownMenuItem(
-                                    text = { Text(entry.document.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    onClick = {
-                                        selectedDocumentId = entry.document.id
-                                        documentMenuExpanded = false
-                                    },
-                                    leadingIcon = { Icon(Icons.Outlined.Description, contentDescription = null) }
-                                )
-                            }
-                        }
+                        DropdownMenuItem(
+                            text = { Text("Upload another document") },
+                            onClick = {
+                                documentMenuExpanded = false
+                                onImportDocument()
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.Add, null) }
+                        )
                     }
                 }
-                OutlinedTextField(
-                    value = quickPrompt,
-                    onValueChange = { quickPrompt = it.take(500) },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Ask anything about your document…") },
-                    shape = RoundedCornerShape(18.dp),
-                    maxLines = 3
-                )
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onImportDocument) {
-                        Icon(Icons.Outlined.Add, contentDescription = "Upload documents", tint = DataCubeColors.Navy)
+            }
+            BasicTextField(
+                value = quickPrompt,
+                onValueChange = { quickPrompt = it.take(500) },
+                enabled = selectedDocument != null,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
+                textStyle = TextStyle(color = DataCubeColors.Navy, fontSize = 16.sp),
+                maxLines = 4,
+                decorationBox = { content ->
+                    Box {
+                        if (quickPrompt.isBlank()) Text(
+                            if (selectedDocument == null) "Upload a document to start asking…" else "Ask anything about your document…",
+                            color = DataCubeColors.TextSecondary
+                        )
+                        content()
                     }
-                    AssistChip(onClick = {}, enabled = false, label = { Text("Local document search") })
-                    Spacer(Modifier.weight(1f))
-                    FilledIconButton(
-                        onClick = {
-                            val target = selectedDocument
-                            val question = quickPrompt.trim()
-                            if (target != null && question.isNotEmpty()) {
-                                onSendPromptToDocument(target.document.id, question)
-                                quickPrompt = ""
-                            }
-                        },
-                        enabled = selectedDocument != null && quickPrompt.isNotBlank()
-                    ) {
-                        Icon(Icons.Outlined.Send, contentDescription = "Ask about selected document")
+                }
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onImportDocument) {
+                    Icon(Icons.Outlined.Add, "Upload documents", tint = DataCubeColors.Navy)
+                }
+                Text("Document AI", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                Spacer(Modifier.weight(1f))
+                FilledIconButton(
+                    enabled = selectedDocument != null && quickPrompt.isNotBlank(),
+                    colors = IconButtonDefaults.filledIconButtonColors(containerColor = DataCubeColors.Blue),
+                    onClick = {
+                        val target = selectedDocument
+                        val question = quickPrompt.trim()
+                        if (target != null && question.isNotEmpty()) {
+                            onSendPromptToDocument(target.document.id, question)
+                            quickPrompt = ""
+                        }
                     }
+                ) {
+                    Icon(Icons.Outlined.Send, "Ask about selected document")
                 }
             }
         }

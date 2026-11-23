@@ -16,7 +16,7 @@ concurrency:
 jobs:
   migration-chain:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       # config.toml references these through env(...). The related services are
       # not used by this schema-only gate, so non-secret CI placeholders are sufficient.
@@ -36,6 +36,18 @@ jobs:
         with:
           version: 2.116.0
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
       - name: Start minimal local Supabase stack
         shell: bash
         run: |
@@ -43,10 +55,8 @@ jobs:
           supabase start \
             --exclude logflare \
             --exclude vector \
-            --exclude kong \
             --exclude mailpit \
             --exclude realtime \
-            --exclude postgrest \
             --exclude imgproxy \
             --exclude edge-runtime \
             --exclude postgres-meta \
@@ -91,6 +101,28 @@ jobs:
 
       - name: Lint migrated public schema
         run: supabase db lint --local --schema public --level error --fail-on error
+
+      - name: Install web dependencies for the mobile auth integration test
+        run: pnpm install --frozen-lockfile
+
+      - name: Test mobile authorization with isolated Supabase Auth and Postgres
+        shell: bash
+        run: |
+          psql -X -v ON_ERROR_STOP=1 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' -f supabase/tests/mobile_device_authorization.sql
+          config=$(supabase status --output json)
+          DATACUBE_TEST_SUPABASE_URL=$(jq -er '.API_URL' <<< "$config")
+          DATACUBE_TEST_SUPABASE_PUBLIC_KEY=$(jq -er '.ANON_KEY // .PUBLISHABLE_KEY' <<< "$config")
+          DATACUBE_TEST_SUPABASE_SERVICE_KEY=$(jq -er '.SERVICE_ROLE_KEY // .SECRET_KEY' <<< "$config")
+          export DATACUBE_TEST_SUPABASE_URL DATACUBE_TEST_SUPABASE_PUBLIC_KEY DATACUBE_TEST_SUPABASE_SERVICE_KEY
+          export DATACUBE_TEST_WEB_URL=http://127.0.0.1:3000
+          export NEXT_PUBLIC_SUPABASE_URL="$DATACUBE_TEST_SUPABASE_URL"
+          export NEXT_PUBLIC_SUPABASE_ANON_KEY="$DATACUBE_TEST_SUPABASE_PUBLIC_KEY"
+          export SUPABASE_SERVICE_ROLE_KEY="$DATACUBE_TEST_SUPABASE_SERVICE_KEY"
+          pnpm exec next dev --webpack --hostname 127.0.0.1 --port 3000 > /tmp/mobile-auth-next.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$web_pid" 2>/dev/null || true' EXIT
+          curl --fail --retry 20 --retry-all-errors --retry-delay 2 --silent --show-error "$DATACUBE_TEST_WEB_URL/.well-known/assetlinks.json" > /dev/null
+          node tests/mobile-device-authorization.integration.mjs
 
       - name: Stop local Supabase resources
         if: always()

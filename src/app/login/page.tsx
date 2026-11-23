@@ -22,7 +22,7 @@ import {
 } from '@/lib/auth/session-cookie';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { sanitizeRedirectTarget } from '@/lib/auth/redirects';
+import { isMobileAuthorizationDestination, sanitizeRedirectTarget } from '@/lib/auth/redirects';
 
 export default function LoginPage() {
   const { signInWithGoogle } = useSmartAuth();
@@ -45,6 +45,7 @@ export default function LoginPage() {
     typeof window === 'undefined' ? null : window.location.origin,
     '/',
   );
+  const isMobileDestination = isMobileAuthorizationDestination(safeRedirectPath);
   const isConexDestination = safeRedirectPath === '/conex' || safeRedirectPath.startsWith('/conex/');
 
   useEffect(() => {
@@ -123,6 +124,12 @@ export default function LoginPage() {
           await signOutAndStop();
           return;
         }
+        if (cancelled) return;
+
+        if (isMobileDestination) {
+          router.replace(safeRedirectPath);
+          return;
+        }
 
         if (isConexDestination || safeRedirectPath === '/') {
           const response = await fetch('/conex/users?mode=access', {
@@ -162,17 +169,19 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, isUserLoading, router, safeRedirectPath, isConexDestination, forceReauth]);
+  }, [user, isUserLoading, router, safeRedirectPath, isMobileDestination, isConexDestination, forceReauth]);
 
   const handleGoogleSignIn = async () => {
-    if (isLoadingGoogle) return;
+    if (isLoadingGoogle || isUserLoading) return;
     setIsLoadingGoogle(true);
     setAuthError(null);
 
     try {
       await signInWithGoogle(safeRedirectPath);
     } catch (error: any) {
-      const message = error?.message || 'Could not start Google sign-in. Please try again.';
+      const message = !isMobileDestination && error?.message
+        ? error.message
+        : 'Could not start Google sign-in. Please try again.';
       setAuthError(message);
       toast({
         variant: 'destructive',
@@ -235,7 +244,7 @@ export default function LoginPage() {
               onClick={handleGoogleSignIn}
               className="h-12 w-full rounded-xl text-sm font-semibold shadow-lg shadow-primary/15"
               variant="outline"
-              disabled={isLoadingGoogle}
+              disabled={isLoadingGoogle || isUserLoading}
             >
               {isLoadingGoogle ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

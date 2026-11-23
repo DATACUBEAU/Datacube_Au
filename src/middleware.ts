@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 import { hasConexAccess } from '@/lib/conex-rbac';
+import { isMobileAuthorizationPage } from '@/lib/auth/redirects';
 import {
   ACCESS_NO_STORE_HEADERS,
   evaluateAccess,
@@ -250,6 +251,11 @@ function isRetiredWebProductPath(pathname: string): boolean {
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  if (isMobileAuthorizationPage(pathname) || pathname === '/login' || pathname === '/auth/callback') {
+    const response = applyProtectedHeaders(NextResponse.next());
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
+  }
   if (isRetiredWebProductPath(pathname)) {
     return applyProtectedHeaders(
       NextResponse.redirect(new URL('/mobile-app-required', req.url)),

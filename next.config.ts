@@ -201,6 +201,9 @@ const matchNextDataRoute = ({ request, url }: { request: Request; url: URL }) =>
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/login',
+    '/auth/callback',
+    '/mobile-auth',
   ];
   return !excludedPrefixes.some((prefix) => {
     return matchedRoute === prefix || matchedRoute.startsWith(`${prefix}/`);
@@ -227,6 +230,9 @@ const matchPrefetchedRscRoute = ({
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/login',
+    '/auth/callback',
+    '/mobile-auth',
   ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
@@ -252,6 +258,9 @@ const matchRscRoute = ({
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/login',
+    '/auth/callback',
+    '/mobile-auth',
   ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);
@@ -277,6 +286,9 @@ const matchNavigationRoute = ({
   const excludedPrefixes = [
     '/conex',
     '/dashboard',
+    '/login',
+    '/auth/callback',
+    '/mobile-auth',
   ];
   return !excludedPrefixes.some((prefix) => {
     return normalizedPath === prefix || normalizedPath.startsWith(`${prefix}/`);

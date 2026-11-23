@@ -3,6 +3,7 @@ package au.datacube.app
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -10,6 +11,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.core.tween
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,16 +24,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
-import androidx.credentials.Credential
-import androidx.credentials.CredentialManager
-import androidx.credentials.GetCredentialRequest
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.core.view.doOnPreDraw
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavDestination.Companion.hierarchy
-import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -39,7 +37,6 @@ import androidx.navigation.compose.rememberNavController
 import au.datacube.app.ui.DataCubeViewModel
 import au.datacube.app.ui.auth.AuthScreen
 import au.datacube.app.ui.auth.AuthViewModel
-import au.datacube.app.ui.chat.ChatScreen
 import au.datacube.app.ui.documents.DocumentsScreen
 import au.datacube.app.ui.documents.CollectionWorkspaceScreen
 import au.datacube.app.ui.documents.DocumentWorkspaceScreen
@@ -47,36 +44,93 @@ import au.datacube.app.data.LocalDocument
 import au.datacube.app.models.ModelBackupManager
 import au.datacube.app.ui.home.HomeScreen
 import au.datacube.app.ui.profile.ProfileScreen
-import au.datacube.app.ui.study.StudyScreen
 import au.datacube.app.ui.theme.DataCubeTheme
 import au.datacube.app.work.LocalJobScheduler
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
     private val authViewModel: AuthViewModel by viewModels()
     private val documentsViewModel: DataCubeViewModel by viewModels()
+    private var mobileSignInRequest: String? = null
+    private var ignoreViewIntentOnResume = false
+    private var workspaceRecoveryStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-
-        // Recover any locally interrupted jobs on startup.
-        lifecycleScope.launch {
-            runCatching { LocalJobScheduler(applicationContext).enqueueRecoverable() }
-        }
+        receiveMobileSignInIntent(intent, "cold")
 
         setContent {
             DataCubeTheme {
-                DataCubeRoot(authViewModel, documentsViewModel) { request ->
-                    CredentialManager.create(this@MainActivity)
-                        .getCredential(this@MainActivity, request).credential
-                }
+                DataCubeRoot(
+                    authViewModel,
+                    { documentsViewModel },
+                    openBrowser = ::openBrowser,
+                    onWorkspaceDrawn = ::recoverWorkspaceJobs
+                )
             }
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        receiveMobileSignInIntent(intent, "warm")
+    }
 
+    override fun onResume() {
+        super.onResume()
+        val request = mobileSignInRequest
+        val ignoreIntent = ignoreViewIntentOnResume
+        mobileSignInRequest = null
+        ignoreViewIntentOnResume = false
+        if (!ignoreIntent) authViewModel.resumeMobileSignIn(request)
+    }
+
+    override fun onPause() {
+        authViewModel.pauseMobileSignIn()
+        super.onPause()
+    }
+
+    private fun receiveMobileSignInIntent(intent: Intent?, launch: String) {
+        if (intent?.action != Intent.ACTION_VIEW) {
+            ignoreViewIntentOnResume = false
+            return
+        }
+        val request = mobileSignInRequestId(intent)
+        if (request == null) {
+            ignoreViewIntentOnResume = mobileSignInRequest == null
+            Log.i(TAG, "mobile_return_ignored launch=$launch")
+            return
+        }
+        mobileSignInRequest = request
+        ignoreViewIntentOnResume = false
+        Log.i(TAG, "mobile_return_received launch=$launch")
+    }
+
+    private fun openBrowser(uri: Uri) {
+        startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+    }
+
+    private fun recoverWorkspaceJobs() {
+        if (workspaceRecoveryStarted) return
+        workspaceRecoveryStarted = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                LocalJobScheduler(applicationContext).enqueueRecoverable()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                Log.w(TAG, "local_job_recovery_failed")
+            }
+        }
+    }
+
+    private companion object {
+        const val TAG = "DataCubeStartup"
+    }
 }
 
 // ── Navigation destinations ───────────────────────────────────────────────────
@@ -87,50 +141,36 @@ private sealed class Screen(val route: String) {
     object Documents : Screen("documents")
     object Collection : Screen("collection/{id}")
     object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
-    object Study : Screen("study")
-    object Chat : Screen("chat")
-    object Profile : Screen("profile")
+    object Settings : Screen("settings")
 }
-
-private data class BottomNavItem(
-    val screen: Screen,
-    val label: String,
-    val icon: androidx.compose.ui.graphics.vector.ImageVector
-)
-
-private val bottomNavItems = listOf(
-    BottomNavItem(Screen.Home, "Home", Icons.Outlined.Home),
-    BottomNavItem(Screen.Documents, "Documents", Icons.Outlined.Folder),
-    BottomNavItem(Screen.Study, "Study", Icons.Outlined.School),
-    BottomNavItem(Screen.Chat, "AU Chat", Icons.Outlined.Chat),
-    BottomNavItem(Screen.Profile, "Profile", Icons.Outlined.Person)
-)
 
 // ── Root composable ───────────────────────────────────────────────────────────
 
 @Composable
 internal fun DataCubeRoot(
     authViewModel: AuthViewModel,
-    documentsViewModel: DataCubeViewModel,
-    getGoogleCredential: suspend (GetCredentialRequest) -> Credential
+    documentsViewModel: () -> DataCubeViewModel,
+    openBrowser: (Uri) -> Unit = {},
+    onWorkspaceDrawn: () -> Unit = {}
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
-    // Loading / session-restore gate
-    if (!authState.sessionRestored) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator()
-        }
-        return
-    }
+    ReportDrawnWhen { authState.sessionRestored && !authState.isLoading }
 
-    // If not authenticated, show auth screen
-    if (authState.user == null) {
-        AuthScreen(viewModel = authViewModel, getGoogleCredential = getGoogleCredential)
+    if (!authState.sessionRestored || authState.user == null) {
+        AuthScreen(
+            viewModel = authViewModel,
+            openBrowser = openBrowser
+        )
         return
     }
 
     key(authState.user?.id) {
-        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel)
+        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel())
+        val view = LocalView.current
+        DisposableEffect(view) {
+            val listener = view.doOnPreDraw { view.post { onWorkspaceDrawn() } }
+            onDispose { listener.removeListener() }
+        }
     }
 }
 
@@ -230,28 +270,7 @@ private fun AuthenticatedWorkspace(
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            if (!isWorkspaceRoute) {
-                val current = navBackStackEntry?.destination
-                NavigationBar {
-                    bottomNavItems.forEach { item ->
-                        NavigationBarItem(
-                            selected = current?.hierarchy?.any { it.route == item.screen.route } == true,
-                            onClick = {
-                                navController.navigate(item.screen.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = { Icon(item.icon, contentDescription = item.label) },
-                            label = { Text(item.label) }
-                        )
-                    }
-                }
-            }
-        }
+        snackbarHost = { SnackbarHost(snackbar) }
     ) { padding ->
         NavHost(
             navController = navController,
@@ -268,13 +287,13 @@ private fun AuthenticatedWorkspace(
                     recentDocuments = documents,
                     onImportDocument = { multiPicker.launch(mimeTypes) },
                     onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
-                    onNavigateToStudy = { navController.navigate(Screen.Study.route) },
-                    onNavigateToChat = { navController.navigate(Screen.Chat.route) },
+                    onNavigateToStudy = { navController.navigate(Screen.Documents.route) },
+                    onNavigateToChat = { navController.navigate(Screen.Documents.route) },
                     onOpenDocument = { id -> navController.navigate("document/$id") },
                     onSendPromptToDocument = { id, prompt ->
                         navController.navigate("document/$id?prompt=" + Uri.encode(prompt) + "&tab=0")
                     },
-                    onNavigateSettings = { navController.navigate(Screen.Profile.route) }
+                    onNavigateSettings = { navController.navigate(Screen.Settings.route) }
                 )
             }
             composable(Screen.Documents.route) {
@@ -283,7 +302,7 @@ private fun AuthenticatedWorkspace(
                     collections = collections,
                     onImport = { multiPicker.launch(mimeTypes) },
                     onNavigateHome = { navController.navigate(Screen.Home.route) },
-                    onNavigateSettings = { navController.navigate(Screen.Profile.route) },
+                    onNavigateSettings = { navController.navigate(Screen.Settings.route) },
                     onCreateCollection = { name, done -> documentsViewModel.createCollection(name, done = done) },
                     onOpenCollection = { id -> navController.navigate("collection/$id") },
                     onDeleteCollection = documentsViewModel::deleteCollection,
@@ -370,23 +389,10 @@ private fun AuthenticatedWorkspace(
                     }
                 }
             }
-            composable(Screen.Study.route) {
-                StudyScreen(
-                    documents = documents,
-                    onOpenDocument = { id, tab -> navController.navigate("document/$id?prompt=&tab=$tab") },
-                    onImport = { multiPicker.launch(mimeTypes) }
-                )
-            }
-            composable(Screen.Chat.route) {
-                ChatScreen(
-                    documents = documents,
-                    onOpenDocument = { id -> navController.navigate("document/$id?prompt=&tab=0") },
-                    onImport = { multiPicker.launch(mimeTypes) }
-                )
-            }
-            composable(Screen.Profile.route) {
+            composable(Screen.Settings.route) {
                 ProfileScreen(
                     user = authState.user,
+                    onBack = { navController.popBackStack() },
                     onSignOut = { authViewModel.signOut() },
                     onBackupModels = {
                         modelBackupLauncher.launch(

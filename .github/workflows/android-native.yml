@@ -6,16 +6,22 @@ on:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
       - "tests/mobile-auth-handoff.unit.test.ts"
+      - "public/.well-known/assetlinks.json"
   push:
     branches: ["**"]
     paths:
       - "apps/android/**"
       - ".github/workflows/android-native.yml"
       - "tests/mobile-auth-handoff.unit.test.ts"
+      - "public/.well-known/assetlinks.json"
   workflow_dispatch:
     inputs:
       personal_test_signer:
         description: Use the persistent personal debug signer
+        type: boolean
+        default: false
+      startup_benchmark:
+        description: Compare startup against the PR 47 Android baseline
         type: boolean
         default: false
 
@@ -23,11 +29,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-native-${{ github.head_ref || github.ref_name }}${{ github.event_name == 'workflow_dispatch' && inputs.personal_test_signer && '-personal-signing' || '' }}
+  group: android-native-${{ github.head_ref || github.ref_name }}${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) && '-personal-signing' || github.event_name == 'workflow_dispatch' && inputs.startup_benchmark && '-startup' || '' }}
   cancel-in-progress: true
 
 jobs:
   build:
+    if: github.event_name != 'workflow_dispatch' || !inputs.startup_benchmark || inputs.personal_test_signer
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -51,7 +58,7 @@ jobs:
           gradle-version: wrapper
 
       - name: Restore personal debug signer
-        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         shell: bash
         env:
           PERSONAL_KEYSTORE: ${{ secrets.ANDROID_PERSONAL_DEBUG_KEYSTORE_BASE64 }}
@@ -79,8 +86,6 @@ jobs:
           SUPABASE_URL: https://dhmukdeljiwvvwjdcxgn.supabase.co
           SUPABASE_ANON_KEY: sb_publishable_6N4nuBJIaXzOVYYUXSzomA_R8TB1vc_
           AUTH_WEBSITE_URL: https://datacube-au.vercel.app
-          # Built-in public project audience is used when no override is configured.
-          GOOGLE_WEB_CLIENT_ID: ${{ vars.GOOGLE_WEB_CLIENT_ID || secrets.GOOGLE_WEB_CLIENT_ID }}
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "::error::Android build needs Supabase project URL and publishable key."
@@ -91,9 +96,6 @@ jobs:
           echo "SUPABASE_ANON_KEY=$SUPABASE_ANON_KEY" >> local.properties
           if [ -n "$AUTH_WEBSITE_URL" ]; then
             echo "AUTH_WEBSITE_URL=$AUTH_WEBSITE_URL" >> local.properties
-          fi
-          if [ -n "$GOOGLE_WEB_CLIENT_ID" ]; then
-            echo "GOOGLE_WEB_CLIENT_ID=$GOOGLE_WEB_CLIENT_ID" >> local.properties
           fi
 
       - name: Run unit tests
@@ -113,7 +115,7 @@ jobs:
 
       # Never label a temporary CI-signed APK as a personal Google OAuth test build.
       - name: Verify personal APK certificate and package
-        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         run: |
           apk=app/build/outputs/apk/debug/app-debug.apk
           signer=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)
@@ -129,7 +131,16 @@ jobs:
             echo "::error::The APK package does not match the personal Google OAuth configuration."
             exit 1
           fi
-          printf 'Verified Android OAuth identity: au.datacube.app / %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+          apk_sha256=$(sed -nE '/^[[:space:]]*Source Stamp/!s/^.*certificate SHA-256 digest:[[:space:]]*([[:xdigit:]:]+)[[:space:]]*$/\1/p' <<< "$certificates" |
+            tr '[:lower:]' '[:upper:]' | tr -d ':' | sort -u)
+          jq -e --arg signer "$apk_sha256" '
+            any(.[];
+              (.relation | index("delegate_permission/common.handle_all_urls")) != null and
+              .target.namespace == "android_app" and .target.package_name == "au.datacube.app" and
+              any(.target.sha256_cert_fingerprints[]; gsub(":"; "") == $signer)
+            )' ../../public/.well-known/assetlinks.json > /dev/null
+          printf 'Verified Android package identity: au.datacube.app / %s\n' "$actual" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Verified App Links APK certificate SHA-256: %s\n' "$apk_sha256" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Run lint
         run: bash ./gradlew :app:lintDebug --no-daemon
@@ -142,7 +153,7 @@ jobs:
       # Ordinary PR and push artifacts have transient CI signatures. They are not
       # guaranteed to be accepted by a Google Cloud Android OAuth client.
       - name: Upload CI debug APK (temporary signer)
-        if: github.event_name != 'workflow_dispatch' || !inputs.personal_test_signer
+        if: ${{ !((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         uses: actions/upload-artifact@v4
         with:
           name: datacube-au-android-ci-debug-unregistered-signer
@@ -150,12 +161,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # Only a manually requested, certificate-checked APK gets this artifact name.
-      - name: Upload personal Google sign-in test APK
-        if: github.event_name == 'workflow_dispatch' && inputs.personal_test_signer
+      # A certificate-checked APK can be requested manually or by a tightly scoped release commit.
+      - name: Upload personally signed browser authentication APK
+        if: ${{ ((github.event_name == 'workflow_dispatch' && inputs.personal_test_signer) || (github.event_name == 'push' && github.repository == 'DATACUBEAU/Datacube_Au' && github.ref == 'refs/heads/fix/android-hybrid-auth' && startsWith(github.event.head_commit.message, 'release-android-personal-signed-browser-only-apk'))) }}
         uses: actions/upload-artifact@v4
         with:
-          name: datacube-au-android-personal-google-test-signed
+          name: datacube-au-android-browser-auth-personal-signed
           path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
@@ -201,7 +212,7 @@ jobs:
           script: >-
             mkdir -p app/build/diagnostics && adb logcat -c &&
             { test_status=0; bash ./gradlew :app:connectedDebugAndroidTest --no-daemon || test_status=$?;
-            for screen in launcher login home; do adb pull "/data/local/tmp/datacube-$screen.png" app/build/diagnostics/ || test_status=1; done;
+            for screen in launcher login home; do adb pull "/data/local/tmp/datacube-$screen.png" app/build/diagnostics/ >/dev/null 2>&1 || echo "Optional emulator screenshot unavailable: $screen"; done;
             adb logcat -b crash -d -v threadtime > app/build/diagnostics/emulator-crash.log || true;
             adb devices -l > app/build/diagnostics/adb-devices.txt || true;
             echo "connectedDebugAndroidTest_exit_code=$test_status" > app/build/diagnostics/test-exit-code.txt;
@@ -217,5 +228,87 @@ jobs:
             apps/android/app/build/diagnostics/**
             apps/android/app/build/reports/androidTests/connected/**
             apps/android/app/build/outputs/androidTest-results/connected/**
+          if-no-files-found: ignore
+          retention-days: 7
+
+  startup-benchmark:
+    if: github.event_name == 'workflow_dispatch' && inputs.startup_benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/android
+    env:
+      STARTUP_BASELINE: 1ef561115b09409ab65d4d69e814488f0ff5435c
+      SUPABASE_URL: https://startup-fixture.invalid
+      SUPABASE_ANON_KEY: startup-fixture-public
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: wrapper
+
+      - name: Build baseline and candidate with isolated auth settings
+        shell: bash
+        run: |
+          baseline="$RUNNER_TEMP/startup-baseline"
+          mkdir -p "$baseline"
+          git -C "$GITHUB_WORKSPACE" archive "$STARTUP_BASELINE" apps/android | tar -xf - -C "$baseline"
+          fixture=app/src/androidTest/java/au/datacube/app/auth/StartupSessionFixture.kt
+          cp "$fixture" "$baseline/apps/android/$fixture"
+          (cd "$baseline/apps/android" && bash ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon)
+          bash ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :startupProbe:assembleDebug --no-daemon
+
+      - name: Enable KVM for startup measurements
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          test -w /dev/kvm
+
+      - name: Compare Android startup on one emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          working-directory: apps/android
+          profile: pixel_2
+          emulator-boot-timeout: 1200
+          disable-animations: true
+          script: >-
+            python3 startupProbe/compare.py
+            --baseline-apk "$RUNNER_TEMP/startup-baseline/apps/android/app/build/outputs/apk/debug/app-debug.apk"
+            --baseline-test-apk "$RUNNER_TEMP/startup-baseline/apps/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
+            --final-apk app/build/outputs/apk/debug/app-debug.apk
+            --final-test-apk app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            --probe-apk startupProbe/build/outputs/apk/debug/startupProbe-debug.apk
+            --output "$RUNNER_TEMP/datacube-startup-report"
+
+      - name: Record startup results
+        if: always()
+        run: |
+          report="$RUNNER_TEMP/datacube-startup-report/startup.md"
+          if [[ -f "$report" ]]; then
+            printf 'Baseline `%s` and candidate `%s`\n\n' "$STARTUP_BASELINE" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+            cat "$report" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload startup measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: datacube-au-android-startup-measurements
+          path: ${{ runner.temp }}/datacube-startup-report/
           if-no-files-found: ignore
           retention-days: 7

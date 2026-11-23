@@ -1,7 +1,7 @@
 package au.datacube.app
 
 import android.app.Application
-import androidx.credentials.CredentialManager
+import androidx.work.Configuration
 import au.datacube.app.auth.AuthRepository
 import au.datacube.app.auth.AuthSessionStore
 import au.datacube.app.data.DataCubeDatabase
@@ -14,23 +14,17 @@ import au.datacube.app.data.DataCubeDatabase
  * named companion/object fields to keep the architecture maintainable for
  * a single developer.
  */
-class DataCubeApp : Application() {
+class DataCubeApp : Application(), Configuration.Provider {
+    val authSessionStore by lazy { AuthSessionStore(this) }
+    val authRepository by lazy { AuthRepository(authSessionStore) }
+    val database by lazy { DataCubeDatabase.get(this) }
 
-    lateinit var authSessionStore: AuthSessionStore
-        private set
-
-    lateinit var authRepository: AuthRepository
-        private set
-
-    lateinit var database: DataCubeDatabase
-        private set
+    override val workManagerConfiguration: Configuration
+        get() = Configuration.Builder().build()
 
     override fun onCreate() {
         super.onCreate()
         instance = this
-        authSessionStore = AuthSessionStore(this)
-        authRepository = AuthRepository(authSessionStore, CredentialManager.create(this))
-        database = DataCubeDatabase.get(this)
     }
 
     companion object {

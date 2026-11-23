@@ -1,5 +1,6 @@
 package au.datacube.app.ui.auth
 
+import android.net.Uri
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -29,11 +30,14 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,6 +50,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -53,8 +59,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.credentials.Credential
-import androidx.credentials.GetCredentialRequest
 import au.datacube.app.R
 import au.datacube.app.ui.WireframeCube
 import au.datacube.app.ui.rememberAmbientMotionEnabled
@@ -67,9 +71,10 @@ private val AuthBlue = Color(0xFF318BFF)
 @Composable
 fun AuthScreen(
     viewModel: AuthViewModel,
-    getGoogleCredential: suspend (GetCredentialRequest) -> Credential
+    openBrowser: (Uri) -> Unit
 ) {
     val state by viewModel.state.collectAsState()
+    val clipboardManager = LocalClipboardManager.current
     val motionEnabled = rememberAmbientMotionEnabled()
     val motionPhase = if (motionEnabled) {
         val transition = rememberInfiniteTransition(label = "DataCube AU ambient motion")
@@ -118,16 +123,54 @@ fun AuthScreen(
             )
             Spacer(Modifier.height(19.dp))
             Text(
-                "Welcome back.",
+                "Yo, welcome.",
                 color = Color.White,
                 fontWeight = FontWeight.Bold,
                 style = MaterialTheme.typography.headlineLarge,
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(38.dp))
+            val pairingCode = state.pairingCode
+            var codeCopied by remember(pairingCode) { mutableStateOf(false) }
+            val canContinue = state.sessionRestored && !state.isLoading
+            if (pairingCode != null) {
+                Text(
+                    "Copy this code, paste it on the DataCube AU website, then return here.",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyMedium,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    pairingCode,
+                    color = Color(0xFF92E0FF),
+                    letterSpacing = 4.sp,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineSmall,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
+                )
+                Spacer(Modifier.height(4.dp))
+                TextButton(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(pairingCode))
+                        codeCopied = true
+                    },
+                    enabled = canContinue
+                ) {
+                    Text(
+                        if (codeCopied) "Copied!" else "Copy code",
+                        color = Color(0xFFBCE8FF),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+            }
             Button(
-                onClick = { viewModel.signInWithGoogle(getGoogleCredential) },
-                enabled = !state.isLoading,
+                onClick = {
+                    if (pairingCode == null) viewModel.startMobileSignIn(openBrowser)
+                    else viewModel.openPendingSignIn(openBrowser)
+                },
+                enabled = canContinue,
                 interactionSource = buttonInteraction,
                 modifier = Modifier.fillMaxWidth().height(56.dp).graphicsLayer {
                     val scale = buttonScale.value
@@ -144,7 +187,15 @@ fun AuthScreen(
                     CircularProgressIndicator(Modifier.size(19.dp), color = Color.White, strokeWidth = 2.dp)
                     Spacer(Modifier.size(10.dp))
                 }
-                Text("Continue with Google", fontWeight = FontWeight.SemiBold)
+                Text(if (pairingCode == null) "Continue with Google" else "Open browser", fontWeight = FontWeight.SemiBold)
+            }
+            if (pairingCode != null) {
+                TextButton(onClick = { viewModel.resumeMobileSignIn() }, enabled = canContinue) {
+                    Text("Check sign-in", color = Color(0xFF92E0FF))
+                }
+                TextButton(onClick = viewModel::cancelMobileSignIn, enabled = canContinue) {
+                    Text("Cancel", color = Color(0xFFB8C9DE))
+                }
             }
             state.error?.let { message ->
                 Spacer(Modifier.height(18.dp))

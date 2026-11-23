@@ -6,6 +6,7 @@ import { Session } from '@supabase/supabase-js';
 import { normalizeUsableSupabaseSession } from '@/lib/auth/browser-session';
 import { clearClientAuthStorageArtifacts, clearUserScopedClientCaches, readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
+import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 import { clearServerAuthSessionCookie, hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   AUTH_STATE_CHANGED_EVENT,
@@ -314,23 +315,19 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const signInWithGoogle = useCallback(async (redirectPath?: string) => {
     authStateRef.current = 'loading';
     setAuthState('loading');
-    const safePath =
-      typeof redirectPath === 'string' &&
-      redirectPath.startsWith('/') &&
-      !redirectPath.startsWith('//')
-        ? redirectPath
-        : '/';
+    const safePath = sanitizeLocalRedirectPath(redirectPath, '/');
     const redirectTo =
       typeof window !== 'undefined'
         ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(safePath)}`
         : undefined;
 
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: redirectTo ? { redirectTo } : undefined,
-    });
-
-    if (error) {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: redirectTo ? { redirectTo } : undefined,
+      });
+      if (error) throw error;
+    } catch (error) {
       const nextState = session ? 'authenticated' : 'unauthenticated';
       authStateRef.current = nextState;
       setAuthState(nextState);
