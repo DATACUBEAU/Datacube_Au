@@ -370,7 +370,6 @@ fun PredictionWorkspace(documentName: String, textPreview: String?, previewLoadi
                 }
                 Spacer(Modifier.height(14.dp))
                 Button(onClick = { generated = true }, Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
-                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null); Spacer(Modifier.width(8.dp))
                     Text(if (generated) "Refresh Study Plan" else "Generate Study Plan")
                 }
             }

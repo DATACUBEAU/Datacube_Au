@@ -16,8 +16,6 @@ import androidx.compose.ui.unit.dp
 import au.datacube.app.ui.WireframeCube
 import au.datacube.app.ui.rememberAmbientMotionEnabled
 import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 // The web productivity scene uses two blue glows and particles at different depths.
 // Project the cube and the particle layers into a single, clipped drawing surface.
@@ -37,17 +35,10 @@ internal fun StudyScene(modifier: Modifier) {
         val glow = Brush.radialGradient(listOf(Color(0xAD197AE5), Color.Transparent), center, glowRadius)
         val radius = minOf(size.width * .115f, size.height * .20f)
         val cube = WireframeCube()
-        val sparkle = Color(0xFFB9E5FF)
         onDrawBehind {
             drawRect(background)
             drawCircle(glow, glowRadius, center)
             val rotation = angle?.value ?: .64f
-            repeat(22) { i ->
-                val depth = (i % 4 + 1) * .24f
-                val x = ((i * 73 + 9) % 101) / 101f * size.width + sin(rotation + i) * 7.dp.toPx() * depth
-                val y = ((i * 37 + 4) % 97) / 97f * size.height + cos(rotation + i) * 5.dp.toPx() * depth
-                drawCircle(sparkle.copy(alpha = .12f + .34f * depth), (.5f + depth).dp.toPx(), Offset(x, y))
-            }
             cube.draw(this, center, radius, rotation)
         }
     })
