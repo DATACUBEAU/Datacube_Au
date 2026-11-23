@@ -40,12 +40,13 @@ fun VoiceNoteInputButton(
     val recorder = remember(context, ownerId) { LocalVoiceNoteRecorder(context, ownerId) }
     var recording by remember(ownerId) { mutableStateOf(false) }
     var seconds by remember(ownerId) { mutableIntStateOf(0) }
-    var preview by remember(ownerId) { mutableStateOf<RecordedVoiceNote?>(null) }
+    val pendingVoice = remember(ownerId) { mutableStateOf<RecordedVoiceNote?>(null) }
+    var preview by pendingVoice
+    var finishing by remember(ownerId) { mutableStateOf(false) }
     var error by remember(ownerId) { mutableStateOf<String?>(null) }
-    val pendingOnDispose by rememberUpdatedState(preview)
 
     fun start() {
-        if (!enabled || recording || preview != null) return
+        if (!enabled || recording || finishing || preview != null) return
         try {
             recorder.start(scope)
             seconds = 0
@@ -57,8 +58,9 @@ fun VoiceNoteInputButton(
     }
 
     fun stop() {
-        if (!recording) return
+        if (!recording || finishing) return
         recording = false
+        finishing = true
         scope.launch {
             try {
                 val note = recorder.finish()
@@ -67,6 +69,8 @@ fun VoiceNoteInputButton(
             } catch (_: Exception) {
                 error = "Voice recording could not be saved."
                 recorder.cancel()
+            } finally {
+                finishing = false
             }
         }
     }
@@ -90,7 +94,7 @@ fun VoiceNoteInputButton(
     DisposableEffect(ownerId) {
         onDispose {
             recorder.cancel()
-            pendingOnDispose?.file?.delete()
+            pendingVoice.value?.file?.delete()
         }
     }
 
@@ -143,7 +147,7 @@ fun VoiceNoteInputButton(
 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
         IconButton(
-            enabled = enabled,
+            enabled = enabled && !finishing,
             modifier = Modifier.size(48.dp),
             onClick = {
                 if (recording) stop()
@@ -177,9 +181,13 @@ internal fun playPrivateVoiceNote(path: String) {
     val player = MediaPlayer()
     try {
         player.setDataSource(path)
+        player.setOnPreparedListener { it.start() }
         player.setOnCompletionListener { it.release() }
-        player.prepare()
-        player.start()
+        player.setOnErrorListener { mediaPlayer, _, _ ->
+            mediaPlayer.release()
+            true
+        }
+        player.prepareAsync()
     } catch (_: Exception) {
         player.release()
     }
@@ -201,8 +209,10 @@ fun VoiceNotePlayback(audioPath: String, label: String) {
         enabled = valid,
         onClick = { if (valid) playPrivateVoiceNote(audioPath) }
     ) {
-        Icon(Icons.Outlined.PlayArrow, contentDescription = null)
+        Icon(Icons.Outlined.PlayArrow, contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimaryContainer)
         Spacer(Modifier.width(7.dp))
-        Text(if (valid) label else "Voice note unavailable")
+        Text(if (valid) label else "Voice note unavailable",
+            color = MaterialTheme.colorScheme.onPrimaryContainer)
     }
 }
