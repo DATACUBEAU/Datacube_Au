@@ -51,6 +51,7 @@ import kotlinx.coroutines.Job
 import au.datacube.app.data.rag.GroundedRagPlanner
 import au.datacube.app.data.rag.RagEvidence
 import au.datacube.app.data.rag.RagTurn
+import au.datacube.app.data.rag.StudyContentQuality
 import android.os.SystemClock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -117,7 +118,8 @@ private fun documentTopics(raw: String?): List<String> {
             val words = line.split(Regex("\\s+"))
             line.length in 4..72 && words.size in 1..7 &&
                 !line.endsWith('.') && !line.endsWith(';') &&
-                !line.startsWith("Page ", ignoreCase = true)
+                !line.startsWith("Page ", ignoreCase = true) &&
+                StudyContentQuality.usefulHeading(line)
         }
         .distinctBy { it.lowercase() }.take(5).toList()
 
@@ -126,6 +128,7 @@ private fun documentTopics(raw: String?): List<String> {
         .map { it.value.trim('’', '\'', '-') }
         .filterNot { it in ignoredTerms }
         .groupingBy { it }.eachCount().entries
+        .filter { it.value >= 3 }
         .sortedByDescending { it.value }
         .map { it.key.replaceFirstChar { char -> char.titlecase(Locale.getDefault()) } }
         .filterNot { candidate -> headings.any { it.equals(candidate, ignoreCase = true) } }
@@ -134,7 +137,9 @@ private fun documentTopics(raw: String?): List<String> {
 }
 
 private fun documentSummary(raw: String?): String =
-    sourceSnippets(raw).take(4).joinToString(" ") { it.text }.take(1_200)
+    StudyContentQuality.extractiveSummary(
+        sourceSnippets(raw).map { RagEvidence(it.text, it.page) }
+    )
 
 private fun suggestedStudyQuestions(raw: String?, count: Int = 5): List<StudyQuestion> {
     val snippets = sourceSnippets(raw)
@@ -245,6 +250,7 @@ fun DocumentChatWorkspace(
     var activeRequest by remember(documentId) { mutableStateOf<Job?>(null) }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
     var expandedSteps by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var expandedSources by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
     var explainingTerm by remember(documentId) { mutableStateOf(false) }
@@ -473,9 +479,7 @@ fun DocumentChatWorkspace(
                                         }
                                     }
                                 )
-                                Spacer(Modifier.height(10.dp))
-                                Text("Source passages", style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(8.dp))
                             }
                             if (message.generating) {
                                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -491,6 +495,21 @@ fun DocumentChatWorkspace(
                                 Text("No supported source passage found. Try asking about a specific section.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
+                                val turnIndex = messages.indexOf(message)
+                                TextButton(onClick = {
+                                    expandedSources = if (turnIndex in expandedSources) expandedSources - turnIndex
+                                    else expandedSources + turnIndex
+                                }) {
+                                    Icon(Icons.Outlined.MenuBook, null, Modifier.size(17.dp))
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Sources (${message.matches.size})")
+                                    Icon(
+                                        if (turnIndex in expandedSources) Icons.Outlined.ExpandLess
+                                        else Icons.Outlined.ExpandMore,
+                                        contentDescription = null
+                                    )
+                                }
+                                if (turnIndex in expandedSources) {
                                 message.matches.forEachIndexed { index, snippet ->
                                     val phrase = message.question.split(Regex("[^\\p{L}\\p{N}]+"))
                                         .filter { it.length >= 4 }.distinct().take(8)
@@ -525,6 +544,7 @@ fun DocumentChatWorkspace(
                                             color = MaterialTheme.colorScheme.outlineVariant)
                                     }
                                 }
+                                }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 TextButton(onClick = {
@@ -548,7 +568,7 @@ fun DocumentChatWorkspace(
                                 }) {
                                     Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
                                     Spacer(Modifier.width(5.dp))
-                                    Text("Search activity")
+                                    Text("How AU found this")
                                 }
                             }
                             if (messages.indexOf(message) in expandedSteps) {
@@ -609,7 +629,9 @@ fun DocumentChatWorkspace(
                                     var usedSemantic = false
                                     if (plan.overview) {
                                         searchingStage = "Collecting source excerpts"
-                                        matches = sourceSnippets(textPreview).take(4)
+                                        matches = StudyContentQuality.chooseOverview(
+                                            sourceSnippets(textPreview).map { RagEvidence(it.text, it.page) }
+                                        ).map { SourceSnippet(it.text, it.page) }
                                         events += "Selected source passages for an overview"
                                     } else {
                                         searchingStage = "Searching document text"
@@ -768,7 +790,7 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
                     Text("Study notes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Text("Extracted from $documentName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
-                    Text("Key takeaway", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                    Text("Key ideas from the document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     Text(summary.ifBlank { "No readable passages were extracted." }, color = MaterialTheme.colorScheme.onSurface)
                 }
                 topics.forEachIndexed { index, topic ->
