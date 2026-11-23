@@ -1,5 +1,6 @@
 package au.datacube.app
 
+import au.datacube.app.ui.common.DataCubeDialog
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -247,7 +248,7 @@ private fun AuthenticatedWorkspace(
     if (selectedRestoreUri != null && selectedRestorePreview != null) {
         val archiveUri = requireNotNull(selectedRestoreUri)
         val preview = requireNotNull(selectedRestorePreview)
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = {
                 selectedRestoreUri = null
                 selectedRestorePreview = null
@@ -314,7 +315,7 @@ private fun AuthenticatedWorkspace(
         val capability = remember(setupStep) {
             if (setupStep == 1) DeviceCapabilityScanner.scan(context) else null
         }
-        AlertDialog(
+        DataCubeDialog(
             onDismissRequest = {
                 setupPrefs.edit().putBoolean(userSetupKey, true).apply()
                 setupStep = -1
