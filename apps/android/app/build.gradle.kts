@@ -56,6 +56,12 @@ android {
      versionCode = 3
      versionName = "1.0.2"
      testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+     // Direct-download test build: ship only ARM64 native libraries instead of
+     // bundling ARM32/x86/x64 runtimes into one universal APK. Does not affect
+     // ordinary CI/emulator builds or the Play Store App Bundle.
+     if (providers.gradleProperty("datacubeArm64Only").orNull == "true") {
+         ndk { abiFilters += "arm64-v8a" }
+     }
      buildConfigField("String", "SUPABASE_URL", buildConfigLiteral(supabaseUrl))
      buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigLiteral(supabaseAnonKey))
      buildConfigField("String", "AUTH_WEBSITE_URL", buildConfigLiteral(authWebsiteUrl))
