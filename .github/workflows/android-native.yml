@@ -263,10 +263,11 @@ jobs:
           gradle-version: wrapper
 
       - name: Build baseline and candidate with isolated auth settings
+        shell: bash
         run: |
           baseline="$RUNNER_TEMP/startup-baseline"
           mkdir -p "$baseline"
-          git archive "$STARTUP_BASELINE" apps/android | tar -xf - -C "$baseline"
+          git -C "$GITHUB_WORKSPACE" archive "$STARTUP_BASELINE" apps/android | tar -xf - -C "$baseline"
           fixture=app/src/androidTest/java/au/datacube/app/auth/StartupSessionFixture.kt
           cp "$fixture" "$baseline/apps/android/$fixture"
           (cd "$baseline/apps/android" && bash ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon)
