@@ -119,19 +119,19 @@ fun HomeScreen(
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Active Documents", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                Text("Active Documents", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 Spacer(Modifier.weight(1f))
                 TextButton(onClick = onNavigateToDocuments) { Text("View All  →") }
             }
         }
         if (recentDocuments.isEmpty()) {
             item {
-                Surface(shape = RoundedCornerShape(20.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Column(Modifier.fillMaxWidth().padding(22.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Outlined.FolderOpen, null, tint = DataCubeColors.Blue, modifier = Modifier.size(42.dp))
                         Spacer(Modifier.height(8.dp))
-                        Text("No documents yet", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
-                        Text("Upload a file to start exploring your documents.", color = DataCubeColors.TextSecondary)
+                        Text("No documents yet", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                        Text("Upload a file to start exploring your documents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(12.dp))
                         Button(onClick = onImportDocument) { Icon(Icons.Outlined.Add, null); Text(" Upload Documents") }
                     }
@@ -142,29 +142,29 @@ fun HomeScreen(
                 val doc = entry.document
                 val ext = doc.extension.lowercase()
                 val tint = DataCubeColors.Blue
-                Surface(onClick = { onOpenDocument(doc.id) }, shape = RoundedCornerShape(17.dp), color = Color.White, shadowElevation = 2.dp, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+                Surface(onClick = { onOpenDocument(doc.id) }, shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.surface, shadowElevation = 2.dp, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                     Row(Modifier.fillMaxWidth().padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
                         Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).background(tint.copy(alpha = .12f)), contentAlignment = Alignment.Center) {
                             Text(ext.uppercase().take(3), color = tint, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(doc.name, fontWeight = FontWeight.SemiBold, color = DataCubeColors.Navy, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("${ext.uppercase()}  ·  ${doc.sizeBytes / 1024} KB", style = MaterialTheme.typography.bodySmall, color = DataCubeColors.TextSecondary)
+                            Text(doc.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${ext.uppercase()}  ·  ${doc.sizeBytes / 1024} KB", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
-                        Icon(Icons.Outlined.ChevronRight, null, tint = DataCubeColors.TextSecondary)
+                        Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
         }
         item {
-            Surface(shape = RoundedCornerShape(20.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface, border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column(Modifier.fillMaxWidth().padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Your study workspace", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
+                        Text("Your study workspace", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                     }
                     Spacer(Modifier.height(6.dp))
-                    Text("Keep your documents organized and open AU Chat whenever you are ready to explore them.", color = DataCubeColors.TextSecondary)
+                    Text("Keep your documents organized and open AU Chat whenever you are ready to explore them.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(onClick = onNavigateToDocuments, modifier = Modifier.fillMaxWidth()) { Text("Open Documents") }
                 }
@@ -188,13 +188,13 @@ fun HomeScreen(
             .padding(horizontal = 14.dp, vertical = 8.dp)
             .navigationBarsPadding().imePadding(),
         shape = RoundedCornerShape(26.dp),
-        color = Color.White,
+        color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.5.dp, DataCubeColors.Blue.copy(alpha = .45f)),
         shadowElevation = 5.dp
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Searching in", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                Text("Searching in", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                 Spacer(Modifier.width(8.dp))
                 Box(Modifier.weight(1f)) {
                     OutlinedButton(
@@ -208,7 +208,7 @@ fun HomeScreen(
                         Text(
                             selectedDocument?.document?.name ?: "Upload a document",
                             modifier = Modifier.weight(1f),
-                            color = DataCubeColors.Navy,
+                            color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -241,13 +241,13 @@ fun HomeScreen(
                 onValueChange = { quickPrompt = it.take(500) },
                 enabled = selectedDocument != null,
                 modifier = Modifier.fillMaxWidth().heightIn(min = 64.dp),
-                textStyle = TextStyle(color = DataCubeColors.Navy, fontSize = 16.sp),
+                textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 16.sp),
                 maxLines = 4,
                 decorationBox = { content ->
                     Box {
                         if (quickPrompt.isBlank()) Text(
                             if (selectedDocument == null) "Upload a document to start asking…" else "Ask anything about your document…",
-                            color = DataCubeColors.TextSecondary
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         content()
                     }
@@ -257,7 +257,7 @@ fun HomeScreen(
                 IconButton(onClick = onImportDocument) {
                     Icon(Icons.Outlined.Add, "Upload documents", tint = DataCubeColors.Navy)
                 }
-                Text("Document AU", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                Text("Document AU", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.weight(1f))
                 FilledIconButton(
                     enabled = selectedDocument != null && quickPrompt.isNotBlank(),
