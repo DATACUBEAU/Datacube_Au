@@ -20,6 +20,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.zIndex
+import au.datacube.app.ui.common.WorkspaceTopBar
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -67,18 +69,9 @@ fun HomeScreen(
     Box(modifier.fillMaxSize()) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().dataCubeBackdrop(),
-        contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 230.dp),
+        contentPadding = PaddingValues(start = 20.dp, top = 104.dp, end = 20.dp, bottom = 230.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
-                    SegmentedButton(selected = true, onClick = {}, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("AU") }
-                    SegmentedButton(selected = false, onClick = onNavigateToDocuments, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Document") }
-                }
-                IconButton(onClick = onNavigateSettings) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
-            }
-        }
         item {
             Surface(
                 shape = RoundedCornerShape(26.dp),
@@ -168,8 +161,6 @@ fun HomeScreen(
             Surface(shape = RoundedCornerShape(20.dp), color = Color.White, border = BorderStroke(1.dp, DataCubeColors.Divider)) {
                 Column(Modifier.fillMaxWidth().padding(18.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.AutoAwesome, null, tint = DataCubeColors.Blue)
-                        Spacer(Modifier.width(8.dp))
                         Text("Your study workspace", fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
                     }
                     Spacer(Modifier.height(6.dp))
@@ -181,6 +172,15 @@ fun HomeScreen(
         }
     }
 
+
+    WorkspaceTopBar(
+        documentSelected = false,
+        onHome = {},
+        onDocuments = onNavigateToDocuments,
+        onSettings = onNavigateSettings,
+        modifier = Modifier.align(Alignment.TopCenter).zIndex(2f)
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+    )
 
     // The composer is always reachable; document selection is required before sending.
     Surface(
@@ -257,7 +257,7 @@ fun HomeScreen(
                 IconButton(onClick = onImportDocument) {
                     Icon(Icons.Outlined.Add, "Upload documents", tint = DataCubeColors.Navy)
                 }
-                Text("Document AI", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                Text("Document AU", color = DataCubeColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
                 Spacer(Modifier.weight(1f))
                 FilledIconButton(
                     enabled = selectedDocument != null && quickPrompt.isNotBlank(),
