@@ -138,6 +138,38 @@ object NeuralNarration {
             }
         }
 
+    /**
+     * Sequential alternating neural voices. Uses the single verified Kokoro
+     * model and its cached synthesizer; no second model or network service.
+     *
+     * The caller owns cancellation, and each turn completes playback before
+     * the next speaker begins.
+     */
+    suspend fun speakDialogue(
+        context: Context,
+        turns: List<PodcastTurn>,
+        speed: Float,
+        onSpeaker: suspend (Int) -> Unit,
+        onStage: suspend (String) -> Unit = {}
+    ) {
+        require(turns.size in 4..PodcastDialogue.MAX_TURNS) {
+            "Prepare a valid two-speaker script first."
+        }
+        require(installed(context)) { "Install Kokoro to hear both speakers." }
+        for ((index, turn) in turns.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            onSpeaker(index)
+            onStage("Speaker ${index + 1} of ${turns.size}")
+            speak(
+                context = context,
+                text = turn.text,
+                voice = PodcastDialogue.voiceFor(turn.speaker),
+                speed = speed,
+                onStage = onStage
+            )
+        }
+    }
+
     /** Stop is immediate and never waits for the inference mutex. */
     fun stop() {
         runCatching { synth?.cancel() }
