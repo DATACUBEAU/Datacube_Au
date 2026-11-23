@@ -39,6 +39,10 @@ class LocalSemanticSearch(private val context: Context) {
         work.enqueueUniqueWork(workName(documentId), ExistingWorkPolicy.KEEP, request)
     }
 
+    fun cancelIndex(documentId: String) {
+        work.cancelUniqueWork(workName(documentId))
+    }
+
     fun observeIndex(documentId: String): Flow<List<WorkInfo>> =
         work.getWorkInfosForUniqueWorkFlow(workName(documentId))
 
