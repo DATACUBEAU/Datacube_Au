@@ -1,25 +1,21 @@
 package au.datacube.app.ui.profile
 
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.res.painterResource
-import au.datacube.app.R
+import androidx.compose.foundation.Image
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import au.datacube.app.R
+import au.datacube.app.ui.theme.ThemePreference
 import io.github.jan.supabase.auth.user.UserInfo
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -30,24 +26,47 @@ fun ProfileScreen(
     onSignOut: () -> Unit,
     onBackupModels: () -> Unit,
     onRestoreModels: () -> Unit,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    themePreference: ThemePreference = ThemePreference.SYSTEM,
+    onThemeChange: (ThemePreference) -> Unit = {},
+    onOpenModels: () -> Unit = {},
+    onOpenSubscription: () -> Unit = {},
+    onEnableNotifications: () -> Unit = {}
 ) {
     val email = user?.email ?: "—"
-    val displayName = email.substringBefore('@')
     var showProfile by remember { mutableStateOf(false) }
+    var showBackups by remember { mutableStateOf(false) }
 
     if (showProfile) {
         AlertDialog(
             onDismissRequest = { showProfile = false },
-            title = { Text("Profile", fontWeight = FontWeight.Bold) },
+            title = { Text("Profile") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(email.substringBefore('@'), fontWeight = FontWeight.SemiBold)
                     Text(email, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (user != null) Text("Signed in", color = MaterialTheme.colorScheme.primary)
                 }
             },
             confirmButton = { TextButton(onClick = { showProfile = false }) { Text("Close") } }
+        )
+    }
+
+    if (showBackups) {
+        AlertDialog(
+            onDismissRequest = { showBackups = false },
+            title = { Text("Model backups") },
+            text = { Text("Keep a copy of your downloaded models.") },
+            confirmButton = {
+                Column {
+                    Button(onClick = { showBackups = false; onBackupModels() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Export backup")
+                    }
+                    OutlinedButton(onClick = { showBackups = false; onRestoreModels() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Restore backup")
+                    }
+                }
+            },
+            dismissButton = { TextButton(onClick = { showBackups = false }) { Text("Close") } }
         )
     }
 
@@ -67,150 +86,84 @@ fun ProfileScreen(
                     }
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
-                    }
+                    IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") }
                 }
             )
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── Account settings ──
+            item { SettingsSection("Appearance") }
             item {
-                Text("Account", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
-            }
-            item {
-                ProfileRow(icon = Icons.Outlined.Person, label = "Profile", onClick = { showProfile = true })
-            }
-
-            // ── Subscription ──
-            item {
-                Text("Subscription", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
-            }
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.Star, null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Manage subscription", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "View plan, usage and billing on the DataCube AU website.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                        }
-                        Icon(Icons.Outlined.OpenInNew, null, modifier = Modifier.size(18.dp))
-                    }
-                }
-            }
-
-            // ── Usage ──
-            item {
-                Text("Usage", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp))
-            }
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(2.dp)
-                ) {
-                    Column(Modifier.padding(20.dp)) {
-                        Text("Cloud AI usage", fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "Cloud AI usage is tracked server-side and subject to your subscription plan. Local processing is unlimited.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedButton(onClick = {}, modifier = Modifier.fillMaxWidth()) {
-                            Text("View usage details")
+                    Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Display mode", fontWeight = FontWeight.SemiBold)
+                        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                            SegmentedButton(
+                                selected = themePreference == ThemePreference.SYSTEM,
+                                onClick = { onThemeChange(ThemePreference.SYSTEM) },
+                                shape = SegmentedButtonDefaults.itemShape(0, 3)
+                            ) { Icon(Icons.Outlined.BrightnessAuto, "System", Modifier.size(18.dp)) }
+                            SegmentedButton(
+                                selected = themePreference == ThemePreference.LIGHT,
+                                onClick = { onThemeChange(ThemePreference.LIGHT) },
+                                shape = SegmentedButtonDefaults.itemShape(1, 3)
+                            ) { Icon(Icons.Outlined.LightMode, "Day", Modifier.size(18.dp)) }
+                            SegmentedButton(
+                                selected = themePreference == ThemePreference.DARK,
+                                onClick = { onThemeChange(ThemePreference.DARK) },
+                                shape = SegmentedButtonDefaults.itemShape(2, 3)
+                            ) { Icon(Icons.Outlined.DarkMode, "Night", Modifier.size(18.dp)) }
                         }
                     }
                 }
             }
-
-            // ── Model backup and restore ──
+            item { SettingsSection("Membership") }
             item {
-                Text(
-                    "Local AI models",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                SettingsEntry(
+                    Icons.Outlined.CreditCard, "Manage subscription", "Plan and billing", onOpenSubscription
                 )
             }
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    elevation = CardDefaults.cardElevation(2.dp)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text("Model backups", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Export installed models into one portable ZIP file. Choose Documents, an SD card, USB storage or a connected cloud drive in the Android file picker. The backup is stored outside DataCube AU and can be restored after reinstalling the app.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "Restore checks file sizes and SHA-256 hashes. Existing model folders are never overwritten.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = onBackupModels,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Export model backup")
-                        }
-                        OutlinedButton(
-                            onClick = onRestoreModels,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text("Restore from backup")
-                        }
-                    }
-                }
+                SettingsEntry(
+                    Icons.Outlined.QueryStats, "Cloud AU usage", "Check your cloud AU usage", onOpenSubscription
+                )
             }
-
-            // ── Sign out ──
+            item { SettingsSection("On-device") }
             item {
-                Spacer(Modifier.height(8.dp))
-                Button(
+                SettingsEntry(Icons.Outlined.Memory, "Models", "Download or import models", onOpenModels)
+            }
+            item {
+                SettingsEntry(Icons.Outlined.Backup, "Backups", "Export or restore models", { showBackups = true })
+            }
+            item {
+                SettingsEntry(Icons.Outlined.NotificationsNone, "Notifications", "Enable task updates", onEnableNotifications)
+            }
+            item { SettingsSection("Account") }
+            item { SettingsEntry(Icons.Outlined.PersonOutline, "Profile", email, { showProfile = true }) }
+            item {
+                OutlinedButton(
                     onClick = onSignOut,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        contentColor = MaterialTheme.colorScheme.onErrorContainer
-                    )
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Outlined.Logout, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Sign out", fontWeight = FontWeight.SemiBold)
+                    Text("Sign out")
                 }
             }
-
             item {
                 Text(
-                    "DataCube AU • ${au.datacube.app.BuildConfig.VERSION_NAME}",
+                    "DataCube AU • " + au.datacube.app.BuildConfig.VERSION_NAME,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 4.dp)
+                    modifier = Modifier.padding(4.dp)
                 )
             }
         }
@@ -218,19 +171,39 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun ProfileRow(
+private fun SettingsSection(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+    )
+}
+
+@Composable
+private fun SettingsEntry(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
+    title: String,
+    subtitle: String,
     onClick: () -> Unit
 ) {
-    Surface(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        ListItem(
-            leadingContent = {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            },
-            headlineContent = { Text(label) },
-            trailingContent = { Icon(Icons.Outlined.ChevronRight, null) }
-        )
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Icon(Icons.Outlined.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
-    HorizontalDivider()
 }
