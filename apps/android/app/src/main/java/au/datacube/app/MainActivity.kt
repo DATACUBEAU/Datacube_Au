@@ -569,10 +569,6 @@ private fun AuthenticatedWorkspace(
                     onOpenModels = { navController.navigate(Screen.Models.route) },
                     onOpenVault = { navController.navigate(Screen.ModelVault.route) },
                     onOpenSubscription = {
-                        val url = BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/dashboard/settings/subscription"
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    },
-                    onOpenUsage = {
                         val url = BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/dashboard/settings/usage"
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     },
