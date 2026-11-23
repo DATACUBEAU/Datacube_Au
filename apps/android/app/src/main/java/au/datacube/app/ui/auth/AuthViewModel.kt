@@ -103,9 +103,10 @@ class AuthViewModel internal constructor(
                 when (status) {
                     is SessionStatus.Authenticated -> _state.value = _state.value.copy(user = status.session.user)
                     is SessionStatus.NotAuthenticated -> _state.value = _state.value.copy(user = null)
+                    // A temporary network refresh error does not revoke an already restored
+                    // encrypted session. NotAuthenticated remains the real sign-out signal.
                     is SessionStatus.RefreshFailure -> _state.value = _state.value.copy(
-                        user = null,
-                        error = "Your session couldn’t be refreshed. Check your connection and sign in again."
+                        error = "Couldn't refresh your session. Offline features are still available."
                     )
                     SessionStatus.Initializing -> Unit
                 }
