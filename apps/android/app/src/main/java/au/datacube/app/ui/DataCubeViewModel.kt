@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import au.datacube.app.DataCubeApp
 import au.datacube.app.notifications.LocalNotificationService
+import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.data.ExtractedTextStore
@@ -232,6 +233,7 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
         }
 
     fun delete(id: String) {
+        DocumentChatSessions.forgetDocument(id)
         viewModelScope.launch {
             val jobs = database.jobs().findForDocument(id)
             jobs.forEach { job ->
