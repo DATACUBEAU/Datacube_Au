@@ -69,6 +69,11 @@ object PodcastSourceSampler {
                 }
             }
         }
-        return selected.take(8)
+        if (selected.size <= 8) return selected
+        // Keep early, middle AND final chapters instead of truncating the
+        // later samples from a long book.
+        return (0 until 8).map { index ->
+            selected[index * (selected.size - 1) / 7]
+        }
     }
 }
