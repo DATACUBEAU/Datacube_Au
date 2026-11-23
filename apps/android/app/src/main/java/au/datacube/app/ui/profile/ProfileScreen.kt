@@ -31,6 +31,7 @@ fun ProfileScreen(
     onThemeChange: (ThemePreference) -> Unit = {},
     onOpenModels: () -> Unit = {},
     onOpenSubscription: () -> Unit = {},
+    onOpenUsage: () -> Unit = {},
     onEnableNotifications: () -> Unit = {}
 ) {
     val email = user?.email ?: "—"
@@ -133,7 +134,7 @@ fun ProfileScreen(
             }
             item {
                 SettingsEntry(
-                    Icons.Outlined.QueryStats, "Cloud AU usage", "Check your cloud AU usage", onOpenSubscription
+                    Icons.Outlined.QueryStats, "Cloud AU usage", "Check your cloud AU usage", onOpenUsage
                 )
             }
             item { SettingsSection("On-device") }
