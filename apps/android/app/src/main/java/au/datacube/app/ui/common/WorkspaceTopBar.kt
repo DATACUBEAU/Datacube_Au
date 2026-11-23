@@ -46,7 +46,7 @@ fun WorkspaceTopBar(
             Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                 NavPill("AU", Icons.Outlined.AutoAwesome, !documentSelected && !discsSelected,
                     onHome, Modifier.weight(1f))
-                NavPill("Discs", Icons.Outlined.Forum, discsSelected,
+                NavPill("Gist", Icons.Outlined.Forum, discsSelected,
                     onDiscs, Modifier.weight(1.13f))
                 NavPill("Docs", Icons.Outlined.Description, documentSelected,
                     onDocuments, Modifier.weight(1.05f))

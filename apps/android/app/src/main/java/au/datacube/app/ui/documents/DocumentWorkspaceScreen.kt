@@ -206,6 +206,7 @@ fun DocumentWorkspaceScreen(
                 extractionProgress = extractionProgress,
                 extractionError = extractionError,
                 showHistoryPicker = chatHistoryOpen,
+                onOpenHistory = { chatHistoryOpen = true },
                 onDismissHistory = { chatHistoryOpen = false }
             )
             1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading)

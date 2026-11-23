@@ -64,7 +64,7 @@ class AppResponsiveUiTest {
                         recentDocuments = emptyList(),
                         onImportDocument = {},
                         onNavigateToDocuments = {},
-                        onNavigateToStudy = {},
+                        onNavigateToGist = {},
                         onNavigateToChat = {},
                         onOpenDocument = {},
                         onNavigateSettings = {}
@@ -75,6 +75,7 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("DataCube AU").assertIsDisplayed()
         composeRule.onNodeWithText("Active Documents").assertIsDisplayed()
         composeRule.onNodeWithText("No documents yet").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Gist").onFirst().assertIsDisplayed()
         composeRule.onNodeWithText("Upload a document to start asking…").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Upload documents").assertIsDisplayed()
     }
@@ -237,6 +238,8 @@ class AppResponsiveUiTest {
         // The workspace header precedes the second copy inside the chat panel.
         composeRule.onAllNodesWithText("Study notes.pdf").onFirst().assertIsDisplayed()
         composeRule.onNodeWithText("AU Chat").assertIsDisplayed()
+        composeRule.onNodeWithText("History").assertIsDisplayed()
+        composeRule.onNodeWithText("New").assertIsDisplayed()
         composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
     }
 

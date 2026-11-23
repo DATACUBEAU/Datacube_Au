@@ -134,6 +134,7 @@ object LocalGenerativeEngine {
         context: Context,
         groundedPrompt: String,
         allowGeneral: Boolean = false,
+        generalOnly: Boolean = false,
         onText: suspend (String) -> Unit
     ) = withContext(dispatcher) {
         require(groundedPrompt.isNotBlank() && groundedPrompt.length <= 18_000) {
@@ -169,7 +170,14 @@ object LocalGenerativeEngine {
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
-                        if (allowGeneral) {
+                        if (generalOnly) {
+                            "You are AU, the DataCube AU on-device conversational assistant. " +
+                                "Have a natural conversation using your general trained knowledge. " +
+                                "Handle minor typos and short follow-ups using chat context; if a prompt " +
+                                "has multiple reasonable meanings, ask a brief clarifying question. " +
+                                "You have no live internet or document access in this mode. " +
+                                "Do not invent user documents, citations or current facts."
+                        } else if (allowGeneral) {
                             "You are DataCube AU, a concise on-device study assistant. " +
                                 "Answer the user conversationally. If document excerpts are provided, " +
                                 "base document claims only on those excerpts and cite them [1], [2]. " +

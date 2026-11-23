@@ -243,6 +243,7 @@ fun DocumentChatWorkspace(
     documentName: String, initialPrompt: String? = null, textPreview: String?, previewLoading: Boolean, previewError: String?,
     extractionStatus: String?, extractionProgress: Double?, extractionError: String?,
     showHistoryPicker: Boolean = false,
+    onOpenHistory: () -> Unit = {},
     onDismissHistory: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -363,8 +364,26 @@ fun DocumentChatWorkspace(
                                 val events = session.activitySteps
                                 try {
                                     session.searchingStage = "Understanding your question"
-                                    val plan = DocumentQueryInterpreter.understand(cleanPrompt, textPreview.orEmpty())
-                                    if (plan.correctedTerms.isNotEmpty()) events += "Resolved wording against document terms"
+                                    val priorQuestion = messages.dropLast(1)
+                                        .lastOrNull { it.isUser }?.question
+                                    val plan = DocumentQueryInterpreter.understand(
+                                        cleanPrompt, textPreview.orEmpty(), priorQuestion
+                                    )
+                                    if (plan.clarification != null) {
+                                        events += "Asked for clarification before retrieving document text"
+                                        messages.add(ChatMessage(
+                                            cleanPrompt, emptyList(), false,
+                                            answer = plan.clarification,
+                                            steps = events.toList()
+                                        ))
+                                        return@launch
+                                    }
+                                    if (plan.correctedTerms.isNotEmpty()) {
+                                        events += "Resolved wording against document terms"
+                                    }
+                                    if (plan.contextualQuestion != null) {
+                                        events += "Used conversation context to interpret the question"
+                                    }
                                     val matches: List<SourceSnippet>
                                     var usedSemantic = false
                                     if (plan.overview) {
@@ -439,7 +458,7 @@ fun DocumentChatWorkspace(
                                             .takeLast(3)
                                             .map { RagTurn(it.question, it.answer) }
                                         val grounded = GroundedRagPlanner.build(
-                                            cleanPrompt, previous,
+                                            plan.contextualQuestion ?: cleanPrompt, previous,
                                             matches.map { RagEvidence(it.text, it.page) }
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
@@ -607,8 +626,19 @@ fun DocumentChatWorkspace(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall)
             } ?: Spacer(Modifier.weight(1f))
-            IconButton(onClick = ::startNewChat, enabled = threadIndex != null) {
-                Icon(Icons.Outlined.AddCircleOutline, contentDescription = "Start new chat")
+            TextButton(
+                onClick = onOpenHistory,
+                contentPadding = PaddingValues(horizontal = 6.dp)
+            ) {
+                Icon(Icons.Outlined.History, "Document chat history", Modifier.size(19.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("History")
+            }
+            TextButton(onClick = ::startNewChat, enabled = threadIndex != null,
+                contentPadding = PaddingValues(horizontal = 6.dp)) {
+                Icon(Icons.Outlined.Add, "Start new document chat", Modifier.size(19.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("New")
             }
         }
         if (textPreview.isNullOrBlank()) {
@@ -700,8 +730,8 @@ fun DocumentChatWorkspace(
                                     style = MaterialTheme.typography.bodySmall)
                                 Spacer(Modifier.height(8.dp))
                             }
-                            if (message.matches.isEmpty()) {
-                                Text("No supported source passage found. Try asking about a specific section.",
+                            if (message.matches.isEmpty() && message.answer.isBlank()) {
+                                Text("No supported source passage found. Try another term or ask about a specific section.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             } else {
                                 val turnIndex = messages.indexOf(message)
