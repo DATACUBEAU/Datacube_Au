@@ -1,10 +1,13 @@
 package au.datacube.app.ui.voice
 
+import android.Manifest
 import android.content.Context
+import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.SystemClock
+import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -59,7 +62,8 @@ internal object WavePcm {
  * The owner ID is a document ID or authenticated Discs owner.
  */
 class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
-    private val root = File(context.applicationContext.filesDir, "voice-notes/$ownerId")
+    private val appContext = context.applicationContext
+    private val root = File(appContext.filesDir, "voice-notes/$ownerId")
     private var track: AudioRecord? = null
     private var recordingJob: Job? = null
     private var partial: File? = null
@@ -70,6 +74,10 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
 
     fun start(scope: CoroutineScope) {
         check(track == null && recordingJob == null) { "Recording is already active." }
+        check(ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED) {
+            "Microphone permission is required to record a voice note."
+        }
         check(root.mkdirs() || root.isDirectory) { "Cannot create private voice-note storage." }
         val capacity = maxOf(
             AudioRecord.getMinBufferSize(
@@ -79,13 +87,17 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
             ), 4_096
         )
         check(capacity in 4096..256_000) { "Device cannot capture the required audio format." }
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            WavePcm.SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            capacity
-        )
+        val recorder = try {
+            AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                WavePcm.SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                capacity
+            )
+        } catch (denied: SecurityException) {
+            error("Microphone access was revoked. Check app permissions and try again.")
+        }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release()
             error("Microphone initialization failed.")
