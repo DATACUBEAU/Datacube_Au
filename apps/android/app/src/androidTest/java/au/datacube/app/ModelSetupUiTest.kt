@@ -4,6 +4,8 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.performClick
 import au.datacube.app.models.ModelSpec
 import au.datacube.app.ui.models.ModelsScreen
@@ -49,7 +51,7 @@ class ModelSetupUiTest {
             }
         }
         composeRule.onNodeWithText("EmbeddingGemma 300M").assertIsDisplayed()
-        composeRule.onNodeWithText("Import").performClick()
+        composeRule.onAllNodesWithText("Import").onFirst().performClick()
         assertNotNull(selected)
         assertEquals("embeddinggemma-300m", selected?.id)
     }
