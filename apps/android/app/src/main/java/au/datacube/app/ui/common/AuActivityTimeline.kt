@@ -1,0 +1,158 @@
+package au.datacube.app.ui.common
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.FactCheck
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material3.*
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+
+/**
+ * Categorizes observed retrieval events, never model-private reasoning.
+ * These labels must not be presented as unobserved agent actions.
+ */
+internal enum class AuActivityKind { SEARCH, EVIDENCE, ANSWER, OTHER }
+
+internal fun classifyAuActivity(event: String): AuActivityKind = when {
+    listOf("search", "index", "rank", "bm25", "vector", "semantic", "retriev")
+        .any { event.contains(it, ignoreCase = true) } -> AuActivityKind.SEARCH
+    listOf("source", "passage", "excerpt", "evidence", "filter", "ground")
+        .any { event.contains(it, ignoreCase = true) } -> AuActivityKind.EVIDENCE
+    listOf("generat", "answer", "respond")
+        .any { event.contains(it, ignoreCase = true) } -> AuActivityKind.ANSWER
+    else -> AuActivityKind.OTHER
+}
+
+@Composable
+fun AuActivityTimeline(
+    steps: List<String>,
+    modifier: Modifier = Modifier
+) {
+    if (steps.isEmpty()) return
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.42f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Outlined.FactCheck,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(19.dp)
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    "AU activity",
+                    color = MaterialTheme.colorScheme.onSurface,
+                    style = MaterialTheme.typography.titleSmall
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    steps.size.toString() + " completed",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            steps.take(16).forEach { step ->
+                val kind = classifyAuActivity(step)
+                val (label, icon) = when (kind) {
+                    AuActivityKind.SEARCH -> "Retrieval" to Icons.Outlined.Search
+                    AuActivityKind.EVIDENCE -> "Evidence" to Icons.Outlined.FactCheck
+                    AuActivityKind.ANSWER -> "Response" to Icons.Outlined.AutoAwesome
+                    AuActivityKind.OTHER -> "Preparation" to Icons.Outlined.CheckCircle
+                }
+                val accent = when (kind) {
+                    AuActivityKind.SEARCH -> MaterialTheme.colorScheme.primary
+                    AuActivityKind.EVIDENCE -> MaterialTheme.colorScheme.tertiary
+                    AuActivityKind.ANSWER -> MaterialTheme.colorScheme.primary
+                    AuActivityKind.OTHER -> MaterialTheme.colorScheme.secondary
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        color = accent.copy(alpha = 0.12f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(
+                            icon,
+                            contentDescription = null,
+                            tint = accent,
+                            modifier = Modifier.padding(8.dp).size(17.dp)
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(label, style = MaterialTheme.typography.labelMedium, color = accent)
+                        Text(
+                            step,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        Icons.Outlined.CheckCircle,
+                        contentDescription = "Completed",
+                        tint = Color(0xFF239A75),
+                        modifier = Modifier.size(17.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AuWorkingStatus(
+    stage: String,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.50f)
+    ) {
+        Row(
+            Modifier.padding(start = 15.dp, top = 7.dp, bottom = 7.dp, end = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(17.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "AU is working",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                if (stage.isNotBlank()) {
+                    Text(
+                        stage,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            TextButton(onClick = onStop) { Text("Stop") }
+        }
+    }
+}
