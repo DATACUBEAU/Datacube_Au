@@ -49,9 +49,9 @@ class ModelSetupUiTest {
                 )
             }
         }
-        composeRule.onNodeWithText("EmbeddingGemma 300M").assertIsDisplayed()
+        composeRule.onNodeWithText("EmbeddingGemma 2 · 270M").assertIsDisplayed()
         composeRule.onAllNodesWithText("Import files").onFirst().performClick()
         assertNotNull(selected)
-        assertEquals("embeddinggemma-300m", selected?.id)
+        assertEquals("embeddinggemma-2-270m", selected?.id)
     }
 }
