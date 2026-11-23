@@ -13,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
+import au.datacube.app.ui.common.WorkspaceTopBar
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -107,20 +109,12 @@ fun DocumentsScreen(
         )
     }
 
+    Box(modifier.fillMaxSize()) {
     LazyColumn(
-        modifier = modifier.fillMaxSize().dataCubeBackdrop(),
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 18.dp),
+        modifier = Modifier.fillMaxSize().dataCubeBackdrop(),
+        contentPadding = PaddingValues(start = 18.dp, top = 104.dp, end = 18.dp, bottom = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
-                    SegmentedButton(selected = false, onClick = onNavigateHome, shape = SegmentedButtonDefaults.itemShape(0, 2)) { Text("AU") }
-                    SegmentedButton(selected = true, onClick = {}, shape = SegmentedButtonDefaults.itemShape(1, 2)) { Text("Document") }
-                }
-                IconButton(onClick = onNavigateSettings) { Icon(Icons.Outlined.Settings, "Settings", tint = DataCubeColors.Navy) }
-            }
-        }
         item {
             Column {
                 Text("Documents", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold, color = DataCubeColors.Navy)
@@ -222,5 +216,14 @@ fun DocumentsScreen(
                 }
             }
         }
+    }
+    WorkspaceTopBar(
+        documentSelected = true,
+        onHome = onNavigateHome,
+        onDocuments = {},
+        onSettings = onNavigateSettings,
+        modifier = Modifier.align(Alignment.TopCenter).zIndex(2f)
+            .padding(horizontal = 18.dp, vertical = 10.dp)
+    )
     }
 }
