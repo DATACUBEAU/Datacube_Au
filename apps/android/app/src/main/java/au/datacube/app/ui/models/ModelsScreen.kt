@@ -155,7 +155,7 @@ private fun ModelCard(
                 Text("Paused. Partial download retained.", style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = {
-                        downloader.start(model.id, wifiOnly = true)
+                        downloader.resume(model.id)
                         revision += 1
                     }, modifier = Modifier.weight(1f)) { Text("Resume") }
                     OutlinedButton(
