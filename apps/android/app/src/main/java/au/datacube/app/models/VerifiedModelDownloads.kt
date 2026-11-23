@@ -40,7 +40,26 @@ object VerifiedModelDownloads {
         license = "Apache-2.0"
     )
 
-    /** Gemma / EmbeddingGemma are gated. Offer their publisher pages, not a bypass. */
+    /**
+     * Public Apache-2.0 EmbeddingGemma 2 text model, official LiteRT community export.
+     * Pinned upstream commit and SHA-256 from Hugging Face LFS pointer (2026-11-23).
+     */
+    private val embeddingGemma2 = VerifiedModelArtifact(
+        modelId = "embeddinggemma-2-270m",
+        fileName = "embeddinggemma-2-text-270m.litertlm",
+        url = "https://huggingface.co/litert-community/embeddinggemma-2-text-270m-litert-lm/resolve/9be6e8b90982095dc05c2bd162e4b954ee4dbac7/embeddinggemma-2-text-270m.litertlm",
+        sha256 = "2d079ee2f6f066b1f368e8d7c819f55214eaef1d0513b312321901f30ab286fb",
+        maximumBytes = 220L * 1024 * 1024,
+        displaySize = "About 165 MB",
+        license = "Apache-2.0"
+    )
+
+    /** Earlier EmbeddingGemma v1 and Gemma 4 weights need publisher terms. */
+
     fun find(modelId: String): VerifiedModelArtifact? =
-        if (modelId == qwen3Small.modelId) qwen3Small else null
+        when (modelId) {
+            qwen3Small.modelId -> qwen3Small
+            embeddingGemma2.modelId -> embeddingGemma2
+            else -> null
+        }
 }
