@@ -27,20 +27,20 @@ object DocumentQueryInterpreter {
     )
 
     fun understand(query: String, documentText: String): DocumentQueryPlan {
-        val tokens = tokens(query)
-        if (tokens.isEmpty()) return DocumentQueryPlan("", false, emptyMap())
-        val overview = (tokens.any { it in overviewTerms || near(it, "document") } &&
-            tokens.any { it in overviewActions }) ||
-            (tokens.contains("summarize") && tokens.size <= 8) ||
-            (tokens.contains("overview") && tokens.size <= 8) ||
-            (tokens.contains("summary") && tokens.size <= 8)
+        val queryTokens = tokens(query)
+        if (queryTokens.isEmpty()) return DocumentQueryPlan("", false, emptyMap())
+        val overview = (queryTokens.any { it in overviewTerms || near(it, "document") } &&
+            queryTokens.any { it in overviewActions }) ||
+            (queryTokens.contains("summarize") && queryTokens.size <= 8) ||
+            (queryTokens.contains("overview") && queryTokens.size <= 8) ||
+            (queryTokens.contains("summary") && queryTokens.size <= 8)
         if (overview) return DocumentQueryPlan(query.trim(), true, emptyMap())
         val frequency = tokens(documentText.take(64_000))
             .filter { it.length >= 4 && it !in ignore }
             .groupingBy { it }.eachCount()
         val vocabulary = frequency.keys.take(2400)
         val corrected = mutableMapOf<String, String>()
-        tokens.filter { it.length >= 4 && it !in ignore && it !in frequency }
+        queryTokens.filter { it.length >= 4 && it !in ignore && it !in frequency }
             .distinct().forEach { term ->
                 val limit = if (term.length >= 8) 2 else 1
                 val nearMatches = vocabulary
@@ -53,7 +53,7 @@ object DocumentQueryInterpreter {
                 val best = nearMatches.filter { it.second == closestDistance }
                 if (best.size == 1) corrected[term] = best.single().first
             }
-        val resolved = tokens.joinToString(" ") { corrected[it] ?: it }
+        val resolved = queryTokens.joinToString(" ") { corrected[it] ?: it }
         return DocumentQueryPlan(resolved, false, corrected)
     }
 
