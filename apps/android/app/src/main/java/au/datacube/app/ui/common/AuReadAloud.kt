@@ -152,6 +152,7 @@ internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String
             if (speech.active == id) Text(speech.stage, style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (speech.active == id) AuElapsedFeedback(speech.stage)
         if (speech.errorId == id) {
             Text(speech.error.orEmpty(), color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall)
