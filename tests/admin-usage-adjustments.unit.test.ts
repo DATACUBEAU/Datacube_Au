@@ -191,12 +191,10 @@ async function main() {
     assert.doesNotMatch(route, /scope:\s*'default'/);
   });
 
-  await run('simple admin UI clearly separates user-only usage resets from plan-wide cap edits', () => {
+  await run('legacy usage editor cannot modify plan caps or user usage', () => {
     const page = readFileSync('src/app/conex/usage/page.tsx', 'utf8');
-    assert.match(page, /A cap change is plan-wide\. A usage reset above affects only the selected user\./);
-    assert.match(page, /Hard reset usage/);
-    assert.match(page, /Increase or decrease this number to change the allowance for the whole plan\./);
-    assert.match(page, /Advanced plan limits/);
+    assert.match(page, /redirect\('\/conex'\)/);
+    assert.doesNotMatch(page, /Hard reset usage|authedFetch/);
   });
 
   if (failed > 0) process.exit(1);

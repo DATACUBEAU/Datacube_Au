@@ -68,18 +68,18 @@ const TOUR_STEPS: Record<string, Step> = {
   },
   '/conex': {
     title: 'Conex Console',
-    content: 'This admin area is for operational oversight: users, plans, feature flags, provider configuration, activity, and system health.',
-    actions: ['Review system health', 'Check provider configuration', 'Open user management'],
+    content: 'This admin area is for user support, existing billing records, feedback and on-demand health checks.',
+    actions: ['Open user management', 'Review existing billing', 'Check system health'],
   },
   '/conex/users': {
     title: 'User Management',
-    content: 'Review user access, plan assignment, and account status without exposing private credentials or session values.',
-    actions: ['Search for a user', 'Review plan status', 'Apply only necessary changes'],
+    content: 'Review account status and optional device compatibility information without exposing private credentials or session values.',
+    actions: ['Search for a user', 'Review recorded account tier', 'Check device compatibility'],
   },
   '/conex/plan-limits': {
-    title: 'Plan Limits',
-    content: 'Tune feature limits and plan behavior for the product. Changes here affect what users can do across AI and document workflows.',
-    actions: ['Review the active plan', 'Compare limit values', 'Save only intentional updates'],
+    title: 'Retired plan controls',
+    content: 'Legacy plan and quota editing is retired for the local-first launch.',
+    actions: ['Return to Conex'],
   },
   '/pricing': {
     title: 'Plans and Pricing',
@@ -185,7 +185,8 @@ function shouldSuppressOnboardingForPath(pathname: string | null): boolean {
     normalized.startsWith('/login') ||
     normalized.startsWith('/signup') ||
     normalized.startsWith('/auth/callback') ||
-    normalized.startsWith('/session-expired')
+    normalized.startsWith('/session-expired') ||
+    normalized === '/' || ['/features', '/about', '/policy', '/pricing', '/download', '/mobile-auth', '/mobile-app-required', '/conex'].some(prefix => normalized === prefix || normalized.startsWith(prefix + '/'))
   );
 }
 

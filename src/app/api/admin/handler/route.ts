@@ -235,6 +235,11 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    // Only essential health diagnostics are exposed during the local-first launch.
+    if (!new Set<string>(['verify_system']).has(action)) {
+      return NextResponse.json({ error: 'LEGACY_ADMIN_CONTROL_RETIRED', requestId },
+        { status: 410, headers: { 'Cache-Control': 'no-store, private' } });
+    }
     switch (action) {
       case 'get_conex_config':
         return await handleGetConexConfig(supabase, requestId);
@@ -686,10 +691,12 @@ async function handleVerifySystem(supabase: any, requestId: string) {
   const { error: profilesErr } = await supabase.from('au_user_profiles').select('user_id').limit(1);
   checks.au_user_profiles = { ok: !profilesErr, error: profilesErr?.message, latencyMs: Date.now() - t1 };
 
-  // Check au_plan_limit_rules
+  // Verify the existing device-support and admin-session configuration tables.
   const t2 = Date.now();
-  const { error: limitsErr } = await supabase.from('au_plan_limit_rules').select('id').limit(1);
-  checks.au_plan_limit_rules = { ok: !limitsErr, error: limitsErr?.message, latencyMs: Date.now() - t2 };
+  const { error: activityErr } = await supabase.from('au_user_activity').select('user_id').limit(1);
+  checks.au_user_activity = { ok: !activityErr, latencyMs: Date.now() - t2 };
+  const { data: adminConfig, error: adminErr } = await supabase.from('au_admin_config').select('key').eq('key', 'admin_access_key').maybeSingle();
+  checks.au_admin_config = { ok: !adminErr && Boolean(adminConfig) };
 
   // Check billing_subscriptions
   const t3 = Date.now();

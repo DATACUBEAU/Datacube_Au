@@ -120,7 +120,7 @@ run('core dashboard and Conex layouts avoid fixed mobile two-column overflow', (
 
   assert.match(dashboardLayout, /overflow-x-hidden/);
   assert.match(dashboardLayout, /min-w-0 flex-1/);
-  assert.match(conex, /grid grid-cols-1 gap-4 sm:grid-cols-2/);
+  assert.match(conex, /grid w-full grid-cols-2 sm:grid-cols-4/);
   assert.match(conex, /className="min-w-0"/);
-  assert.match(conex, /flex flex-wrap items-center gap-2/);
+  assert.match(conex, /flex flex-wrap items-center justify-between gap-3/);
 });

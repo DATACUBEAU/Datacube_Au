@@ -4,6 +4,35 @@ export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
 export const USER_ROLES = ['admin', 'free', 'weekly', 'monthly', 'pro', 'user'] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
+export type DeviceSupportReport = {
+  installation_id: string;
+  manufacturer: string;
+  model: string;
+  android_version: string;
+  sdk: number;
+  app_version: string;
+  app_version_code: number;
+  reported_at: string;
+};
+
+/** User-supplied diagnostic information, never an authorization or identity signal. */
+export function parseDeviceSupportReport(raw: unknown): DeviceSupportReport | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const data = raw as Record<string, unknown>;
+  const bounded = (key: string, max: number) => typeof data[key] === 'string' ? String(data[key]).trim().slice(0, max) : '';
+  const installation = bounded('installation_id', 36);
+  const reported = bounded('reported_at', 40);
+  const sdk = data.sdk;
+  const version = data.app_version_code;
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(installation) ||
+      typeof sdk !== 'number' || !Number.isSafeInteger(sdk) || sdk < 26 || sdk > 100 ||
+      typeof version !== 'number' || !Number.isSafeInteger(version) || version < 1 ||
+      !Number.isFinite(Date.parse(reported))) return null;
+  return { installation_id: installation, manufacturer: bounded('manufacturer', 60), model: bounded('model', 80),
+    android_version: bounded('android_version', 32), sdk, app_version: bounded('app_version', 32),
+    app_version_code: version, reported_at: reported };
+}
+
 export type ManagedUserRecord = {
   user_id: string;
   email: string | null;
@@ -20,6 +49,7 @@ export type ManagedUserRecord = {
   is_suspended: boolean;
   is_authorized: boolean;
   is_protected_owner?: boolean;
+  device_report?: DeviceSupportReport | null;
   admin_override_plan?: 'free' | 'pro_weekly' | 'pro_monthly' | 'premium' | null;
 };
 

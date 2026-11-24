@@ -16,6 +16,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import au.datacube.app.R
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 import au.datacube.app.ui.theme.ThemePreference
 import io.github.jan.supabase.auth.user.UserInfo
 
@@ -38,8 +40,44 @@ fun ProfileScreen(
     val email = user?.email ?: "—"
     var showProfile by remember { mutableStateOf(false) }
     var showBackups by remember { mutableStateOf(false) }
-    var showPersonalization by remember { mutableStateOf(false) }
+    var showPersonalization by remember(user?.id) { mutableStateOf(false) }
     if (showPersonalization && user != null) AuPersonalizationDialog(user.id) { showPersonalization = false }
+    var showDeviceReport by remember(user?.id) { mutableStateOf(false) }
+    var reportBusy by remember(user?.id) { mutableStateOf(false) }
+    var reportStatus by remember(user?.id) { mutableStateOf("") }
+    val reportScope = rememberCoroutineScope()
+    fun submitReport(remove: Boolean) {
+        val account = user?.id ?: return
+        if (reportBusy) return
+        reportBusy = true
+        reportScope.launch {
+            try {
+                val ok = DeviceCompatibilityReport.send(account, remove)
+                reportStatus = if (!ok) "Request unavailable. Try again when connected."
+                    else if (remove) "Report removed." else "Compatibility report shared."
+            } catch (e: CancellationException) { throw e }
+            catch (_: Exception) { reportStatus = "Request unavailable. Try again when connected." }
+            finally { reportBusy = false }
+        }
+    }
+    if (showDeviceReport && user != null) {
+        DataCubeDialog(
+            onDismissRequest = { if (!reportBusy) showDeviceReport = false },
+            title = { Text("Device compatibility") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Optional: share your phone model, Android version and AU version with support to help diagnose compatibility. No device identifier or location is sent.")
+                    Text(android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
+                    Text("Android " + android.os.Build.VERSION.RELEASE + " · AU " + au.datacube.app.BuildConfig.VERSION_NAME)
+                    if (reportStatus.isNotBlank()) Text(reportStatus, style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(onClick = { submitReport(true) }, enabled = !reportBusy) { Text("Remove shared report") }
+                }
+            },
+            confirmButton = { TextButton(onClick = { submitReport(false) }, enabled = !reportBusy) { Text(if (reportBusy) "Working…" else "Share report") } },
+            dismissButton = { TextButton(onClick = { showDeviceReport = false }, enabled = !reportBusy) { Text("Close") } }
+        )
+    }
+
 
     if (showProfile) {
         DataCubeDialog(
@@ -152,6 +190,7 @@ fun ProfileScreen(
             item { UpdateSettingsCard() }
             item { SettingsSection("Account") }
             if (user != null) item { SettingsEntry(Icons.Outlined.PersonOutline, "AU personalization", "Response style and saved memories", { showPersonalization = true }) }
+            if (user != null) item { SettingsEntry(Icons.Outlined.Info, "Device compatibility", "Optional support report", { showDeviceReport = true }) }
             item { SettingsEntry(Icons.Outlined.PersonOutline, "Profile", email, { showProfile = true }) }
             item {
                 OutlinedButton(

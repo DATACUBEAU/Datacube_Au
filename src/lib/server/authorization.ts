@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest, type RequestAuthResult } from '@/app/api/proxy/_supabase-auth';
 import { hasConexAccess } from '@/lib/conex-rbac';
+import { verifyConexProof } from '@/lib/server/conex-proof';
 import {
   ACCESS_NO_STORE_HEADERS,
   buildFeatureAccessRule,
@@ -94,6 +95,7 @@ function unauthenticatedDecision(rule: Pick<AccessRule, 'id' | 'requirement' | '
 export async function authorizeRequest(
   req: NextRequest,
   rule: Pick<AccessRule, 'id' | 'requirement' | 'feature' | 'labels'>,
+  options: { ownerCheckOnly?: boolean } = {},
 ): Promise<AuthorizedRequest> {
   const auth = await requireUserFromRequest(req);
   if (!auth.ok) {
@@ -101,12 +103,17 @@ export async function authorizeRequest(
   }
 
   const supabase = createSupabaseAdminClient();
-  const subject = await loadEntitlementSubject({ supabase, auth });
+  const subject = rule.requirement === 'admin'
+    ? { userId: auth.userId, email: auth.email, adminOverride: hasConexAccess({ userId: auth.userId }) }
+    : await loadEntitlementSubject({ supabase, auth });
   const decision = evaluateAccess(subject, rule);
   if (!decision.allowed) {
     throw new AccessControlError(decision);
   }
 
+  if (rule.requirement === 'admin' && !options.ownerCheckOnly && !await verifyConexProof(req, auth.userId, auth.accessToken, 'verified')) {
+    throw new AccessControlError({ ...decision, allowed: false, status: 403, code: 'FORBIDDEN', reason: 'Conex verification required.' });
+  }
   return { auth, supabase, subject, decision };
 }
 
@@ -122,12 +129,16 @@ export async function requirePaidAccess(req: NextRequest): Promise<AuthorizedReq
   });
 }
 
-export async function requireAdmin(req: NextRequest): Promise<AuthorizedRequest> {
+export async function requireConexOwner(req: NextRequest): Promise<AuthorizedRequest> {
+  return requireAdmin(req, { ownerCheckOnly: true });
+}
+
+export async function requireAdmin(req: NextRequest, options: { ownerCheckOnly?: boolean } = {}): Promise<AuthorizedRequest> {
   return authorizeRequest(req, {
     id: 'admin_access',
     requirement: 'admin',
     labels: ['AUTH', 'ADMIN', 'STAFF', 'INTERNAL', 'CACHE_SENSITIVE'],
-  });
+  }, options);
 }
 
 export function accessControlResponse(error: AccessControlError, requestId?: string): NextResponse {

@@ -5,7 +5,7 @@ import { useReducedMotion } from 'framer-motion';
 import { useEffect, useMemo, useState } from 'react';
 import { AnimatedBackground, type AnimatedBackgroundVariant } from './backgrounds/animated-background';
 
-const DISABLED_PREFIXES = ['/offline'];
+const DISABLED_PREFIXES = ['/offline', '/download', '/features', '/about', '/policy', '/pricing', '/mobile-app-required', '/mobile-auth', '/conex'];
 
 type OverrideSettings = {
   disabled: boolean;
@@ -77,9 +77,10 @@ export function BackgroundController() {
   // though for backgrounds it's usually fine, let's be safe.
   if (!mounted) return null;
 
-  const isRouteDisabled = DISABLED_PREFIXES.some((prefix) => pathname?.startsWith(prefix));
+  const isRouteDisabled = pathname === '/' || DISABLED_PREFIXES.some((prefix) => pathname === prefix || pathname?.startsWith(prefix + '/'));
   const isDisabled = isRouteDisabled || override.disabled;
   const variant = override.variant || routeVariant;
+  if (isDisabled || shouldReduceMotion) return null;
 
   return (
     <AnimatedBackground

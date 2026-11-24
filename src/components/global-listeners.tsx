@@ -47,5 +47,5 @@ export function GlobalListeners() {
     return () => window.removeEventListener(AUTH_SESSION_EXPIRED_EVENT, handleExpired as EventListener);
   }, [pathname]);
 
-  return isPublicAuthPath(pathname) ? null : <CommunityPopup />;
+  return isPublicAuthPath(pathname) || !pathname?.startsWith('/dashboard/settings') ? null : <CommunityPopup />;
 }

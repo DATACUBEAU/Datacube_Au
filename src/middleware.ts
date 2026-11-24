@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
+import { verifyConexProof } from '@/lib/server/conex-proof';
 import { hasConexAccess } from '@/lib/conex-rbac';
 import { isMobileAuthorizationPage } from '@/lib/auth/redirects';
 import {
@@ -62,15 +63,9 @@ function isApiLikeRoute(pathname: string): boolean {
   return pathname.startsWith('/api/') || pathname === '/conex/users' || pathname.startsWith('/conex/users/');
 }
 
-function loginRedirect(req: NextRequest): NextResponse {
-  const loginUrl = new URL('/login', req.url);
-  const redirectTarget = `${req.nextUrl.pathname}${req.nextUrl.search}`;
-  loginUrl.searchParams.set('redirectTo', redirectTarget);
-  return applyProtectedHeaders(NextResponse.redirect(loginUrl));
-}
-
-function forbiddenRedirect(req: NextRequest): NextResponse {
-  return applyProtectedHeaders(NextResponse.redirect(new URL('/403', req.url)));
+function homeRedirect(req: NextRequest): NextResponse {
+  // No protected URL, token, or query parameter is carried to the public homepage.
+  return applyProtectedHeaders(NextResponse.redirect(new URL('/', req.url), 303));
 }
 
 function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse {
@@ -90,7 +85,7 @@ function unauthorizedResponse(req: NextRequest, rule: AccessRule): NextResponse 
       ),
     );
   }
-  return loginRedirect(req);
+  return homeRedirect(req);
 }
 
 function forbiddenResponse(req: NextRequest, decision: AccessDecision): NextResponse {
@@ -112,7 +107,7 @@ function forbiddenResponse(req: NextRequest, decision: AccessDecision): NextResp
       ),
     );
   }
-  return forbiddenRedirect(req);
+  return homeRedirect(req);
 }
 
 function getServiceClient() {
@@ -256,6 +251,9 @@ export async function middleware(req: NextRequest) {
     response.headers.set('Referrer-Policy', 'no-referrer');
     return response;
   }
+  if (pathname === '/403' || pathname === '/codex' || pathname.startsWith('/codex/')) {
+    return homeRedirect(req);
+  }
   if (isRetiredWebProductPath(pathname)) {
     return applyProtectedHeaders(
       NextResponse.redirect(new URL('/mobile-app-required', req.url)),
@@ -267,8 +265,28 @@ export async function middleware(req: NextRequest) {
     return applyClickjackingHeaders(NextResponse.next());
   }
 
-  const auth = await requireUserFromRequest(req);
-  if (!auth.ok) return unauthorizedResponse(req, rule);
+  const auth = await requireUserFromRequest(req).catch(() => null);
+  if (!auth?.ok) return unauthorizedResponse(req, rule);
+
+  // Cloud generation is deliberately unavailable during the local-first launch.
+  // Do not mint gateway tickets even for an authenticated or paying user.
+  if (pathname === '/api/au/vps-ticket' || pathname.startsWith('/api/au/vps-ticket/')) {
+    return applyProtectedHeaders(NextResponse.json(
+      { ok: false, code: 'CLOUD_AU_PAUSED', message: 'Cloud AU is not available. Use the Android app.' },
+      { status: 410 },
+    ));
+  }
+
+  // Owner-only admin routes need no subscription/profile lookups.
+  if (rule.requirement === 'admin') {
+    if (hasConexAccess({ userId: auth.userId })) {
+      const entry = pathname === '/conex' || pathname === '/api/admin/auth' ||
+        (pathname === '/conex/users' && req.method === 'GET' && req.nextUrl.searchParams.get('mode') === 'access');
+      if (entry || await verifyConexProof(req, auth.userId, auth.accessToken, 'verified')) return applyProtectedHeaders(NextResponse.next());
+      if (!isApiLikeRoute(pathname)) return applyProtectedHeaders(NextResponse.redirect(new URL('/conex', req.url), 303));
+    }
+    return forbiddenResponse(req, evaluateAccess({ userId: auth.userId, adminOverride: false }, rule));
+  }
 
   if (rule.requirement === 'auth') {
     return applyProtectedHeaders(NextResponse.next());

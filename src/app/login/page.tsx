@@ -147,7 +147,7 @@ export default function LoginPage() {
             return;
           }
           if (response.status === 403) {
-            router.replace(isConexDestination ? '/403' : '/');
+            router.replace('/');
             return;
           }
           if (response.status === 401) {

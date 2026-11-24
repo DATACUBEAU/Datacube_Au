@@ -109,55 +109,27 @@ run('unverified admin claims do not grant access to a free profile', async () =>
   assert.equal((await repo.getProfileByUserId(targetUser.user_id))?.tier, 'free');
 });
 
-run('verified admin profile can manage access without the protected owner id', async () => {
+run('non-owner admin profile cannot manage Conex', async () => {
   const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser, adminTierActor]);
-
-  const updated = await setConexTierForUser(
-    repo,
-    { userId: adminTierActor.user_id, email: 'tier-admin@example.com' },
-    targetUser.user_id,
-    'admin'
-  );
-
-  assert.equal(updated.tier, 'admin');
-  assert.equal((await repo.getProfileByUserId(targetUser.user_id))?.tier, 'admin');
+  await assert.rejects(() => listConexDashboardUsers(repo, { userId: adminTierActor.user_id }),
+    (error: any) => error instanceof ConexAccessError && error.status === 403);
 });
 
-run('toggle switch persistence updates tier in repository', async () => {
+run('owner cannot grant Conex access to another account', async () => {
   const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser]);
-
-  const updated = await setConexTierForUser(
-    repo,
-    { userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL },
-    targetUser.user_id,
-    'admin'
-  );
-
-  assert.equal(updated.tier, 'admin');
-
-  const persisted = await repo.getProfileByUserId(targetUser.user_id);
-  assert.equal(persisted?.tier, 'admin');
+  await assert.rejects(() => setConexTierForUser(repo, { userId: CONEX_ROOT_ADMIN_USER_ID },
+    targetUser.user_id, 'admin'), (error: any) => error instanceof ConexAccessError && error.code === 'owner_only');
+  assert.equal((await repo.getProfileByUserId(targetUser.user_id))?.tier, 'free');
 });
 
-run('dashboard list includes authorized users with avatar_url and full_name', async () => {
-  const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser]);
-
-  await setConexTierForUser(
-    repo,
-    { userId: CONEX_ROOT_ADMIN_USER_ID, email: CONEX_ROOT_ADMIN_EMAIL },
-    targetUser.user_id,
-    'admin'
-  );
-
-  const dashboard = await listConexDashboardUsers(repo, {
-    userId: CONEX_ROOT_ADMIN_USER_ID,
-    email: CONEX_ROOT_ADMIN_EMAIL,
-  });
-
-  const authorizedTarget = dashboard.authorizedUsers.find((user) => user.user_id === targetUser.user_id);
-  assert.ok(authorizedTarget);
-  assert.equal(authorizedTarget?.full_name, 'Target User');
-  assert.equal(authorizedTarget?.avatar_url, 'https://example.com/target.png');
+run('only the configured owner appears authorized despite legacy admin labels', async () => {
+  const repo = new InMemoryConexRepo([bootstrapAdmin, targetUser, adminTierActor]);
+  const dashboard = await listConexDashboardUsers(repo, { userId: CONEX_ROOT_ADMIN_USER_ID });
+  assert.deepEqual(dashboard.authorizedUsers.map(user => user.user_id), [CONEX_ROOT_ADMIN_USER_ID]);
+  assert.equal(dashboard.users.find(user => user.user_id === adminTierActor.user_id)?.is_authorized, false);
+  const updated = await setConexTierForUser(repo, { userId: CONEX_ROOT_ADMIN_USER_ID }, adminTierActor.user_id, 'free');
+  assert.equal(updated.tier, 'free');
+  assert.equal(updated.is_authorized, false);
 });
 
 process.on('beforeExit', () => {

@@ -254,7 +254,8 @@ async function fetchProfilesMap(
 
 async function fetchActivityMap(
   supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
-  userIds: string[]
+  userIds: string[],
+  includeLegacyMetadata = false
 ): Promise<Map<string, { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null }>> {
   if (userIds.length === 0) return new Map();
   const map = new Map<string, { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null }>();
@@ -263,7 +264,7 @@ async function fetchActivityMap(
     const chunk = userIds.slice(i, i + 500);
     const { data, error } = await supabaseAdmin
       .from('au_user_activity')
-      .select('user_id,last_active_at,metadata,is_pwa,user_agent')
+      .select(includeLegacyMetadata ? 'user_id,last_active_at,metadata' : 'user_id,last_active_at')
       .in('user_id', chunk);
 
     if (error) {
@@ -341,7 +342,7 @@ function mapAuthUserToManagedRecord(
     null;
 
   const tier = profile?.tier ?? roleToTier(role) ?? 'free';
-  const isAuthorized = String(tier).toLowerCase() === 'admin';
+  const isAuthorized = isProtectedOwnerUserId(user.id);
 
   return {
     user_id: user.id,
@@ -375,7 +376,7 @@ function mapAuUsersToManagedRecord(
   const accountStatus = normalizeAccountStatus(
     (activity?.metadata as Record<string, unknown> | null)?.account_status ?? 'active'
   );
-  const isAuthorized = String(tier).toLowerCase() === 'admin';
+  const isAuthorized = isProtectedOwnerUserId(user.id);
 
   return {
     user_id: user.id,
@@ -427,7 +428,7 @@ function assertProtectedOwnerDeletionAllowed(userId: string) {
 }
 
 const querySchema = z.object({
-  q: z.string().optional(),
+  q: z.string().max(120).optional(),
   status: z.enum(['all', ...ACCOUNT_STATUSES]).optional().default('all'),
   role: z.enum(['all', ...USER_ROLES]).optional().default('all'),
   presence: z.enum(['all', 'online', 'offline']).optional().default('all'),
@@ -536,6 +537,28 @@ async function listManagedUsers(req: NextRequest) {
   });
 
   const serviceClient = tryCreateServiceRoleClient();
+  // The standard directory needs only one Auth page and its associated metadata.
+  // Keep the legacy filtered path available to existing consumers until a database-side
+  // search implementation is validated; do not fetch the full directory on every open.
+  if (serviceClient && !queryInput.q?.trim() && queryInput.status === 'all' &&
+      queryInput.role === 'all' && queryInput.presence === 'all' &&
+      queryInput.sortBy === 'created_at' && queryInput.sortDir === 'desc') {
+    const { data, error } = await serviceClient.auth.admin.listUsers({
+      page: queryInput.page, perPage: queryInput.pageSize,
+    });
+    if (error) throw new ApiError(503, 'list_users_failed');
+    const users = data.users || [];
+    const ids = users.map(user => user.id);
+    const [profiles, activity, overrides] = await Promise.all([
+      fetchProfilesMap(serviceClient, ids), fetchActivityMap(serviceClient, ids),
+      fetchAdminOverrideMap(serviceClient, ids),
+    ]);
+    const total = Number.isSafeInteger(data.total) ? data.total : users.length;
+    return NextResponse.json({
+      ok: true, users: users.map(user => mapAuthUserToManagedRecord(user, profiles.get(user.id), activity.get(user.id), overrides.get(user.id))),
+      totalUsers: total, filteredTotal: total, page: queryInput.page, pageSize: queryInput.pageSize, source: 'auth_admin',
+    }, { headers: { 'Cache-Control': 'no-store, private' } });
+  }
   let merged: ManagedUserRecord[] = [];
   let totalUsers = 0;
 
@@ -558,7 +581,7 @@ async function listManagedUsers(req: NextRequest) {
     const userIds = rows.map((row) => row.id);
     const [profilesMap, activityMap, overrideMap] = await Promise.all([
       fetchProfilesMap(scopedClient, userIds),
-      fetchActivityMap(scopedClient, userIds),
+      fetchActivityMap(scopedClient, userIds, true),
       fetchAdminOverrideMap(scopedClient, userIds),
     ]);
 
@@ -996,6 +1019,22 @@ async function handleUserActivity(
 
 export async function GET(req: NextRequest) {
   try {
+    const deviceReportFor = req.nextUrl.searchParams.get('deviceReportFor');
+    if (deviceReportFor !== null) {
+      await requireConexAdmin(req);
+      const userId = z.string().uuid().parse(deviceReportFor);
+      const { data, error } = await createServiceRoleClient().from('au_user_activity')
+        .select('device_info').eq('user_id', userId).maybeSingle();
+      if (error) return NextResponse.json({ ok: false }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+      const info = data?.device_info;
+      const bounded = (value: unknown, length: number) => typeof value === 'string' ? value.slice(0, length) : null;
+      const report = info && typeof info === 'object' && typeof info.reportedAt === 'string'
+        ? { manufacturer: bounded(info.manufacturer, 60), model: bounded(info.model, 80),
+            androidVersion: bounded(info.androidVersion, 30), appVersion: bounded(info.appVersion, 40),
+            sdk: Number.isInteger(info.sdk) ? info.sdk : null, reportedAt: bounded(info.reportedAt, 40) }
+        : null;
+      return NextResponse.json({ ok: true, report }, { headers: { 'Cache-Control': 'no-store, private' } });
+    }
     return await listManagedUsers(req);
   } catch (error) {
     return jsonError(error);
@@ -1011,6 +1050,16 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = actionsSchema.parse(body);
+    // Local-first launch: no new plan overrides, credential creation, or bulk mutations.
+    // Existing billing records and normal account lifecycle remain intact.
+    if (!['get_user_activity', 'update_user'].includes(payload.action) ||
+        (payload.action === 'update_user' && !(payload.status !== undefined &&
+          payload.fullName === undefined && payload.avatarUrl === undefined &&
+          payload.role === undefined && payload.permissions === undefined && payload.tier === undefined))) {
+      return NextResponse.json({ error: 'LEGACY_ADMIN_CONTROL_RETIRED' },
+        { status: 410, headers: { 'Cache-Control': 'no-store, private' } });
+    }
+
     if (payload.action === 'get_user_activity') {
       const readClient = tryCreateServiceRoleClient() ?? createScopedRlsClient(actor.accessToken);
       return await handleUserActivity(payload, readClient);

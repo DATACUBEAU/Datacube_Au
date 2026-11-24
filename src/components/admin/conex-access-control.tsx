@@ -153,7 +153,7 @@ export function ConexAccessControl() {
       <CardHeader className="space-y-2">
         <CardTitle>Conex Access Control</CardTitle>
         <CardDescription>
-          Grant or revoke Conex page access by switching each user tier between <code>admin</code> and <code>free</code>.
+          Conex is restricted to the configured owner. Existing profile tier labels do not grant admin access.
         </CardDescription>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">Authorized: {authorizedCount}</Badge>
@@ -193,7 +193,7 @@ export function ConexAccessControl() {
           <div className="space-y-2">
             {filteredUsers.map((user) => {
               const isRootAdmin = Boolean(user.is_protected_owner);
-              const toggleDisabled = isRootAdmin || savingUserId === user.user_id;
+              const toggleDisabled = true;
 
               return (
                 <div key={user.user_id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
@@ -216,7 +216,7 @@ export function ConexAccessControl() {
                       checked={user.is_authorized}
                       onCheckedChange={(enabled) => onToggle(user, enabled)}
                       disabled={toggleDisabled}
-                      aria-label={`Toggle Conex admin access for ${user.full_name || user.user_id}`}
+                      aria-label={`Owner access status for ${user.full_name || user.user_id}`}
                     />
                   </div>
                 </div>
