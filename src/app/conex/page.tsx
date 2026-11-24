@@ -3121,21 +3121,32 @@ export default function ConexPage() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { toast } = useToast();
 
-  const challenge = useCallback(async (body: Record<string, unknown>) => {
+  const challenge = useCallback(async (body?: Record<string, unknown>) => {
     const token = await getSupabaseAccessToken();
-    if (!token) throw new Error('Sign in required.');
-    const res = await fetch('/api/admin/auth', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+    if (!token) { router.replace('/'); throw new Error('Sign in required.'); }
+    const res = await fetch('/api/admin/auth', {
+      method: body ? 'POST' : 'GET', credentials: 'same-origin', cache: 'no-store',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(body) });
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 403) router.replace('/');
+    if (res.status === 409) {
+      setStep(0);
+      setPuzzle({ a: 0, b: 0, val: '' });
+    }
     if (!res.ok) throw new Error(data.error || 'Security check unavailable.');
     return data;
-  }, []);
+  }, [router]);
 
   const start = useCallback(async () => {
-    const data = await challenge({ action: 'start' });
-    setPuzzle({ a: data.a, b: data.b, val: '' });
-    setStep(0);
+    const data = await challenge();
+    if (data.stage === 'unlocked') setStep(3);
+    else if (data.stage === 'passcode') setStep(2);
+    else if (data.stage === 'math') {
+      setPuzzle({ a: data.a, b: data.b, val: '' });
+      setStep(0);
+    } else throw new Error('Invalid challenge.');
     setAccessKey('');
   }, [challenge]);
 
@@ -3144,42 +3155,39 @@ export default function ConexPage() {
     if (isUserLoading) return;
     if (!user) { router.replace('/'); return; }
     setIsCheckingConexAccess(true);
-    void (async () => {
-      try {
-        const data = await challenge({ action: 'status' });
-        if (cancelled) return;
-        if (data.verified) setStep(3);
-        else await start();
-        if (!cancelled) setIsCheckingConexAccess(false);
-      } catch {
-        if (!cancelled) router.replace('/');
-      }
-    })();
+    for (const key of ['conex_admin_token', 'conex_session_id', 'conex_auth_step']) {
+      try { localStorage.removeItem(key); } catch {}
+    }
+    start().catch(() => { if (!cancelled) setError('Could not load verification. Retry.'); })
+      .finally(() => { if (!cancelled) setIsCheckingConexAccess(false); });
     return () => { cancelled = true; };
-  }, [isUserLoading, user?.id, router, challenge, start]);
+  }, [isUserLoading, user?.id, router, start]);
 
   const handlePuzzle = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading || !puzzle.val || !puzzle.a) return;
     setLoading(true); setError(null);
     try {
-      await challenge({ action: 'math', answer: puzzle.val });
+      const data = await challenge({ stage: 'math', answer: Number(puzzle.val) });
+      if (data.stage !== 'passcode') throw new Error('Invalid challenge response.');
       setStep(2);
     } catch (e) { setError(e instanceof Error ? e.message : 'Security check failed.'); }
     finally { setLoading(false); }
   };
   const handleStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading || !accessKey.trim()) return;
     setLoading(true); setError(null);
     try {
-      const data = await challenge({ action: 'passcode', passcode: accessKey });
-      if (!data.verified) throw new Error('Security check failed.');
-      setAccessKey(''); setStep(3);
+      const data = await challenge({ stage: 'passcode', passcode: accessKey });
+      if (data.stage !== 'unlocked') throw new Error('Security check failed.');
+      setStep(3);
       toast({ title: 'Conex unlocked' });
-    } catch (e) { setAccessKey(''); setError(e instanceof Error ? e.message : 'Security check failed.'); }
-    finally { setLoading(false); }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Security check failed.'); }
+    finally { setAccessKey(''); setLoading(false); }
   };
   const handleLogout = async () => {
-    try { await challenge({ action: 'logout' }); } catch {}
+    await fetch('/api/admin/auth', { method: 'DELETE' }).catch(() => {});
     setStep(0); setAccessKey('');
     await explicitSignOut(user?.id ?? null);
     router.replace('/');
@@ -3188,7 +3196,6 @@ export default function ConexPage() {
   const navItems = [
     { value: 'billing', label: 'Billing', icon: Crown },
     { value: 'users', label: 'Users', icon: Users },
-    { value: 'activity', label: 'Activity', icon: Activity },
     { value: 'feedback', label: 'Feedback', icon: Star },
     { value: 'alerts', label: 'Alerts', icon: Mail },
     { value: 'health', label: 'Health', icon: HeartPulse },
@@ -3442,7 +3449,8 @@ export default function ConexPage() {
               <form onSubmit={handlePuzzle}>
                 <CardContent className="space-y-4">
                   <div className="space-y-2 text-center">
-                    <Label className="text-lg font-medium">What is {puzzle.a} + {puzzle.b}?</Label>
+                    <Label className="text-lg font-medium">{puzzle.a ? `What is ${puzzle.a} + ${puzzle.b}?` : "Challenge unavailable"}</Label>
+                    {!puzzle.a && <Button type="button" variant="outline" onClick={() => start().catch(() => setError("Could not load challenge."))}>Retry</Button>}
                     <Input 
                       type="number"
                       value={puzzle.val} 
@@ -3460,7 +3468,7 @@ export default function ConexPage() {
                   )}
                 </CardContent>
                 <CardFooter>
-                  <Button type="submit" disabled={loading || !puzzle.val} className="w-full h-12 text-lg font-bold uppercase tracking-tighter">
+                  <Button type="submit" disabled={loading || !puzzle.val || !puzzle.a} className="w-full h-12 text-lg font-bold uppercase tracking-tighter">
                     Verify
                   </Button>
                 </CardFooter>
@@ -3491,6 +3499,7 @@ export default function ConexPage() {
                     <Label className="text-lg font-medium">Admin passcode</Label>
                     <Input 
                       type="password"
+                      autoComplete="off"
                       value={accessKey} 
                       onChange={(e) => setAccessKey(e.target.value)}
                       placeholder="••••••••••••••••"
