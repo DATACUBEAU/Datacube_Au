@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { randomUUID, randomInt, createHash, timingSafeEqual } from 'node:crypto';
-import { accessControlResponse, isAccessControlError, requireAdmin } from '@/lib/server/authorization';
+import { accessControlResponse, isAccessControlError, requireConexOwner } from '@/lib/server/authorization';
 import { CONEX_COOKIE, CHALLENGE_COOKIE, conexCookieOptions, signConexProof, verifyConexProof } from '@/lib/server/conex-proof';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,7 +18,7 @@ function secureEqual(a: string, b: string) {
 export async function GET(req: NextRequest) {
   const requestId = createSafeRequestId();
   try {
-    const { auth } = await requireAdmin(req, { ownerCheckOnly: true });
+    const { auth } = await requireConexOwner(req);
     if (await verifyConexProof(req, auth.userId, auth.accessToken, 'verified')) return response({ ok: true, stage: 'unlocked' });
     if (await verifyConexProof(req, auth.userId, auth.accessToken, 'passcode')) return response({ ok: true, stage: 'passcode' });
     const a = randomInt(1, 10), b = randomInt(1, 10);
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
   const requestId = createSafeRequestId();
   try {
     if (!sameOrigin(req)) return response({ error: 'Invalid request origin.', requestId }, 403);
-    const { auth, supabase } = await requireAdmin(req, { ownerCheckOnly: true });
+    const { auth, supabase } = await requireConexOwner(req);
     if (Number(req.headers.get('content-length') || 0) > 4096) return response({ error: 'Invalid request.', requestId }, 413);
     const raw = await req.text();
     if (raw.length > 4096) return response({ error: 'Invalid request.', requestId }, 413);
@@ -62,10 +62,10 @@ export async function POST(req: NextRequest) {
         { ...conexCookieOptions, maxAge: 300 });
       return res;
     }
-    const submitted = typeof body.passcode === 'string' ? body.passcode.trim() : '';
+    const submitted = typeof body.passcode === 'string' ? body.passcode : '';
     if (!submitted || submitted.length > 512) return response({ error: 'Incorrect passcode.', requestId }, 401);
     const config = await supabase.from('au_admin_config').select('value').eq('key', 'admin_access_key').single();
-    const expected = typeof config.data?.value === 'string' ? config.data.value.trim() : '';
+    const expected = typeof config.data?.value === 'string' ? config.data.value : '';
     if (config.error || !expected) return response({ error: 'Passcode verification unavailable.', requestId }, 503);
     if (!secureEqual(submitted, expected)) return response({ error: 'Incorrect passcode.', requestId }, 401);
     const res = response({ ok: true, stage: 'unlocked' });
