@@ -66,6 +66,25 @@ class ModelBackupManagerInstrumentedTest {
     }
 
     @Test
+    fun confirmsActualMultiModelArchiveAndRejectsDeletedFile() = runBlocking {
+        val first = File(installedModels, "embedding-test-v1")
+        val second = File(installedModels, "gemma-4-e2b")
+        assertTrue(first.mkdirs())
+        assertTrue(second.mkdirs())
+        File(first, "weights.bin").writeText("embedding")
+        File(second, "weights.bin").writeText("generation")
+        val manager = ModelBackupManager(context)
+        val uri = Uri.fromFile(backupFile)
+        val exported = manager.exportBackup(uri)
+        val preview = manager.inspectBackup(uri)
+        assertEquals(2, preview.modelIds.size)
+        val confirmed = manager.verifySavedBackup(uri, null, exported)
+        assertEquals(2, confirmed.modelCount)
+        assertTrue(backupFile.delete())
+        assertTrue(runCatching { manager.verifySavedBackup(uri, null, exported) }.isFailure)
+    }
+
+    @Test
     fun restoreRefusesToOverwriteAnAlreadyInstalledModel() = runBlocking {
         val modelDirectory = File(installedModels, "embedding-test-v1")
         assertTrue(modelDirectory.mkdirs())
