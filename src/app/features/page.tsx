@@ -10,7 +10,6 @@ import {
   Menu,
   ScanSearch,
   Settings2,
-  Share2,
   Sigma,
   SquarePen,
   WifiOff,
@@ -27,56 +26,16 @@ import {
 
 
 const features = [
-  {
-    title: 'Data Ingestion Engine',
-    description: 'Seamlessly upload and process various document formats to build your knowledge base.',
-    icon: FileText,
-  },
-  {
-    title: 'Smart Concept Mapping',
-    description: 'Visualize connections between key ideas with automatically generated concept maps.',
-    icon: Share2,
-  },
-  {
-    title: 'Pattern Recognition for Exams',
-    description: 'Identifies recurring themes and topics from past exams to focus your study efforts.',
-    icon: ScanSearch,
-  },
-  {
-    title: 'Robust Offline Mode',
-    description: 'Access cached data, read materials, and queue questions even without an internet connection.',
-    icon: WifiOff,
-  },
-  {
-    title: 'Predictive Question Generator',
-    description: 'Generates likely exam questions based on the patterns and weights of your materials.',
-    icon: Lightbulb,
-  },
-  {
-    title: 'Practice Exam Generation',
-    description: 'Test your knowledge with AU-generated practice exams based on your study materials.',
-    icon: SquarePen,
-  },
-  {
-    title: 'Smart Summary & Key Points',
-    description: 'Distills long documents into concise summaries and extracts crucial key points for quick review.',
-    icon: BookCopy,
-  },
-  {
-    title: 'Installable App (PWA)',
-    description: 'Install DataCube AU on your desktop, Android, or iOS device for a native, offline-first experience.',
-    icon: Cpu,
-  },
-  {
-    title: 'Personalized Answering Style',
-    description: "Adjust the AU's tone and complexity to match your preferred way of learning via an AU Guide file.",
-    icon: Settings2,
-  },
-  {
-    title: 'Study Path Recommender',
-    description: 'Suggests a step-by-step learning path to efficiently master new subjects.',
-    icon: Sigma,
-  },
+  { title: 'Your document workspace', description: 'Import supported documents, extract readable text and organise your study materials on your device.', icon: FileText },
+  { title: 'AU Chat with sources', description: 'Ask questions about your documents or collections and review the retrieved source passages. General AU chat is also available.', icon: BrainCircuit },
+  { title: 'Smart Notes', description: 'Generate structured explanations and explore concept topics using your selected AU model.', icon: BookCopy },
+  { title: 'Revision forecast', description: 'Review important topics and compare an optional reference with your document. Forecasts are study suggestions, not guaranteed exam questions.', icon: ScanSearch },
+  { title: 'Practice questions', description: 'Generate document-grounded questions and sample answers to review your understanding.', icon: SquarePen },
+  { title: 'Audio conversations', description: 'Generate a two-speaker study discussion and listen with installed offline voices or Kokoro. Neural audio may take time to prepare.', icon: Lightbulb },
+  { title: 'Rich answers', description: 'Read structured explanations with headings, tables, status highlights and source previews. Read completed answers aloud.', icon: Sigma },
+  { title: 'Local-first processing', description: 'Use supported downloaded models for document study and chat without an internet connection. Account, billing and downloads may require internet access.', icon: WifiOff },
+  { title: 'Model management', description: 'Choose compatible models, download only what you need, and save or verify model ZIP backups in a folder you select.', icon: Settings2 },
+  { title: 'Native Android app', description: 'Download the official APK for supported 64-bit Android devices. Updates are available through the app and website.', icon: Cpu },
 ];
 
 export default function FeaturesPage() {
@@ -105,7 +64,7 @@ export default function FeaturesPage() {
                 </nav>
                 <div className="flex items-center justify-end gap-2 sm:gap-4">
                   <Button asChild className="hidden md:flex">
-                    <Link href="/dashboard">Go to Dashboard</Link>
+                    <Link href="/download">Download for Android</Link>
                   </Button>
                   <div className="md:hidden">
                     <DropdownMenu>
@@ -125,8 +84,8 @@ export default function FeaturesPage() {
                           </DropdownMenuItem>
                         ))}
                          <DropdownMenuItem asChild>
-                            <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
-                              Go to Dashboard
+                            <Link href="/download" className="flex items-center gap-2 font-semibold">
+                              Download for Android
                             </Link>
                           </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -139,11 +98,10 @@ export default function FeaturesPage() {
       <div className="relative mx-auto max-w-5xl px-4 py-20 sm:px-6 lg:px-8">
         <div className="text-center">
           <h1 className="font-headline text-4xl font-extrabold tracking-tight sm:text-5xl md:text-6xl">
-            Core Intelligence Features
+            Explore what AU can do
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-muted-foreground">
-            DataCube AU is built on a powerful foundation of interconnected AU
-            features designed to accelerate your learning.
+            A native Android workspace for document intelligence, study and conversation. Availability and performance depend on the installed models, device and app version.
           </p>
         </div>
 
