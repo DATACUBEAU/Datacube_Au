@@ -96,7 +96,7 @@ export default function AndroidDownloadPage() {
                 Version {release.versionName}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                {(release.sizeBytes / (1024 * 1024)).toFixed(1)} MiB · App only (AI models downloaded separately)
+                {(release.sizeBytes / (1024 * 1024)).toFixed(1)} MiB · App only (AU models downloaded separately)
               </p>
               <p className="mt-3 text-xs leading-5 text-muted-foreground">
                 {release.notes}

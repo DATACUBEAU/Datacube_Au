@@ -18,7 +18,7 @@ import { AUAssistant } from '@/components/au-assistant';
 import './globals.css';
 
 const APP_NAME = 'DataCube AU';
-const APP_DESCRIPTION = 'Datacube AU is an AI study platform for your own data.';
+const APP_DESCRIPTION = 'DataCube AU is a local-first Android document and study assistant.';
 const COMPANY_NAME = 'Zahed Investment Ltd';
 const COMPANY_RC = '8127949';
 
@@ -42,12 +42,6 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: APP_NAME,
     description: `${APP_DESCRIPTION} Built by ${COMPANY_NAME}. RC ${COMPANY_RC}.`,
-  },
-  manifest: '/manifest.webmanifest',
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: 'default',
-    title: APP_NAME,
   },
   formatDetection: {
     telephone: false,

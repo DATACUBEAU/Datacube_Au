@@ -40,7 +40,7 @@ export default function PolicyPage() {
           </nav>
           <div className="flex items-center justify-end gap-2 sm:gap-4">
             <Button asChild className="hidden md:flex">
-              <Link href="/dashboard">Go to Dashboard</Link>
+              <Link href="/download">Download for Android</Link>
             </Button>
             <div className="md:hidden">
               <DropdownMenu>
@@ -60,8 +60,8 @@ export default function PolicyPage() {
                     </DropdownMenuItem>
                   ))}
                   <DropdownMenuItem asChild>
-                    <Link href="/dashboard" className="flex items-center gap-2 font-semibold">
-                      Go to Dashboard
+                    <Link href="/download" className="flex items-center gap-2 font-semibold">
+                      Download for Android
                     </Link>
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -99,7 +99,8 @@ export default function PolicyPage() {
           </ul>
           <h2 className="font-headline text-xl font-semibold">Content and Availability</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
-            <li>You retain rights to your uploaded documents. Processing creates derived data to power features like concept maps and practice questions.</li>
+            <li>You retain rights to your documents. AU may extract text and create derived notes, indexes, answers and practice questions to provide study features.</li>
+            <li>AU-generated content can be inaccurate or incomplete. Review answers and source passages; revision forecasts do not guarantee exam outcomes.</li>
             <li>Service availability may vary; features can change or be suspended for maintenance or safety.</li>
           </ul>
         </section>
@@ -115,19 +116,22 @@ export default function PolicyPage() {
           <h2 className="font-headline text-xl font-semibold">Data We Process</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
             <li>Account details (for authenticated users) such as email and profile metadata.</li>
-            <li>Uploaded documents and derived text chunks used for study features.</li>
+            <li>Documents, extracted text, search indexes, generated answers and study outputs used by the Android workspace. Local study processing is designed to run on your device with installed models. Any cloud features you use may process the information necessary to provide them.</li>
+            <li>Subscription and payment-related account information needed to manage access and billing.</li>
+            <li>Voice notes you choose to record, and generated audio used by narration and study conversations.</li>
             <li>Usage metadata, device information, and event logs for reliability and performance.</li>
-            <li>Local storage and cookies used to support offline features and preferences.</li>
+            <li>App storage, preferences, and website cookies or local storage used for account sessions and site functionality.</li>
           </ul>
           <h2 className="font-headline text-xl font-semibold">Security</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
-            <li>Data is protected in transit and at rest with industry‑standard practices.</li>
+            <li>We use security measures designed to protect account data and service communications. Protect access to your device and any external backup folders you select.</li>
             <li>Access is restricted and monitored; we minimize collection to what is necessary.</li>
           </ul>
           <h2 className="font-headline text-xl font-semibold">Retention and Deletion</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
-            <li>Signed-out uploads are deleted after {retentionPolicy.signedOutDays} days. Free and Promo documents expire after {retentionPolicy.freeDays} days, while paid Pro documents expire after {retentionPolicy.paidProDays} days.</li>
-            <li>You may request deletion sooner via account settings.</li>
+            <li>For cloud-stored documents, signed-out uploads are deleted after {retentionPolicy.signedOutDays} days. Free and Promo documents expire after {retentionPolicy.freeDays} days, while paid Pro documents expire after {retentionPolicy.paidProDays} days.</li>
+            <li>Local files and generated content are managed on your device, separately from cloud retention periods. Deleting the app may remove app-private data. Model ZIP backups saved to a folder you select can remain after uninstalling; manage those copies yourself.</li>
+            <li>You may request deletion of eligible account data sooner via account settings.</li>
           </ul>
           <h2 className="font-headline text-xl font-semibold">Your Rights</h2>
           <ul className="list-disc space-y-2 pl-6 text-muted-foreground">
@@ -144,7 +148,7 @@ export default function PolicyPage() {
               <p className="text-sm text-muted-foreground">Need more info?</p>
               <div className="flex gap-2">
                 <Button asChild variant="outline" size="sm">
-                  <Link href="/dashboard">Open Dashboard</Link>
+                  <Link href="/download">Get Android app</Link>
                 </Button>
                 <Button asChild size="sm">
                   <Link href="/features">Explore Features</Link>
