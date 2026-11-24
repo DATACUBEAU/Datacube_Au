@@ -68,7 +68,7 @@ object DocumentQueryInterpreter {
             (queryTokens.any { it in overviewTerms || near(it, "document") } ||
                 queryTokens.any { it in setOf("summarize", "summary", "overview") })
         val sourceReference = Regex("""\b(?:this|the|my)\s+(?:[\p{L}\p{N}]+\s+){0,3}?(?:document|notes?|lecture notes?|pdf|file|material)\b""", RegexOption.IGNORE_CASE)
-        val teacherWords = setOf("teach", "teaching", "students", "student", "class", "lesson", "plan", "prepare", "using", "use", "lecture", "want", "help", "make", "for", "based", "on", "to", "how", "can", "do", "would")
+        val teacherWords = setOf("teach", "teaching", "students", "student", "class", "lesson", "plan", "prepare", "using", "use", "lecture", "want", "help", "make", "for", "based", "on", "to", "how", "can", "do", "would", "my", "our")
         val wholeDocumentTeaching = Regex("""\b(?:teach|teaching|lesson plan|prepare a lesson)\b""", RegexOption.IGNORE_CASE).containsMatchIn(query) &&
             sourceReference.containsMatchIn(query) &&
             tokens(sourceReference.replace(query, " ")).all { it in generic || it in teacherWords }
