@@ -20,7 +20,7 @@ function run(name: string, fn: () => void) {
   }
 }
 
-run('admin user management allows a verified admin profile and denies a free profile', () => {
+run('admin user management denies non-owner profiles regardless of tier', () => {
   const freeAccess = hasConexAccess({
     userId: '33333333-3333-4333-8333-333333333333',
     email: 'free@example.com',
@@ -33,7 +33,7 @@ run('admin user management allows a verified admin profile and denies a free pro
   });
 
   assert.equal(freeAccess, false);
-  assert.equal(verifiedAdminAccess, true);
+  assert.equal(verifiedAdminAccess, false);
 });
 
 run('bulk metadata patch stays bounded to approved role/status/permission values', () => {
