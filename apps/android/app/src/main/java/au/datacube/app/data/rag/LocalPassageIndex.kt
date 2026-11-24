@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import java.io.File
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.PriorityQueue
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
@@ -23,14 +24,14 @@ data class IndexedPassage(
  * Data stays in app-private storage and no AI model is needed to build it.
  */
 class LocalPassageIndex(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, DB_NAME, null, 1) {
+    SQLiteOpenHelper(context.applicationContext, DB_NAME, null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE IF NOT EXISTS indexed_documents (" +
                 "documentId TEXT PRIMARY KEY NOT NULL, sourceBytes INTEGER NOT NULL," +
                 "sourceModified INTEGER NOT NULL, sourceSha256 TEXT NOT NULL," +
-                "passageCount INTEGER NOT NULL)"
+                "passageCount INTEGER NOT NULL, indexVersion INTEGER NOT NULL DEFAULT 1)"
         )
         db.execSQL(
             "CREATE VIRTUAL TABLE IF NOT EXISTS passages USING fts4(" +
@@ -40,20 +41,22 @@ class LocalPassageIndex(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // No version upgrade exists yet. Never silently destroy an index.
-        check(oldVersion == newVersion) { "Unsupported search-index schema upgrade." }
+        if (oldVersion == 1 && newVersion == 2) {
+            // Keep existing indexes available for rollback; rebuild lazily from extracted text.
+            db.execSQL("ALTER TABLE indexed_documents ADD COLUMN indexVersion INTEGER NOT NULL DEFAULT 1")
+        } else check(oldVersion == newVersion) { "Unsupported search-index schema upgrade." }
     }
 
     fun hasCurrent(documentId: String, source: File): Boolean {
         if (!validId(documentId) || !source.isFile || source.length() <= 0L) return false
         readableDatabase.rawQuery(
-            "SELECT sourceBytes, sourceModified, passageCount FROM indexed_documents WHERE documentId = ?",
+            "SELECT sourceBytes, sourceModified, passageCount, indexVersion FROM indexed_documents WHERE documentId = ?",
             arrayOf(documentId)
         ).use { cursor ->
             return cursor.moveToFirst() &&
                 cursor.getLong(0) == source.length() &&
                 cursor.getLong(1) == source.lastModified() &&
-                cursor.getInt(2) > 0
+                cursor.getInt(2) > 0 && cursor.getInt(3) == INDEX_VERSION
         }
     }
 
@@ -91,10 +94,11 @@ class LocalPassageIndex(context: Context) :
             val buffer = StringBuilder()
             var page: Int? = null
             var ordinal = 0
+            var overlapPrefix = 0
 
             fun publish(text: String) {
                 val cleaned = text.trim()
-                if (cleaned.length < 24) return
+                if (cleaned.isBlank()) return
                 check(ordinal < MAX_PASSAGES) {
                     "This document exceeds the local search-index passage limit."
                 }
@@ -119,12 +123,14 @@ class LocalPassageIndex(context: Context) :
                     if (space > TARGET_CHARS / 2) end = space
                     publish(buffer.substring(0, end))
                     buffer.delete(0, (end - OVERLAP_CHARS).coerceAtLeast(1))
+                    overlapPrefix = minOf(OVERLAP_CHARS, buffer.length)
                 }
                 if (finishPage) {
-                    if (buffer.length >= 24 && (ordinal == 0 || buffer.length > OVERLAP_CHARS + 24)) {
+                    if (buffer.length > overlapPrefix) {
                         publish(buffer.toString())
                     }
                     buffer.setLength(0)
+                    overlapPrefix = 0
                 }
             }
 
@@ -176,9 +182,9 @@ class LocalPassageIndex(context: Context) :
                 "Document changed while the search index was being built."
             }
             db.execSQL(
-                "INSERT INTO indexed_documents (documentId, sourceBytes, sourceModified, sourceSha256, passageCount)" +
-                    " VALUES (?, ?, ?, ?, ?)",
-                arrayOf<Any>(documentId, bytes, modified, hash, ordinal)
+                "INSERT INTO indexed_documents (documentId, sourceBytes, sourceModified, sourceSha256, passageCount, indexVersion)" +
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                arrayOf<Any>(documentId, bytes, modified, hash, ordinal, INDEX_VERSION)
             )
             indexingContext.ensureActive()
             db.setTransactionSuccessful()
@@ -191,46 +197,46 @@ class LocalPassageIndex(context: Context) :
         return publishedCount
     }
 
-    fun search(documentId: String, question: String, source: File, limit: Int = 5): List<IndexedPassage> {
+    suspend fun search(documentId: String, question: String, source: File, limit: Int = 5): List<IndexedPassage> {
         require(limit in 1..12)
         if (!hasCurrent(documentId, source)) return emptyList()
         val terms = keywords(question)
         if (terms.isEmpty()) return emptyList()
-        // Prefer joint term matches (including late pages); widen to OR only if
-        // necessary. Query tokens are quoted and passed as SQL parameters.
-        val quoted = terms.map { 34.toChar().toString() + it + 34.toChar() }
-        val patterns = listOf(
-            quoted.take(3).joinToString(" "),
-            quoted.joinToString(" OR ")
-        ).distinct()
-        val matches = linkedMapOf<Int, IndexedPassage>()
-        for (expression in patterns) {
-            readableDatabase.rawQuery(
-                "SELECT ordinal, page, body FROM passages " +
-                    "WHERE documentId = ? AND passages MATCH ? LIMIT 400",
-                arrayOf(documentId, expression)
-            ).use { cursor ->
-                while (cursor.moveToNext()) {
-                    val ordinal = cursor.getString(0).toIntOrNull() ?: continue
-                    val page = cursor.getString(1)?.toIntOrNull()
-                    val text = cursor.getString(2) ?: continue
-                    val lower = text.lowercase(Locale.ROOT)
-                    val hits = terms.count { it in lower }
-                    val frequency = terms.sumOf { term ->
-                        Regex(Regex.escape(term)).findAll(lower).take(5).count()
-                    }
-                    val score = hits * 10 + frequency
-                    val previous = matches[ordinal]
-                    if (score > 0 && (previous == null || score > previous.score)) {
-                        matches[ordinal] = IndexedPassage(text, page, ordinal, score)
-                    }
+        val expression = terms.joinToString(" OR ") { "\"" + it + "\"" }
+        val termSet = terms.toSet()
+        // No arbitrary first-400 cutoff: rank all matching candidates, retain only top K.
+        val best = PriorityQueue<IndexedPassage>(
+            compareBy<IndexedPassage> { it.score }.thenByDescending { it.ordinal }
+        )
+        val cancellation = currentCoroutineContext()
+        readableDatabase.rawQuery(
+            "SELECT ordinal, page, body FROM passages WHERE documentId = ? AND passages MATCH ?",
+            arrayOf(documentId, expression)
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                cancellation.ensureActive()
+                val ordinal = cursor.getString(0).toIntOrNull() ?: continue
+                val page = cursor.getString(1)?.toIntOrNull()
+                val text = cursor.getString(2) ?: continue
+                val frequency = mutableMapOf<String, Int>()
+                termRegex.findAll(text.lowercase(Locale.ROOT)).forEach { match ->
+                    val token = match.value
+                    if (token in termSet) frequency[token] = minOf(5, (frequency[token] ?: 0) + 1)
+                }
+                // Exact token coverage dominates repeated keyword frequency.
+                val score = frequency.size * 10 + frequency.values.sum()
+                if (score <= 0) continue
+                val hit = IndexedPassage(text, page, ordinal, score)
+                val weakest = best.peek()
+                if (best.size < limit) best.add(hit)
+                else if (weakest != null && (score > weakest.score ||
+                        (score == weakest.score && ordinal < weakest.ordinal))) {
+                    best.poll()
+                    best.add(hit)
                 }
             }
-            if (matches.size >= limit * 3) break
         }
-        return matches.values.sortedWith(
-            compareByDescending<IndexedPassage> { it.score }.thenBy { it.ordinal }
-        ).take(limit)
+        return best.sortedWith(compareByDescending<IndexedPassage> { it.score }.thenBy { it.ordinal })
     }
 
     /** Representative start/middle/end passages for grounded overviews. */
@@ -298,15 +304,17 @@ class LocalPassageIndex(context: Context) :
 
     companion object {
         private const val DB_NAME = "datacube-passages.db"
+        private const val INDEX_VERSION = 2
         private const val TARGET_CHARS = 800
         private const val OVERLAP_CHARS = 120
         private const val MAX_PASSAGES = 60_000
         private const val MAX_SOURCE_BYTES = 100L * 1024 * 1024
-        private val termRegex = Regex("""[\p{L}\p{N}]{3,}""")
+        private val termRegex = Regex("""[\p{L}\p{N}]{2,}""")
         private val stopWords = setOf(
             "this", "that", "the", "and", "for", "from", "with", "what", "where",
             "does", "could", "would", "should", "your", "about", "please",
-            "document", "documents", "explain", "summarize", "are", "you"
+            "document", "documents", "explain", "summarize", "are", "you",
+            "is", "it", "of", "to", "in", "on", "as", "at", "be", "by", "an", "or", "do", "me", "how", "why"
         )
 
         private fun validId(id: String): Boolean =

@@ -26,6 +26,7 @@ class DocumentQueryInterpreterTest {
         assertFalse(plan.overview)
         assertEquals("neutron", plan.correctedTerms["neutorn"])
         assertTrue("neutron" in plan.retrievalQuery)
+        assertTrue("neutorn" in plan.retrievalQuery)
     }
 
     @Test fun unknownTermsAreNotInvented() {
@@ -38,12 +39,13 @@ class DocumentQueryInterpreterTest {
     @Test fun keyboardTranspositionIsWithinOneEdit() {
         assertEquals(1, DocumentQueryInterpreter.distance("neutorn", "neutron", 2))
     }
-    @Test fun realWordTypoUsesRepeatedDocumentEvidenceWhenUnique() {
+    @Test fun ambiguousRealWordDoesNotGetSilentlyReplaced() {
         val plan = DocumentQueryInterpreter.understand(
             "What is meter?", "Matter forms objects. Matter exists in many states. Matter has mass."
         )
-        assertEquals("matter", plan.correctedTerms["meter"])
-        assertTrue("matter" in plan.retrievalQuery)
+        assertTrue(plan.correctedTerms.isEmpty())
+        assertTrue("meter" in plan.retrievalQuery)
+        assertTrue(plan.clarification?.contains("matter") == true)
     }
 
     @Test fun existingCorrectTermIsNotChanged() {
@@ -78,4 +80,11 @@ class DocumentQueryInterpreterTest {
         assertTrue(plan.clarification?.contains("matter") == true)
     }
 
+
+    @Test fun specificDocumentQuestionDoesNotBecomeOverview() {
+        val source = "ATP stores energy. Photosynthesis converts light energy."
+        assertFalse(DocumentQueryInterpreter.understand("Explain ATP in this document", source).overview)
+        assertFalse(DocumentQueryInterpreter.understand("Summarize photosynthesis", source).overview)
+        assertTrue(DocumentQueryInterpreter.understand("Summarize the key ideas", source).overview)
+    }
 }

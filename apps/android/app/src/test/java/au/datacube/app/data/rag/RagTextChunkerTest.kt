@@ -49,4 +49,12 @@ class RagTextChunkerTest {
         assertEquals(2, ranked.first().page)
         assertTrue(RagBm25Index(chunks).search("unrelatedkeyword").isEmpty())
     }
+
+    @Test fun commonQuestionWordsDoNotCreateFalseMatchesAndShortTermsWork() {
+        val chunks = chunker.chunk("notes", "----- Page 1 -----\nThe water evaporates in sunlight.\n----- Page 2 -----\nAI is artificial intelligence. The pH scale measures acidity.")
+        val index = RagBm25Index(chunks)
+        assertTrue(index.search("What is quantumheliodynamics in the document?").isEmpty())
+        assertEquals(2, index.search("What is pH?").first().page)
+        assertEquals(2, index.search("What is AI?").first().page)
+    }
 }

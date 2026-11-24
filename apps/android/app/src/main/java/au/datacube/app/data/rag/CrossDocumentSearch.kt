@@ -4,6 +4,8 @@ import android.content.Context
 import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.data.LocalDocument
 import java.io.File
+import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -37,8 +39,8 @@ class CrossDocumentSearch(
         if (query.isBlank() || documents.isEmpty()) return@withContext emptyList()
         require(limit in 1..8)
         val result = mutableListOf<CrossDocumentEvidence>()
-        val tokens = query.lowercase().split(Regex("""[^\p{L}\p{N}]+"""))
-            .filter { it.length >= 4 && it !in STOP_WORDS }.distinct()
+        val tokens = query.lowercase(Locale.ROOT).split(Regex("""[^\p{L}\p{N}]+"""))
+            .filter { it.length >= 2 && it !in STOP_WORDS }.distinct()
         if (tokens.isEmpty()) return@withContext emptyList()
 
         val persistent = appContext?.let { LocalPassageIndex(it) }
@@ -53,7 +55,7 @@ class CrossDocumentSearch(
                 if (persistent?.hasCurrent(document.id, file) == true)
                     persistent.search(document.id, query, file, limit = 4)
                 else null
-            }.getOrNull()
+            }.getOrElse { if (it is CancellationException) throw it; null }
             if (indexed != null) {
                 indexed.forEach { passage ->
                     val titleHits = tokens.count { document.name.lowercase().contains(it) }
@@ -73,6 +75,8 @@ class CrossDocumentSearch(
                     val size = reader.read(buffer)
                     if (size <= 0) "" else String(buffer, 0, size)
                 }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (_: Exception) {
                 continue
             }
@@ -81,10 +85,10 @@ class CrossDocumentSearch(
             val matches = RagBm25Index(chunks).search(query, limit = 3)
             for (chunk in matches) {
                 val text = chunk.text.trim()
-                val lower = text.lowercase()
-                val matched = tokens.count { lower.contains(it) }
+                val words = text.lowercase(Locale.ROOT).split(Regex("""[^\p{L}\p{N}]+""")).toSet()
+                val matched = tokens.count { it in words }
                 val titleMatches = tokens.count { document.name.lowercase().contains(it) }
-                if (matched == 0 && titleMatches == 0) continue
+                if (matched == 0) continue
                 result += CrossDocumentEvidence(
                     documentId = document.id,
                     documentName = document.name,
@@ -112,7 +116,7 @@ class CrossDocumentSearch(
             "about", "this", "that", "from", "what", "when", "with", "would",
             "could", "should", "which", "give", "tell", "explain", "please",
             "summary", "summarize", "your", "document", "documents", "across",
-            "these", "those", "have", "their", "there"
+            "these", "those", "have", "their", "there", "is", "it", "of", "to", "in", "on", "as", "at", "be", "by", "an", "or", "do", "me", "how", "why", "the", "and", "my", "are", "for", "you"
         )
     }
 }

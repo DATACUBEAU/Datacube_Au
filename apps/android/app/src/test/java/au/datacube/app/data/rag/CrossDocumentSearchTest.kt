@@ -55,4 +55,18 @@ class CrossDocumentSearchTest {
         assertFalse(LocalConversationThreads.historyKey("doc123", "main").contains("--"))
         assertTrue(LocalConversationThreads.historyKey("doc123", "thread123").contains("--"))
     }
+
+    @Test fun shortTechnicalTermsDoNotMatchSubstringsOrTitlesAlone() = runBlocking {
+        val root = Files.createTempDirectory("short-terms").toFile()
+        try {
+            val a = document("ai", "AI notes")
+            val b = document("air", "Air science")
+            val c = document("title", "AI title only")
+            listOf(a to "AI means artificial intelligence.", b to "Air contains nitrogen.", c to "Water freezes at zero degrees.").forEach { (doc, body) ->
+                ExtractedTextStore.fileFor(root, doc.id).apply { parentFile?.mkdirs(); writeText(body) }
+            }
+            val hits = CrossDocumentSearch(root).search(listOf(a, b, c), "What is AI?")
+            assertEquals(listOf("ai"), hits.map { it.documentId }.distinct())
+        } finally { root.deleteRecursively() }
+    }
 }

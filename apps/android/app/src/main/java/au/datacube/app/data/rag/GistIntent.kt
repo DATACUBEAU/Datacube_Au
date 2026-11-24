@@ -56,22 +56,24 @@ object GistRequestRouter {
 
 object GistPrompt {
     /** Recent pairs supply context to follow-ups; they are not evidence of facts. */
-    fun build(question: String, previous: List<Pair<String, String>>): String {
+    fun build(question: String, previous: List<Pair<String, String>>, compact: Boolean = false): String {
         require(question.isNotBlank())
-        val history = previous.takeLast(3).filter { it.first.isNotBlank() && it.second.isNotBlank() }
+        val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) 3 else 5)
         return buildString {
             appendLine("GIST — NORMAL OFFLINE AU CONVERSATION")
             appendLine("You are chatting without searching imported documents.")
             appendLine("Answer from your general trained knowledge, not from imagined files.")
-            appendLine("Minor spelling errors should be interpreted using conversational context.")
+            appendLine("Infer obvious minor typos from context; preserve unfamiliar names and technical terms. Ask one specific question only if meaning remains uncertain.")
+            appendLine("Answer the actual request first, naturally and at the right depth. Avoid generic introductions and repetitive closing questions. Adapt to learners, educators and professionals; do not assume the user is a student.")
+            appendLine("Continue from relevant earlier messages; do not invent memory. Offer a relevant study next step only when useful.")
             appendLine("If the question is too incomplete or has two plausible meanings, ask one short clarification.")
             appendLine("Do not assume access to live news, current facts, the internet or the user's private files.")
             appendLine("Do not invent citations or pretend to have searched a document.")
             if (history.isNotEmpty()) {
                 appendLine("RECENT CHAT (context, not external evidence):")
                 history.forEach { (user, answer) ->
-                    appendLine("User: " + user.take(220))
-                    appendLine("AU: " + answer.take(380))
+                    appendLine("User: " + user.take(if (compact) 180 else 300))
+                    appendLine("AU: " + answer.take(if (compact) 260 else 520))
                 }
             }
             appendLine("CURRENT USER MESSAGE:")
