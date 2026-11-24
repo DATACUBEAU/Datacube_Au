@@ -112,7 +112,7 @@ async function requireActor(req: NextRequest): Promise<
   { ok: true; actor: { userId: string; email: string | null; accessToken: string } } | { ok: false; response: NextResponse }
 > {
   try {
-    const { auth } = await requireAdmin(req);
+    const { auth } = await requireAdmin(req, { ownerCheckOnly: req.method === 'GET' && req.nextUrl.searchParams.get('mode') === 'access' });
     return {
       ok: true,
       actor: {
