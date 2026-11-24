@@ -41,7 +41,7 @@ export default function LandingPage() {
             </nav>
             <div className="flex items-center justify-end gap-2 sm:gap-4">
               <Button asChild className="hidden md:flex">
-                <Link href="/mobile-app-required">Use the Android app</Link>
+                <Link href="/download">Download for Android</Link>
               </Button>
               <div className="md:hidden">
                 <DropdownMenu>
@@ -61,8 +61,8 @@ export default function LandingPage() {
                       </DropdownMenuItem>
                     ))}
                      <DropdownMenuItem asChild>
-                        <Link href="/mobile-app-required" className="flex items-center gap-2 font-semibold">
-                          Use the Android app
+                        <Link href="/download" className="flex items-center gap-2 font-semibold">
+                          Download for Android
                         </Link>
                       </DropdownMenuItem>
                   </DropdownMenuContent>
@@ -82,18 +82,20 @@ export default function LandingPage() {
             <section className="grid grid-cols-1 items-center gap-12 px-4 py-16 md:grid-cols-2 md:py-24 lg:px-8">
                 <div className="space-y-6 text-center md:text-left">
                   <h1 className="font-headline text-4xl font-extrabold tracking-tight sm:text-5xl md:text-6xl">
-                    Unlock the Power of Your Documents with AU
+                    Your documents. Your knowledge. Your AU.
                   </h1>
                   <p className="max-w-2xl text-lg text-muted-foreground md:mx-0 mx-auto">
-                    DataCube AU transforms your scattered notes, textbooks, and study materials into an intelligent, searchable knowledge base. Ask questions, get A U insights, and study smarter.
+                    Turn notes, textbooks and documents into a personal study workspace. Ask AU questions with source references, create Smart Notes, practise what you learn and listen to study conversations. Supported models run on your Android device after setup.
                   </p>
-                  <div className="flex justify-center md:justify-start">
+                  <div className="flex flex-wrap justify-center gap-3 md:justify-start">
                     <Button asChild size="lg">
-                      <Link href="/mobile-app-required">
-                          Use the Android app
+                      <Link href="/download">
+                          Download for Android
                       </Link>
                     </Button>
+                    <Button asChild size="lg" variant="outline"><Link href="/features">Explore features</Link></Button>
                   </div>
+                  <p className="text-sm text-muted-foreground">Android 8.0+ · 64-bit devices · Choose and download your AU models separately.</p>
                 </div>
                 <div className="relative flex h-full min-h-[300px] w-full items-center justify-center">
                     {heroIllustration && (
