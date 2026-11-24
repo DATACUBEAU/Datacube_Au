@@ -90,7 +90,8 @@ internal data class ChatMessage(
     val answer: String = "",
     val generating: Boolean = false,
     val generationError: String? = null,
-    val audioPath: String? = null
+    val audioPath: String? = null,
+    val createdAtEpochMs: Long? = System.currentTimeMillis()
 )
 
 private fun sourceSnippets(raw: String?): List<SourceSnippet> {
