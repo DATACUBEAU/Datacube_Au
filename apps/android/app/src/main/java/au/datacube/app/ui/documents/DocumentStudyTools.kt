@@ -45,6 +45,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.rag.RagTextChunker
+import au.datacube.app.data.rag.AuConversationContext
+import au.datacube.app.data.rag.ConversationEntry
+import au.datacube.app.models.ActiveLocalChatModel
 import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.data.rag.LocalSemanticSearch
 import au.datacube.app.data.rag.DocumentChatIntent
@@ -384,6 +387,14 @@ fun DocumentChatWorkspace(
                                 val events = session.activitySteps
                                 try {
                                     session.searchingStage = "Understanding your question"
+                                    if (AuConversationContext.asksYesterdayRecap(cleanPrompt)) {
+                                        val recap = threads.yesterdayReply(documentId, threadId, messages.map {
+                                            ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
+                                        })
+                                        events += "Checked dated saved conversations in this workspace"
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = recap, steps = events.toList()))
+                                        return@launch
+                                    }
                                     if (DocumentChatIntent.isGreeting(cleanPrompt)) {
                                         events += "Identified a conversational greeting"
                                         val answerIndex = messages.size
@@ -516,12 +527,13 @@ fun DocumentChatWorkspace(
                                     if (llmInstalled && matches.isNotEmpty()) {
                                         session.searchingStage = "AU is preparing an answer"
                                         val previous = messages.take(resultIndex)
-                                            .filter { !it.isUser && it.answer.isNotBlank() }
-                                            .takeLast(3)
+                                            .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null }
+                                            .takeLast(20)
                                             .map { RagTurn(it.question, it.answer) }
                                         val grounded = GroundedRagPlanner.build(
                                             plan.contextualQuestion ?: cleanPrompt, previous,
-                                            matches.map { RagEvidence(it.text, it.page) }
+                                            matches.map { RagEvidence(it.text, it.page) },
+                                            compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected())
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
                                         var generated = ""
