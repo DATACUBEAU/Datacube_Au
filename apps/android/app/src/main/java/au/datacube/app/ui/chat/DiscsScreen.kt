@@ -522,7 +522,7 @@ fun DiscsScreen(
             onSend = { send() },
             placeholder = if (collectionId == null) "Ask Gist anything…"
                 else "Ask AU about this collection…",
-            enabled = ready && !needsCollectionModel && !session.searching,
+            enabled = !session.searching,
             sendEnabled = !session.searching && prompt.isNotBlank() &&
                 (AuScheduleIntent.matches(prompt) || (ready && !needsCollectionModel &&
                     userTurns < ConversationWindow.MAX_USER_TURNS)),
