@@ -26,7 +26,6 @@ import { Icons } from '@/components/icons';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import PwaInstallButton from '@/components/pwa-install-button';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
 import { supabase } from '@/lib/supabase-client/client';
 import { Switch } from '@/components/ui/switch';
@@ -581,7 +580,7 @@ export default function SettingsPage() {
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
-                <PwaInstallButton />
+                <Button asChild variant="outline"><a href="/download">Download Android app</a></Button>
                 
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between rounded-lg border p-4 bg-muted/30 gap-4">
                   <div className="flex items-center gap-4">
