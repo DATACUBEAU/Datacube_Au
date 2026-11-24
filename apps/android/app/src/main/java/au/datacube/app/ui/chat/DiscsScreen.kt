@@ -1,6 +1,9 @@
 package au.datacube.app.ui.chat
 
 import android.os.SystemClock
+import au.datacube.app.data.rag.AuConversationContext
+import au.datacube.app.data.rag.ConversationEntry
+import au.datacube.app.models.ActiveLocalChatModel
 import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -160,6 +163,14 @@ fun DiscsScreen(
             val events = session.activitySteps
             try {
                 threads.nameFromQuestion(ownerId, threadId, question)
+                if (AuConversationContext.asksYesterdayRecap(question)) {
+                    val recap = threads.yesterdayReply(ownerId, threadId, turns.map {
+                        ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
+                    })
+                    events += "Checked dated saved conversations in this workspace"
+                    turns.add(ChatMessage(question, emptyList(), false, answer = recap, steps = events.toList()))
+                    return@launch
+                }
                 val intent = GistRequestRouter.classify(question)
                 if (intent == GistIntent.LIBRARY_COUNT || intent == GistIntent.LIBRARY_LIST) {
                     events += "Checked local document library"
@@ -233,9 +244,10 @@ fun DiscsScreen(
                             """.trimIndent().take(13_000)
                         } else {
                             val contextPairs = turns.take(answerIndex)
-                                .filter { !it.isUser && it.answer.isNotBlank() }
-                                .takeLast(3).map { it.question to it.answer }
-                            GistPrompt.build(question, contextPairs)
+                                .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null }
+                                .takeLast(20).map { it.question to it.answer }
+                            GistPrompt.build(question, contextPairs,
+                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()))
                         }
                         var raw = ""
                         var lastUpdate = 0L
