@@ -38,6 +38,8 @@ fun ProfileScreen(
     val email = user?.email ?: "—"
     var showProfile by remember { mutableStateOf(false) }
     var showBackups by remember { mutableStateOf(false) }
+    var showPersonalization by remember { mutableStateOf(false) }
+    if (showPersonalization && user != null) AuPersonalizationDialog(user.id) { showPersonalization = false }
 
     if (showProfile) {
         DataCubeDialog(
@@ -149,6 +151,7 @@ fun ProfileScreen(
             item { SettingsSection("App updates") }
             item { UpdateSettingsCard() }
             item { SettingsSection("Account") }
+            if (user != null) item { SettingsEntry(Icons.Outlined.PersonOutline, "AU personalization", "Response style and saved memories", { showPersonalization = true }) }
             item { SettingsEntry(Icons.Outlined.PersonOutline, "Profile", email, { showProfile = true }) }
             item {
                 OutlinedButton(
