@@ -160,12 +160,12 @@ class ModelVaultStore(context: Context) {
                     val name = cursor.getString(1) ?: continue
                     val mime = cursor.getString(2)
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR &&
-                        (name == "DataCubeAU-Models" || (depth == 1 &&
-                            name.matches(Regex("[a-z0-9][a-z0-9._-]{1,80}"))))) {
+                        (name == "DataCubeAU-Models" ||
+                            ModelCatalog.models.any { it.id == name })) {
                         scan(id, depth + 1)
                     } else if (name.startsWith("DataCubeAU-") &&
-                        (mime == ModelBackupManager.BACKUP_MIME_TYPE ||
-                            mime == "application/octet-stream")) {
+                        (name.endsWith(".zip", ignoreCase = true) ||
+                            name.endsWith(".partial", ignoreCase = true))) {
                         result += name to DocumentsContract.buildDocumentUriUsingTree(tree, id)
                     }
                 }
