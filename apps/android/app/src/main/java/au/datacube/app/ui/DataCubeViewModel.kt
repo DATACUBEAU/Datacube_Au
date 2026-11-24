@@ -246,6 +246,7 @@ class DataCubeViewModel(app: Application) : AndroidViewModel(app) {
             }
             LexicalIndexWorker.cancel(getApplication(), id)
             LocalSemanticSearch(getApplication()).cancelIndex(id)
+            au.datacube.app.ui.documents.GeneratedStudySessions.clear(id)
             repository.delete(id)
             withContext(Dispatchers.IO) {
                 runCatching {
