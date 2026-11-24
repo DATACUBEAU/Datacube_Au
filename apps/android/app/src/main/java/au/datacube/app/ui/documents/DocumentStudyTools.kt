@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.rag.RagTextChunker
 import au.datacube.app.data.rag.AuConversationContext
+import au.datacube.app.data.rag.AuPersonalizationStore
 import au.datacube.app.data.rag.ConversationEntry
 import au.datacube.app.models.ActiveLocalChatModel
 import au.datacube.app.data.rag.RagBm25Index
@@ -258,7 +259,8 @@ fun DocumentChatWorkspace(
     onOpenHistory: () -> Unit = {},
     onDismissHistory: () -> Unit = {},
     newChatToken: Int = 0,
-    onOpenModels: () -> Unit = {}
+    onOpenModels: () -> Unit = {},
+    accountId: String? = null
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -387,6 +389,13 @@ fun DocumentChatWorkspace(
                                 val events = session.activitySteps
                                 try {
                                     session.searchingStage = "Understanding your question"
+                                    val personalization = accountId?.let { AuPersonalizationStore(context, it) }
+                                    val memoryReply = if (audioPath == null && !alreadyAdded)
+                                        personalization?.command(cleanPrompt) else null
+                                    if (memoryReply != null) {
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = memoryReply))
+                                        return@launch
+                                    }
                                     if (AuConversationContext.asksYesterdayRecap(cleanPrompt)) {
                                         val recap = threads.yesterdayReply(documentId, threadId, messages.map {
                                             ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
@@ -542,7 +551,7 @@ fun DocumentChatWorkspace(
                                         var lastUpdate = 0L
                                         try {
                                             session.searchingStage = "AU is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value) { part ->
+                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.promptContext(cleanPrompt).orEmpty()) { part ->
                                                 generated += part
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate > 90L) {
