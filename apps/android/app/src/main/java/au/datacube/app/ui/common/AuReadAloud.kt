@@ -62,7 +62,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         error = null
         errorId = null
         stage = "Preparing audio"
-        job = AuAudioPlayback.launch(context, "Preparing or playing response audio") {
+        job = AuAudioPlayback.launch(context, "Preparing or playing response audio",
+            onFinished = { if (token == revision) { active = null; stage = "" } }) {
             try {
                 val report: suspend (String) -> Unit = { value ->
                     withContext(Dispatchers.Main) { if (token == revision) stage = value }
