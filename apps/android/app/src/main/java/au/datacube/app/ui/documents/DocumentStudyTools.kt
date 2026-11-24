@@ -260,6 +260,7 @@ fun DocumentChatWorkspace(
     onDismissHistory: () -> Unit = {},
     newChatToken: Int = 0,
     onOpenModels: () -> Unit = {},
+    onScheduleRequest: ((String) -> Unit)? = null,
     accountId: String? = null
 ) {
     val context = LocalContext.current
@@ -377,6 +378,11 @@ fun DocumentChatWorkspace(
         audioPath: String? = null,
         alreadyAdded: Boolean = false
     ) {
+        if (audioPath == null && !alreadyAdded && onScheduleRequest != null &&
+            au.datacube.app.schedule.AuScheduleIntent.matches(cleanPrompt)) {
+            onScheduleRequest(cleanPrompt)
+            return
+        }
                         if (llmInstalled && cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
                             if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
                             if (audioPath == null) prompt = ""
@@ -958,10 +964,11 @@ fun DocumentChatWorkspace(
             onValueChange = { prompt = it.take(500) },
             onSend = { submitQuestion(prompt.trim()) },
             placeholder = "Ask AU about this document…",
-            enabled = historyReady && threadIndex != null && !session.searching && llmInstalled,
-            sendEnabled = historyReady && threadIndex != null && llmInstalled &&
-                userTurns < ConversationWindow.MAX_USER_TURNS && prompt.isNotBlank() &&
-                !textPreview.isNullOrBlank() && !session.searching,
+            enabled = !session.searching && (onScheduleRequest != null || (historyReady && threadIndex != null && llmInstalled)),
+            sendEnabled = !session.searching && prompt.isNotBlank() &&
+                ((onScheduleRequest != null && au.datacube.app.schedule.AuScheduleIntent.matches(prompt)) ||
+                    (historyReady && threadIndex != null && llmInstalled &&
+                        userTurns < ConversationWindow.MAX_USER_TURNS && !textPreview.isNullOrBlank())),
             sendDescription = "Search document",
             actions = {
                 VoiceNoteInputButton(
