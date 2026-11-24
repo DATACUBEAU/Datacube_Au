@@ -1139,11 +1139,7 @@ fun SmartNoteWorkspace(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 if (open) {
-                                    SelectionContainer {
-                                        Text(section.details.ifBlank { "No additional detail was generated." },
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = MaterialTheme.colorScheme.onSurface)
-                                    }
+                                    AuRichResponse(section.details.ifBlank { "No additional detail was generated." })
                                 }
                             }
                         }
@@ -1155,11 +1151,7 @@ fun SmartNoteWorkspace(
                                 fontWeight = FontWeight.Bold)
                             if (section.details.isNotBlank()) {
                                 Spacer(Modifier.height(10.dp))
-                                SelectionContainer {
-                                    Text(section.details,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface)
-                                }
+                                AuRichResponse(section.details)
                             }
                         }
                     }
@@ -1253,10 +1245,7 @@ fun PredictionWorkspace(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(9.dp))
-                        SelectionContainer {
-                            Text(section.details, style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface)
-                        }
+                        AuRichResponse(section.details)
                     }
                 }
                 Text("This is a study aid, not a guarantee of future exam questions.",
