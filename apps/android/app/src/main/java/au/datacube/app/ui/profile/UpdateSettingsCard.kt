@@ -39,6 +39,8 @@ fun UpdateSettingsCard() {
             try {
                 val found = AndroidUpdateManager.check(context)
                 release = found
+                complete = false
+                needsPermission = false
                 status = if (found == null) "Your version is up to date."
                     else "Version ${found.versionName} is ready to download."
             } catch (cancelled: CancellationException) {
@@ -100,12 +102,12 @@ fun UpdateSettingsCard() {
                     onClick = {
                         scope.launch {
                             try {
-                                if (!AndroidUpdateManager.existingDownload(context, current)) {
+                                run {
                                     downloading = true
                                     percent = 0
                                     status = "Downloading signed update"
                                     AndroidUpdateManager.download(context, current) {
-                                        percent = it
+                                        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { percent = it }
                                     }
                                 }
                                 downloading = false
@@ -134,8 +136,7 @@ fun UpdateSettingsCard() {
                         contentDescription = null
                     )
                     Spacer(Modifier.width(8.dp))
-                    Text(if (complete || AndroidUpdateManager.existingDownload(context, current))
-                        "Install verified update" else "Download and update")
+                    Text(if (complete || needsPermission) "Install verified update" else "Download and update")
                 }
             }
             if (needsPermission) {
@@ -146,6 +147,7 @@ fun UpdateSettingsCard() {
                     Text("Allow Android installation, then return")
                 }
             }
+            Text("AU checks for updates automatically. Downloads and installation require your approval.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             TextButton(
                 onClick = ::check,
                 enabled = !checking && !downloading,
