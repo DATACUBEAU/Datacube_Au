@@ -9,7 +9,6 @@ import androidx.compose.runtime.setValue
 import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.data.PdfDocumentTextExtractor
 import au.datacube.app.data.PlainTextDocumentExtractor
-import au.datacube.app.data.rag.GroundedRagPlanner
 import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.LocalPassageIndex
 import au.datacube.app.data.rag.ModelOutputCleaner
@@ -106,49 +105,37 @@ class GeneratedStudySession {
                         index.close()
                     }
                 }.getOrDefault(emptyList()).ifEmpty {
-                    RagTextChunker(maxChunks = 40)
+                    val previewChunks = RagTextChunker(maxChunks = 40)
                         .chunk(documentId, textPreview.take(240_000))
-                        .take(10).map { SourceSnippet(it.text, it.page) }
+                    StudyGenerationPrompt.spreadAcross(previewChunks, count = 10)
+                        .map { SourceSnippet(it.text, it.page) }
                 }
                 require(excerpts.isNotEmpty()) {
                     "No readable evidence is available yet. Finish document processing first."
                 }
-                sources = excerpts
-                val task = if (mode == GeneratedStudyMode.NOTES) {
-                    "Create structured, detailed study notes from the provided document evidence. " +
-                        "Use 4-8 sections in this exact format: TOPIC: short name, followed by " +
-                        "2-5 clear sentences explaining what the source actually says and a concise " +
-                        "example only when the evidence supports it. Avoid repeated disclaimers. " +
-                        "Do not invent source citations, facts or topics."
-                } else {
-                    "Generate a revision forecast and realistic practice questions from the provided " +
-                        "document evidence. This is NOT a prediction of actual examination questions. " +
-                        "Use 4-8 sections, each starting PRIORITY: topic name, followed by what " +
-                        "to revise, one practice question, and why its source passage is relevant. " +
-                        "Use any additional user-attached reference as distinct evidence. " +
-                        "Do not claim exam probabilities or fabricate missing facts."
-                }
-                val grounded = GroundedRagPlanner.build(
-                    task, emptyList(), excerpts.map { RagEvidence(it.text, it.page) }
+                val prepared = StudyGenerationPrompt.prepare(
+                    documentName, mode,
+                    excerpts.map { RagEvidence(it.text, it.page) },
+                    attached
                 )
-                val prompt = grounded.value +
-                    if (mode == GeneratedStudyMode.REVISION && !attached.isNullOrBlank()) {
-                        "\n\nADDITIONAL USER-ATTACHED REFERENCE (separate from main document):\n" +
-                            attached.take(12_000)
-                    } else ""
-                withContext(Dispatchers.Main) { stage = "AU is generating" }
+                withContext(Dispatchers.Main) {
+                    // These are exactly the passages supplied to AU, not a larger
+                    // list that might incorrectly imply model-visible citations.
+                    sources = prepared.evidence.map { SourceSnippet(it.text, it.page) }
+                    stage = "AU is generating"
+                }
                 val answer = StringBuilder()
                 var last = 0L
-                LocalGenerativeEngine.generate(app, prompt.take(19_000)) { chunk ->
+                LocalGenerativeEngine.generate(app, prepared.text) { chunk ->
                     answer.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - last >= 120) {
-                        val shown = ModelOutputCleaner.visible(answer.toString(), excerpts.size).take(16_000)
+                        val shown = ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size).take(16_000)
                         withContext(Dispatchers.Main) { response = shown }
                         last = now
                     }
                 }
-                val complete = ModelOutputCleaner.visible(answer.toString(), excerpts.size).trim()
+                val complete = ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size).trim()
                 check(complete.isNotBlank()) { "AU did not produce readable study content." }
                 withContext(Dispatchers.Main) {
                     response = complete.take(18_000)
