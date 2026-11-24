@@ -40,11 +40,13 @@ class VerifiedModelDownloadWorker(
         val artifact = VerifiedModelDownloads.find(id)
             ?: return@withContext Result.failure(workDataOf(KEY_ERROR to "Unknown model."))
         try {
-            if (LocalModelLibrary(applicationContext).installed(id)) {
-                return@withContext Result.success()
+            // Installation is not completion: a previous run may have been stopped
+            // while writing the external ZIP. Never skip the backup on restart.
+            if (!LocalModelLibrary(applicationContext).installed(id)) {
+                download(artifact)
             }
-            download(artifact)
-            Result.success()
+            savePortableCopy(artifact)
+            Result.success(workDataOf(KEY_BACKUP_VERIFIED to true, KEY_STAGE to "Installed · backup verified"))
         } catch (cancelled: CancellationException) {
             // Keep the partial file for explicit Pause -> Resume and process recovery.
             throw cancelled
@@ -160,22 +162,34 @@ class VerifiedModelDownloadWorker(
             }
             publishInstalled(artifact, partial, hash)
             etag.delete()
-            // The user opted into this location before download. Commit a portable,
-            // verified, self-describing archive outside the app sandbox as part of
-            // completing the requested download. No automatic model download occurs.
-            setProgress(workDataOf(KEY_PROGRESS to 99, KEY_STAGE to "Saving in model folder"))
-            try {
-                ModelVaultStore(applicationContext).save(id)
-            } catch (saveError: Exception) {
-                throw ModelDownloadRejected(
-                    "Model installed, but could not save its external copy. " +
-                        "Open Model Vault and back it up before uninstalling."
-                )
-            }
-            setProgress(workDataOf(KEY_PROGRESS to 100, KEY_STAGE to "Installed · portable copy saved"))
         } finally {
             connection.disconnect()
         }
+    }
+
+    private suspend fun savePortableCopy(artifact: VerifiedModelArtifact) {
+        // Set foreground even when a restarted worker has no network work to do.
+        publishProgress(artifact, 0L, -1L, stageOverride = "Preparing external backup")
+        var stage = "Preparing external backup"
+        try {
+            ModelVaultStore(applicationContext).save(
+                modelId = artifact.modelId,
+                onProgress = { bytes, total ->
+                    publishProgress(artifact, bytes, total, stageOverride = stage)
+                },
+                onStage = { next ->
+                    stage = next
+                    publishProgress(artifact, 0L, -1L, stageOverride = stage)
+                }
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            throw ModelDownloadRejected("Model installed, but backup is not complete. " +
+                "Retry backup without downloading the model again. " +
+                (failure.message ?: "Check your selected folder and available space."))
+        }
+        setProgress(workDataOf(KEY_PROGRESS to 100, KEY_STAGE to "Installed · backup verified"))
     }
 
     private suspend fun publishInstalled(artifact: VerifiedModelArtifact, partial: File, hash: String) {
@@ -220,17 +234,19 @@ class VerifiedModelDownloadWorker(
     }
 
     private suspend fun publishProgress(
-        artifact: VerifiedModelArtifact, downloaded: Long, total: Long, verifying: Boolean = false
+        artifact: VerifiedModelArtifact, downloaded: Long, total: Long, verifying: Boolean = false,
+        stageOverride: String? = null
     ) {
         val percent = if (total > 0L) (downloaded * 100 / total).toInt().coerceIn(0, 99) else -1
-        val stage = if (verifying) "Checking download integrity" else "Downloading"
+        val stage = stageOverride ?: if (verifying) "Checking download integrity" else "Downloading"
         setProgress(workDataOf(
             KEY_STAGE to stage, KEY_PROGRESS to percent, KEY_BYTES to downloaded, KEY_TOTAL to total
         ))
         val notification = Notification.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("DataCube AU · " + artifact.modelId)
-            .setContentText(if (verifying) "Verifying model..." else if (percent >= 0) "$percent% downloaded" else "Downloading model...")
+            .setContentText(if (stageOverride != null) stage + if (percent >= 0) " · $percent%" else ""
+                else if (verifying) "Verifying model..." else if (percent >= 0) "$percent% downloaded" else "Downloading model...")
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setProgress(100, percent.coerceAtLeast(0), percent < 0 || verifying)
@@ -288,6 +304,7 @@ class VerifiedModelDownloadWorker(
         const val KEY_TOTAL = "totalBytes"
         const val KEY_STAGE = "stage"
         const val KEY_ERROR = "error"
+        const val KEY_BACKUP_VERIFIED = "backupVerified"
         private const val CHANNEL_ID = "datacube_verified_downloads"
         private const val NOTIFICATION_BASE = 50_000
         private const val STORAGE_HEADROOM = 160L * 1024L * 1024L
