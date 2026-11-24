@@ -59,6 +59,7 @@ function MobileAuthInstallContent() {
             Open DataCube AU
           </a>
         ) : null}
+        {appMissing && <Link href="/download" className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground">Download Android app</Link>}
         <div>
           <Link href="/" className="text-sm font-medium text-primary underline underline-offset-4">
             Website home
