@@ -1059,6 +1059,7 @@ fun SmartNoteWorkspace(
                     Spacer(Modifier.height(10.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(session.stage, style = MaterialTheme.typography.bodySmall)
+                    au.datacube.app.ui.common.AuElapsedFeedback(session.stage)
                     TextButton(onClick = session::stop) { Text("Stop") }
                 }
                 session.error?.let { message ->
@@ -1228,6 +1229,7 @@ fun PredictionWorkspace(
                     Spacer(Modifier.height(9.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(session.stage, style = MaterialTheme.typography.bodySmall)
+                    au.datacube.app.ui.common.AuElapsedFeedback(session.stage)
                     TextButton(onClick = session::stop) { Text("Stop") }
                 }
                 session.error?.let {
@@ -1516,7 +1518,6 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                 return
             }
             neuralJob?.cancel()
-            NeuralNarration.stop()
             tts.stop()
             speechError = null
             neuralStage = "Preparing Kokoro on your device"
@@ -1622,8 +1623,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                         selected = !useNeural,
                         onClick = {
                             neuralJob?.cancel()
-                            NeuralNarration.stop()
-                            useNeural = false
+                                            useNeural = false
                             neuralPrefs.edit().putBoolean("neural_opt_in_v3", false).apply()
                             speaking = false
                         },
@@ -1679,8 +1679,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                                     text = { Text(label) },
                                     onClick = {
                                         neuralJob?.cancel()
-                                        NeuralNarration.stop()
-                                        speaking = false
+                                                                    speaking = false
                                         neuralVoice = id
                                         neuralPrefs.edit().putString("voice", id).apply()
                                         voiceMenuExpanded = false
@@ -1756,8 +1755,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                         onClick = {
                             if (speaking) {
                                 neuralJob?.cancel()
-                                NeuralNarration.stop()
-                                tts.stop()
+                                                    tts.stop()
                                 speaking = false
                             }
                             else speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
