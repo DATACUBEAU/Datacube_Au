@@ -110,4 +110,23 @@ class LocalPassageIndexTest {
         }
     }
 
+
+    @Test fun ranksLateMatchesAndPreservesShortPagesAndTechnicalTerms() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val id = "test-" + UUID.randomUUID()
+        val file = File(context.cacheDir, "$id.txt")
+        val index = LocalPassageIndex(context)
+        try {
+            file.writeText("----- Page 1 -----\n" + ("Energy is discussed in the general introduction to science. ").repeat(7000) +
+                "\n----- Page 2 -----\nEnergy voltage voltage voltage relationship in a circuit.\n----- Page 3 -----\npH is 7.\n----- Page 4 -----\nAI means artificial intelligence.")
+            assertTrue(index.build(id, file) > 400)
+            assertTrue(index.search(id, "energy voltage", file).first().page == 2)
+            assertTrue(index.search(id, "What is pH?", file).first().page == 3)
+            assertTrue(index.search(id, "What is AI?", file).first().page == 4)
+        } finally {
+            index.remove(id)
+            index.close()
+            file.delete()
+        }
+    }
 }

@@ -45,6 +45,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.rag.RagTextChunker
+import au.datacube.app.data.rag.AuConversationContext
+import au.datacube.app.data.rag.AuPersonalizationStore
+import au.datacube.app.data.rag.ConversationEntry
+import au.datacube.app.models.ActiveLocalChatModel
 import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.data.rag.LocalSemanticSearch
 import au.datacube.app.data.rag.DocumentChatIntent
@@ -90,7 +94,8 @@ internal data class ChatMessage(
     val answer: String = "",
     val generating: Boolean = false,
     val generationError: String? = null,
-    val audioPath: String? = null
+    val audioPath: String? = null,
+    val createdAtEpochMs: Long? = System.currentTimeMillis()
 )
 
 private fun sourceSnippets(raw: String?): List<SourceSnippet> {
@@ -255,7 +260,8 @@ fun DocumentChatWorkspace(
     onDismissHistory: () -> Unit = {},
     newChatToken: Int = 0,
     onOpenModels: () -> Unit = {},
-    onScheduleRequest: ((String) -> Unit)? = null
+    onScheduleRequest: ((String) -> Unit)? = null,
+    accountId: String? = null
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -389,6 +395,21 @@ fun DocumentChatWorkspace(
                                 val events = session.activitySteps
                                 try {
                                     session.searchingStage = "Understanding your question"
+                                    val personalization = accountId?.let { AuPersonalizationStore(context, it) }
+                                    val memoryReply = if (audioPath == null && !alreadyAdded)
+                                        personalization?.command(cleanPrompt) else null
+                                    if (memoryReply != null) {
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = memoryReply))
+                                        return@launch
+                                    }
+                                    if (AuConversationContext.asksYesterdayRecap(cleanPrompt)) {
+                                        val recap = threads.yesterdayReply(documentId, threadId, messages.map {
+                                            ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
+                                        })
+                                        events += "Checked dated saved conversations in this workspace"
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = recap, steps = events.toList()))
+                                        return@launch
+                                    }
                                     if (DocumentChatIntent.isGreeting(cleanPrompt)) {
                                         events += "Identified a conversational greeting"
                                         val answerIndex = messages.size
@@ -433,9 +454,11 @@ fun DocumentChatWorkspace(
                                     }
                                     val priorQuestion = messages.dropLast(1)
                                         .lastOrNull { it.isUser }?.question
-                                    val plan = DocumentQueryInterpreter.understand(
-                                        cleanPrompt, textPreview.orEmpty(), priorQuestion
-                                    )
+                                    val plan = withContext(Dispatchers.Default) {
+                                        DocumentQueryInterpreter.understand(
+                                            cleanPrompt, textPreview.orEmpty(), priorQuestion
+                                        )
+                                    }
                                     if (plan.clarification != null) {
                                         events += "Asked for clarification before retrieving document text"
                                         messages.add(ChatMessage(
@@ -521,19 +544,20 @@ fun DocumentChatWorkspace(
                                     if (llmInstalled && matches.isNotEmpty()) {
                                         session.searchingStage = "AU is preparing an answer"
                                         val previous = messages.take(resultIndex)
-                                            .filter { !it.isUser && it.answer.isNotBlank() }
-                                            .takeLast(3)
+                                            .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
+                                            .takeLast(20)
                                             .map { RagTurn(it.question, it.answer) }
                                         val grounded = GroundedRagPlanner.build(
                                             plan.contextualQuestion ?: cleanPrompt, previous,
-                                            matches.map { RagEvidence(it.text, it.page) }
+                                            matches.map { RagEvidence(it.text, it.page) },
+                                            compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected())
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
                                         var generated = ""
                                         var lastUpdate = 0L
                                         try {
                                             session.searchingStage = "AU is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value) { part ->
+                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.promptContext(cleanPrompt).orEmpty()) { part ->
                                                 generated += part
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate > 90L) {

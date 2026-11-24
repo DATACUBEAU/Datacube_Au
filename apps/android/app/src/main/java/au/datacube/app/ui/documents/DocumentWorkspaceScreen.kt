@@ -181,6 +181,7 @@ fun DocumentWorkspaceScreen(
         when (selectedTab) {
             0 -> DocumentChatWorkspace(
                 documentId = document.id,
+                accountId = accountId,
                 documentName = document.name,
                 initialPrompt = initialPrompt,
                 textPreview = textPreview,

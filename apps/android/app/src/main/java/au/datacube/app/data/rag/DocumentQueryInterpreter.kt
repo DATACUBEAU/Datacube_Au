@@ -53,14 +53,26 @@ object DocumentQueryInterpreter {
             "Earlier question: ${previous.take(220)}. Follow-up: ${query.trim().take(350)}"
         else null
         val searchTerms = if (contextualQuestion != null) {
-            tokens(previous.orEmpty()) + queryTokens
+            queryTokens + tokens(previous.orEmpty())
         } else queryTokens
 
-        val overview = (queryTokens.any { it in overviewTerms || near(it, "document") } &&
-            queryTokens.any { it in overviewActions }) ||
-            (queryTokens.contains("summarize") && queryTokens.size <= 8) ||
-            (queryTokens.contains("overview") && queryTokens.size <= 8) ||
-            (queryTokens.contains("summary") && queryTokens.size <= 8)
+        // A targeted question ("explain ATP in this document") must retrieve
+        // that topic, not replace it with an unrelated whole-document overview.
+        val generic = overviewTerms + overviewActions + ignore + setOf(
+            "is", "in", "of", "to", "the", "a", "an", "all", "key", "brief",
+            "briefly", "whole", "entire", "give", "me", "can", "you", "does", "do",
+            "it", "its", "are", "concepts", "points", "covered", "mainly"
+        )
+        val specificTerms = queryTokens.filterNot { it in generic || near(it, "document") }
+        val asksOverview = queryTokens.any { it in overviewActions } &&
+            (queryTokens.any { it in overviewTerms || near(it, "document") } ||
+                queryTokens.any { it in setOf("summarize", "summary", "overview") })
+        val sourceReference = Regex("""\b(?:this|the|my)\s+(?:[\p{L}\p{N}]+\s+){0,3}?(?:document|notes?|lecture notes?|pdf|file|material)\b""", RegexOption.IGNORE_CASE)
+        val teacherWords = setOf("teach", "teaching", "students", "student", "class", "lesson", "plan", "prepare", "using", "use", "lecture", "want", "help", "make", "for", "based", "on", "to", "how", "can", "do", "would", "my", "our")
+        val wholeDocumentTeaching = Regex("""\b(?:teach|teaching|lesson plan|prepare a lesson)\b""", RegexOption.IGNORE_CASE).containsMatchIn(query) &&
+            sourceReference.containsMatchIn(query) &&
+            tokens(sourceReference.replace(query, " ")).all { it in generic || it in teacherWords }
+        val overview = ((asksOverview && specificTerms.isEmpty()) || wholeDocumentTeaching) && contextualQuestion == null
         if (overview) return DocumentQueryPlan(query.trim(), true, emptyMap(),
             contextualQuestion = contextualQuestion)
 
@@ -85,8 +97,7 @@ object DocumentQueryInterpreter {
                 val best = nearMatches.filter { it.second == bestDistance }
                 if (best.size == 1) {
                     val candidate = best.single().first
-                    if (bestDistance == 1 || (term.length >= 5 &&
-                            (frequency[candidate] ?: 0) >= 2)) {
+                    if (bestDistance == 1) {
                         corrected[term] = candidate
                     } else if (suggestions.isEmpty()) {
                         suggestions += "Did you mean '$candidate' instead of '$term'?"
@@ -96,16 +107,16 @@ object DocumentQueryInterpreter {
                         best.joinToString(" or ") { "'${it.first}'" } + "?"
                 }
             }
-        val retrievalQuery = searchTerms.joinToString(" ") { corrected[it] ?: it }
+        val retrievalQuery = searchTerms.flatMap { term -> listOfNotNull(term, corrected[term]) }.distinct().joinToString(" ")
         val clarifiedQuestion = if (contextualQuestion == null && corrected.isEmpty()) null
             else buildString {
                 if (contextualQuestion != null) appendLine(contextualQuestion)
                 else appendLine("Original question: ${query.trim().take(350)}")
                 if (corrected.isNotEmpty()) {
-                    appendLine("Source-supported query spelling: " +
+                    appendLine("Possible source-supported spelling (original question still applies): " +
                         queryTokens.joinToString(" ") { corrected[it] ?: it })
                 }
-                append("Use source evidence; ask if the interpretation is uncertain.")
+                append("Use source evidence; prefer the original meaning where supported. Ask only if a different interpretation materially changes the answer.")
             }
         return DocumentQueryPlan(
             retrievalQuery = retrievalQuery,
@@ -118,6 +129,8 @@ object DocumentQueryInterpreter {
             contextualQuestion = clarifiedQuestion
         )
     }
+
+    fun isReferentialFollowUp(query: String): Boolean = isReferentialFollowUp(query, tokens(query))
 
     private fun isReferentialFollowUp(query: String, terms: List<String>): Boolean {
         if (terms.size > 6) return false

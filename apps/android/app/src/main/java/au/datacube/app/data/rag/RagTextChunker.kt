@@ -91,7 +91,7 @@ class RagBm25Index(private val chunks: List<RagChunk>) {
 
     fun search(query: String, limit: Int = 5): List<RagChunk> {
         if (query.isBlank() || chunks.isEmpty()) return emptyList()
-        val words = tokens(query).toSet()
+        val words = tokens(query).filterNot { it in STOP_WORDS }.toSet()
         if (words.isEmpty()) return emptyList()
         val n = chunks.size.toDouble()
         return chunks.mapIndexedNotNull { index, chunk ->
@@ -114,4 +114,8 @@ class RagBm25Index(private val chunks: List<RagChunk>) {
 
     private fun tokens(text: String): List<String> =
         tokenizer.findAll(text.lowercase(Locale.ROOT)).map { it.value }.toList()
+
+    companion object {
+        private val STOP_WORDS = setOf("the", "and", "of", "in", "to", "is", "it", "for", "a", "an", "what", "how", "why", "does", "this", "that", "with", "from", "please", "explain", "document", "documents", "about", "you", "me", "my", "are", "on", "be", "as", "at", "do", "or")
+    }
 }
