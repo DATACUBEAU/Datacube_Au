@@ -20,7 +20,7 @@ object GroundedRagPlanner {
             .take(limit.coerceIn(1, 8)).map { it.first }
     }
 
-    fun build(question: String, history: List<RagTurn>, passages: List<RagEvidence>): RagPrompt {
+    fun build(question: String, history: List<RagTurn>, passages: List<RagEvidence>, compact: Boolean = false): RagPrompt {
         require(question.isNotBlank()) { "Ask a document question first." }
         val usable = passages.filter { it.text.isNotBlank() }.take(5)
         require(usable.isNotEmpty()) { "No supporting document text was retrieved." }
@@ -28,12 +28,12 @@ object GroundedRagPlanner {
             appendLine("DOCUMENT QUESTION")
             appendLine(question.trim().take(700))
             appendLine()
-            val recent = history.takeLast(3).filter { it.question.isNotBlank() && it.answer.isNotBlank() }
+            val recent = AuConversationContext.select(question, history, 3)
             if (recent.isNotEmpty()) {
                 appendLine("PREVIOUS CONVERSATION (context only; not evidence)")
                 recent.forEachIndexed { index, turn ->
-                    appendLine("Previous user ${index + 1}: ${turn.question.take(240)}")
-                    appendLine("Previous reply ${index + 1}: ${turn.answer.take(360)}")
+                    appendLine("Previous user ${index + 1}: ${turn.question.take(if (compact) 180 else 240)}")
+                    appendLine("Previous reply ${index + 1}: ${turn.answer.take(if (compact) 240 else 360)}")
                 }
                 appendLine()
             }
@@ -46,7 +46,8 @@ object GroundedRagPlanner {
             appendLine("You are answering a student, not listing search results. Directly answer the question in clear, natural language.")
             appendLine("Synthesize the meaning supported by the excerpts, rather than repeating short quoted fragments or opening with 'the excerpts mention'.")
             appendLine("For a document overview, explain its subject, main purpose, and the most useful concepts you can verify from the excerpts.")
-            appendLine("Match the depth to the question. Use headings, bold terms, lists, or Markdown tables when they improve clarity; keep simple answers simple.")
+            appendLine("Use relevant prior context. Interpret clear typos, but do not substitute a different technical concept. Answer directly; match depth to the question and offer a relevant next step only when helpful.")
+            appendLine("Use headings, bold terms, lists or compact tables only when they improve clarity.")
             appendLine("Use at most 1-3 numbered citations [1], [2], etc. next to directly supported statements; the app displays sources separately.")
             appendLine("If excerpts cover only the title, copyright, or incomplete material, say the available context is limited and ask for a content chapter.")
             appendLine("Do not add unsupported facts, page numbers, quotations, private thinking or hidden chain-of-thought.")
