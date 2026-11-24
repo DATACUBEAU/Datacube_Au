@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest, type RequestAuthResult } from '@/app/api/proxy/_supabase-auth';
+import { verifyConexProof } from '@/lib/server/conex-proof';
 import { hasConexAccess } from '@/lib/conex-rbac';
 import {
   ACCESS_NO_STORE_HEADERS,
@@ -122,12 +123,22 @@ export async function requirePaidAccess(req: NextRequest): Promise<AuthorizedReq
   });
 }
 
+const ownerRule = { id: 'admin_access', requirement: 'admin' as const, labels: ['AUTH', 'ADMIN', 'STAFF', 'INTERNAL', 'CACHE_SENSITIVE'] as const };
+export async function requireConexOwner(req: NextRequest): Promise<AuthorizedRequest> {
+  const auth = await requireUserFromRequest(req);
+  if (!auth.ok) throw new AccessControlError(evaluateAccess(null, ownerRule));
+  const subject = { userId: auth.userId, email: auth.email, adminOverride: hasConexAccess({ userId: auth.userId }) };
+  const decision = evaluateAccess(subject, ownerRule);
+  if (!decision.allowed) throw new AccessControlError(decision);
+  return { auth, subject, decision, supabase: createSupabaseAdminClient() };
+}
+
 export async function requireAdmin(req: NextRequest): Promise<AuthorizedRequest> {
-  return authorizeRequest(req, {
-    id: 'admin_access',
-    requirement: 'admin',
-    labels: ['AUTH', 'ADMIN', 'STAFF', 'INTERNAL', 'CACHE_SENSITIVE'],
-  });
+  const owner = await requireConexOwner(req);
+  if (!await verifyConexProof(req, owner.auth.userId, owner.auth.accessToken, 'verified')) {
+    throw new AccessControlError(evaluateAccess({ userId: owner.auth.userId, adminOverride: false }, ownerRule));
+  }
+  return owner;
 }
 
 export function accessControlResponse(error: AccessControlError, requestId?: string): NextResponse {
