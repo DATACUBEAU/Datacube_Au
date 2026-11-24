@@ -67,9 +67,11 @@ object DocumentQueryInterpreter {
         val asksOverview = queryTokens.any { it in overviewActions } &&
             (queryTokens.any { it in overviewTerms || near(it, "document") } ||
                 queryTokens.any { it in setOf("summarize", "summary", "overview") })
+        val sourceReference = Regex("""\b(?:this|the|my)\s+(?:[\p{L}\p{N}]+\s+){0,3}?(?:document|notes?|lecture notes?|pdf|file|material)\b""", RegexOption.IGNORE_CASE)
+        val teacherWords = setOf("teach", "teaching", "students", "student", "class", "lesson", "plan", "prepare", "using", "use", "lecture", "want", "help", "make", "for", "based", "on", "to", "how", "can", "do", "would")
         val wholeDocumentTeaching = Regex("""\b(?:teach|teaching|lesson plan|prepare a lesson)\b""", RegexOption.IGNORE_CASE).containsMatchIn(query) &&
-            Regex("""\b(?:this|the|my)\s+(?:[\p{L}\p{N}]+\s+){0,3}(?:document|notes?|lecture notes?|pdf|file|material)\b""", RegexOption.IGNORE_CASE).containsMatchIn(query) &&
-            specificTerms.none { it !in setOf("teach", "teaching", "students", "student", "class", "lesson", "plan", "prepare", "using", "use", "lecture", "want", "help", "make", "for", "based", "on", "to") }
+            sourceReference.containsMatchIn(query) &&
+            tokens(sourceReference.replace(query, " ")).all { it in generic || it in teacherWords }
         val overview = ((asksOverview && specificTerms.isEmpty()) || wholeDocumentTeaching) && contextualQuestion == null
         if (overview) return DocumentQueryPlan(query.trim(), true, emptyMap(),
             contextualQuestion = contextualQuestion)
