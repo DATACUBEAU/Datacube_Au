@@ -129,14 +129,8 @@ export async function requirePaidAccess(req: NextRequest): Promise<AuthorizedReq
   });
 }
 
-const ownerRule = { id: 'admin_access', requirement: 'admin' as const, labels: ['AUTH', 'ADMIN', 'STAFF', 'INTERNAL', 'CACHE_SENSITIVE'] as const };
 export async function requireConexOwner(req: NextRequest): Promise<AuthorizedRequest> {
-  const auth = await requireUserFromRequest(req);
-  if (!auth.ok) throw new AccessControlError(evaluateAccess(null, ownerRule));
-  const subject = { userId: auth.userId, email: auth.email, adminOverride: hasConexAccess({ userId: auth.userId }) };
-  const decision = evaluateAccess(subject, ownerRule);
-  if (!decision.allowed) throw new AccessControlError(decision);
-  return { auth, subject, decision, supabase: createSupabaseAdminClient() };
+  return requireAdmin(req, { ownerCheckOnly: true });
 }
 
 export async function requireAdmin(req: NextRequest, options: { ownerCheckOnly?: boolean } = {}): Promise<AuthorizedRequest> {
