@@ -40,6 +40,54 @@ class PodcastOverviewSession(private val documentId: String) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null
+    private var playbackJob: Job? = null
+    var listening by mutableStateOf(false)
+        private set
+    var activeSpeakerIndex by mutableStateOf(-1)
+        private set
+    var playbackStage by mutableStateOf("")
+        private set
+    var playbackError by mutableStateOf<String?>(null)
+        private set
+
+    fun play(context: Context, mobileVoice: Boolean, speed: Float) {
+        if (listening || generating || turns.isEmpty()) return
+        val app = context.applicationContext
+        val dialogue = turns.toList()
+        playbackError = null
+        listening = true
+        playbackStage = "Preparing the voices"
+        playbackJob = AuAudioPlayback.launch(app, "Preparing or playing podcast") {
+            try {
+                val onSpeaker: suspend (Int) -> Unit = { index ->
+                    withContext(Dispatchers.Main) { activeSpeakerIndex = index }
+                }
+                val onStage: suspend (String) -> Unit = { value ->
+                    withContext(Dispatchers.Main) { playbackStage = value }
+                }
+                if (mobileVoice) {
+                    SmoothOfflineNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage,
+                        distinguishSpeakers = true)
+                } else {
+                    LocalGenerativeEngine.release()
+                    NeuralNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                playbackError = failure.message ?: "Audio playback failed."
+            } finally {
+                listening = false
+                activeSpeakerIndex = -1
+                playbackStage = ""
+                playbackJob = null
+            }
+        }
+    }
+
+    fun stopPlayback() {
+        playbackJob?.cancel()
+    }
     private var loaded = false
 
     fun load(context: Context) {
@@ -54,7 +102,7 @@ class PodcastOverviewSession(private val documentId: String) {
     }
 
     fun generate(context: Context, documentName: String, extractedText: String) {
-        if (generating) return
+        if (generating || listening) return
         require(extractedText.isNotBlank()) { "Extract text before creating a podcast." }
         error = null
         stage = "Preparing your document"
@@ -147,6 +195,7 @@ class PodcastOverviewSession(private val documentId: String) {
 
     fun stop() {
         job?.cancel()
+        stopPlayback()
     }
 
     private fun fileFor(dir: File): File {
