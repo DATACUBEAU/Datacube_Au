@@ -1,6 +1,7 @@
 package au.datacube.app.audio
 
 import android.content.Context
+import au.datacube.app.notifications.LocalNotificationService
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
@@ -177,6 +178,7 @@ object NeuralNarration {
                     val next = boundaries.lastOrNull { it.first <= head }?.second ?: 0
                     if (next != speaker) { speaker = next; onSpeaker(next) }
                 }
+                LocalNotificationService(app).showAiReady("neural-audio", "Voice audio is ready")
                 onStage("Playing neural audio")
                 track.play()
                 reportSpeaker()
