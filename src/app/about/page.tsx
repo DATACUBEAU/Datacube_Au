@@ -19,14 +19,15 @@ const navigation = [
   { href: '/features', label: 'Features' },
   { href: '/about', label: 'About' },
   { href: '/policy', label: 'Policy' },
+  { href: '/download', label: 'Download' },
 ];
 
 const introPhrases = [
   'Your personal AU learning companion...',
   'Transforms your notes into knowledge...',
-  'Predicts exam questions to help you focus...',
-  'Works offline, anytime, anywhere...',
-  'Learns from your materials and helps you study...',
+  'Helps you identify topics to review...',
+  'Supports offline study with downloaded models...',
+  'Uses your materials to ground study explanations...',
 ];
 
 function TypingAnimation() {
@@ -123,7 +124,7 @@ export default function AboutPage() {
           </p>
           <p className="mx-auto mt-4 max-w-2xl leading-relaxed text-muted-foreground">
             DataCube AU helps students make better use of their learning materials.
-            Upload notes and documents, ask questions about them, and keep your study
+            Import notes and documents into the Android app, ask questions about them, and keep your study
             resources organised in one place.
           </p>
         </section>
@@ -164,7 +165,7 @@ export default function AboutPage() {
             DataCube AU is a document and study assistant. It helps you work with
             your own files by making their content easier to search, review, and
             discuss. You can use it to ask questions about your materials, create
-            summaries, and support your study sessions.
+            Smart Notes, practice questions and audio discussions. Supported AU models run on your device; account services, billing and model downloads may require a connection.
           </p>
         </section>
 
