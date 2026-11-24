@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import Image from 'next/image';
 import { BookOpen, FileText, MessageCircle, Download } from 'lucide-react';
 
@@ -42,16 +43,13 @@ export default function MobileAppRequiredPage() {
         </div>
 
         <div className="mt-8">
-          <button
-            type="button"
-            disabled
-            aria-disabled="true"
-            title="App download link coming soon"
-            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground opacity-75"
+          <Link
+            href="/download"
+            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground hover:opacity-90"
           >
             <Download className="h-4 w-4" />
             Download DataCube AU
-          </button>
+          </Link>
         </div>
       </section>
     </main>
