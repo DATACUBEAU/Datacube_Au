@@ -78,4 +78,11 @@ class DocumentQueryInterpreterTest {
         assertTrue(plan.clarification?.contains("matter") == true)
     }
 
+
+    @Test fun specificDocumentQuestionDoesNotBecomeOverview() {
+        val source = "ATP stores energy. Photosynthesis converts light energy."
+        assertFalse(DocumentQueryInterpreter.understand("Explain ATP in this document", source).overview)
+        assertFalse(DocumentQueryInterpreter.understand("Summarize photosynthesis", source).overview)
+        assertTrue(DocumentQueryInterpreter.understand("Summarize the key ideas", source).overview)
+    }
 }
