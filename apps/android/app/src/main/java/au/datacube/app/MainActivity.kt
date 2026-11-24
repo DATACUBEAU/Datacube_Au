@@ -630,6 +630,7 @@ private fun AuthenticatedWorkspace(
                 } else if (selectedDocument != null) {
                     DocumentWorkspaceScreen(
                         document = selectedDocument,
+                        accountId = requireNotNull(authState.user).id,
                         initialPrompt = initialPrompt,
                         initialTab = initialTab,
                         extractionStatus = selectedProcessing?.extractionStatus,
