@@ -115,7 +115,11 @@ fun PodcastConversationPanel(
                     } else startPlayback()
                 }
             )
+            if (listening && activeSpeakerIndex < 0) {
+                au.datacube.app.ui.common.AuElapsedFeedback(playbackStage)
+            }
             if (session.generating) {
+                au.datacube.app.ui.common.AuElapsedFeedback(session.stage)
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(session.stage.ifBlank { "AU is preparing your podcast" },
                     color = MaterialTheme.colorScheme.primary,
