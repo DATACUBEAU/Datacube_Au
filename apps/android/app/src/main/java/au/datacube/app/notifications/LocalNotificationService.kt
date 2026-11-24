@@ -4,6 +4,9 @@ import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
+import android.content.Intent
+import au.datacube.app.MainActivity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -108,6 +111,22 @@ class LocalNotificationService(private val context: Context) {
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .build()
         manager.notify(tag(documentId), COMPLETE_ID, notification)
+    }
+
+    /** Completion alerts are separate from silent ongoing progress. No private text. */
+    fun showAiReady(key: String, message: String) {
+        val manager = manager() ?: return
+        manager.createNotificationChannel(NotificationChannel(
+            "au_ai_ready", "AI and audio ready", NotificationManager.IMPORTANCE_HIGH
+        ))
+        val open = PendingIntent.getActivity(context, 73, Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        manager.notify("au-ready-$key", 1, Notification.Builder(context, "au_ai_ready")
+            .setSmallIcon(R.drawable.ic_notification_datacube)
+            .setContentTitle("DataCube AU").setContentText(message)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setContentIntent(open).setAutoCancel(true).build())
     }
 
     fun cancelDocument(documentId: String, legacyJobIds: Collection<String>) {

@@ -12,6 +12,12 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -160,6 +166,7 @@ fun AuWorkingStatus(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
+                AuElapsedFeedback(stage)
                 if (stage.isNotBlank()) {
                     Text(
                         stage,
@@ -171,4 +178,19 @@ fun AuWorkingStatus(
             TextButton(onClick = onStop) { Text("Stop") }
         }
     }
+}
+
+/** Elapsed time is a liveness indicator, not a fabricated completion percentage. */
+@Composable
+fun AuElapsedFeedback(stage: String) {
+    var elapsed by remember(stage) { mutableIntStateOf(0) }
+    LaunchedEffect(stage) {
+        val started = android.os.SystemClock.elapsedRealtime()
+        while (true) {
+            delay(1000)
+            elapsed = ((android.os.SystemClock.elapsedRealtime() - started) / 1000).toInt()
+        }
+    }
+    Text("Current stage · ${elapsed}s", style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
