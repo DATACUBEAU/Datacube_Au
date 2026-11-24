@@ -2420,7 +2420,7 @@ const AdminUsers = () => (
 );
 
 const AdminActivity = (_props: { token?: string }) => {
-  const [isLive, setIsLive] = useState(true);
+  const [isLive, setIsLive] = useState(false);
   const [events, setEvents] = useState<any[]>([]);
   const [activeUsers, setActiveUsers] = useState(0);
   const [windowMinutes, setWindowMinutes] = useState(15);
@@ -2476,8 +2476,8 @@ const AdminActivity = (_props: { token?: string }) => {
   useEffect(() => {
     if (!isLive) return;
     const interval = setInterval(() => {
-      fetchEvents().catch(() => {});
-    }, 10_000);
+      if (document.visibilityState === 'visible' && navigator.onLine) fetchEvents().catch(() => {});
+    }, 60_000);
     return () => clearInterval(interval);
   }, [isLive, fetchEvents]);
 
@@ -3174,6 +3174,11 @@ export default function ConexPage() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Security check failed.'); }
     finally { setLoading(false); }
   };
+  const restartChallenge = async () => {
+    setLoading(true); setError(null);
+    try { await start(); } catch (e) { setError(e instanceof Error ? e.message : 'Security check failed.'); }
+    finally { setLoading(false); }
+  };
   const handleStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading || !accessKey.trim()) return;
@@ -3514,10 +3519,11 @@ export default function ConexPage() {
                     </div>
                   )}
                 </CardContent>
-                <CardFooter>
-                  <Button type="submit" className="w-full h-12 text-lg font-bold uppercase tracking-tighter" disabled={loading}>
+                <CardFooter className="flex flex-col gap-2">
+                  <Button type="submit" className="w-full h-12 text-lg font-bold uppercase tracking-tighter" disabled={loading || !accessKey}>
                     {loading ? <Loader2 className="animate-spin" /> : <>Unlock Conex <Lock className="ml-2 h-5 w-5" /></>}
                   </Button>
+                  <Button type="button" variant="ghost" disabled={loading} onClick={restartChallenge}>Restart security check</Button>
                 </CardFooter>
               </form>
             </Card>
