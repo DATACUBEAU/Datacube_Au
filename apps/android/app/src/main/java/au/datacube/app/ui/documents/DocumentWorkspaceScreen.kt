@@ -1,6 +1,7 @@
 package au.datacube.app.ui.documents
 
 import au.datacube.app.ui.common.DataCubeDialog
+import au.datacube.app.schedule.AuScheduleDialog
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
@@ -51,6 +52,12 @@ fun DocumentWorkspaceScreen(
     var newChatToken by remember(document.id) { mutableIntStateOf(0) }
     var chatHistoryOpen by remember(document.id) { mutableStateOf(false) }
     var showDetails by remember(document.id) { mutableStateOf(false) }
+    var schedulesOpen by remember(document.id) { mutableStateOf(false) }
+    var scheduleTitle by remember(document.id) { mutableStateOf("Review " + document.name) }
+    if (schedulesOpen && accountId != null) {
+        AuScheduleDialog(accountId, "document:${document.id}", scheduleTitle,
+            onDismiss = { schedulesOpen = false })
+    }
 
 
     if (showDetails) {
@@ -137,6 +144,13 @@ fun DocumentWorkspaceScreen(
                         )
                     }
                     HorizontalDivider()
+                    if (accountId != null) {
+                        DropdownMenuItem(
+                            text = { Text("Schedules") },
+                            leadingIcon = { Icon(Icons.Outlined.Schedule, null) },
+                            onClick = { scheduleTitle = "Review " + document.name; schedulesOpen = true; menuExpanded = false }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("New chat") },
                         leadingIcon = { Icon(Icons.Outlined.Add, null) },
@@ -180,7 +194,11 @@ fun DocumentWorkspaceScreen(
                 onOpenHistory = { chatHistoryOpen = true },
                 onDismissHistory = { chatHistoryOpen = false },
                 newChatToken = newChatToken,
-                onOpenModels = onOpenModels
+                onOpenModels = onOpenModels,
+                onScheduleRequest = if (accountId != null) { request ->
+                    scheduleTitle = request
+                    schedulesOpen = true
+                } else null
             )
             1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading, document.id)
             2 -> PredictionWorkspace(document.name, textPreview, previewLoading, document.id)
