@@ -341,7 +341,7 @@ function mapAuthUserToManagedRecord(
     null;
 
   const tier = profile?.tier ?? roleToTier(role) ?? 'free';
-  const isAuthorized = String(tier).toLowerCase() === 'admin';
+  const isAuthorized = isProtectedOwnerUserId(user.id);
 
   return {
     user_id: user.id,
@@ -375,7 +375,7 @@ function mapAuUsersToManagedRecord(
   const accountStatus = normalizeAccountStatus(
     (activity?.metadata as Record<string, unknown> | null)?.account_status ?? 'active'
   );
-  const isAuthorized = String(tier).toLowerCase() === 'admin';
+  const isAuthorized = isProtectedOwnerUserId(user.id);
 
   return {
     user_id: user.id,
@@ -996,6 +996,22 @@ async function handleUserActivity(
 
 export async function GET(req: NextRequest) {
   try {
+    const deviceReportFor = req.nextUrl.searchParams.get('deviceReportFor');
+    if (deviceReportFor !== null) {
+      await requireConexAdmin(req);
+      const userId = z.string().uuid().parse(deviceReportFor);
+      const { data, error } = await createServiceRoleClient().from('au_user_activity')
+        .select('device_info').eq('user_id', userId).maybeSingle();
+      if (error) return NextResponse.json({ ok: false }, { status: 503, headers: { 'Cache-Control': 'no-store' } });
+      const info = data?.device_info;
+      const bounded = (value: unknown, length: number) => typeof value === 'string' ? value.slice(0, length) : null;
+      const report = info && typeof info === 'object' && typeof info.reportedAt === 'string'
+        ? { manufacturer: bounded(info.manufacturer, 60), model: bounded(info.model, 80),
+            androidVersion: bounded(info.androidVersion, 30), appVersion: bounded(info.appVersion, 40),
+            sdk: Number.isInteger(info.sdk) ? info.sdk : null, reportedAt: bounded(info.reportedAt, 40) }
+        : null;
+      return NextResponse.json({ ok: true, report }, { headers: { 'Cache-Control': 'no-store, private' } });
+    }
     return await listManagedUsers(req);
   } catch (error) {
     return jsonError(error);
