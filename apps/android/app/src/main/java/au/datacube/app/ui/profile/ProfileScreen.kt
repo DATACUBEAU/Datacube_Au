@@ -146,6 +146,8 @@ fun ProfileScreen(
             item {
                 SettingsEntry(Icons.Outlined.NotificationsNone, "Notifications", "Enable task updates", onEnableNotifications)
             }
+            item { SettingsSection("App updates") }
+            item { UpdateSettingsCard() }
             item { SettingsSection("Account") }
             item { SettingsEntry(Icons.Outlined.PersonOutline, "Profile", email, { showProfile = true }) }
             item {
