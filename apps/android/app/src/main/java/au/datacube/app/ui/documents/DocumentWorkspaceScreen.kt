@@ -53,8 +53,9 @@ fun DocumentWorkspaceScreen(
     var chatHistoryOpen by remember(document.id) { mutableStateOf(false) }
     var showDetails by remember(document.id) { mutableStateOf(false) }
     var schedulesOpen by remember(document.id) { mutableStateOf(false) }
+    var scheduleTitle by remember(document.id) { mutableStateOf("Review " + document.name) }
     if (schedulesOpen && accountId != null) {
-        AuScheduleDialog(accountId, "document:${document.id}", "Review ${document.name}",
+        AuScheduleDialog(accountId, "document:${document.id}", scheduleTitle,
             onDismiss = { schedulesOpen = false })
     }
 
@@ -147,7 +148,7 @@ fun DocumentWorkspaceScreen(
                         DropdownMenuItem(
                             text = { Text("Schedules") },
                             leadingIcon = { Icon(Icons.Outlined.Schedule, null) },
-                            onClick = { schedulesOpen = true; menuExpanded = false }
+                            onClick = { scheduleTitle = "Review " + document.name; schedulesOpen = true; menuExpanded = false }
                         )
                     }
                     DropdownMenuItem(
@@ -192,7 +193,11 @@ fun DocumentWorkspaceScreen(
                 onOpenHistory = { chatHistoryOpen = true },
                 onDismissHistory = { chatHistoryOpen = false },
                 newChatToken = newChatToken,
-                onOpenModels = onOpenModels
+                onOpenModels = onOpenModels,
+                onScheduleRequest = if (accountId != null) { request ->
+                    scheduleTitle = request
+                    schedulesOpen = true
+                } else null
             )
             1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading, document.id)
             2 -> PredictionWorkspace(document.name, textPreview, previewLoading, document.id)
