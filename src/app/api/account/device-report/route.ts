@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
     if (limit.error || !Number.isSafeInteger(count) || count < 1) return reply({ ok: false }, 503);
     if (count > 10) return reply({ ok: false }, 429);
     if (body?.action === 'remove') {
-      const result = await supabase.from('au_user_activity').update({ device_info: null }).eq('user_id', auth.userId);
+      const result = await supabase.from('au_user_activity').update({ device_info: null } as any).eq('user_id', auth.userId);
       return reply({ ok: !result.error }, result.error ? 503 : 200);
     }
     if (body?.action !== 'share') return reply({ ok: false }, 400);
