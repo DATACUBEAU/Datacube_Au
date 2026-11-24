@@ -162,6 +162,21 @@ export function ConexUserManagement() {
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [deviceReport, setDeviceReport] = useState<{ userId: string; report: Record<string, unknown> | null; error?: boolean } | null>(null);
+  const [loadingDevice, setLoadingDevice] = useState(false);
+  const loadDevice = async (userId: string) => {
+    if (loadingDevice) return;
+    setLoadingDevice(true);
+    try {
+      const res = await authedFetch('/api/admin/users?deviceReportFor=' + encodeURIComponent(userId), { method: 'GET', cache: 'no-store' });
+      if (!res.ok) throw new Error('Unavailable');
+      const data = await res.json();
+      setDeviceReport({ userId, report: data.report ?? null });
+    } catch {
+      setDeviceReport({ userId, report: null, error: true });
+    } finally { setLoadingDevice(false); }
+  };
+
   const selectedUser = useMemo(() => users.find((u) => u.user_id === selectedUserId) ?? null, [users, selectedUserId]);
 
   const [fullName, setFullName] = useState('');
@@ -286,7 +301,7 @@ export function ConexUserManagement() {
   );
 
   useEffect(() => {
-    const timeout = setTimeout(() => setSearch(searchInput.trim()), 250);
+    const timeout = setTimeout(() => setSearch(searchInput.trim()), 650);
     return () => clearTimeout(timeout);
   }, [searchInput]);
 
@@ -1007,6 +1022,22 @@ export function ConexUserManagement() {
                   <div className="space-y-1">
                     <Label>Email</Label>
                     <Input value={selectedUser.email || ''} readOnly />
+                  </div>
+                  <div className="rounded-lg border p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <Label>Android compatibility report</Label>
+                      <Button type="button" size="sm" variant="outline" disabled={loadingDevice} onClick={() => void loadDevice(selectedUser.user_id)}>Load report</Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">User-shared information, not a verified live device.</p>
+                    {deviceReport?.userId === selectedUser.user_id && (
+                      deviceReport.error ? <p className="text-sm">Report unavailable.</p> :
+                      !deviceReport.report ? <p className="text-sm">No report shared.</p> :
+                      <dl className="grid grid-cols-2 gap-2 text-sm">
+                        {Object.entries({ manufacturer: 'Manufacturer', model: 'Model', androidVersion: 'Android', appVersion: 'AU version', sdk: 'Android API', reportedAt: 'Reported' }).map(([key, label]) => (
+                          <div className="contents" key={key}><dt className="text-muted-foreground">{label}</dt><dd className="break-words">{String(deviceReport.report?.[key] ?? '—')}</dd></div>
+                        ))}
+                      </dl>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <Label>Full Name</Label>
