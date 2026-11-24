@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest, type RequestAuthResult } from '@/app/api/proxy/_supabase-auth';
 import { hasConexAccess } from '@/lib/conex-rbac';
-import { readConexState } from '@/lib/server/conex-challenge';
+import { verifyConexProof } from '@/lib/server/conex-proof';
 import {
   ACCESS_NO_STORE_HEADERS,
   buildFeatureAccessRule,
@@ -111,7 +111,7 @@ export async function authorizeRequest(
     throw new AccessControlError(decision);
   }
 
-  if (rule.requirement === 'admin' && !options.ownerCheckOnly && readConexState(req, auth.userId, auth.accessToken)?.stage !== 'unlocked') {
+  if (rule.requirement === 'admin' && !options.ownerCheckOnly && !await verifyConexProof(req, auth.userId, auth.accessToken, 'verified')) {
     throw new AccessControlError({ ...decision, allowed: false, status: 403, code: 'FORBIDDEN', reason: 'Conex verification required.' });
   }
   return { auth, supabase, subject, decision };
