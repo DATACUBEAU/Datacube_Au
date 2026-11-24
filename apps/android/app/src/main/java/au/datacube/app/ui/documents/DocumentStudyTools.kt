@@ -258,7 +258,6 @@ fun DocumentChatWorkspace(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    val speech = rememberAuReadAloud()
     val scope = rememberCoroutineScope()
     val semanticSearch = remember(context) { LocalSemanticSearch(context) }
     val semanticSupported = semanticSearch.supported()
@@ -275,7 +274,7 @@ fun DocumentChatWorkspace(
         if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
     }
     val threadId = threadIndex?.activeId ?: "main"
-    LaunchedEffect(documentId, threadId) { speech.stop() }
+    val speech = rememberAuReadAloud("document:$documentId:$threadId")
     val session = remember(documentId, threadId) {
         DocumentChatSessions.get(documentId, threadId, context)
     }
@@ -1478,9 +1477,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
             }
         })
         onDispose {
-            neuralJob?.cancel()
-            NeuralNarration.stop()
-            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { NeuralNarration.release() }
+            if (neuralJob?.isActive == true) neuralJob?.cancel()
             tts.stop()
             tts.shutdown()
         }
@@ -1524,7 +1521,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
             speechError = null
             neuralStage = "Preparing Kokoro on your device"
             speaking = true
-            neuralJob = narratorScope.launch {
+            neuralJob = au.datacube.app.audio.AuAudioPlayback.launch(context, "Preparing narration") {
                 try {
                     NeuralNarration.speak(context, text, neuralVoice, speechRate) { stage ->
                         withContext(Dispatchers.Main) { neuralStage = stage }
