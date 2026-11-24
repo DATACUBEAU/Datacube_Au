@@ -3,6 +3,7 @@ package au.datacube.app.ui.chat
 import android.os.SystemClock
 import au.datacube.app.data.rag.AuConversationContext
 import au.datacube.app.data.rag.ConversationEntry
+import au.datacube.app.data.rag.DocumentQueryInterpreter
 import au.datacube.app.models.ActiveLocalChatModel
 import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
@@ -181,12 +182,19 @@ fun DiscsScreen(
                             .replace("on this device", "in this collection"),
                         steps = events.toList()))
                 } else {
+                    val previousGrounded = turns.dropLast(1).lastOrNull { !it.isUser && !it.generating && it.generationError == null }
+                        ?.takeIf { it.matches.isNotEmpty() }
+                    val groundedFollowUp = previousGrounded != null &&
+                        DocumentQueryInterpreter.isReferentialFollowUp(question)
                     val searchDocuments = if (collectionId != null) {
                         !ScopedChatRouting.isSocialGreeting(question)
-                    } else intent == GistIntent.DOCUMENT_SEARCH
+                    } else intent == GistIntent.DOCUMENT_SEARCH || groundedFollowUp
+                    val retrievalQuestion = if (groundedFollowUp && previousGrounded != null)
+                        question.take(700) + " " + previousGrounded.question.take(350)
+                    else question
                     session.searchingStage = if (searchDocuments) "Searching your documents" else "Preparing a reply"
                     val sourceResults = if (searchDocuments) {
-                        CrossDocumentSearch(context).search(library, question)
+                        CrossDocumentSearch(context).search(library, retrievalQuestion)
                     } else emptyList()
                     if (searchDocuments) {
                         events += "Searched extracted text across ${library.size} document(s)"
@@ -232,6 +240,7 @@ fun DiscsScreen(
                         val input = if (searchDocuments) {
                             """
                             QUESTION: ${question.take(700)}
+                            ${if (groundedFollowUp) "Earlier document question: " + previousGrounded?.question.orEmpty().take(350) else ""}
                             PREVIOUS CHAT (not source evidence):
                             $lastAnswers
                             DOCUMENT SEARCH RESULTS:
@@ -252,7 +261,7 @@ fun DiscsScreen(
                         var raw = ""
                         var lastUpdate = 0L
                         try {
-                            LocalGenerativeEngine.generate(context, input, allowGeneral = true,
+                            LocalGenerativeEngine.generate(context, input, allowGeneral = !searchDocuments,
                                 generalOnly = !searchDocuments) { text ->
                                 raw += text
                                 val now = SystemClock.elapsedRealtime()
