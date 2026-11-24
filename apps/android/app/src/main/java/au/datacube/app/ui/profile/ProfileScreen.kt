@@ -76,8 +76,6 @@ fun ProfileScreen(
         )
     }
 
-    var showDeviceReport by remember { mutableStateOf(false) }
-    if (showDeviceReport && user != null) AuDeviceDiagnosticsDialog(user.id) { showDeviceReport = false }
 
     if (showProfile) {
         DataCubeDialog(
@@ -188,7 +186,6 @@ fun ProfileScreen(
             }
             item { SettingsSection("App updates") }
             item { UpdateSettingsCard() }
-            if (user != null) item { SettingsEntry(Icons.Outlined.PhoneAndroid, "Device support information", "Optional compatibility report", { showDeviceReport = true }) }
             item { SettingsSection("Account") }
             if (user != null) item { SettingsEntry(Icons.Outlined.Info, "Device compatibility", "Optional support report", { showDeviceReport = true }) }
             item { SettingsEntry(Icons.Outlined.PersonOutline, "Profile", email, { showProfile = true }) }
