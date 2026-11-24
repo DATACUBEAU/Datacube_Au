@@ -60,6 +60,8 @@ import au.datacube.app.ui.models.ModelsScreen
 import au.datacube.app.ui.theme.ThemePreference
 import au.datacube.app.ui.theme.ThemePreferenceStore
 import au.datacube.app.ui.home.HomeScreen
+import au.datacube.app.updates.AndroidUpdateCheckWorker
+import au.datacube.app.updates.AndroidUpdateManager
 import au.datacube.app.ui.profile.ProfileScreen
 import au.datacube.app.ui.theme.DataCubeTheme
 import au.datacube.app.work.LocalJobScheduler
@@ -78,6 +80,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        // Metadata-only periodic checks; no APK/model is downloaded until user consent.
+        AndroidUpdateCheckWorker.schedule(applicationContext)
+        val updateJustCompleted = AndroidUpdateManager.consumeUpdatedOnLaunch(applicationContext)
         receiveMobileSignInIntent(intent, "cold")
 
         setContent {
@@ -95,6 +100,7 @@ class MainActivity : ComponentActivity() {
                     { documentsViewModel },
                     openBrowser = ::openBrowser,
                     onWorkspaceDrawn = ::recoverWorkspaceJobs,
+                    updateJustCompleted = updateJustCompleted,
                     themePreference = displayMode,
                     onThemeChange = { selected ->
                         themeStore.set(selected)
@@ -185,6 +191,7 @@ internal fun DataCubeRoot(
     documentsViewModel: () -> DataCubeViewModel,
     openBrowser: (Uri) -> Unit = {},
     onWorkspaceDrawn: () -> Unit = {},
+    updateJustCompleted: Boolean = false,
     themePreference: ThemePreference = ThemePreference.SYSTEM,
     onThemeChange: (ThemePreference) -> Unit = {}
 ) {
@@ -207,7 +214,10 @@ internal fun DataCubeRoot(
     }
 
     key(authState.user?.id) {
-        AuthenticatedWorkspace(authState, authViewModel, documentsViewModel(), themePreference, onThemeChange)
+        AuthenticatedWorkspace(
+            authState, authViewModel, documentsViewModel(),
+            themePreference, onThemeChange, updateJustCompleted
+        )
         val view = LocalView.current
         DisposableEffect(view) {
             val listener = view.doOnPreDraw { view.post { onWorkspaceDrawn() } }
@@ -222,7 +232,8 @@ private fun AuthenticatedWorkspace(
     authViewModel: AuthViewModel,
     documentsViewModel: DataCubeViewModel,
     themePreference: ThemePreference,
-    onThemeChange: (ThemePreference) -> Unit
+    onThemeChange: (ThemePreference) -> Unit,
+    updateJustCompleted: Boolean
 ) {
     val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
     val collections by documentsViewModel.collections.collectAsStateWithLifecycle()
@@ -231,6 +242,11 @@ private fun AuthenticatedWorkspace(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
+    LaunchedEffect(updateJustCompleted) {
+        if (updateJustCompleted) {
+            snackbar.showSnackbar("DataCube AU updated successfully. Your local data is retained.")
+        }
+    }
     var collectionPickerTarget by remember { mutableStateOf<String?>(null) }
     var modelRevision by remember { mutableIntStateOf(0) }
     var modelImportTarget by remember { mutableStateOf<ModelSpec?>(null) }
@@ -438,7 +454,15 @@ private fun AuthenticatedWorkspace(
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) }
+        snackbarHost = {
+            // Nonblocking top-of-screen banner, never covering the chat composer.
+            Box(
+                Modifier.fillMaxSize().padding(top = 12.dp),
+                contentAlignment = Alignment.TopCenter
+            ) {
+                SnackbarHost(snackbar)
+            }
+        }
     ) { padding ->
         NavHost(
             navController = navController,
