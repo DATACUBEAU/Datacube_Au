@@ -68,7 +68,7 @@ class GeneratedStudySession {
         private set
     var error by mutableStateOf<String?>(null)
         private set
-    var sources by mutableStateOf<List<SourceSnippet>>(emptyList())
+    internal var sources by mutableStateOf<List<SourceSnippet>>(emptyList())
         private set
     var attachmentLabel by mutableStateOf<String?>(null)
         private set
