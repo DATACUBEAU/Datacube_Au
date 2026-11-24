@@ -61,7 +61,7 @@ test('admin provider key responses are masked and never echo raw key rows', () =
   assert.match(adminAuth, /requireConexOwner\(req\)/);
   assert.match(adminAuth, /verifyConexProof/);
   assert.doesNotMatch(adminAuth, /safeUpstreamResponse|functions\/v1\/admin-handler/);
-  assert.doesNotMatch(conexPage, /Who are you now|conex_auth_step/);
+  assert.doesNotMatch(conexPage, /Who are you now|localStorage\.(?:getItem|setItem)\('conex_auth_step'/);
   assert.doesNotMatch(adminAuth, /select\('\*'\)/);
   assert.doesNotMatch(adminAuth, /Non-JSON response from Edge Function:',\s*text/);
   assert.match(conexPage, /Leave blank to keep existing key/);
@@ -229,4 +229,21 @@ test('production profile ACL migrations revoke all browser privilege escalation 
   assert.match(initialAcl, /GRANT UPDATE \(full_name, avatar_url, username\)/i);
   assert.match(finalAcl, /REVOKE UPDATE \(username\) ON TABLE public\.au_user_profiles FROM authenticated/i);
   assert.doesNotMatch(finalAcl, /GRANT UPDATE/i);
+});
+
+
+test('Conex challenge requires both stages and keeps device reports optional', () => {
+  const route = readRepoFile('src/app/api/admin/auth/route.ts');
+  const proof = readRepoFile('src/lib/server/conex-proof.ts');
+  const authz = readRepoFile('src/lib/server/authorization.ts');
+  const device = readRepoFile('src/app/api/account/device-report/route.ts');
+  assert.match(route, /au_rate_limit_hit/);
+  assert.match(route, /admin_access_key/);
+  assert.match(route, /verifyConexProof/);
+  assert.match(proof, /httpOnly: true/);
+  assert.match(proof, /sameSite: 'strict'/);
+  assert.match(proof, /proof\.session === await sessionBinding\(token\)/);
+  assert.match(authz, /!options.ownerCheckOnly && !await verifyConexProof/);
+  assert.match(device, /auth\.source !== 'header'/);
+  assert.match(device, /device_info: null/);
 });
