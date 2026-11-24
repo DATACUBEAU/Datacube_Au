@@ -32,7 +32,9 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
     val store = remember(context) { AuReminderStore(context) }
     val scope = rememberCoroutineScope()
     var title by remember(initialTitle) { mutableStateOf(initialTitle.take(240)) }
-    var at by remember { mutableLongStateOf(System.currentTimeMillis() + 60 * 60 * 1000L) }
+    val proposed = remember(initialTitle) { AuScheduleIntent.proposedTime(initialTitle) }
+    var at by remember(initialTitle) { mutableLongStateOf(proposed ?: System.currentTimeMillis() + 60 * 60 * 1000L) }
+    var timeChosen by remember(initialTitle) { mutableStateOf(proposed != null) }
     var tasks by remember { mutableStateOf(store.list(account, workspace)) }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -55,6 +57,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
             cal.set(Calendar.HOUR_OF_DAY, h); cal.set(Calendar.MINUTE, m)
             cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
             at = cal.timeInMillis
+            timeChosen = true
         }, cal.get(Calendar.HOUR_OF_DAY), cal.get(Calendar.MINUTE),
             android.text.format.DateFormat.is24HourFormat(context)).show()
     }
@@ -64,7 +67,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
             (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
             manager.getNotificationChannel(AuReminderStore.CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
     }
-    val valid = title.isNotBlank() && at > System.currentTimeMillis() && !busy
+    val valid = title.isNotBlank() && timeChosen && at > System.currentTimeMillis() && !busy
     DataCubeDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("Schedules") },
         text = {
             Column(Modifier.heightIn(max = 500.dp).verticalScroll(rememberScrollState()),
@@ -76,6 +79,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
                     OutlinedButton(onClick = ::chooseTime, modifier = Modifier.weight(1f)) { Text("Choose time") }
                 }
                 Text(format(at), style = MaterialTheme.typography.titleSmall)
+                Text(if (timeChosen) "Review the date and time before saving." else "Choose a time to enable scheduling.", style = MaterialTheme.typography.bodySmall)
                 Text("Reminders work offline. Android may delay delivery to save battery.", style = MaterialTheme.typography.bodySmall)
                 Button(enabled = valid, onClick = {
                     if (!enabled()) {
@@ -93,6 +97,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
                                 store.add(account, workspace, title, at)
                                 tasks = store.list(account, workspace)
                                 title = ""
+                                timeChosen = false
                                 status = "Reminder saved."
                             } catch (e: Exception) {
                                 status = e.message ?: "Could not schedule reminder."
