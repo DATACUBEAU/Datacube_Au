@@ -1,0 +1,116 @@
+package au.datacube.app.ui.common
+
+import android.content.Context
+import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.VolumeUp
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import au.datacube.app.audio.NeuralNarration
+import au.datacube.app.audio.NeuralTextSegmenter
+import au.datacube.app.audio.PodcastSpeaker
+import au.datacube.app.audio.PodcastTurn
+import au.datacube.app.audio.SmoothOfflineNarration
+import au.datacube.app.data.rag.LocalGenerativeEngine
+import kotlinx.coroutines.*
+
+internal class AuReadAloudState(private val context: Context, private val scope: CoroutineScope) {
+    var active by mutableStateOf<Int?>(null)
+        private set
+    var stage by mutableStateOf("")
+        private set
+    var error by mutableStateOf<String?>(null)
+        private set
+    var errorId by mutableStateOf<Int?>(null)
+        private set
+    private var job: Job? = null
+    private var revision = 0
+
+    fun stop() {
+        revision++
+        if (job?.isActive == true) {
+            job?.cancel()
+            NeuralNarration.stop()
+            SmoothOfflineNarration.stop()
+        }
+        job = null
+        active = null
+        stage = ""
+    }
+
+    fun play(id: Int, answer: String, systemVoice: Boolean = false) {
+        stop()
+        val token = revision
+        val plain = answer.replace(Regex("\\[(?:\\d{1,2})]"), "")
+            .replace(Regex("^\\s*#{1,6}\\s+", RegexOption.MULTILINE), "")
+            .replace(Regex("[*\\x60|]"), " ")
+            .trim()
+        if (plain.isBlank()) return
+        active = id
+        error = null
+        errorId = null
+        stage = "Preparing audio"
+        job = scope.launch {
+            try {
+                val report: suspend (String) -> Unit = { value ->
+                    withContext(Dispatchers.Main) { if (token == revision) stage = value }
+                }
+                if (!systemVoice && NeuralNarration.installed(context)) {
+                    LocalGenerativeEngine.release()
+                    NeuralNarration.speak(context, plain, NeuralNarration.DEFAULT_VOICE, 1f, report)
+                } else {
+                    val turns = NeuralTextSegmenter.split(plain, maxChunk = 350, maxText = 12_000)
+                        .map { PodcastTurn(PodcastSpeaker.GUIDE, it) }
+                    SmoothOfflineNarration.speakDialogue(context, turns, 1f, {}, report)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                if (token == revision) {
+                    errorId = id
+                    error = failure.message ?: "Could not prepare audio."
+                }
+            } finally {
+                if (token == revision) { active = null; stage = "" }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun rememberAuReadAloud(): AuReadAloudState {
+    val context = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    val speech = remember(context, scope) { AuReadAloudState(context, scope) }
+    DisposableEffect(speech) { onDispose { speech.stop() } }
+    return speech
+}
+
+@Composable
+internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String) {
+    Column {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            TextButton(onClick = {
+                if (speech.active == id) speech.stop() else speech.play(id, answer)
+            }) {
+                Icon(if (speech.active == id) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
+                    contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(if (speech.active == id) "Stop audio" else "Read aloud")
+            }
+            if (speech.active == id) Text(speech.stage, style = MaterialTheme.typography.labelSmall,
+                modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (speech.errorId == id) {
+            Text(speech.error.orEmpty(), color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { speech.play(id, answer, systemVoice = true) }) {
+                Text("Try offline system voice")
+            }
+        }
+    }
+}
