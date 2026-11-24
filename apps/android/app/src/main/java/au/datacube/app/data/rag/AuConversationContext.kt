@@ -1,7 +1,6 @@
 package au.datacube.app.data.rag
 
 import java.time.Instant
-import java.time.LocalDate
 import java.time.ZoneId
 import java.util.Locale
 
@@ -45,7 +44,7 @@ object AuConversationContext {
     fun select(question: String, history: List<RagTurn>, maxTurns: Int = 3): List<RagTurn> {
         val usable = history.takeLast(20).filter { it.question.isNotBlank() && it.answer.isNotBlank() }
         val count = maxTurns.coerceIn(1, 5)
-        val recent = usable.indices.takeLast(minOf(2, count, usable.size))
+        val recent = usable.indices.toList().takeLast(minOf(2, count, usable.size))
         val query = terms(question)
         val relevant = usable.indices.filterNot { it in recent }.map { index ->
             index to (terms(usable[index].question).intersect(query).size * 3 +
