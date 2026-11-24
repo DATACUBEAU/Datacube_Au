@@ -126,4 +126,34 @@ class AuReminderWorker(context: Context, params: WorkerParameters) : CoroutineWo
 object AuScheduleIntent {
     private val request = Regex("^(?:au[, ]+)?(?:(?:can|could|would) you\\s+)?(?:please\\s+)?(?:remind me|set (?:a |an )?reminder|schedule (?:a |an )?(?:study session|reminder|task))\\b", RegexOption.IGNORE_CASE)
     fun matches(message: String): Boolean = request.containsMatchIn(message.trim())
+
+    /** Conservative English parser. Ambiguous or past dates require a manual choice. */
+    fun proposedTime(message: String, now: java.time.ZonedDateTime = java.time.ZonedDateTime.now()): Long? {
+        if (!matches(message)) return null
+        val relative = Regex("\\bin\\s+(\\d{1,4})\\s+(minutes?|hours?|days?)\\b", RegexOption.IGNORE_CASE).findAll(message).toList()
+        val clock = Regex("\\b(today|tomorrow)\\s+at\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)\\b", RegexOption.IGNORE_CASE).findAll(message).toList()
+        if (relative.size + clock.size != 1) return null
+        val candidate = if (relative.isNotEmpty()) {
+            val match = relative.single()
+            val amount = match.groupValues[1].toLong()
+            if (amount <= 0) return null
+            when {
+                match.groupValues[2].startsWith("minute", true) -> now.plusMinutes(amount)
+                match.groupValues[2].startsWith("hour", true) -> now.plusHours(amount)
+                else -> now.plusDays(amount)
+            }
+        } else {
+            val match = clock.single()
+            val hour = match.groupValues[2].toInt()
+            val minute = match.groupValues[3].toIntOrNull() ?: 0
+            if (hour !in 1..12 || minute !in 0..59) return null
+            val day = now.toLocalDate().plusDays(if (match.groupValues[1].equals("tomorrow", true)) 1 else 0)
+            val hour24 = hour % 12 + if (match.groupValues[4].equals("pm", true)) 12 else 0
+            val local = day.atTime(hour24, minute)
+            val offsets = now.zone.rules.getValidOffsets(local)
+            if (offsets.size != 1) return null
+            java.time.ZonedDateTime.ofStrict(local, offsets.single(), now.zone)
+        }
+        return candidate.toInstant().toEpochMilli().takeIf { it > now.toInstant().toEpochMilli() }
+    }
 }
