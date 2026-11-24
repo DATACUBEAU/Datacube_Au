@@ -4,6 +4,7 @@ import {
   accessControlResponse,
   isAccessControlError,
   requireAdmin,
+  requireConexOwner,
 } from '@/lib/server/authorization';
 import {
   ConexAccessError,
