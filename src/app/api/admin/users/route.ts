@@ -18,7 +18,6 @@ import {
   normalizeUserRole,
   resolveAdminPlanChangeType,
   roleToTier,
-  parseDeviceSupportReport,
   type ManagedUserRecord,
   type UserRole,
 } from '@/lib/server/admin-user-management';
@@ -350,7 +349,6 @@ function mapAuthUserToManagedRecord(
     full_name: fullName,
     avatar_url: avatarUrl,
     provider: String((user as any).app_metadata?.provider ?? 'supabase'),
-    device_report: parseDeviceSupportReport(userMeta.au_device_diagnostics),
     created_at: user.created_at ?? null,
     last_sign_in_at: user.last_sign_in_at ?? null,
     last_active_at: activity?.last_active_at ?? user.last_sign_in_at ?? null,
