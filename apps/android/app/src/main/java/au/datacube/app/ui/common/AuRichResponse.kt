@@ -11,6 +11,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -20,6 +21,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 internal sealed interface AuResponseBlock {
     data class Prose(val text: String, val heading: Int = 0, val prefix: String = "") : AuResponseBlock
@@ -27,6 +29,7 @@ internal sealed interface AuResponseBlock {
     data class Code(val text: String) : AuResponseBlock
     data class Status(val kind: String, val text: String) : AuResponseBlock
     data class Callout(val title: String, val body: String) : AuResponseBlock
+    data class Flow(val title: String, val steps: List<String>) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -64,6 +67,19 @@ internal object AuResponseParser {
                     }
                     result += AuResponseBlock.Table(header, rows)
                     continue
+                }
+            }
+            // Only a small, complete, declarative flow is accepted. No HTML, URLs or scripts.
+            if (line.startsWith("[FLOW] ")) {
+                val end = (i + 1 until minOf(lines.size, i + 9)).firstOrNull { lines[it].trim() == "[/FLOW]" }
+                if (end != null) {
+                    val title = line.removePrefix("[FLOW] ").trim()
+                    val steps = lines.subList(i + 1, end).map(String::trim).filter(String::isNotBlank)
+                    if (title.length in 1..100 && steps.size in 2..6 && steps.all { it.length in 1..120 && !it.contains("[FLOW]") && !it.contains("[/FLOW]") }) {
+                        result += AuResponseBlock.Flow(title, steps)
+                        i = end + 1
+                        continue
+                    }
                 }
             }
             // Bounded, declarative visual box. No executable model-generated UI.
@@ -110,12 +126,15 @@ private fun inlineText(text: String): AnnotatedString = buildAnnotatedString {
 @Composable
 internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)? = null) {
     val blocks = remember(answer) { AuResponseParser.parse(answer) }
-    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         blocks.forEach { block ->
             when (block) {
                 is AuResponseBlock.Prose -> {
-                    val style = if (block.heading > 0) MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
-                        else MaterialTheme.typography.bodyLarge
+                    val style = when (block.heading) {
+                        1, 2 -> MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold, lineHeight = 28.sp)
+                        3, 4 -> MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold, lineHeight = 24.sp)
+                        else -> MaterialTheme.typography.bodyLarge.copy(lineHeight = 25.sp)
+                    }
                     val annotated = remember(block) { inlineText(block.prefix + block.text) }
                     if (onTextClick != null) {
                         ClickableText(annotated, style = style.copy(color = MaterialTheme.colorScheme.onSurface),
@@ -158,6 +177,33 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                     }
                 }
                 is AuResponseBlock.Status -> StatusText(block.kind, block.text)
+                is AuResponseBlock.Flow -> Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text(inlineText(block.title), style = MaterialTheme.typography.titleSmall,
+                            modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(3.dp))
+                        block.steps.forEachIndexed { index, step ->
+                            if (index > 0) Text("↓", color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.titleMedium)
+                            Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)) {
+                                Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text((index + 1).toString(), color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.SemiBold)
+                                    SelectionContainer { Text(inlineText(step), style = MaterialTheme.typography.bodyMedium) }
+                                }
+                            }
+                        }
+                    }
+                }
                 is AuResponseBlock.Callout -> Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
