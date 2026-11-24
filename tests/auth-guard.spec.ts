@@ -10,8 +10,8 @@ test.describe('Auth guard redirects', () => {
     expect([302, 303, 307, 308]).toContain(response.status());
 
     const location = new URL(response.headers()['location'] ?? '', response.url());
-    expect(location.pathname).toBe('/login');
-    expect(location.searchParams.get('redirectTo')).toBe('/dashboard/settings');
+    expect(location.pathname).toBe('/');
+    expect(location.search).toBe('');
 
     const body = await response.text();
     expect(body).not.toContain('Plan Status');
@@ -50,11 +50,16 @@ test.describe('Auth guard redirects', () => {
 
     const location = response.headers()['location'] ?? '';
     const decoded = decodeURIComponent(location);
-    expect(decoded).toContain('/login');
-    expect(decoded).toContain('/conex');
+    expect(new URL(decoded, response.url()).pathname).toBe('/');
 
     const body = await response.text();
     expect(body).not.toContain('AU Central Command');
     expect(body).not.toContain('Billing Controls');
+  });
+  test('admin API denies unsigned requests without HTML redirects', async ({ request }) => {
+    const res = await request.get('/conex/users?mode=access', { maxRedirects: 0, failOnStatusCode: false });
+    expect(res.status()).toBe(401);
+    expect(res.headers()['content-type']).toContain('application/json');
+    expect(res.headers()['cache-control']).toContain('no-store');
   });
 });
