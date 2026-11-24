@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
+import { verifyConexProof } from '@/lib/server/conex-proof';
 import { hasConexAccess } from '@/lib/conex-rbac';
 import { isMobileAuthorizationPage } from '@/lib/auth/redirects';
 import {
@@ -277,7 +278,12 @@ export async function middleware(req: NextRequest) {
 
   // Owner-only admin routes need no subscription/profile lookups.
   if (rule.requirement === 'admin') {
-    if (hasConexAccess({ userId: auth.userId })) return applyProtectedHeaders(NextResponse.next());
+    if (hasConexAccess({ userId: auth.userId })) {
+      const entry = pathname === '/conex' || pathname === '/api/admin/auth' ||
+        (pathname === '/conex/users' && req.method === 'GET' && req.nextUrl.searchParams.get('mode') === 'access');
+      if (entry || await verifyConexProof(req, auth.userId, auth.accessToken, 'verified')) return applyProtectedHeaders(NextResponse.next());
+      if (!isApiLikeRoute(pathname)) return applyProtectedHeaders(NextResponse.redirect(new URL('/conex', req.url), 303));
+    }
     return forbiddenResponse(req, evaluateAccess({ userId: auth.userId, adminOverride: false }, rule));
   }
 
