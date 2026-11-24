@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest, type RequestAuthResult } from '@/app/api/proxy/_supabase-auth';
 import { verifyConexProof } from '@/lib/server/conex-proof';
 import { hasConexAccess } from '@/lib/conex-rbac';
+import { readConexState } from '@/lib/server/conex-challenge';
 import {
   ACCESS_NO_STORE_HEADERS,
   buildFeatureAccessRule,
@@ -95,6 +96,7 @@ function unauthenticatedDecision(rule: Pick<AccessRule, 'id' | 'requirement' | '
 export async function authorizeRequest(
   req: NextRequest,
   rule: Pick<AccessRule, 'id' | 'requirement' | 'feature' | 'labels'>,
+  options: { ownerCheckOnly?: boolean } = {},
 ): Promise<AuthorizedRequest> {
   const auth = await requireUserFromRequest(req);
   if (!auth.ok) {
@@ -102,12 +104,17 @@ export async function authorizeRequest(
   }
 
   const supabase = createSupabaseAdminClient();
-  const subject = await loadEntitlementSubject({ supabase, auth });
+  const subject = rule.requirement === 'admin'
+    ? { userId: auth.userId, email: auth.email, adminOverride: hasConexAccess({ userId: auth.userId }) }
+    : await loadEntitlementSubject({ supabase, auth });
   const decision = evaluateAccess(subject, rule);
   if (!decision.allowed) {
     throw new AccessControlError(decision);
   }
 
+  if (rule.requirement === 'admin' && !options.ownerCheckOnly && readConexState(req, auth.userId, auth.accessToken)?.stage !== 'unlocked') {
+    throw new AccessControlError({ ...decision, allowed: false, status: 403, code: 'FORBIDDEN', reason: 'Conex verification required.' });
+  }
   return { auth, supabase, subject, decision };
 }
 
@@ -133,7 +140,7 @@ export async function requireConexOwner(req: NextRequest): Promise<AuthorizedReq
   return { auth, subject, decision, supabase: createSupabaseAdminClient() };
 }
 
-export async function requireAdmin(req: NextRequest): Promise<AuthorizedRequest> {
+export async function requireAdmin(req: NextRequest, options: { ownerCheckOnly?: boolean } = {}): Promise<AuthorizedRequest> {
   const owner = await requireConexOwner(req);
   if (!await verifyConexProof(req, owner.auth.userId, owner.auth.accessToken, 'verified')) {
     throw new AccessControlError(evaluateAccess({ userId: owner.auth.userId, adminOverride: false }, ownerRule));
