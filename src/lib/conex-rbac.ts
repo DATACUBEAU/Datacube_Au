@@ -33,9 +33,8 @@ export function isRootConexAdmin(userId: string, email?: string | null): boolean
 }
 
 export function hasConexAccess(subject: ConexAccessSubject): boolean {
-  // Authorization uses the profile tier loaded server-side for this authenticated user.
-  // Never accept a tier supplied by the browser or user metadata.
-  return isRootConexAdmin(subject.userId, subject.email) || normalizeConexTier(subject.tier) === 'admin';
+  // Conex is a sole-owner console. Email aliases and membership/profile tiers never grant access.
+  return isRootConexAdmin(subject.userId, subject.email);
 }
 
 export function toConexTierFromToggle(enabled: boolean): ConexTier {
