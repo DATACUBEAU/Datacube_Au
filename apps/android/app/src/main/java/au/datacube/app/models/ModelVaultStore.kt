@@ -42,6 +42,7 @@ class ModelVaultStore(context: Context) {
     suspend fun archives(): List<Archive> = withContext(Dispatchers.IO) {
         val manager = ModelBackupManager(app)
         entries().filter { it.first.endsWith(".zip", ignoreCase = true) }
+            .sortedByDescending { it.first }
             .take(MAX_ARCHIVES)
             .mapNotNull { (name, uri) ->
                 try {
@@ -111,6 +112,22 @@ class ModelVaultStore(context: Context) {
         }
         }
     }
+
+    /** Reopen the actual published ZIP, not a cached download or worker status. */
+    suspend fun verifyArchive(
+        archive: Archive,
+        onProgress: suspend (Long, Long) -> Unit = { _, _ -> }
+    ): ModelBackupSummary = withContext(Dispatchers.IO) {
+        val manager = ModelBackupManager(app)
+        val current = manager.inspectBackup(archive.uri)
+        require(current == archive.preview) { "This backup changed. Refresh and select it again." }
+        manager.verifySavedBackup(archive.uri, current.modelIds.singleOrNull(),
+            ModelBackupSummary(current.modelIds.size, current.fileCount, current.totalBytes),
+            onProgress)
+    }
+
+    suspend fun latestArchive(modelId: String): Archive? =
+        archives().filter { modelId in it.preview.modelIds }.maxByOrNull { it.filename }
 
     suspend fun restore(uri: Uri): ModelBackupSummary = withContext(Dispatchers.IO) {
         // ZIP header and internal path checks, hashes, duplicates and atomic install
