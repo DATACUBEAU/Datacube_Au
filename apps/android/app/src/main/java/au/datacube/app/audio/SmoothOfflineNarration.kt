@@ -48,7 +48,7 @@ object SmoothOfflineNarration {
                 .sortedWith(
                     compareByDescending<android.speech.tts.Voice> {
                         it.locale.language == Locale.getDefault().language
-                    }.thenBy { it.name }
+                    }.thenBy { it.latency }.thenByDescending { it.quality }.thenBy { it.name }
                 )
             require(offline.isNotEmpty()) {
                 "No offline voice is installed. Add one in Android Text-to-speech settings."
