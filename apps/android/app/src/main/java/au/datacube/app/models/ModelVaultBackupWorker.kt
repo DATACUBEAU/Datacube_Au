@@ -46,13 +46,21 @@ class ModelVaultBackupWorker(
             } else ForegroundInfo(NOTIFICATION_ID + (modelId.hashCode() and 0x0fff), notification)
             setForeground(info)
             setProgress(workDataOf(KEY_STAGE to "Checking model files"))
-            val summary = ModelVaultStore(applicationContext).save(modelId) { written, total ->
-                setProgress(workDataOf(
-                    KEY_STAGE to "Saving model archive",
-                    KEY_WRITTEN to written,
-                    KEY_TOTAL to total
-                ))
-            }
+            var stage = "Writing model archive"
+            val summary = ModelVaultStore(applicationContext).save(
+                modelId = modelId,
+                onProgress = { written, total ->
+                    setProgress(workDataOf(
+                        KEY_STAGE to stage,
+                        KEY_WRITTEN to written,
+                        KEY_TOTAL to total
+                    ))
+                },
+                onStage = { next ->
+                    stage = next
+                    setProgress(workDataOf(KEY_STAGE to next))
+                }
+            )
             Result.success(workDataOf(
                 KEY_STAGE to "Backed up",
                 KEY_FILES to summary.fileCount,
