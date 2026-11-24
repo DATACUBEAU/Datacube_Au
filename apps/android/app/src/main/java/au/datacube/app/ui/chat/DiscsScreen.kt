@@ -2,6 +2,7 @@ package au.datacube.app.ui.chat
 
 import android.os.SystemClock
 import au.datacube.app.data.rag.AuConversationContext
+import au.datacube.app.data.rag.AuPersonalizationStore
 import au.datacube.app.data.rag.ConversationEntry
 import au.datacube.app.data.rag.DocumentQueryInterpreter
 import au.datacube.app.models.ActiveLocalChatModel
@@ -164,6 +165,12 @@ fun DiscsScreen(
             val events = session.activitySteps
             try {
                 threads.nameFromQuestion(ownerId, threadId, question)
+                val personalization = AuPersonalizationStore(context, accountId)
+                val memoryReply = if (audioPath == null && !alreadyAdded) personalization.command(question) else null
+                if (memoryReply != null) {
+                    turns.add(ChatMessage(question, emptyList(), false, answer = memoryReply))
+                    return@launch
+                }
                 if (AuConversationContext.asksYesterdayRecap(question)) {
                     val recap = threads.yesterdayReply(ownerId, threadId, turns.map {
                         ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
@@ -261,7 +268,7 @@ fun DiscsScreen(
                         var raw = ""
                         var lastUpdate = 0L
                         try {
-                            LocalGenerativeEngine.generate(context, input, allowGeneral = !searchDocuments,
+                            LocalGenerativeEngine.generate(context, input + personalization.promptContext(question), allowGeneral = !searchDocuments,
                                 generalOnly = !searchDocuments) { text ->
                                 raw += text
                                 val now = SystemClock.elapsedRealtime()
