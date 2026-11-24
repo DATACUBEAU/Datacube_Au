@@ -113,7 +113,8 @@ async function requireActor(req: NextRequest): Promise<
   { ok: true; actor: { userId: string; email: string | null; accessToken: string } } | { ok: false; response: NextResponse }
 > {
   try {
-    const { auth } = await requireAdmin(req, { ownerCheckOnly: req.method === 'GET' && req.nextUrl.searchParams.get('mode') === 'access' });
+    const accessProbe = req.method === 'GET' && req.nextUrl.searchParams.get('mode') === 'access';
+    const { auth } = accessProbe ? await requireConexOwner(req) : await requireAdmin(req);
     return {
       ok: true,
       actor: {
