@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUserFromRequest, type RequestAuthResult } from '@/app/api/proxy/_supabase-auth';
-import { verifyConexProof } from '@/lib/server/conex-proof';
 import { hasConexAccess } from '@/lib/conex-rbac';
 import { readConexState } from '@/lib/server/conex-challenge';
 import {
@@ -141,11 +140,11 @@ export async function requireConexOwner(req: NextRequest): Promise<AuthorizedReq
 }
 
 export async function requireAdmin(req: NextRequest, options: { ownerCheckOnly?: boolean } = {}): Promise<AuthorizedRequest> {
-  const owner = await requireConexOwner(req);
-  if (!await verifyConexProof(req, owner.auth.userId, owner.auth.accessToken, 'verified')) {
-    throw new AccessControlError(evaluateAccess({ userId: owner.auth.userId, adminOverride: false }, ownerRule));
-  }
-  return owner;
+  return authorizeRequest(req, {
+    id: 'admin_access',
+    requirement: 'admin',
+    labels: ['AUTH', 'ADMIN', 'STAFF', 'INTERNAL', 'CACHE_SENSITIVE'],
+  }, options);
 }
 
 export function accessControlResponse(error: AccessControlError, requestId?: string): NextResponse {
