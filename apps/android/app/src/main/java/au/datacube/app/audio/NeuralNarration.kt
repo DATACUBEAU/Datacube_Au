@@ -171,7 +171,15 @@ object NeuralNarration {
                 player = track
                 audio = track
                 check(track.state == AudioTrack.STATE_INITIALIZED)
-                if (speed != 1f) track.playbackRate = (rate * speed).toInt()
+                if (speed != 1f) {
+                    // Time stretching preserves the speaker's pitch where supported.
+                    // Fall back to sample-rate playback on devices rejecting PlaybackParams.
+                    try {
+                        track.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
+                    } catch (_: IllegalArgumentException) {
+                        track.playbackRate = (rate * speed).toInt()
+                    }
+                }
                 var speaker = -1
                 suspend fun reportSpeaker() {
                     val head = track.playbackHeadPosition.toLong() and 0xffffffffL
