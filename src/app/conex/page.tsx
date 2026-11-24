@@ -3087,7 +3087,7 @@ export default function ConexPage() {
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 403) router.replace('/');
+    if (res.status === 403 && !body) router.replace('/');
     if (res.status === 409) {
       setStep(0);
       setPuzzle({ a: 0, b: 0, val: '' });
@@ -3245,7 +3245,7 @@ export default function ConexPage() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="hidden md:grid w-full grid-cols-8 mb-8">
+            <TabsList className="hidden md:grid w-full grid-cols-7 mb-8">
                 {navItems.map((item) => (
                     <TabsTrigger key={item.value} value={item.value} className="gap-2">
                         <item.icon className="h-4 w-4" /> {item.label}
