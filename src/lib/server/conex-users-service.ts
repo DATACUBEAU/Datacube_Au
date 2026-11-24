@@ -70,7 +70,7 @@ export function buildConexDashboardUsers(rows: ConexProfileRow[]): {
       tier,
       full_name: row.full_name ?? null,
       avatar_url: row.avatar_url ?? null,
-      is_authorized: tier === 'admin',
+      is_authorized: isProtectedOwnerUserId(row.user_id),
       is_protected_owner: isProtectedOwnerUserId(row.user_id),
     };
     return item;
@@ -118,6 +118,9 @@ export async function setConexTierForUser(
     throw new ConexAccessError(400, 'protected_user', 'Cannot revoke root admin access.');
   }
 
+  if (!isProtectedOwnerUserId(targetUserId) && nextTier === 'admin') {
+    throw new ConexAccessError(403, 'owner_only', 'Conex access is restricted to the configured owner.');
+  }
   const updated = await repo.upsertTier(targetUserId, nextTier);
   if (!updated) {
     throw new ConexAccessError(500, 'update_failed', 'Failed to update user tier.');
@@ -129,7 +132,7 @@ export async function setConexTierForUser(
     tier,
     full_name: updated.full_name ?? null,
     avatar_url: updated.avatar_url ?? null,
-    is_authorized: tier === 'admin',
+    is_authorized: isProtectedOwnerUserId(updated.user_id),
     is_protected_owner: isProtectedOwnerUserId(updated.user_id),
   };
 }
