@@ -68,7 +68,7 @@ run('device reports are opt-in bounded diagnostic data, not identity or authoriz
     imei: 'must-not-export', is_admin: true, location: 'must-not-export' });
   assert.equal(report?.model, 'Phone');
   assert.equal(report?.sdk, 35);
-  assert.equal(Object.hasOwn(report!, 'imei'), false);
-  assert.equal(Object.hasOwn(report!, 'is_admin'), false);
-  assert.equal(Object.hasOwn(report!, 'location'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(report!, 'imei'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(report!, 'is_admin'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(report!, 'location'), false);
 });
