@@ -254,7 +254,8 @@ async function fetchProfilesMap(
 
 async function fetchActivityMap(
   supabaseAdmin: ReturnType<typeof createServiceRoleClient>,
-  userIds: string[]
+  userIds: string[],
+  includeLegacyMetadata = false
 ): Promise<Map<string, { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null }>> {
   if (userIds.length === 0) return new Map();
   const map = new Map<string, { last_active_at: string | null; metadata: any; is_pwa: boolean; user_agent: string | null }>();
@@ -263,7 +264,7 @@ async function fetchActivityMap(
     const chunk = userIds.slice(i, i + 500);
     const { data, error } = await supabaseAdmin
       .from('au_user_activity')
-      .select('user_id,last_active_at,metadata,is_pwa,user_agent')
+      .select(includeLegacyMetadata ? 'user_id,last_active_at,metadata' : 'user_id,last_active_at')
       .in('user_id', chunk);
 
     if (error) {
@@ -558,7 +559,7 @@ async function listManagedUsers(req: NextRequest) {
     const userIds = rows.map((row) => row.id);
     const [profilesMap, activityMap, overrideMap] = await Promise.all([
       fetchProfilesMap(scopedClient, userIds),
-      fetchActivityMap(scopedClient, userIds),
+      fetchActivityMap(scopedClient, userIds, true),
       fetchAdminOverrideMap(scopedClient, userIds),
     ]);
 
