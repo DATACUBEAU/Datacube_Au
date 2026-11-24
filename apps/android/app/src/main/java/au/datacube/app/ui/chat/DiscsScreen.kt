@@ -1,6 +1,8 @@
 package au.datacube.app.ui.chat
 
 import android.os.SystemClock
+import au.datacube.app.schedule.AuScheduleDialog
+import au.datacube.app.schedule.AuScheduleIntent
 import au.datacube.app.data.rag.AuConversationContext
 import au.datacube.app.data.rag.AuPersonalizationStore
 import au.datacube.app.data.rag.ConversationEntry
@@ -97,6 +99,12 @@ fun DiscsScreen(
     val library = documents.map { it.document }
     var prompt by remember(threadId) { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
+    var scheduleOpen by remember(ownerId) { mutableStateOf(false) }
+    var scheduleTitle by remember(ownerId) { mutableStateOf("") }
+    if (scheduleOpen) {
+        AuScheduleDialog(accountId, collectionId?.let { "collection:$it" }, scheduleTitle,
+            onDismiss = { scheduleOpen = false })
+    }
     var expandedSources by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var expandedProcess by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var liveActivityOpen by remember(threadId) { mutableStateOf(false) }
@@ -154,6 +162,11 @@ fun DiscsScreen(
         audioPath: String? = null,
         alreadyAdded: Boolean = false
     ) {
+        if (audioPath == null && !alreadyAdded && AuScheduleIntent.matches(question)) {
+            scheduleTitle = question
+            scheduleOpen = true
+            return
+        }
         if (!ready || needsCollectionModel || session.searching || question.isBlank() ||
             (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
         if (audioPath == null) prompt = ""
@@ -333,6 +346,9 @@ fun DiscsScreen(
                         else "AU ready · Offline chat",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { scheduleTitle = ""; scheduleOpen = true }) {
+                    Icon(Icons.Outlined.Schedule, contentDescription = "Schedules")
                 }
                 TextButton(onClick = ::newChat, enabled = ready, contentPadding = PaddingValues(horizontal = 5.dp)) {
                     Icon(Icons.Outlined.Add, "New Gist chat", modifier = Modifier.size(19.dp))
@@ -535,10 +551,10 @@ fun DiscsScreen(
             onSend = { send() },
             placeholder = if (collectionId == null) "Ask Gist anything…"
                 else "Ask AU about this collection…",
-            enabled = ready && !needsCollectionModel && !session.searching,
-            sendEnabled = ready && !needsCollectionModel &&
-                !session.searching && prompt.isNotBlank() &&
-                userTurns < ConversationWindow.MAX_USER_TURNS,
+            enabled = !session.searching,
+            sendEnabled = !session.searching && prompt.isNotBlank() &&
+                (AuScheduleIntent.matches(prompt) || (ready && !needsCollectionModel &&
+                    userTurns < ConversationWindow.MAX_USER_TURNS)),
             sendDescription = "Send Gist message",
             actions = {
                 VoiceNoteInputButton(
