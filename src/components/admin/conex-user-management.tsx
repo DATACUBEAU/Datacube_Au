@@ -319,17 +319,7 @@ export function ConexUserManagement() {
     fetchActivity(selectedUser.user_id).catch(() => {});
   }, [fetchActivity, selectedUser]);
 
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      if (typeof navigator !== 'undefined' && !navigator.onLine) return;
-      fetchUsers({ silent: true }).catch(() => {});
-      if (selectedUserId) {
-        fetchActivity(selectedUserId).catch(() => {});
-      }
-    }, 45_000);
-    return () => clearInterval(interval);
-  }, [fetchActivity, fetchUsers, selectedUserId]);
+
 
   const totalPages = Math.max(1, Math.ceil(filteredTotal / pageSize));
   const selectedCount = selectedIds.size;
