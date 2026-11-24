@@ -56,7 +56,7 @@ export function ConexUserManagement() {
     const controller = new AbortController();
     let active = true;
     setLoading(true); setError('');
-    const params = new URLSearchParams({q:query,page:String(page),pageSize:String(PAGE_SIZE),sortBy:'last_active_at',sortDir:'desc'});
+    const params = new URLSearchParams({q:query,page:String(page),pageSize:String(PAGE_SIZE),sortBy:'created_at',sortDir:'desc'});
     void request('/api/admin/users?'+params.toString(),{signal:controller.signal}).then(data=>{
       if (!active) return;
       const rows:User[] = Array.isArray(data?.users)?data.users:[];
