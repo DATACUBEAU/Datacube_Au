@@ -57,7 +57,11 @@ test('admin provider key responses are masked and never echo raw key rows', () =
   assert.doesNotMatch(adminFetch, /localStorage\.getItem\('conex_admin_token'\)/);
   assert.doesNotMatch(adminFetch, /X-Admin-Token/);
   assert.doesNotMatch(featureFlags, /conex_admin_token/);
-  assert.match(adminAuth, /sanitizeCredentialPayload/);
+  assert.match(adminAuth, /timingSafeEqual/);
+  assert.match(adminAuth, /requireConexOwner\(req\)/);
+  assert.match(adminAuth, /verifyConexProof/);
+  assert.doesNotMatch(adminAuth, /safeUpstreamResponse|functions\/v1\/admin-handler/);
+  assert.doesNotMatch(conexPage, /Who are you now|conex_auth_step/);
   assert.doesNotMatch(adminAuth, /select\('\*'\)/);
   assert.doesNotMatch(adminAuth, /Non-JSON response from Edge Function:',\s*text/);
   assert.match(conexPage, /Leave blank to keep existing key/);
