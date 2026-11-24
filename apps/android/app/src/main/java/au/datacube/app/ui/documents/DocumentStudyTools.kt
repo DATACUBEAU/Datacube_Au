@@ -8,6 +8,7 @@ import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuReadAloudAction
 import au.datacube.app.ui.common.rememberAuReadAloud
 import androidx.compose.foundation.lazy.itemsIndexed
+import au.datacube.app.work.AuBackgroundWork
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import au.datacube.app.audio.OfflineNarrationPreferences
@@ -576,6 +577,7 @@ fun DocumentChatWorkspace(
                                     session.activitySteps.clear()
                                 }
                             }
+                        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer") }
                         }
                     
     }
