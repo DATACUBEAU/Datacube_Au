@@ -3112,221 +3112,81 @@ export default function ConexPage() {
   const router = useRouter();
   const [user, , isUserLoading] = useSupabaseUser();
   const [isCheckingConexAccess, setIsCheckingConexAccess] = useState(true);
-  const [step, setStep] = useState<0 | 1 | 2 | 3>(0);
-  const [puzzle, setPuzzle] = useState(() => {
-    const a = Math.floor(Math.random() * 10) + 1;
-    const b = Math.floor(Math.random() * 10) + 1;
-    return { a, b, val: '' };
-  });
-  const [answer, setAnswer] = useState('');
+  const [step, setStep] = useState<0 | 2 | 3>(0);
+  const [puzzle, setPuzzle] = useState({ a: 0, b: 0, val: '' });
   const [accessKey, setAccessKey] = useState('');
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [isAdminVerified, setIsAdminVerified] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("access");
+  const [activeTab, setActiveTab] = useState("users");
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const { toast } = useToast();
 
+  const challenge = useCallback(async (body: Record<string, unknown>) => {
+    const token = await getSupabaseAccessToken();
+    if (!token) throw new Error('Sign in required.');
+    const res = await fetch('/api/admin/auth', { method: 'POST', credentials: 'same-origin', cache: 'no-store',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(body) });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Security check unavailable.');
+    return data;
+  }, []);
+
+  const start = useCallback(async () => {
+    const data = await challenge({ action: 'start' });
+    setPuzzle({ a: data.a, b: data.b, val: '' });
+    setStep(0);
+    setAccessKey('');
+  }, [challenge]);
+
   useEffect(() => {
     let cancelled = false;
-
-    const verifyConexAccess = async () => {
-      if (isUserLoading) return;
-
-      if (!user) {
-        router.replace('/');
-        return;
-      }
-
-      const token = await getSupabaseAccessToken();
-      if (!token) {
-        router.replace('/');
-        return;
-      }
-
+    if (isUserLoading) return;
+    if (!user) { router.replace('/'); return; }
+    setIsCheckingConexAccess(true);
+    void (async () => {
       try {
-        const res = await fetch('/conex/users?mode=access', {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          cache: 'no-store',
-        });
-
+        const data = await challenge({ action: 'status' });
         if (cancelled) return;
-
-        if (res.ok) {
-          setIsCheckingConexAccess(false);
-          return;
-        }
-
-        if (res.status === 403) {
-          router.replace('/');
-          return;
-        }
-
-        router.replace('/');
+        if (data.verified) setStep(3);
+        else await start();
+        if (!cancelled) setIsCheckingConexAccess(false);
       } catch {
         if (!cancelled) router.replace('/');
       }
-    };
+    })();
+    return () => { cancelled = true; };
+  }, [isUserLoading, user?.id, router, challenge, start]);
 
-    verifyConexAccess();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isUserLoading, user, router]);
-
-  const resetConexAuth = (opts?: { message?: string }) => {
-    localStorage.removeItem('conex_admin_token');
-    localStorage.removeItem('conex_session_id');
-    localStorage.removeItem('conex_auth_step');
-    setIsAdminVerified(false);
-    setSessionId(null);
-    setAccessKey('');
-    setAnswer('');
-    setStep(0);
-    if (opts?.message) setError(opts.message);
-  };
-
-  // Handle persistence on refresh
-  useEffect(() => {
-    let mounted = true;
-
-    const restoreAdminState = async () => {
-      const accessToken = await getSupabaseAccessToken();
-      if (!mounted) return;
-      if (!accessToken) {
-        resetConexAuth({ message: 'Session expired. Please log in again.' });
-        return;
-      }
-
-      const savedSession = localStorage.getItem('conex_session_id');
-      const savedStep = localStorage.getItem('conex_auth_step');
-
-      if (savedStep === '3') {
-        setStep(3);
-        setIsAdminVerified(true);
-        return;
-      }
-
-      if (savedStep === '2') {
-        if (!savedSession || savedSession === 'undefined' || !UUID_REGEX.test(savedSession)) {
-          resetConexAuth({ message: 'Session expired. Please restart access.' });
-          return;
-        }
-        setSessionId(savedSession);
-        setStep(2);
-      }
-    };
-
-    restoreAdminState();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  const handlePuzzle = (e: React.FormEvent) => {
+  const handlePuzzle = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (parseInt(puzzle.val) === puzzle.a + puzzle.b) {
-      setStep(1);
-      setError(null);
-    } else {
-      setError('Incorrect. Access denied.');
-      setPuzzle(prev => ({ ...prev, val: '' }));
-    }
-  };
-
-  const handleStep1 = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
-      const accessToken = await getSupabaseAccessToken();
-      if (!accessToken) {
-        throw new Error('Sign in required. Please log in to your account first.');
-      }
-
-      const res = await fetch('/api/admin/auth', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ action: 'auth', step: 1, answer })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        const nextSessionId = String(data.sessionId || '');
-        if (!UUID_REGEX.test(nextSessionId)) {
-          throw new Error('Auth session could not be created. Please try again.');
-        }
-        setSessionId(nextSessionId);
-        setStep(2);
-        localStorage.setItem('conex_session_id', nextSessionId);
-        localStorage.setItem('conex_auth_step', '2');
-      } else {
-        throw new Error(data.error || 'Authentication failed');
-      }
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+      await challenge({ action: 'math', answer: puzzle.val });
+      setStep(2);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Security check failed.'); }
+    finally { setLoading(false); }
   };
-
   const handleStep2 = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionId || sessionId === 'undefined' || !UUID_REGEX.test(sessionId)) {
-      resetConexAuth({ message: 'Invalid session. Please restart access.' });
-      return;
-    }
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
-      const accessToken = await getSupabaseAccessToken();
-      if (!accessToken) {
-        throw new Error('Sign in required. Please log in to your account first.');
-      }
-
-      const res = await fetch('/api/admin/auth', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({ action: 'auth', step: 2, accessKey, sessionId })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setStep(3);
-        setIsAdminVerified(true);
-        localStorage.setItem('conex_auth_step', '3');
-        toast({ title: 'Welcome, Admin', description: 'System access granted.' });
-      } else {
-        throw new Error(data.error || 'Access denied');
-      }
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+      const data = await challenge({ action: 'passcode', passcode: accessKey });
+      if (!data.verified) throw new Error('Security check failed.');
+      setAccessKey(''); setStep(3);
+      toast({ title: 'Conex unlocked' });
+    } catch (e) { setAccessKey(''); setError(e instanceof Error ? e.message : 'Security check failed.'); }
+    finally { setLoading(false); }
   };
-
   const handleLogout = async () => {
-    resetConexAuth();
+    try { await challenge({ action: 'logout' }); } catch {}
+    setStep(0); setAccessKey('');
     await explicitSignOut(user?.id ?? null);
-    router.replace('/login');
+    router.replace('/');
   };
 
   const navItems = [
-    { value: 'access', label: 'Access', icon: Shield },
-    { value: 'usage', label: 'Usage', icon: LayoutDashboard },
     { value: 'billing', label: 'Billing', icon: Crown },
-    { value: 'registry', label: 'Registry', icon: Database },
     { value: 'users', label: 'Users', icon: Users },
     { value: 'activity', label: 'Activity', icon: Activity },
     { value: 'feedback', label: 'Feedback', icon: Star },
@@ -3344,7 +3204,7 @@ export default function ConexPage() {
     );
   }
 
-  if (step === 3 && isAdminVerified) {
+  if (step === 3) {
     return (
       <div className="min-h-screen bg-transparent p-4 md:p-8">
         <div className="mx-auto max-w-6xl space-y-8">
@@ -3416,7 +3276,7 @@ export default function ConexPage() {
           </div>
 
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="hidden md:grid w-full grid-cols-11 mb-8">
+            <TabsList className="hidden md:grid w-full grid-cols-8 mb-8">
                 {navItems.map((item) => (
                     <TabsTrigger key={item.value} value={item.value} className="gap-2">
                         <item.icon className="h-4 w-4" /> {item.label}
@@ -3577,7 +3437,7 @@ export default function ConexPage() {
                   <Shield className="h-6 w-6 text-primary" />
                 </div>
                 <CardTitle className="text-2xl font-headline tracking-tighter uppercase">Security Check</CardTitle>
-                <CardDescription>Prove you are human.</CardDescription>
+                <CardDescription>Step 1 of 2 · Solve the arithmetic question.</CardDescription>
               </CardHeader>
               <form onSubmit={handlePuzzle}>
                 <CardContent className="space-y-4">
@@ -3600,53 +3460,8 @@ export default function ConexPage() {
                   )}
                 </CardContent>
                 <CardFooter>
-                  <Button type="submit" className="w-full h-12 text-lg font-bold uppercase tracking-tighter">
+                  <Button type="submit" disabled={loading || !puzzle.val} className="w-full h-12 text-lg font-bold uppercase tracking-tighter">
                     Verify
-                  </Button>
-                </CardFooter>
-              </form>
-            </Card>
-          </motion.div>
-        )}
-
-        {step === 1 && (
-          <motion.div
-            key="step1"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="w-full max-w-md"
-          >
-            <Card className="border-primary/20 shadow-xl">
-              <CardHeader className="text-center">
-                <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
-                  <Shield className="h-6 w-6 text-primary" />
-                </div>
-                <CardTitle className="text-2xl font-headline tracking-tighter uppercase">Conex Access</CardTitle>
-                <CardDescription>Identify yourself to proceed.</CardDescription>
-              </CardHeader>
-              <form onSubmit={handleStep1}>
-                <CardContent className="space-y-4">
-                  <div className="space-y-2">
-                    <Label className="text-lg font-medium">Who are you now?</Label>
-                    <Input 
-                      value={answer} 
-                      onChange={(e) => setAnswer(e.target.value)}
-                      placeholder="Enter the secret answer..."
-                      className="text-center text-lg py-6"
-                      autoFocus
-                    />
-                  </div>
-                  {error && (
-                    <div className="flex items-center gap-2 text-destructive text-sm bg-destructive/10 p-3 rounded-md">
-                      <AlertCircle className="h-4 w-4" />
-                      <span>{error}</span>
-                    </div>
-                  )}
-                </CardContent>
-                <CardFooter>
-                  <Button type="submit" className="w-full h-12 text-lg font-bold uppercase tracking-tighter" disabled={loading}>
-                    {loading ? <Loader2 className="animate-spin" /> : <>Identify <ArrowRight className="ml-2 h-5 w-5" /></>}
                   </Button>
                 </CardFooter>
               </form>
@@ -3667,13 +3482,13 @@ export default function ConexPage() {
                 <div className="mx-auto w-12 h-12 bg-primary/10 rounded-full flex items-center justify-center mb-4">
                   <Key className="h-6 w-6 text-primary" />
                 </div>
-                <CardTitle className="text-2xl font-headline tracking-tighter uppercase">Access Key</CardTitle>
-                <CardDescription>Final security checkpoint.</CardDescription>
+                <CardTitle className="text-2xl font-headline tracking-tighter uppercase">Passcode</CardTitle>
+                <CardDescription>Step 2 of 2 · Enter your admin passcode.</CardDescription>
               </CardHeader>
               <form onSubmit={handleStep2}>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
-                    <Label className="text-lg font-medium">Admin Access Key</Label>
+                    <Label className="text-lg font-medium">Admin passcode</Label>
                     <Input 
                       type="password"
                       value={accessKey} 
@@ -3692,7 +3507,7 @@ export default function ConexPage() {
                 </CardContent>
                 <CardFooter>
                   <Button type="submit" className="w-full h-12 text-lg font-bold uppercase tracking-tighter" disabled={loading}>
-                    {loading ? <Loader2 className="animate-spin" /> : <>Unlock Command Center <Lock className="ml-2 h-5 w-5" /></>}
+                    {loading ? <Loader2 className="animate-spin" /> : <>Unlock Conex <Lock className="ml-2 h-5 w-5" /></>}
                   </Button>
                 </CardFooter>
               </form>
