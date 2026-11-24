@@ -54,7 +54,6 @@ type ManagedUser = {
   is_suspended: boolean;
   is_authorized: boolean;
   is_protected_owner?: boolean;
-  device_report?: { installation_id: string; manufacturer: string; model: string; android_version: string; sdk: number; app_version: string; app_version_code: number; reported_at: string } | null;
   admin_override_plan?: AdminOverridePlan | null;
 };
 
@@ -1224,14 +1223,8 @@ export function ConexUserManagement() {
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Device & support information</CardTitle>
-              <CardDescription>Optional device report shared by the selected user; not verified hardware identity.</CardDescription>
-              {selectedUser?.device_report ? <div className="grid gap-2 rounded-lg border p-3 text-sm">
-                <p><strong>Device:</strong> {selectedUser.device_report.manufacturer} {selectedUser.device_report.model}</p>
-                <p><strong>Android:</strong> {selectedUser.device_report.android_version} (API {selectedUser.device_report.sdk})</p>
-                <p><strong>AU version:</strong> {selectedUser.device_report.app_version} ({selectedUser.device_report.app_version_code})</p>
-                <p className="break-all"><strong>App installation:</strong> {selectedUser.device_report.installation_id}</p>
-                <p className="text-xs text-muted-foreground">Reported {formatDate(selectedUser.device_report.reported_at)}</p>
-              </div> : <p className="text-xs text-muted-foreground">No native support report shared.</p>}
+              <CardDescription>Load recent account activity only when needed.</CardDescription>
+
               <Button type="button" size="sm" variant="outline" disabled={!selectedUser || loadingActivity} onClick={() => selectedUser && void fetchActivity(selectedUser.user_id)}>Load recent activity</Button>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[280px] overflow-auto">
