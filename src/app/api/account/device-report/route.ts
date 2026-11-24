@@ -44,10 +44,10 @@ export async function POST(req: NextRequest) {
     // One self-reported snapshot per account. Never store IMEI, serial, Android ID,
     // phone number, location, IP, or installed model/document history here.
     const now = new Date().toISOString();
-    const result = await supabase.from('au_user_activity').upsert({
+    const result = await supabase.from('au_user_activity').upsert([{
       user_id: auth.userId, last_active_at: now,
       device_info: { manufacturer, model, androidVersion, appVersion, sdk, reportedAt: now },
-    }, { onConflict: 'user_id', defaultToNull: false });
+    }], { onConflict: 'user_id', defaultToNull: false });
     return reply({ ok: !result.error }, result.error ? 503 : 200);
   } catch { return reply({ ok: false }, 400); }
 }
