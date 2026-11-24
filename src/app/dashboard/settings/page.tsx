@@ -574,7 +574,7 @@ export default function SettingsPage() {
                 <div>
                   <CardTitle className="font-headline">Application</CardTitle>
               <CardDescription>
-                    Install the app on your device for a native experience.
+                    Download the native Android app to study with AU.
                   </CardDescription>
                 </div>
               </div>
