@@ -28,7 +28,7 @@ class VerifiedModelDownloadManager(context: Context) {
 
     fun start(id: String, wifiOnly: Boolean) {
         requireNotNull(VerifiedModelDownloads.find(id)) { "No verified download for this model." }
-        require(!LocalModelLibrary(app).installed(id)) { "Model files already exist." }
+        val alreadyInstalled = LocalModelLibrary(app).installed(id)
         check(ModelVaultStore(app).folder() != null) {
             "Choose your model folder before downloading."
         }
@@ -39,7 +39,8 @@ class VerifiedModelDownloadManager(context: Context) {
             ))
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                    .setRequiredNetworkType(if (alreadyInstalled) NetworkType.NOT_REQUIRED
+                        else if (wifiOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
                     .setRequiresStorageNotLow(true)
                     .setRequiresBatteryNotLow(true)
                     .build()
@@ -47,7 +48,7 @@ class VerifiedModelDownloadManager(context: Context) {
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30L, TimeUnit.SECONDS)
             .addTag("datacube-verified-model")
             .build()
-        work.enqueueUniqueWork(workName(id), ExistingWorkPolicy.REPLACE, request)
+        work.enqueueUniqueWork(workName(id), ExistingWorkPolicy.KEEP, request)
     }
 
     fun resume(id: String) = start(id, wifiOnly = preferences.getBoolean("wifi_$id", true))
