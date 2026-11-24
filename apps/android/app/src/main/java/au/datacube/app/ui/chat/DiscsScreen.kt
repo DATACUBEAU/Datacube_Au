@@ -189,7 +189,7 @@ fun DiscsScreen(
                             .replace("on this device", "in this collection"),
                         steps = events.toList()))
                 } else {
-                    val previousGrounded = turns.dropLast(1).lastOrNull { !it.isUser && !it.generating && it.generationError == null }
+                    val previousGrounded = turns.dropLast(1).lastOrNull { !it.isUser && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                         ?.takeIf { it.matches.isNotEmpty() }
                     val groundedFollowUp = previousGrounded != null &&
                         DocumentQueryInterpreter.isReferentialFollowUp(question)
@@ -260,7 +260,7 @@ fun DiscsScreen(
                             """.trimIndent().take(13_000)
                         } else {
                             val contextPairs = turns.take(answerIndex)
-                                .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null }
+                                .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                                 .takeLast(20).map { it.question to it.answer }
                             GistPrompt.build(question, contextPairs,
                                 compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()))
