@@ -439,9 +439,11 @@ fun DocumentChatWorkspace(
                                     }
                                     val priorQuestion = messages.dropLast(1)
                                         .lastOrNull { it.isUser }?.question
-                                    val plan = DocumentQueryInterpreter.understand(
-                                        cleanPrompt, textPreview.orEmpty(), priorQuestion
-                                    )
+                                    val plan = withContext(Dispatchers.Default) {
+                                        DocumentQueryInterpreter.understand(
+                                            cleanPrompt, textPreview.orEmpty(), priorQuestion
+                                        )
+                                    }
                                     if (plan.clarification != null) {
                                         events += "Asked for clarification before retrieving document text"
                                         messages.add(ChatMessage(
