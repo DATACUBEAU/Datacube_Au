@@ -8,6 +8,7 @@ import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuReadAloudAction
 import au.datacube.app.ui.common.rememberAuReadAloud
 import androidx.compose.foundation.lazy.itemsIndexed
+import au.datacube.app.work.AuBackgroundWork
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import au.datacube.app.audio.OfflineNarrationPreferences
@@ -258,7 +259,6 @@ fun DocumentChatWorkspace(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    val speech = rememberAuReadAloud()
     val scope = rememberCoroutineScope()
     val semanticSearch = remember(context) { LocalSemanticSearch(context) }
     val semanticSupported = semanticSearch.supported()
@@ -275,7 +275,7 @@ fun DocumentChatWorkspace(
         if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
     }
     val threadId = threadIndex?.activeId ?: "main"
-    LaunchedEffect(documentId, threadId) { speech.stop() }
+    val speech = rememberAuReadAloud("document:$documentId:$threadId")
     val session = remember(documentId, threadId) {
         DocumentChatSessions.get(documentId, threadId, context)
     }
@@ -582,6 +582,7 @@ fun DocumentChatWorkspace(
                                     session.activitySteps.clear()
                                 }
                             }
+                        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer") }
                         }
                     
     }
@@ -1065,6 +1066,7 @@ fun SmartNoteWorkspace(
                     Spacer(Modifier.height(10.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(session.stage, style = MaterialTheme.typography.bodySmall)
+                    au.datacube.app.ui.common.AuElapsedFeedback(session.stage)
                     TextButton(onClick = session::stop) { Text("Stop") }
                 }
                 session.error?.let { message ->
@@ -1144,11 +1146,7 @@ fun SmartNoteWorkspace(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 if (open) {
-                                    SelectionContainer {
-                                        Text(section.details.ifBlank { "No additional detail was generated." },
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = MaterialTheme.colorScheme.onSurface)
-                                    }
+                                    AuRichResponse(section.details.ifBlank { "No additional detail was generated." })
                                 }
                             }
                         }
@@ -1160,11 +1158,7 @@ fun SmartNoteWorkspace(
                                 fontWeight = FontWeight.Bold)
                             if (section.details.isNotBlank()) {
                                 Spacer(Modifier.height(10.dp))
-                                SelectionContainer {
-                                    Text(section.details,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        color = MaterialTheme.colorScheme.onSurface)
-                                }
+                                AuRichResponse(section.details)
                             }
                         }
                     }
@@ -1242,6 +1236,7 @@ fun PredictionWorkspace(
                     Spacer(Modifier.height(9.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text(session.stage, style = MaterialTheme.typography.bodySmall)
+                    au.datacube.app.ui.common.AuElapsedFeedback(session.stage)
                     TextButton(onClick = session::stop) { Text("Stop") }
                 }
                 session.error?.let {
@@ -1258,10 +1253,7 @@ fun PredictionWorkspace(
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(9.dp))
-                        SelectionContainer {
-                            Text(section.details, style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface)
-                        }
+                        AuRichResponse(section.details)
                     }
                 }
                 Text("This is a study aid, not a guarantee of future exam questions.",
@@ -1494,9 +1486,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
             }
         })
         onDispose {
-            neuralJob?.cancel()
-            NeuralNarration.stop()
-            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { NeuralNarration.release() }
+            if (neuralJob?.isActive == true) neuralJob?.cancel()
             tts.stop()
             tts.shutdown()
         }
@@ -1535,12 +1525,11 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                 return
             }
             neuralJob?.cancel()
-            NeuralNarration.stop()
             tts.stop()
             speechError = null
             neuralStage = "Preparing Kokoro on your device"
             speaking = true
-            neuralJob = narratorScope.launch {
+            neuralJob = au.datacube.app.audio.AuAudioPlayback.launch(context, "Preparing narration") {
                 try {
                     NeuralNarration.speak(context, text, neuralVoice, speechRate) { stage ->
                         withContext(Dispatchers.Main) { neuralStage = stage }
@@ -1641,8 +1630,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                         selected = !useNeural,
                         onClick = {
                             neuralJob?.cancel()
-                            NeuralNarration.stop()
-                            useNeural = false
+                                            useNeural = false
                             neuralPrefs.edit().putBoolean("neural_opt_in_v3", false).apply()
                             speaking = false
                         },
@@ -1698,8 +1686,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                                     text = { Text(label) },
                                     onClick = {
                                         neuralJob?.cancel()
-                                        NeuralNarration.stop()
-                                        speaking = false
+                                                                    speaking = false
                                         neuralVoice = id
                                         neuralPrefs.edit().putString("voice", id).apply()
                                         voiceMenuExpanded = false
@@ -1775,8 +1762,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                         onClick = {
                             if (speaking) {
                                 neuralJob?.cancel()
-                                NeuralNarration.stop()
-                                tts.stop()
+                                                    tts.stop()
                                 speaking = false
                             }
                             else speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
