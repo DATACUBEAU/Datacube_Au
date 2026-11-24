@@ -1,6 +1,7 @@
 package au.datacube.app.ui.documents
 
 import au.datacube.app.ui.common.DataCubeDialog
+import au.datacube.app.schedule.AuScheduleDialog
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
@@ -42,7 +43,8 @@ fun DocumentWorkspaceScreen(
     onBack: () -> Unit,
     onOpenModels: () -> Unit = {},
     initialPrompt: String? = null,
-    initialTab: Int = 0
+    initialTab: Int = 0,
+    accountId: String? = null
 ) {
     var selectedTab by remember(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
     var menuExpanded by remember(document.id) { mutableStateOf(false) }
@@ -50,6 +52,11 @@ fun DocumentWorkspaceScreen(
     var newChatToken by remember(document.id) { mutableIntStateOf(0) }
     var chatHistoryOpen by remember(document.id) { mutableStateOf(false) }
     var showDetails by remember(document.id) { mutableStateOf(false) }
+    var schedulesOpen by remember(document.id) { mutableStateOf(false) }
+    if (schedulesOpen && accountId != null) {
+        AuScheduleDialog(accountId, "document:${document.id}", "Review ${document.name}",
+            onDismiss = { schedulesOpen = false })
+    }
 
 
     if (showDetails) {
@@ -136,6 +143,13 @@ fun DocumentWorkspaceScreen(
                         )
                     }
                     HorizontalDivider()
+                    if (accountId != null) {
+                        DropdownMenuItem(
+                            text = { Text("Schedules") },
+                            leadingIcon = { Icon(Icons.Outlined.Schedule, null) },
+                            onClick = { schedulesOpen = true; menuExpanded = false }
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("New chat") },
                         leadingIcon = { Icon(Icons.Outlined.Add, null) },
