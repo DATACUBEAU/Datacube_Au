@@ -185,7 +185,8 @@ function shouldSuppressOnboardingForPath(pathname: string | null): boolean {
     normalized.startsWith('/login') ||
     normalized.startsWith('/signup') ||
     normalized.startsWith('/auth/callback') ||
-    normalized.startsWith('/session-expired')
+    normalized.startsWith('/session-expired') ||
+    normalized === '/' || ['/features', '/about', '/policy', '/pricing', '/download', '/mobile-auth', '/mobile-app-required', '/conex'].some(prefix => normalized === prefix || normalized.startsWith(prefix + '/'))
   );
 }
 
