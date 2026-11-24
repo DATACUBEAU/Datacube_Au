@@ -75,13 +75,12 @@ fun DiscsScreen(
         else ScopedChatRouting.ownerId(accountId, collectionId)
     }
     val uiScope = rememberCoroutineScope()
-    val speech = rememberAuReadAloud()
     val clipboard = LocalClipboardManager.current
     val threads = remember(context) { LocalConversationThreads(context) }
     var index by remember { mutableStateOf<ConversationThreadIndex?>(null) }
     LaunchedEffect(ownerId) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
-    LaunchedEffect(ownerId, threadId) { speech.stop() }
+    val speech = rememberAuReadAloud("chat:$ownerId:$threadId")
     val session = remember(ownerId, threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
