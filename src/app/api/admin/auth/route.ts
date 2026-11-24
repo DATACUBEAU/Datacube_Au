@@ -1,65 +1,89 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { randomInt, timingSafeEqual, createHash } from 'node:crypto';
-import { requireConexOwner, accessControlResponse, isAccessControlError } from '@/lib/server/authorization';
-import { CONEX_COOKIE, CHALLENGE_COOKIE, conexCookieOptions, signConexProof, verifyConexProof } from '@/lib/server/conex-proof';
+import { randomUUID } from 'node:crypto';
+import { accessControlResponse, isAccessControlError, requireAdmin } from '@/lib/server/authorization';
+import { issueConexState, readConexState, clearConexState, secureEqual } from '@/lib/server/conex-challenge';
 
 export const runtime = 'nodejs';
-const noStore = { 'Cache-Control': 'no-store, private' };
-function response(data: object, status = 200) {
-  return NextResponse.json(data, { status, headers: noStore });
+export const dynamic = 'force-dynamic';
+
+function createSafeRequestId() { return randomUUID(); }
+function response(body: Record<string, unknown>, status = 200) {
+  return NextResponse.json(body, { status, headers: { 'Cache-Control': 'no-store, private' } });
 }
-function equal(a: string, b: string) {
-  return timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
+function sameOrigin(req: NextRequest) {
+  return req.headers.get('origin') === req.nextUrl.origin;
 }
-export async function POST(req: NextRequest) {
+
+export async function GET(req: NextRequest) {
+  const requestId = createSafeRequestId();
   try {
-    if (req.headers.get('origin') !== req.nextUrl.origin) return response({ error: 'Invalid origin' }, 403);
-    const { auth, supabase } = await requireConexOwner(req);
-    const body = await req.json().catch(() => null);
-    const action = body?.action;
-    if (action === 'status') return response({ verified: Boolean(await verifyConexProof(req, auth.userId, auth.accessToken, 'verified')) });
-    if (action === 'logout') {
-      const res = response({ ok: true });
-      for (const name of [CONEX_COOKIE, CHALLENGE_COOKIE]) res.cookies.set(name, '', { ...conexCookieOptions, maxAge: 0 });
-      return res;
-    }
-    if (!['start', 'math', 'passcode'].includes(action)) return response({ error: 'Invalid challenge action' }, 400);
-    // Reuse the existing atomic database rate limiter, keyed by verified owner.
-    const seconds = 900;
-    const start = new Date(Math.floor(Date.now() / (seconds * 1000)) * seconds * 1000).toISOString();
-    const { data: counts, error: limitError } = await supabase.rpc('au_rate_limit_hit', {
-      p_key: 'conex-v2:' + auth.userId + ':' + action + ':' + start,
-      p_owner_id: auth.userId, p_ip_hash: null, p_endpoint: 'conex-' + action,
-      p_window_start: start, p_window_seconds: seconds,
+    const { auth } = await requireAdmin(req, { ownerCheckOnly: true });
+    const current = readConexState(req, auth.userId, auth.accessToken);
+    if (current?.stage === 'unlocked') return response({ ok: true, stage: 'unlocked' });
+    if (current?.stage === 'passcode') return response({ ok: true, stage: 'passcode' });
+    const res = response({ ok: true, stage: 'math' });
+    const state = current?.stage === 'math' ? current : issueConexState(res, auth.userId, auth.accessToken, 'math');
+    // Preserve the signed cookie on the response while adding the math question.
+    const output = response({ ok: true, stage: 'math', a: state.a, b: state.b });
+    for (const cookie of res.cookies.getAll()) output.cookies.set(cookie);
+    return output;
+  } catch (error) {
+    if (isAccessControlError(error)) return accessControlResponse(error, requestId);
+    return response({ error: 'Admin verification unavailable.', requestId }, 503);
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const requestId = createSafeRequestId();
+  try {
+    if (!sameOrigin(req)) return response({ error: 'Invalid request origin.', requestId }, 403);
+    const { auth, supabase } = await requireAdmin(req, { ownerCheckOnly: true });
+    const state = readConexState(req, auth.userId, auth.accessToken);
+    if (!state || state.stage === 'unlocked') return response({ error: 'Restart verification.', requestId }, 409);
+    if (Number(req.headers.get('content-length') || 0) > 4096) return response({ error: 'Invalid request.', requestId }, 413);
+    const raw = await req.text();
+    if (raw.length > 4096) return response({ error: 'Invalid request.', requestId }, 413);
+    const body = JSON.parse(raw);
+    if (body?.stage !== state.stage) return response({ error: 'Restart verification.', requestId }, 409);
+    // Existing service-role-only atomic rate limiter. Owner-scoped, not spoofable IP headers.
+    // Count attempts before checking the answer, so parallel requests cannot bypass the budget.
+    const windowSeconds = state.stage === 'passcode' ? 900 : 300;
+    const start = new Date(Math.floor(Date.now() / (windowSeconds * 1000)) * windowSeconds * 1000).toISOString();
+    const { data, error } = await supabase.rpc('au_rate_limit_hit', {
+      p_key: 'conex:v2:' + auth.userId + ':' + state.stage + ':' + start,
+      p_owner_id: auth.userId, p_ip_hash: 'owner-session', p_endpoint: '/conex/' + state.stage,
+      p_window_start: start, p_window_seconds: windowSeconds,
     });
-    const count = Number(counts?.[0]?.current_count);
-    if (limitError || !Number.isSafeInteger(count) || count < 1) return response({ error: 'Security check temporarily unavailable' }, 503);
-    if (count > (action === 'passcode' ? 5 : 20)) return response({ error: 'Too many attempts. Try again after the rate-limit window.' }, 429);
-    if (action === 'start') {
-      const a = randomInt(1, 11), b = randomInt(1, 11);
-      const res = response({ a, b });
-      res.cookies.set(CHALLENGE_COOKIE, await signConexProof(auth.userId, auth.accessToken, 'math', 300, a+b), { ...conexCookieOptions, maxAge: 300 });
+    const count = Number(data?.[0]?.current_count);
+    if (error || !Number.isSafeInteger(count) || count < 1) return response({ error: 'Verification unavailable.', requestId }, 503);
+    if (count > (state.stage === 'passcode' ? 5 : 10)) {
+      return response({ error: 'Too many attempts. Try again later.', code: 'admin_auth_rate_limited', requestId }, 429);
+    }
+    if (state.stage === 'math') {
+      if (!Number.isInteger(body.answer) || body.answer !== Number(state.a) + Number(state.b))
+        return response({ error: 'Incorrect answer.', requestId }, 401);
+      const res = response({ ok: true, stage: 'passcode' });
+      issueConexState(res, auth.userId, auth.accessToken, 'passcode');
       return res;
     }
-    if (action === 'math') {
-      const proof = await verifyConexProof(req, auth.userId, auth.accessToken, 'math');
-      if (!proof || typeof body.answer !== 'string' || !/^\d{1,2}$/.test(body.answer) || Number(body.answer) !== proof.answer)
-        return response({ error: 'Incorrect or expired challenge' }, 400);
-      const res = response({ ok: true });
-      res.cookies.set(CHALLENGE_COOKIE, await signConexProof(auth.userId, auth.accessToken, 'passcode', 300), { ...conexCookieOptions, maxAge: 300 });
-      return res;
-    }
-    if (!await verifyConexProof(req, auth.userId, auth.accessToken, 'passcode')) return response({ error: 'Restart the security check' }, 403);
-    if (typeof body.passcode !== 'string' || !body.passcode || body.passcode.length > 256) return response({ error: 'Invalid passcode' }, 400);
-    const { data, error } = await supabase.from('au_admin_config').select('value').eq('key', 'admin_access_key').maybeSingle();
-    if (error || typeof data?.value !== 'string' || !data.value) return response({ error: 'Passcode configuration unavailable' }, 503);
-    if (!equal(body.passcode, data.value)) return response({ error: 'Incorrect passcode' }, 403);
-    const res = response({ ok: true, verified: true });
-    res.cookies.set(CONEX_COOKIE, await signConexProof(auth.userId, auth.accessToken, 'verified', 1800), { ...conexCookieOptions, maxAge: 1800 });
-    res.cookies.set(CHALLENGE_COOKIE, '', { ...conexCookieOptions, maxAge: 0 });
+    const submitted = typeof body.passcode === 'string' ? body.passcode.trim() : '';
+    if (!submitted || submitted.length > 512) return response({ error: 'Incorrect passcode.', requestId }, 401);
+    const config = await supabase.from('au_admin_config').select('value').eq('key', 'admin_access_key').single();
+    const expected = typeof config.data?.value === 'string' ? config.data.value.trim() : '';
+    if (config.error || !expected) return response({ error: 'Passcode verification unavailable.', requestId }, 503);
+    if (!secureEqual(submitted, expected)) return response({ error: 'Incorrect passcode.', requestId }, 401);
+    const res = response({ ok: true, stage: 'unlocked' });
+    issueConexState(res, auth.userId, auth.accessToken, 'unlocked');
     return res;
   } catch (error) {
-    if (isAccessControlError(error)) return accessControlResponse(error);
-    return response({ error: 'Security check unavailable' }, 503);
+    if (isAccessControlError(error)) return accessControlResponse(error, requestId);
+    return response({ error: 'Admin verification failed.', requestId }, 400);
   }
+}
+
+export async function DELETE(req: NextRequest) {
+  if (!sameOrigin(req)) return response({ error: 'Invalid request origin.' }, 403);
+  const res = response({ ok: true });
+  clearConexState(res);
+  return res;
 }
