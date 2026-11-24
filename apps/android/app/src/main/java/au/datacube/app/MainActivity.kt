@@ -594,7 +594,8 @@ private fun AuthenticatedWorkspace(
                         previewTruncated = previewTruncated,
                         previewLoading = previewLoading,
                         previewError = previewError,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onOpenModels = { navController.navigate(Screen.Models.route) }
                     )
                 } else {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
