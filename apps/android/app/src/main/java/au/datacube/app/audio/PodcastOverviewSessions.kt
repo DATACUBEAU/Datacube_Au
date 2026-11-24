@@ -57,7 +57,13 @@ class PodcastOverviewSession(private val documentId: String) {
         playbackError = null
         listening = true
         playbackStage = "Preparing the voices"
-        playbackJob = AuAudioPlayback.launch(app, "Preparing or playing podcast") {
+        playbackJob = AuAudioPlayback.launch(app, "Preparing or playing podcast", onFinished = {
+            if (playbackJob?.isActive != true) {
+                listening = false
+                activeSpeakerIndex = -1
+                playbackStage = ""
+            }
+        }) {
             try {
                 val onSpeaker: suspend (Int) -> Unit = { index ->
                     withContext(Dispatchers.Main) { activeSpeakerIndex = index }
