@@ -39,7 +39,7 @@ object AuBackgroundWork {
 
 class AuWorkService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private val manager get() = getSystemService(NotificationManager::class.java)
+    private val manager get() = requireNotNull(getSystemService(NotificationManager::class.java))
     private val refresh = object : Runnable {
         override fun run() {
             val labels = AuBackgroundWork.labels()
