@@ -236,7 +236,7 @@ export async function POST(req: NextRequest) {
 
   try {
     // Only essential health diagnostics are exposed during the local-first launch.
-    if (action !== 'verify_system') {
+    if (!new Set<string>(['verify_system']).has(action)) {
       return NextResponse.json({ error: 'LEGACY_ADMIN_CONTROL_RETIRED', requestId },
         { status: 410, headers: { 'Cache-Control': 'no-store, private' } });
     }
