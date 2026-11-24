@@ -309,8 +309,9 @@ class AppResponsiveUiTest {
 
         composeRule.onNodeWithContentDescription("Document options and tools").performClick()
         composeRule.onNodeWithText("Practice").performClick()
-        composeRule.onNodeWithText("Start Practice").performClick()
-        composeRule.onNodeWithText("Question 1 of 5").assertIsDisplayed()
+        // Practice requires real on-device inference; CI has no downloaded weights.
+        composeRule.onNodeWithText("Generate practice").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Install and select an AU chat model in Models.").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithContentDescription("Document options and tools").performClick()
         composeRule.onNodeWithText("Podcast").performClick()
