@@ -64,7 +64,8 @@ test('admin provider key responses are masked and never echo raw key rows', () =
   assert.doesNotMatch(conexPage, /Who are you now|localStorage\.(?:getItem|setItem)\('conex_auth_step'/);
   assert.doesNotMatch(adminAuth, /select\('\*'\)/);
   assert.doesNotMatch(adminAuth, /Non-JSON response from Edge Function:',\s*text/);
-  assert.match(conexPage, /Leave blank to keep existing key/);
+  assert.doesNotMatch(conexPage, /Leave blank to keep existing key|Model Registry|plan-limits/);
+  assert.match(handler, /LEGACY_ADMIN_CONTROL_RETIRED/);
 });
 
 test('tracked and public files do not contain high-confidence raw secret values', () => {
