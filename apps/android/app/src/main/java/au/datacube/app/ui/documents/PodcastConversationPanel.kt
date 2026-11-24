@@ -48,62 +48,16 @@ fun PodcastConversationPanel(
     val turns = session.turns
     val modelReady = LocalGenerativeEngine.installed(context)
     val neuralReady = NeuralNarration.installed(context)
-    var listening by remember(documentId) { mutableStateOf(false) }
-    var activeSpeakerIndex by remember(documentId) { mutableIntStateOf(-1) }
-    var playbackStage by remember(documentId) { mutableStateOf("") }
-    var playbackError by remember(documentId) { mutableStateOf<String?>(null) }
-    var playbackJob by remember(documentId) { mutableStateOf<Job?>(null) }
+    val listening = session.listening
+    val activeSpeakerIndex = session.activeSpeakerIndex
+    val playbackStage = session.playbackStage
+    val playbackError = session.playbackError
     var showTranscript by remember(documentId) { mutableStateOf(false) }
     var smoothVoice by remember(documentId, neuralReady) { mutableStateOf(!neuralReady) }
 
-    DisposableEffect(documentId) {
-        onDispose {
-            playbackJob?.cancel()
-            if (listening) {
-                NeuralNarration.stop()
-                SmoothOfflineNarration.stop()
-            }
-        }
-    }
-
     fun startPlayback() {
-        if (turns.isEmpty() || (!smoothVoice && !neuralReady) || listening || session.generating) return
-        playbackError = null
-        listening = true
-        playbackStage = "Preparing the voices"
-        playbackJob = scope.launch {
-            try {
-                // Avoid keeping the large chat model resident while Kokoro
-                // allocates its neural speech engine on lower-RAM phones.
-                if (!smoothVoice) LocalGenerativeEngine.release()
-                val onSpeaker: suspend (Int) -> Unit = { index ->
-                    withContext(Dispatchers.Main) { activeSpeakerIndex = index }
-                }
-                val onStage: suspend (String) -> Unit = { stage ->
-                    withContext(Dispatchers.Main) { playbackStage = stage }
-                }
-                if (smoothVoice) {
-                    SmoothOfflineNarration.speakDialogue(
-                        context, turns.toList(), playbackSpeed, onSpeaker, onStage,
-                        distinguishSpeakers = true
-                    )
-                } else {
-                    NeuralNarration.speakDialogue(
-                        context, turns.toList(), playbackSpeed, onSpeaker, onStage
-                    )
-                }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Exception) {
-                playbackError = "Audio conversation stopped: " +
-                    (failure.message ?: "Offline voice is unavailable on this device.")
-            } finally {
-                listening = false
-                activeSpeakerIndex = -1
-                playbackStage = ""
-                playbackJob = null
-            }
-        }
+        if (!smoothVoice && !neuralReady) return
+        session.play(context, smoothVoice, playbackSpeed)
     }
 
     Surface(
@@ -157,10 +111,7 @@ fun PodcastConversationPanel(
                 enabled = (smoothVoice || neuralReady) && !session.generating,
                 onPlayPause = {
                     if (listening) {
-                        playbackJob?.cancel()
-                        NeuralNarration.stop()
-                        SmoothOfflineNarration.stop()
-                        listening = false
+                        session.stopPlayback()
                     } else startPlayback()
                 }
             )
@@ -169,7 +120,7 @@ fun PodcastConversationPanel(
                 Text(session.stage.ifBlank { "AU is preparing your podcast" },
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.bodyMedium)
-                Text("You can visit another workspace. Preparation continues while the app stays open.",
+                Text("You can leave this workspace. AU keeps preparing the conversation while Android allows the task to run.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = session::stop) { Text("Cancel preparation") }
@@ -202,7 +153,8 @@ fun PodcastConversationPanel(
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (listening) "Speaking ${activeSpeakerIndex + 1} of ${turns.size}"
+                        if (listening && activeSpeakerIndex >= 0) "Speaking ${activeSpeakerIndex + 1} of ${turns.size}"
+                        else if (listening) playbackStage.ifBlank { "Preparing audio" }
                         else "${turns.size} conversational turns prepared",
                         modifier = Modifier.weight(1f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
