@@ -16,15 +16,19 @@ internal object StudyGenerationPrompt {
     private const val MAX_PASSAGES = 8
     private const val MAX_CHARS_PER_PASSAGE = 1_150
     private const val MAX_ATTACHMENT_CHARS = 6_000
-    private const val MAX_PROMPT_CHARS = 19_000
+    private const val MAX_PROMPT_CHARS = 18_000
 
     fun prepare(
         documentName: String,
         mode: GeneratedStudyMode,
         passages: List<RagEvidence>,
-        attachmentText: String?
+        attachmentText: String?,
+        questionCount: Int = 5,
+        questionStyle: String = "Explain",
+        focus: String = "All topics"
     ): PreparedStudyPrompt {
         val evidence = passages.filter { it.text.isNotBlank() }.take(MAX_PASSAGES)
+            .map { it.copy(text = it.text.trim().take(MAX_CHARS_PER_PASSAGE)) }
         require(evidence.isNotEmpty()) { "No readable document passages are available." }
         val includeExtra = mode == GeneratedStudyMode.REVISION && !attachmentText.isNullOrBlank()
         val instructions = when (mode) {
@@ -45,6 +49,15 @@ internal object StudyGenerationPrompt {
                     "Treat an optional extra reference as a separate source; " +
                     "compare it to the main document when relevant. " +
                     "Never claim guaranteed exam questions or invent probabilities."
+            GeneratedStudyMode.PRACTICE ->
+                "Generate up to ${questionCount.coerceIn(1, 15)} distinct practice questions, " +
+                    "using the requested style: ${if (questionStyle == "Recall") "Recall key facts" else "Explain and apply concepts"}. " +
+                    "Requested focus: ${focus.take(100).replace('\n', ' ')}. " +
+                    "Generate only questions answerable from the main document. " +
+                    "For each question use exactly four lines: QUESTION: question text, " +
+                    "ANSWER: a helpful model answer, SOURCE: the number of a supporting Main passage, " +
+                    "TOPIC: a concise topic name. Use one valid source number per question. " +
+                    "Separate questions with a blank line. Do not invent questions to reach the requested count."
         }
         val prompt = buildString {
             appendLine("DATACUBE AU — ON-DEVICE DOCUMENT STUDY TASK")
@@ -56,7 +69,7 @@ internal object StudyGenerationPrompt {
             appendLine()
             appendLine("MAIN DOCUMENT PASSAGES")
             evidence.forEachIndexed { index, passage ->
-                appendLine("[Main ${index + 1}]" +
+                appendLine("[${index + 1}] Main passage " +
                     (passage.page?.let { " Page $it" } ?: ""))
                 appendLine(passage.text.trim().take(MAX_CHARS_PER_PASSAGE))
                 appendLine()
