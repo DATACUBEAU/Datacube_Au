@@ -454,17 +454,15 @@ private fun AuthenticatedWorkspace(
         navController.popBackStack()
     }
 
-    Scaffold(
-        snackbarHost = {
-            // Nonblocking top-of-screen banner, never covering the chat composer.
-            Box(
-                Modifier.fillMaxSize().padding(top = 12.dp),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                SnackbarHost(snackbar)
-            }
-        }
-    ) { padding ->
+    // Keep the top notice OUTSIDE Scaffold's snackbar slot. A fillMaxSize()
+    // snackbar there is measured as an entire screen and steals all nav space.
+    // A normal-height host above Scaffold reserves only its actual banner height.
+    Column(Modifier.fillMaxSize()) {
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+        )
+        Scaffold(modifier = Modifier.weight(1f)) { padding ->
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
@@ -688,6 +686,7 @@ private fun AuthenticatedWorkspace(
                     onBack = { navController.popBackStack() }
                 )
             }
+        }
         }
     }
 }
