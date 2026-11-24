@@ -22,6 +22,7 @@ import au.datacube.app.data.LocalDocumentProcessing
 import au.datacube.app.data.rag.ConversationThreadIndex
 import au.datacube.app.data.rag.ConversationWindow
 import au.datacube.app.data.rag.CrossDocumentSearch
+import au.datacube.app.data.rag.ScopedChatRouting
 import au.datacube.app.data.rag.GistIntent
 import au.datacube.app.data.rag.GistRequestRouter
 import au.datacube.app.data.rag.GistPrompt
@@ -54,24 +55,31 @@ fun DiscsScreen(
     documents: List<LocalDocumentProcessing>,
     onBack: () -> Unit,
     onOpenDocument: (String) -> Unit,
-    onOpenDocuments: () -> Unit
+    onOpenDocuments: () -> Unit,
+    collectionId: String? = null,
+    collectionName: String? = null,
+    onOpenModels: () -> Unit = {}
 ) {
     val context = LocalContext.current
     // Scope every conversation to the current authenticated account.
-    val ownerId = remember(accountId) {
+    val ownerId = remember(accountId, collectionId) {
         require(accountId.matches(Regex("[A-Za-z0-9_-]{8,64}"))) { "Authenticated account required." }
-        "global-$accountId"
+        if (collectionId == null) "global-$accountId"
+        else ScopedChatRouting.ownerId(accountId, collectionId)
     }
     val uiScope = rememberCoroutineScope()
     val threads = remember(context) { LocalConversationThreads(context) }
     var index by remember { mutableStateOf<ConversationThreadIndex?>(null) }
-    LaunchedEffect(Unit) { index = runCatching { threads.list(ownerId) }.getOrNull() }
+    LaunchedEffect(ownerId) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
-    val session = remember(threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
+    val session = remember(ownerId, threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
     val modelReady = LocalGenerativeEngine.installed(context)
+    val needsCollectionModel = collectionId != null && !modelReady
+    // In collection mode callers pass only documents in the selected collection.
+    // No global workspace files can enter source retrieval through this argument.
     val library = documents.map { it.document }
     var prompt by remember(threadId) { mutableStateOf("") }
     var historyOpen by remember { mutableStateOf(false) }
@@ -132,7 +140,7 @@ fun DiscsScreen(
         audioPath: String? = null,
         alreadyAdded: Boolean = false
     ) {
-        if (!ready || session.searching || question.isBlank() ||
+        if (!ready || needsCollectionModel || session.searching || question.isBlank() ||
             (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
         if (audioPath == null) prompt = ""
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
@@ -147,10 +155,15 @@ fun DiscsScreen(
                 if (intent == GistIntent.LIBRARY_COUNT || intent == GistIntent.LIBRARY_LIST) {
                     events += "Checked local document library"
                     turns.add(ChatMessage(question, emptyList(), false,
-                        answer = GistRequestRouter.libraryReply(intent, library.map { it.name }),
+                        answer = if (collectionId == null)
+                            GistRequestRouter.libraryReply(intent, library.map { it.name })
+                        else GistRequestRouter.libraryReply(intent, library.map { it.name })
+                            .replace("on this device", "in this collection"),
                         steps = events.toList()))
                 } else {
-                    val searchDocuments = intent == GistIntent.DOCUMENT_SEARCH
+                    val searchDocuments = if (collectionId != null) {
+                        !ScopedChatRouting.isSocialGreeting(question)
+                    } else intent == GistIntent.DOCUMENT_SEARCH
                     session.searchingStage = if (searchDocuments) "Searching your documents" else "Preparing a reply"
                     val sourceResults = if (searchDocuments) {
                         CrossDocumentSearch(context).search(library, question)
@@ -274,9 +287,12 @@ fun DiscsScreen(
                 verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") }
                 Column(Modifier.weight(1f)) {
-                    Text("Gist", fontWeight = FontWeight.Bold,
+                    Text(if (collectionId == null) "Gist" else collectionName ?: "Collection AU",
+                        fontWeight = FontWeight.Bold,
                         style = MaterialTheme.typography.titleLarge)
-                    Text(if (modelReady) "AU ready · Offline chat" else "Install an AU model to chat",
+                    Text(if (!modelReady) "Install an AU model to chat"
+                        else if (collectionId != null) "${library.size} source documents · Collection AU"
+                        else "AU ready · Offline chat",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -301,10 +317,13 @@ fun DiscsScreen(
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(48.dp))
                 Spacer(Modifier.height(12.dp))
-                Text("What’s on your mind?", fontWeight = FontWeight.Bold,
+                Text(if (collectionId == null) "What’s on your mind?" else "Ask about this collection",
+                    fontWeight = FontWeight.Bold,
                     style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(6.dp))
-                Text("Gist with AU about anything. Ask about your documents only when you want to.",
+                Text(if (collectionId == null)
+                    "Gist with AU about anything. Ask about your documents only when you want to."
+                    else "AU searches only the documents in this collection.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(20.dp))
@@ -429,19 +448,37 @@ fun DiscsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall)
         }
+        if (needsCollectionModel) {
+            Surface(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Choose an AU model to chat with this collection",
+                        style = MaterialTheme.typography.titleSmall)
+                    Text("Collection answers require an installed local language model.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Button(onClick = onOpenModels) { Text("Open Models") }
+                }
+            }
+        }
         AuComposer(
             value = prompt,
             onValueChange = { prompt = it.take(700) },
             onSend = { send() },
-            placeholder = "Ask Gist anything…",
-            enabled = ready && !session.searching,
-            sendEnabled = ready && !session.searching && prompt.isNotBlank() &&
+            placeholder = if (collectionId == null) "Ask Gist anything…"
+                else "Ask AU about this collection…",
+            enabled = ready && !needsCollectionModel && !session.searching,
+            sendEnabled = ready && !needsCollectionModel &&
+                !session.searching && prompt.isNotBlank() &&
                 userTurns < ConversationWindow.MAX_USER_TURNS,
             sendDescription = "Send Gist message",
             actions = {
                 VoiceNoteInputButton(
                     ownerId = ownerId,
-                    enabled = ready && !session.searching &&
+                    enabled = ready && !needsCollectionModel && !session.searching &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->
