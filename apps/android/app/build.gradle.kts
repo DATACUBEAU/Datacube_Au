@@ -53,8 +53,13 @@ android {
      applicationId = "au.datacube.app"
      minSdk = 26
      targetSdk = 35
-     versionCode = 3
-     versionName = "1.0.2"
+     // Every published APK is assigned a stable increasing versionCode from
+     // the full main-branch Git history. Local builds keep a safe default.
+     versionCode = providers.gradleProperty("datacubeVersionCode").orNull
+         ?.toIntOrNull()?.takeIf { it >= 4 } ?: 4
+     versionName = providers.gradleProperty("datacubeVersionName").orNull
+         ?.takeIf { it.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")) }
+         ?: "1.0.3"
      testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
      // Direct-download test build: ship only ARM64 native libraries instead of
      // bundling ARM32/x86/x64 runtimes into one universal APK. Does not affect
