@@ -119,7 +119,7 @@ export default function AuthCallbackPage() {
           } catch {
             // A temporary Conex check outage must not block an ordinary user sign-in.
             if (isConexDestination) {
-              router.replace('/403');
+              router.replace('/');
               return;
             }
           }
@@ -130,7 +130,7 @@ export default function AuthCallbackPage() {
             return;
           }
           if (isConexDestination && accessResponse?.status === 403) {
-            router.replace('/403');
+            router.replace('/');
             return;
           }
           if (accessResponse?.status === 401) {
