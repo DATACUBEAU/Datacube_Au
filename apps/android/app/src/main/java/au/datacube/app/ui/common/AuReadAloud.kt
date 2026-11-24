@@ -1,6 +1,8 @@
 package au.datacube.app.ui.common
 
 import android.content.Context
+import android.content.Intent
+import android.speech.tts.TextToSpeech
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.VolumeUp
@@ -31,6 +33,13 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     private var revision = 0
     val neuralAvailable: Boolean get() = NeuralNarration.installed(context)
 
+    // Discover user-installed speech services, including compatible KittenTTS engines.
+    // Do not install anything, start a download or claim an engine is present by name alone.
+    fun installedEngines(): List<Pair<String, String>> = context.packageManager
+        .queryIntentServices(Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE), 0)
+        .map { it.serviceInfo.packageName to it.loadLabel(context.packageManager).toString() }
+        .distinctBy { it.first }.sortedBy { it.second }
+
     fun stop() {
         revision++
         if (job?.isActive == true) {
@@ -43,7 +52,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         stage = ""
     }
 
-    fun play(id: Int, answer: String, systemVoice: Boolean = false) {
+    fun play(id: Int, answer: String, systemVoice: Boolean = false, enginePackage: String? = null) {
         stop()
         val token = revision
         val plain = AuSpokenResponse.format(answer)
@@ -64,7 +73,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 } else {
                     val turns = NeuralTextSegmenter.split(plain, maxChunk = 350, maxText = 12_000)
                         .map { PodcastTurn(PodcastSpeaker.GUIDE, it) }
-                    SmoothOfflineNarration.speakDialogue(context, turns, 1f, {}, report)
+                    SmoothOfflineNarration.speakDialogue(context, turns, 1f, {}, report, enginePackage = enginePackage)
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -92,11 +101,15 @@ internal fun rememberAuReadAloud(): AuReadAloudState {
 @Composable
 internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String) {
     var voiceMenu by remember(id) { mutableStateOf(false) }
+    var installedEngines by remember(id) { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     Column {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Box {
             TextButton(onClick = {
-                if (speech.active == id) speech.stop() else voiceMenu = true
+                if (speech.active == id) speech.stop() else {
+                    installedEngines = speech.installedEngines()
+                    voiceMenu = true
+                }
             }) {
                 Icon(if (speech.active == id) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
                     contentDescription = null, modifier = Modifier.size(18.dp))
@@ -113,6 +126,17 @@ internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String
                     text = { Column { Text("Kokoro"); Text(if (speech.neuralAvailable) "Natural voice · prepares audio first" else "Install in Models", style = MaterialTheme.typography.bodySmall) } },
                     onClick = { voiceMenu = false; speech.play(id, answer, systemVoice = false) }
                 )
+                if (installedEngines.isNotEmpty()) {
+                    HorizontalDivider()
+                    Text("Other installed speech engines", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelSmall)
+                    installedEngines.forEach { (packageName, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = { voiceMenu = false; speech.play(id, answer, systemVoice = true, enginePackage = packageName) }
+                        )
+                    }
+                }
             }
             }
             if (speech.active == id) Text(speech.stage, style = MaterialTheme.typography.labelSmall,
