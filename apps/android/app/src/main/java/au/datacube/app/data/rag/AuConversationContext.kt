@@ -20,7 +20,7 @@ object AuConversationContext {
         val known = entries.filter { entry ->
             entry.isUser && entry.at?.let {
                 Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == yesterday
-            } == true && entry.question.isNotBlank() && !asksYesterdayRecap(entry.question)
+            } == true && entry.question.isNotBlank() && !asksYesterdayRecap(entry.question) && AuMemoryCommand.parse(entry.question) == null
         }.sortedBy { it.at }
         val distinct = known.distinctBy { it.question.trim().lowercase(Locale.ROOT) }.takeLast(6)
         if (distinct.isEmpty()) {
