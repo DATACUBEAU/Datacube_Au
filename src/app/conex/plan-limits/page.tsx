@@ -364,7 +364,7 @@ export default function ConexPlanLimitsPage() {
         router.replace('/');
         return;
       }
-      const res = await fetch('/conex/users?mode=access', {
+      const res = await fetch('/api/admin/auth', {
         method: 'GET',
         headers: { Authorization: `Bearer ${access}` },
         cache: 'no-store',
@@ -374,6 +374,9 @@ export default function ConexPlanLimitsPage() {
         router.replace('/');
         return;
       }
+      const state = await res.json().catch(() => null);
+      if (cancelled) return;
+      if (state?.stage !== 'unlocked') { router.replace('/conex'); return; }
       setCheckingAccess(false);
     };
     void run();
