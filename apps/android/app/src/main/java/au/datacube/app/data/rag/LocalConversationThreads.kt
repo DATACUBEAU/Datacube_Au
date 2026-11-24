@@ -5,6 +5,7 @@ import android.util.AtomicFile
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -30,6 +31,21 @@ class LocalConversationThreads(private val filesDir: File) {
 
     suspend fun list(ownerId: String): ConversationThreadIndex = withContext(Dispatchers.IO) {
         mutex.withLock { read(ownerId) }
+    }
+
+    /** Explicit recall stays inside the current workspace; ordinary new chats stay independent. */
+    suspend fun yesterdayReply(ownerId: String, activeThreadId: String,
+        activeEntries: List<ConversationEntry>): String = withContext(Dispatchers.IO) {
+        val history = LocalDocumentChatHistory(filesDir)
+        val entries = activeEntries.toMutableList()
+        for (thread in list(ownerId).threads) {
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            if (thread.id == activeThreadId) continue
+            entries += history.load(historyKey(ownerId, thread.id)).map {
+                ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
+            }
+        }
+        AuConversationContext.yesterdayReply(entries)
     }
 
     suspend fun create(ownerId: String): ConversationThreadIndex = withContext(Dispatchers.IO) {
