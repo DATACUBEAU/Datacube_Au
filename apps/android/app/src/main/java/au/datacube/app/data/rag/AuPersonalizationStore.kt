@@ -86,7 +86,7 @@ class AuPersonalizationStore(context: Context, private val accountId: String) {
 data class ParsedMemoryCommand(val kind: String, val note: String = "")
 
 object AuMemoryCommand {
-    private val save = Regex("""^(?:au[, ]+)?(?:please\s+)?(?:remember that|save this to (?:your )?memory|store this in (?:your )?memory|remember this)\s*[:,-]?\s*(.*)$""", RegexOption.IGNORE_CASE)
+    private val save = Regex("""^(?:au[, ]+)?(?:please\s+)?(?:remember that|save this to (?:your )?memory|store this in (?:your )?memory|remember this)\b\s*[:,-]?\s*(.*)$""", RegexOption.IGNORE_CASE)
     private val list = Regex("""^(?:au[, ]+)?(?:what do you remember about me|show (?:my|your) (?:saved )?memories|what have you saved)[?.! ]*$""", RegexOption.IGNORE_CASE)
     private val secret = Regex("""\b(?:password|passphrase|api[ -]?key|private[ -]?key|secret token|recovery code|credit card|bank pin)\b""", RegexOption.IGNORE_CASE)
     private val words = Regex("""[\p{L}\p{N}]{3,}""")
