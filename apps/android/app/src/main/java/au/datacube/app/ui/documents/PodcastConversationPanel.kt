@@ -54,7 +54,7 @@ fun PodcastConversationPanel(
     var playbackError by remember(documentId) { mutableStateOf<String?>(null) }
     var playbackJob by remember(documentId) { mutableStateOf<Job?>(null) }
     var showTranscript by remember(documentId) { mutableStateOf(false) }
-    var smoothVoice by remember(documentId) { mutableStateOf(true) }
+    var smoothVoice by remember(documentId, neuralReady) { mutableStateOf(!neuralReady) }
 
     DisposableEffect(documentId) {
         onDispose {
