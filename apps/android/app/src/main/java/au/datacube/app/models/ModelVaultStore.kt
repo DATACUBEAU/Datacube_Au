@@ -4,7 +4,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** User-selected external folder that survives app uninstall. Re-selection is required after reinstall. */
@@ -41,7 +44,13 @@ class ModelVaultStore(context: Context) {
         entries().filter { it.first.endsWith(".zip", ignoreCase = true) }
             .take(MAX_ARCHIVES)
             .mapNotNull { (name, uri) ->
-                runCatching { Archive(uri, name, manager.inspectBackup(uri)) }.getOrNull()
+                try {
+                    Archive(uri, name, manager.inspectBackup(uri))
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
             }
     }
 
@@ -54,6 +63,7 @@ class ModelVaultStore(context: Context) {
         onProgress: suspend (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
         onStage: suspend (String) -> Unit = {}
     ): ModelBackupSummary = withContext(Dispatchers.IO) {
+        saveMutex.withLock {
         check(ModelCatalog.models.any { it.id == modelId }) { "Unknown model type." }
         val dir = requireNotNull(folder()) { "Select your model folder first." }
         // Abandoned copies from an interrupted earlier backup cannot be mistaken for archives.
@@ -87,6 +97,9 @@ class ModelVaultStore(context: Context) {
             }
             onStage("Backup complete and verified")
             verified
+        } catch (cancelled: CancellationException) {
+            runCatching { DocumentsContract.deleteDocument(resolver, destination) }
+            throw cancelled
         } catch (error: Exception) {
             // Never leave a partial archive labelled as a recoverable backup.
             runCatching { DocumentsContract.deleteDocument(resolver, destination) }
@@ -95,6 +108,7 @@ class ModelVaultStore(context: Context) {
                     "Keep the model installed and try another folder. Details: " +
                     (error.message ?: error.javaClass.simpleName), error
             )
+        }
         }
     }
 
@@ -146,12 +160,12 @@ class ModelVaultStore(context: Context) {
                     val name = cursor.getString(1) ?: continue
                     val mime = cursor.getString(2)
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR &&
-                        (name == "DataCubeAU-Models" || (depth == 1 &&
-                            name.matches(Regex("[a-z0-9][a-z0-9._-]{1,80}"))))) {
+                        (name == "DataCubeAU-Models" ||
+                            ModelCatalog.models.any { it.id == name })) {
                         scan(id, depth + 1)
                     } else if (name.startsWith("DataCubeAU-") &&
-                        (mime == ModelBackupManager.BACKUP_MIME_TYPE ||
-                            mime == "application/octet-stream")) {
+                        (name.endsWith(".zip", ignoreCase = true) ||
+                            name.endsWith(".partial", ignoreCase = true))) {
                         result += name to DocumentsContract.buildDocumentUriUsingTree(tree, id)
                     }
                 }
@@ -162,6 +176,7 @@ class ModelVaultStore(context: Context) {
     }
 
     companion object {
+        private val saveMutex = Mutex()
         private const val KEY_FOLDER = "folder"
         private const val MAX_ARCHIVES = 64
     }

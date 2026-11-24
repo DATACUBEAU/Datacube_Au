@@ -239,7 +239,10 @@ class ModelBackupManager(context: Context) {
         }
     }
 
-    suspend fun restoreBackup(source: Uri): ModelBackupSummary = withContext(Dispatchers.IO) {
+    suspend fun restoreBackup(
+        source: Uri,
+        onProgress: suspend (restoredBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): ModelBackupSummary = withContext(Dispatchers.IO) {
         val input = appContext.contentResolver.openInputStream(source)
             ?: error("The selected model backup could not be opened.")
 
@@ -275,6 +278,8 @@ class ModelBackupManager(context: Context) {
                     require(expectedByEntry.size == records.size) { "The backup manifest contains duplicate paths." }
                     val received = HashSet<String>()
                     var restoredBytes = 0L
+                    var lastReported = 0L
+                    onProgress(0L, totalExpected)
                     var entry = zip.nextEntry
                     while (entry != null) {
                         currentCoroutineContext().ensureActive()
@@ -305,6 +310,10 @@ class ModelBackupManager(context: Context) {
                                 }
                                 digest.update(buffer, 0, count)
                                 output.write(buffer, 0, count)
+                                if (restoredBytes - lastReported >= 32L * 1024 * 1024) {
+                                    onProgress(restoredBytes, totalExpected)
+                                    lastReported = restoredBytes
+                                }
                             }
                         }
                         zip.closeEntry()
@@ -343,6 +352,7 @@ class ModelBackupManager(context: Context) {
                         throw error
                     }
 
+                    onProgress(totalExpected, totalExpected)
                     ModelBackupSummary(
                         modelCount = modelIds.size,
                         fileCount = records.size,

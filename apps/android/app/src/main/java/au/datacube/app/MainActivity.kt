@@ -254,8 +254,11 @@ private fun AuthenticatedWorkspace(
     var vaultRevision by remember { mutableIntStateOf(0) }
     var selectedRestoreUri by remember { mutableStateOf<Uri?>(null) }
     var selectedRestorePreview by remember { mutableStateOf<ModelBackupPreview?>(null) }
+    var restoringModels by remember { mutableStateOf(false) }
+    var restorePercent by remember { mutableIntStateOf(0) }
     val vaultStore = remember(context) { ModelVaultStore(context.applicationContext) }
     fun offerRestore(uri: Uri) {
+        if (restoringModels) return
         scope.launch {
             runCatching { ModelBackupManager(context).inspectBackup(uri) }
                 .onSuccess { preview ->
@@ -272,34 +275,51 @@ private fun AuthenticatedWorkspace(
         val preview = requireNotNull(selectedRestorePreview)
         DataCubeDialog(
             onDismissRequest = {
-                selectedRestoreUri = null
-                selectedRestorePreview = null
+                if (!restoringModels) {
+                    selectedRestoreUri = null
+                    selectedRestorePreview = null
+                }
             },
-            title = { Text("Restore models?") },
+            title = { Text(if (restoringModels) "Restoring models" else "Smart Recovery") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                     Text(preview.labels.joinToString("\n"))
                     Text("${preview.fileCount} files · ${preview.totalBytes / (1024 * 1024)} MB")
                     Text("Files will be checked before installation. Existing models will not be replaced.")
+                    if (restoringModels) {
+                        LinearProgressIndicator(progress = { restorePercent / 100f }, modifier = Modifier.fillMaxWidth())
+                        Text("Verifying and restoring · $restorePercent%")
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    selectedRestoreUri = null
-                    selectedRestorePreview = null
+                TextButton(enabled = !restoringModels, onClick = {
+                    restoringModels = true
+                    restorePercent = 0
                     scope.launch {
-                        runCatching { ModelBackupManager(context).restoreBackup(archiveUri) }
-                            .onSuccess { summary ->
-                                modelRevision += 1
-                                snackbar.showSnackbar("Restored ${summary.modelCount} model(s) with verified files.")
-                            }.onFailure { error ->
-                                snackbar.showSnackbar(error.message ?: "Could not restore the archive.")
+                        val message = try {
+                            val summary = ModelBackupManager(context).restoreBackup(archiveUri) { copied, total ->
+                                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                                    restorePercent = if (total > 0) (copied * 100 / total).toInt().coerceIn(0, 99) else 0
+                                }
                             }
+                            modelRevision += 1
+                            "Restored ${summary.modelCount} model(s) with verified files."
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: Exception) {
+                            error.message ?: "Could not restore the archive."
+                        } finally {
+                            restoringModels = false
+                            selectedRestoreUri = null
+                            selectedRestorePreview = null
+                        }
+                        snackbar.showSnackbar(message)
                     }
                 }) { Text("Restore") }
             },
             dismissButton = {
-                TextButton(onClick = {
+                TextButton(enabled = !restoringModels, onClick = {
                     selectedRestoreUri = null
                     selectedRestorePreview = null
                 }) { Text("Cancel") }
@@ -639,7 +659,7 @@ private fun AuthenticatedWorkspace(
                         )
                     },
                     onRestoreModels = {
-                        modelRestoreLauncher.launch(arrayOf(ModelBackupManager.BACKUP_MIME_TYPE))
+                        modelRestoreLauncher.launch(arrayOf(ModelBackupManager.BACKUP_MIME_TYPE, "application/octet-stream", "application/x-zip-compressed"))
                     },
                     themePreference = themePreference,
                     onThemeChange = onThemeChange,
@@ -666,7 +686,7 @@ private fun AuthenticatedWorkspace(
                     onChooseFolder = { modelVaultFolderPicker.launch(null) },
                     onRestoreArchive = { uri -> offerRestore(uri) },
                     onOpenArchive = {
-                        modelRestoreLauncher.launch(arrayOf(ModelBackupManager.BACKUP_MIME_TYPE))
+                        modelRestoreLauncher.launch(arrayOf(ModelBackupManager.BACKUP_MIME_TYPE, "application/octet-stream", "application/x-zip-compressed"))
                     },
                     onBack = { navController.popBackStack() }
                 )

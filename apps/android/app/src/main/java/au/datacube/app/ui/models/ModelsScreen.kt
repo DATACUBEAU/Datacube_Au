@@ -168,6 +168,8 @@ private fun ModelCard(
     val paused = remember(revision, work?.state) { verified != null && downloader.paused(model.id) }
     val percent = work?.progress?.getInt(VerifiedModelDownloadWorker.KEY_PROGRESS, -1) ?: -1
     val error = work?.outputData?.getString(VerifiedModelDownloadWorker.KEY_ERROR)
+    val backupVerified = work?.state == WorkInfo.State.SUCCEEDED &&
+        work.outputData.getBoolean(VerifiedModelDownloadWorker.KEY_BACKUP_VERIFIED, false)
 
     if (chooseNetwork && verified != null) {
         DataCubeDialog(
@@ -202,11 +204,12 @@ private fun ModelCard(
                     Text(model.description, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
                 }
-                if (complete) Icon(Icons.Outlined.CheckCircle, "Files imported",
+                if (complete && !working) Icon(Icons.Outlined.CheckCircle, "Installed",
                     tint = MaterialTheme.colorScheme.primary)
             }
             Text(
                 when {
+                    working && complete -> "Installed · saving external backup"
                     complete -> when (model.role) {
                         ModelRole.EMBEDDING -> "Ready for local indexing"
                         ModelRole.VOICE -> "Ready for Podcast"
@@ -220,10 +223,10 @@ private fun ModelCard(
             if (complete && model.role == ModelRole.GENERATION && !isActive) {
                 Button(onClick = onUse, modifier = Modifier.fillMaxWidth()) { Text("Use for AU Chat") }
             }
-            if (working && !complete) {
+            if (working) {
                 Text(if (work?.state == WorkInfo.State.RUNNING)
                     work.progress.getString(VerifiedModelDownloadWorker.KEY_STAGE) ?: "Downloading"
-                    else "Queued · waiting for network and battery",
+                    else if (complete) "Backup queued" else "Queued · waiting for network and battery",
                     style = MaterialTheme.typography.bodySmall)
                 if (percent >= 0) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -239,6 +242,25 @@ private fun ModelCard(
                     TextButton(
                         onClick = { scope.launch { downloader.cancel(model.id); revision += 1 } },
                         modifier = Modifier.weight(1f)) { Text("Cancel") }
+                }
+            } else if (complete && verified != null) {
+                Text(if (backupVerified) "External backup verified during last save."
+                    else "External backup not confirmed. Keep AU installed until a backup is verified.",
+                    color = if (backupVerified) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
+                if (!error.isNullOrBlank() && work?.state == WorkInfo.State.FAILED) {
+                    Text(error, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                OutlinedButton(onClick = {
+                    if (canDownload) {
+                        downloader.start(model.id, wifiOnly = false)
+                        revision += 1
+                    } else onChooseFolder()
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (!canDownload) "Choose backup folder"
+                        else if (backupVerified) "Save another backup" else "Retry backup")
                 }
             } else if (!complete && paused && verified != null) {
                 Text("Paused. Partial download retained.", style = MaterialTheme.typography.bodySmall)
