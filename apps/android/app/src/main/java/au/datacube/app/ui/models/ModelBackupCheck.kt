@@ -75,7 +75,9 @@ internal fun ModelBackupCheck(
                         status = "No backup ZIP found. Back up again."
                     } else {
                         vault.verifyArchive(saved) { done, total ->
-                            percent = if (total > 0) (done * 100 / total).toInt().coerceIn(0, 99) else 0
+                            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                                percent = if (total > 0) (done * 100 / total).toInt().coerceIn(0, 99) else 0
+                            }
                         }
                         checked = true
                         percent = 100
