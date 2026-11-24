@@ -1,11 +1,9 @@
 'use client';
 
-import Image from 'next/image';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Icons } from '@/components/icons';
 import { CompanyFooter } from '@/components/company-footer';
-import { PlaceHolderImages } from '@/lib/placeholder-images';
 import { Home, Menu } from 'lucide-react';
 import {
   DropdownMenu,
@@ -15,7 +13,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 
 export default function LandingPage() {
-  const heroIllustration = PlaceHolderImages.find((p) => p.id === 'app-showcase');
   const navLinks = [
     { href: '/', label: 'Home', icon: Home },
     { href: '/features', label: 'Features' },
@@ -98,17 +95,25 @@ export default function LandingPage() {
                   <p className="text-sm text-muted-foreground">Android 8.0+ · 64-bit devices · Choose and download your AU models separately.</p>
                 </div>
                 <div className="relative flex h-full min-h-[300px] w-full items-center justify-center">
-                    {heroIllustration && (
-                        <Image
-                            src={heroIllustration.imageUrl}
-                            alt={heroIllustration.description}
-                            width={600}
-                            height={400}
-                            className="rounded-lg object-contain"
-                            priority
-                            data-au-hint={heroIllustration.imageHint}
-                        />
-                    )}
+                    <div className="w-full max-w-md rounded-[28px] border border-primary/25 bg-card p-6 shadow-xl">
+                      <div className="flex items-center gap-3 border-b border-border pb-4">
+                        <Icons.logo className="h-9 w-9 text-primary" />
+                        <div><p className="font-semibold">AU workspace</p><p className="text-xs text-muted-foreground">A preview of your study workflow</p></div>
+                      </div>
+                      <div className="mt-5 space-y-3">
+                        {[
+                          ['01', 'Import your document', 'Bring your notes and textbooks into AU.'],
+                          ['02', 'Ask AU', 'Explore answers and their source passages.'],
+                          ['03', 'Make it yours', 'Create Smart Notes, practise or listen to a study conversation.'],
+                        ].map(([number, title, description]) => (
+                          <div key={number} className="flex gap-3 rounded-xl border border-border/70 p-3">
+                            <span className="text-sm font-semibold text-primary">{number}</span>
+                            <div><p className="font-medium">{title}</p><p className="mt-1 text-sm text-muted-foreground">{description}</p></div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-5 text-xs text-muted-foreground">Local-first Android experience. Internet required for model downloads and connected account services.</p>
+                    </div>
                 </div>
             </section>
         </div>
