@@ -80,6 +80,7 @@ fun DiscsScreen(
     var index by remember { mutableStateOf<ConversationThreadIndex?>(null) }
     LaunchedEffect(ownerId) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
+    LaunchedEffect(ownerId, threadId) { speech.stop() }
     val session = remember(ownerId, threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
