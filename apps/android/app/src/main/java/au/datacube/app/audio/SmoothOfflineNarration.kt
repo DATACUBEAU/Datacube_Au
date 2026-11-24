@@ -28,15 +28,19 @@ object SmoothOfflineNarration {
         turns: List<PodcastTurn>,
         speed: Float,
         onSpeaker: suspend (Int) -> Unit,
-        onStage: suspend (String) -> Unit
+        onStage: suspend (String) -> Unit,
+        distinguishSpeakers: Boolean = false,
+        enginePackage: String? = null
     ) = mutex.withLock {
         require(turns.isNotEmpty()) { "Create an audio conversation first." }
         val app = context.applicationContext
         val ready = CompletableDeferred<Boolean>()
         val tts = withContext(Dispatchers.Main) {
-            TextToSpeech(app) { status ->
+            if (enginePackage == null) TextToSpeech(app) { status ->
                 ready.complete(status == TextToSpeech.SUCCESS)
-            }
+            } else TextToSpeech(app, { status ->
+                ready.complete(status == TextToSpeech.SUCCESS)
+            }, enginePackage)
         }
         active = tts
         try {
@@ -58,10 +62,17 @@ object SmoothOfflineNarration {
             check(tts.setVoice(voice) != TextToSpeech.ERROR) {
                 "The selected offline voice could not be initialized."
             }
+            val secondVoice = offline.firstOrNull {
+                it.name != voice.name && it.locale.language == voice.locale.language
+            }
             tts.setSpeechRate(speed.coerceIn(0.7f, 1.4f))
             tts.setPitch(preference.pitch)
             turns.forEachIndexed { index, turn ->
                 currentCoroutineContext().ensureActive()
+                if (distinguishSpeakers) {
+                    val chosen = if (turn.speaker == PodcastSpeaker.GUIDE) secondVoice ?: voice else voice
+                    check(tts.setVoice(chosen) != TextToSpeech.ERROR) { "Offline voice is unavailable." }
+                }
                 onSpeaker(index)
                 onStage("Playing ${index + 1} of ${turns.size}")
                 // Android TTS has an utterance length limit. Podcast turns are already
