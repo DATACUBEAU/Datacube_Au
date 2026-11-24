@@ -31,6 +31,10 @@ internal object AuSpokenResponse {
                         }
                         add(label + ". " + plain(block.text))
                     }
+                    is AuResponseBlock.Callout -> {
+                        add(plain(block.title))
+                        add(plain(block.body))
+                    }
                     is AuResponseBlock.Code -> add("A code example is available in the written response.")
                     is AuResponseBlock.Table -> {
                         add("Here is the table, row by row.")
