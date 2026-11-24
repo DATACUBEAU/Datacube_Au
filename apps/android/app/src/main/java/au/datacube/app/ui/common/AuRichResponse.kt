@@ -26,6 +26,7 @@ internal sealed interface AuResponseBlock {
     data class Table(val headers: List<String>, val rows: List<List<String>>) : AuResponseBlock
     data class Code(val text: String) : AuResponseBlock
     data class Status(val kind: String, val text: String) : AuResponseBlock
+    data class Callout(val title: String, val body: String) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -62,6 +63,16 @@ internal object AuResponseParser {
                         rows += cells(lines[i++])
                     }
                     result += AuResponseBlock.Table(header, rows)
+                    continue
+                }
+            }
+            // Bounded, declarative visual box. No executable model-generated UI.
+            if (line.startsWith("[BOX] ")) {
+                val title = line.removePrefix("[BOX] ").take(120)
+                val end = (i + 1 until minOf(lines.size, i + 31)).firstOrNull { lines[it].trim() == "[/BOX]" }
+                if (end != null) {
+                    result += AuResponseBlock.Callout(title, lines.subList(i + 1, end).joinToString("\n").take(3000))
+                    i = end + 1
                     continue
                 }
             }
@@ -147,6 +158,20 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                     }
                 }
                 is AuResponseBlock.Status -> StatusText(block.kind, block.text)
+                is AuResponseBlock.Callout -> Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(inlineText(block.title), style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        SelectionContainer {
+                            Text(inlineText(block.body), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                }
             }
         }
     }

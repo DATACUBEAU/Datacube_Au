@@ -1,6 +1,8 @@
 package au.datacube.app.ui.documents
 
 import android.content.Context
+import au.datacube.app.work.AuBackgroundWork
+import au.datacube.app.notifications.LocalNotificationService
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.compose.runtime.getValue
@@ -159,7 +161,11 @@ class GeneratedStudySession {
                     val now = SystemClock.elapsedRealtime()
                     if (now - last >= 120) {
                         val shown = ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size).take(16_000)
-                        withContext(Dispatchers.Main) { response = shown }
+                        withContext(Dispatchers.Main) {
+                            response = shown
+                            stage = if (shown.isBlank()) "AI is preparing your response"
+                                else "Writing study content · ${shown.length} characters"
+                        }
                         last = now
                     }
                 }
@@ -174,6 +180,11 @@ class GeneratedStudySession {
                     response = complete.take(18_000)
                     stage = "Completed with source evidence"
                 }
+                LocalNotificationService(app).showAiReady("$documentId-${mode.name}", when (mode) {
+                    GeneratedStudyMode.NOTES -> "Smart Notes are ready"
+                    GeneratedStudyMode.REVISION -> "Revision forecast is ready"
+                    GeneratedStudyMode.PRACTICE -> "Practice questions are ready"
+                })
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -181,9 +192,10 @@ class GeneratedStudySession {
                     error = failure.message ?: "AU could not generate study content."
                 }
             } finally {
-                withContext(Dispatchers.Main) { working = false }
+                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { working = false }
             }
         }
+        generation?.let { AuBackgroundWork.track(app, it, "Preparing study content") }
     }
 
     fun stop() {

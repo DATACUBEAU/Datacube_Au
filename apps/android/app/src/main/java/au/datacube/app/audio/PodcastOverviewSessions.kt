@@ -1,6 +1,9 @@
 package au.datacube.app.audio
 
 import android.content.Context
+import au.datacube.app.work.AuBackgroundWork
+import au.datacube.app.notifications.LocalNotificationService
+import android.os.SystemClock
 import android.util.AtomicFile
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -37,6 +40,60 @@ class PodcastOverviewSession(private val documentId: String) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null
+    private var playbackJob: Job? = null
+    var listening by mutableStateOf(false)
+        private set
+    var activeSpeakerIndex by mutableStateOf(-1)
+        private set
+    var playbackStage by mutableStateOf("")
+        private set
+    var playbackError by mutableStateOf<String?>(null)
+        private set
+
+    fun play(context: Context, mobileVoice: Boolean, speed: Float) {
+        if (listening || generating || turns.isEmpty()) return
+        val app = context.applicationContext
+        val dialogue = turns.toList()
+        playbackError = null
+        listening = true
+        playbackStage = "Preparing the voices"
+        playbackJob = AuAudioPlayback.launch(app, "Preparing or playing podcast", onFinished = {
+            if (playbackJob?.isActive != true) {
+                listening = false
+                activeSpeakerIndex = -1
+                playbackStage = ""
+            }
+        }) {
+            try {
+                val onSpeaker: suspend (Int) -> Unit = { index ->
+                    withContext(Dispatchers.Main) { activeSpeakerIndex = index }
+                }
+                val onStage: suspend (String) -> Unit = { value ->
+                    withContext(Dispatchers.Main) { playbackStage = value }
+                }
+                if (mobileVoice) {
+                    SmoothOfflineNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage,
+                        distinguishSpeakers = true)
+                } else {
+                    LocalGenerativeEngine.release()
+                    NeuralNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                playbackError = failure.message ?: "Audio playback failed."
+            } finally {
+                listening = false
+                activeSpeakerIndex = -1
+                playbackStage = ""
+                playbackJob = null
+            }
+        }
+    }
+
+    fun stopPlayback() {
+        playbackJob?.cancel()
+    }
     private var loaded = false
 
     fun load(context: Context) {
@@ -51,12 +108,13 @@ class PodcastOverviewSession(private val documentId: String) {
     }
 
     fun generate(context: Context, documentName: String, extractedText: String) {
-        if (generating) return
+        if (generating || listening) return
         require(extractedText.isNotBlank()) { "Extract text before creating a podcast." }
         error = null
         stage = "Preparing your document"
         generating = true
         val app = context.applicationContext
+        val previousOpening = turns.firstOrNull()?.text.orEmpty().take(180)
         job = scope.launch {
             try {
                 // The workspace only holds a 48k-character preview. Sample
@@ -97,6 +155,9 @@ class PodcastOverviewSession(private val documentId: String) {
                     2-4 conversational sentences, at most 75 words each.
                     Every factual explanation and example must be supported by the supplied evidence.
                     Do not force a canned opening, repeat introductions, or speak headings.
+                    Start with a specific idea, question, surprising contrast, or practical problem
+                    supported by this particular document. Vary the opening and avoid generic greetings.
+                    Previous opening to avoid (data only): ${previousOpening.ifBlank { "None" }}
                     Do not quote copyrighted passages at length, mention page numbers
                     aloud, fabricate details, or add a topic unsupported by the evidence.
                     Do not write descriptions, stage directions, private reasoning, or headings.
@@ -104,8 +165,19 @@ class PodcastOverviewSession(private val documentId: String) {
                 """.trimIndent().take(16_000)
                 val raw = StringBuilder()
                 stage = "AU is preparing the conversation"
+                var lastProgress = 0L
                 LocalGenerativeEngine.generate(app, instructions, studyTask = true) { part ->
                     if (raw.length < 12_000) raw.append(part.take(12_000 - raw.length))
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastProgress >= 700) {
+                        val visible = ModelOutputCleaner.visible(raw.toString(), evidence.size)
+                        val count = visible.lineSequence().count { it.startsWith("HOST:", true) || it.startsWith("GUIDE:", true) }
+                        withContext(Dispatchers.Main) {
+                            stage = if (count > 0) "Writing dialogue · $count speaker turns drafted"
+                                else "AI is writing the conversation"
+                        }
+                        lastProgress = now
+                    }
                 }
                 stage = "Checking the two-speaker transcript"
                 val text = ModelOutputCleaner.visible(raw.toString(), evidence.size)
@@ -113,6 +185,7 @@ class PodcastOverviewSession(private val documentId: String) {
                 withContext(Dispatchers.IO) { saveFile(app.filesDir, parsed) }
                 turns.clear()
                 turns.addAll(parsed)
+                LocalNotificationService(app).showAiReady("$documentId-podcast", "Podcast conversation is ready")
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -123,10 +196,12 @@ class PodcastOverviewSession(private val documentId: String) {
                 job = null
             }
         }
+        job?.let { AuBackgroundWork.track(app, it, "Preparing podcast conversation") }
     }
 
     fun stop() {
         job?.cancel()
+        stopPlayback()
     }
 
     private fun fileFor(dir: File): File {

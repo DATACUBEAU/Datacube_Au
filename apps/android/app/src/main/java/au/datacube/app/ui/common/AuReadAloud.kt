@@ -1,6 +1,8 @@
 package au.datacube.app.ui.common
 
 import android.content.Context
+import au.datacube.app.work.AuBackgroundWork
+import au.datacube.app.audio.AuAudioPlayback
 import android.content.Intent
 import android.speech.tts.TextToSpeech
 import androidx.compose.foundation.layout.*
@@ -44,8 +46,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         revision++
         if (job?.isActive == true) {
             job?.cancel()
-            NeuralNarration.stop()
-            SmoothOfflineNarration.stop()
+            // The shared playback coordinator owns engine cleanup.
         }
         job = null
         active = null
@@ -61,7 +62,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         error = null
         errorId = null
         stage = "Preparing audio"
-        job = scope.launch {
+        job = AuAudioPlayback.launch(context, "Preparing or playing response audio",
+            onFinished = { if (token == revision) { active = null; stage = "" } }) {
             try {
                 val report: suspend (String) -> Unit = { value ->
                     withContext(Dispatchers.Main) { if (token == revision) stage = value }
@@ -89,13 +91,21 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     }
 }
 
+internal object AuReadAloudSessions {
+    private val sessions = linkedMapOf<String, AuReadAloudState>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    fun get(key: String, context: Context): AuReadAloudState =
+        sessions.getOrPut(key) { AuReadAloudState(context.applicationContext, scope) }
+    fun stopAll() {
+        sessions.values.forEach { it.stop() }
+        sessions.clear()
+    }
+}
+
 @Composable
-internal fun rememberAuReadAloud(): AuReadAloudState {
+internal fun rememberAuReadAloud(key: String): AuReadAloudState {
     val context = LocalContext.current.applicationContext
-    val scope = rememberCoroutineScope()
-    val speech = remember(context, scope) { AuReadAloudState(context, scope) }
-    DisposableEffect(speech) { onDispose { speech.stop() } }
-    return speech
+    return remember(context, key) { AuReadAloudSessions.get(key, context) }
 }
 
 @Composable
@@ -142,6 +152,7 @@ internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String
             if (speech.active == id) Text(speech.stage, style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (speech.active == id) AuElapsedFeedback(speech.stage)
         if (speech.errorId == id) {
             Text(speech.error.orEmpty(), color = MaterialTheme.colorScheme.error,
                 style = MaterialTheme.typography.bodySmall)

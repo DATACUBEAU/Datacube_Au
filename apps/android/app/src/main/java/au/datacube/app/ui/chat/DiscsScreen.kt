@@ -1,6 +1,7 @@
 package au.datacube.app.ui.chat
 
 import android.os.SystemClock
+import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -74,13 +75,12 @@ fun DiscsScreen(
         else ScopedChatRouting.ownerId(accountId, collectionId)
     }
     val uiScope = rememberCoroutineScope()
-    val speech = rememberAuReadAloud()
     val clipboard = LocalClipboardManager.current
     val threads = remember(context) { LocalConversationThreads(context) }
     var index by remember { mutableStateOf<ConversationThreadIndex?>(null) }
     LaunchedEffect(ownerId) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
-    LaunchedEffect(ownerId, threadId) { speech.stop() }
+    val speech = rememberAuReadAloud("chat:$ownerId:$threadId")
     val session = remember(ownerId, threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
@@ -287,6 +287,7 @@ fun DiscsScreen(
                 session.activeRequest = null
             }
         }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response") }
     }
 
     Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
