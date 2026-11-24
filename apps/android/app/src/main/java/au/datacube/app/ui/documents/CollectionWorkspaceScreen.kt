@@ -28,7 +28,8 @@ fun CollectionWorkspaceScreen(
     onBack: () -> Unit,
     onAddDocuments: () -> Unit,
     onRemoveDocument: (String) -> Unit,
-    onOpenDocument: (String) -> Unit
+    onOpenDocument: (String) -> Unit,
+    onOpenCollectionChat: () -> Unit = {}
 ) {
     var removeDocumentId by remember { mutableStateOf<String?>(null) }
 
@@ -82,6 +83,17 @@ fun CollectionWorkspaceScreen(
                             Column(Modifier.weight(1f)) {
                                 Text("Collection workspace", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                                 Text("Your documents, organized in one place.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        if (documents.isNotEmpty()) {
+                            Spacer(Modifier.height(14.dp))
+                            Button(
+                                onClick = onOpenCollectionChat,
+                                modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                            ) {
+                                Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Ask AU about this collection")
                             }
                         }
                         Spacer(Modifier.height(16.dp))

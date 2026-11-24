@@ -177,6 +177,7 @@ private sealed class Screen(val route: String) {
     object Documents : Screen("documents")
     object Discs : Screen("discs")
     object Collection : Screen("collection/{id}")
+    object CollectionChat : Screen("collection-chat/{id}")
     object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
     object Settings : Screen("settings")
     object Models : Screen("models")
@@ -453,17 +454,15 @@ private fun AuthenticatedWorkspace(
         navController.popBackStack()
     }
 
-    Scaffold(
-        snackbarHost = {
-            // Nonblocking top-of-screen banner, never covering the chat composer.
-            Box(
-                Modifier.fillMaxSize().padding(top = 12.dp),
-                contentAlignment = Alignment.TopCenter
-            ) {
-                SnackbarHost(snackbar)
-            }
-        }
-    ) { padding ->
+    // Keep the top notice OUTSIDE Scaffold's snackbar slot. A fillMaxSize()
+    // snackbar there is measured as an entire screen and steals all nav space.
+    // A normal-height host above Scaffold reserves only its actual banner height.
+    Column(Modifier.fillMaxSize()) {
+        SnackbarHost(
+            hostState = snackbar,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+        )
+        Scaffold(modifier = Modifier.weight(1f)) { padding ->
         NavHost(
             navController = navController,
             startDestination = Screen.Home.route,
@@ -530,7 +529,33 @@ private fun AuthenticatedWorkspace(
                     onRemoveDocument = { id ->
                         documentsViewModel.removeDocumentFromCollection(collectionId, id)
                     },
-                    onOpenDocument = { id -> navController.navigate("document/$id") }
+                    onOpenDocument = { id -> navController.navigate("document/$id") },
+                    onOpenCollectionChat = {
+                        if (collectionId.isNotBlank()) navController.navigate("collection-chat/$collectionId")
+                    }
+                )
+            }
+            composable(Screen.CollectionChat.route) { entry ->
+                val collectionId = entry.arguments?.getString("id").orEmpty()
+                val collection = collections.firstOrNull { it.id == collectionId }
+                val collectionDocumentsFlow = remember(collectionId) {
+                    documentsViewModel.observeCollectionDocuments(collectionId)
+                }
+                val collectionDocs by collectionDocumentsFlow.collectAsStateWithLifecycle(
+                    initialValue = emptyList()
+                )
+                val allowedIds = collectionDocs.map { it.id }.toSet()
+                DiscsScreen(
+                    accountId = requireNotNull(authState.user).id,
+                    documents = documents.filter { it.document.id in allowedIds },
+                    onBack = { navController.popBackStack() },
+                    onOpenDocument = { id ->
+                        if (id in allowedIds) navController.navigate("document/$id")
+                    },
+                    onOpenDocuments = { navController.navigate("collection/$collectionId") },
+                    collectionId = collectionId,
+                    collectionName = collection?.name ?: "Collection AU",
+                    onOpenModels = { navController.navigate(Screen.Models.route) }
                 )
             }
             composable(
@@ -662,6 +687,7 @@ private fun AuthenticatedWorkspace(
                     onBack = { navController.popBackStack() }
                 )
             }
+        }
         }
     }
 }
