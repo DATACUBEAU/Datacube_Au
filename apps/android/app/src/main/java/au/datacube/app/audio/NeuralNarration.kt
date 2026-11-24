@@ -13,6 +13,10 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
+import android.os.SystemClock
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -37,7 +41,13 @@ object NeuralNarration {
         "bm_george" to "George · UK"
     )
 
+    // GPU task construction, inference and disposal stay on the same thread.
+    private val speechDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "au-neural-speech").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
     private val mutex = Mutex()
+    private var loadedDelegate: Delegate? = null
+    private var gpuRejected = false
     @Volatile private var synth: TextToSpeech? = null
     @Volatile private var audio: AudioTrack? = null
     private var loadedPath: String? = null
@@ -83,21 +93,25 @@ object NeuralNarration {
         context: Context, parts: List<SpeechPart>, speed: Float,
         onSpeaker: suspend (Int) -> Unit,
         onStage: suspend (String) -> Unit
-    ) = withContext(Dispatchers.IO) {
+    ) = withContext(speechDispatcher) {
         require(installed(context)) { "Install Kokoro in Models to use neural voices." }
         require(parts.isNotEmpty() && parts.all { it.voice in presetVoices })
         require(speed in 0.7f..1.5f)
         mutex.withLock {
             val app = context.applicationContext
             onStage("Preparing neural audio")
-            val task = load(app)
+            var task = load(app)
             val pcm = File.createTempFile("au-narration-", ".pcm", app.cacheDir)
             var player: AudioTrack? = null
             var rate = 0
             var totalSamples = 0L
             val boundaries = mutableListOf<Pair<Long, Int>>()
             try {
-                pcm.outputStream().buffered().use { output ->
+                suspend fun prepareAudio() {
+                    rate = 0
+                    totalSamples = 0L
+                    boundaries.clear()
+                    pcm.outputStream().buffered().use { output ->
                     parts.forEachIndexed { index, part ->
                         currentCoroutineContext().ensureActive()
                         if (boundaries.lastOrNull()?.second != part.speaker) {
@@ -121,8 +135,24 @@ object NeuralNarration {
                             output.write(bytes)
                         }
                     }
+                    }
+                    check(rate > 0 && totalSamples > 0) { "No audio was generated." }
                 }
-                check(rate > 0 && totalSamples > 0) { "No audio was generated." }
+                val began = SystemClock.elapsedRealtime()
+                try {
+                    prepareAudio()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    if (loadedDelegate != Delegate.GPU) throw failure
+                    // No audio has played yet, so retry safely without duplicate speech.
+                    gpuRejected = true
+                    onStage("Preparing audio with compatible engine")
+                    closeEngine()
+                    task = load(app)
+                    prepareAudio()
+                }
+                Log.i("AuNeuralSpeech", "delegateRequested=$loadedDelegate synthesisMs=${SystemClock.elapsedRealtime() - began} audioMs=${totalSamples * 1000 / rate}")
                 val minimum = AudioTrack.getMinBufferSize(
                     rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
                 )
@@ -196,13 +226,18 @@ object NeuralNarration {
     }
 
     /** Release the large neural engine when its screen is no longer visible. */
-    suspend fun release() = withContext(Dispatchers.IO) {
+    suspend fun release() = withContext(speechDispatcher) {
         mutex.withLock {
             stop()
-            runCatching { synth?.close() }
-            synth = null
-            loadedPath = null
+            closeEngine()
         }
+    }
+
+    private fun closeEngine() {
+        runCatching { synth?.close() }
+        synth = null
+        loadedPath = null
+        loadedDelegate = null
     }
 
     private suspend fun load(context: Context): TextToSpeech {
@@ -211,25 +246,39 @@ object NeuralNarration {
             "models/installed/$MODEL_ID/${artifact.fileName}")
         check(model.isFile) { "Kokoro model is missing." }
         if (loadedPath != model.absolutePath || synth == null) {
-            synth?.close()
-            synth = null
-            loadedPath = null
+            closeEngine()
             check(sha256(model) == artifact.sha256) {
                 "Kokoro checksum failed. Restore or download the verified model."
             }
-            val base = BaseOptions.builder()
-                .setModelAssetPath(model.absolutePath)
-                .setDelegate(Delegate.CPU)
-                .build()
-            val options = TextToSpeechOptions(
-                baseOptions = base,
-                defaultVoiceId = DEFAULT_VOICE,
-                defaultLocale = null,
-                speakingRate = 1.0f,
-                targetBucket = 64,
-                cacheDir = context.cacheDir.absolutePath
-            )
-            synth = TextToSpeech.create(options)
+            fun create(delegate: Delegate): TextToSpeech {
+                val base = BaseOptions.builder()
+                    .setModelAssetPath(model.absolutePath)
+                    .setDelegate(delegate)
+                    .build()
+                val options = TextToSpeechOptions(
+                    baseOptions = base,
+                    defaultVoiceId = DEFAULT_VOICE,
+                    defaultLocale = null,
+                    speakingRate = 1.0f,
+                    targetBucket = 64,
+                    cacheDir = context.cacheDir.absolutePath
+                )
+                return TextToSpeech.create(options)
+            }
+            val canTryGpu = !gpuRejected && Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a"
+            if (canTryGpu) {
+                try {
+                    synth = create(Delegate.GPU)
+                    loadedDelegate = Delegate.GPU
+                } catch (failure: Exception) {
+                    gpuRejected = true
+                    Log.w("AuNeuralSpeech", "GPU initialization unavailable; using CPU")
+                }
+            }
+            if (synth == null) {
+                synth = create(Delegate.CPU)
+                loadedDelegate = Delegate.CPU
+            }
             loadedPath = model.absolutePath
         }
         return requireNotNull(synth)
