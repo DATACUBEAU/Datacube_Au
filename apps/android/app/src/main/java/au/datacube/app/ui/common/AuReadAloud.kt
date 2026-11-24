@@ -29,6 +29,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         private set
     private var job: Job? = null
     private var revision = 0
+    val neuralAvailable: Boolean get() = NeuralNarration.installed(context)
 
     fun stop() {
         revision++
@@ -45,10 +46,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     fun play(id: Int, answer: String, systemVoice: Boolean = false) {
         stop()
         val token = revision
-        val plain = answer.replace(Regex("\\[(?:\\d{1,2})]"), "")
-            .replace(Regex("^\\s*#{1,6}\\s+", RegexOption.MULTILINE), "")
-            .replace(Regex("[*\\x60|]"), " ")
-            .trim()
+        val plain = AuSpokenResponse.format(answer)
         if (plain.isBlank()) return
         active = id
         error = null
@@ -59,7 +57,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 val report: suspend (String) -> Unit = { value ->
                     withContext(Dispatchers.Main) { if (token == revision) stage = value }
                 }
-                if (!systemVoice && NeuralNarration.installed(context)) {
+                if (!systemVoice) {
+                    check(neuralAvailable) { "Download Kokoro in Models to use neural speech." }
                     LocalGenerativeEngine.release()
                     NeuralNarration.speak(context, plain, NeuralNarration.DEFAULT_VOICE, 1f, report)
                 } else {
@@ -92,15 +91,29 @@ internal fun rememberAuReadAloud(): AuReadAloudState {
 
 @Composable
 internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String) {
+    var voiceMenu by remember(id) { mutableStateOf(false) }
     Column {
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Box {
             TextButton(onClick = {
-                if (speech.active == id) speech.stop() else speech.play(id, answer)
+                if (speech.active == id) speech.stop() else voiceMenu = true
             }) {
                 Icon(if (speech.active == id) Icons.Outlined.Stop else Icons.Outlined.VolumeUp,
                     contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(5.dp))
                 Text(if (speech.active == id) "Stop audio" else "Read aloud")
+            }
+            DropdownMenu(expanded = voiceMenu, onDismissRequest = { voiceMenu = false }) {
+                DropdownMenuItem(
+                    text = { Column { Text("Mobile voice"); Text("Quick offline playback", style = MaterialTheme.typography.bodySmall) } },
+                    onClick = { voiceMenu = false; speech.play(id, answer, systemVoice = true) }
+                )
+                DropdownMenuItem(
+                    enabled = speech.neuralAvailable,
+                    text = { Column { Text("Kokoro"); Text(if (speech.neuralAvailable) "Natural voice · prepares audio first" else "Install in Models", style = MaterialTheme.typography.bodySmall) } },
+                    onClick = { voiceMenu = false; speech.play(id, answer, systemVoice = false) }
+                )
+            }
             }
             if (speech.active == id) Text(speech.stage, style = MaterialTheme.typography.labelSmall,
                 modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
