@@ -3135,13 +3135,13 @@ export default function ConexPage() {
       if (isUserLoading) return;
 
       if (!user) {
-        router.replace('/login?redirectTo=/conex');
+        router.replace('/');
         return;
       }
 
       const token = await getSupabaseAccessToken();
       if (!token) {
-        router.replace('/login?redirectTo=/conex');
+        router.replace('/');
         return;
       }
 
@@ -3163,13 +3163,13 @@ export default function ConexPage() {
         }
 
         if (res.status === 403) {
-          router.replace('/403');
+          router.replace('/');
           return;
         }
 
-        router.replace('/login?redirectTo=/conex');
+        router.replace('/');
       } catch {
-        if (!cancelled) router.replace('/login?redirectTo=/conex');
+        if (!cancelled) router.replace('/');
       }
     };
 
