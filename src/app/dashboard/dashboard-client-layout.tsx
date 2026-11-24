@@ -220,7 +220,7 @@ const SidebarFooterMenu = ({
   <SidebarFooter className="p-2">
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton tooltip={{ children: 'User Guide & Install' }} onClick={onOpenGuide}>
+        <SidebarMenuButton tooltip={{ children: 'AU guide' }} onClick={onOpenGuide}>
           <BookOpen />
           <span className="group-data-[collapsible=icon]:sr-only">User Guide</span>
         </SidebarMenuButton>
