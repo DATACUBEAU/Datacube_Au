@@ -60,7 +60,7 @@ export default async function PricingPage({
             <Link href="/dashboard/settings/subscription">Manage Billing</Link>
           </Button>
           <Button asChild variant="outline">
-            <Link href="/dashboard">Back to Dashboard</Link>
+            <Link href="/download">Get the Android app</Link>
           </Button>
         </div>
       </section>

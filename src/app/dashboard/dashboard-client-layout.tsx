@@ -54,7 +54,6 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import PageLoader from '@/components/page-loader';
 import { useStore } from '@/hooks/use-store';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
-import HeaderPwaInstallButton from '@/components/header-pwa-install-button';
 import { AnimatePresence, motion } from 'framer-motion';
 import { updateUserActivity } from '@/lib/supabase-client/client';
 import { InactivityPolicyBanner } from '@/components/inactivity-policy-banner';
@@ -221,7 +220,7 @@ const SidebarFooterMenu = ({
   <SidebarFooter className="p-2">
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton tooltip={{ children: 'User Guide & Install' }} onClick={onOpenGuide}>
+        <SidebarMenuButton tooltip={{ children: 'AU guide' }} onClick={onOpenGuide}>
           <BookOpen />
           <span className="group-data-[collapsible=icon]:sr-only">User Guide</span>
         </SidebarMenuButton>
@@ -756,7 +755,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
               <SidebarTrigger />
               <span className="font-semibold">{currentPageTitle}</span>
               <div className="flex items-center gap-1">
-                 <HeaderPwaInstallButton />
+                 
                  <Link href="/dashboard/messages" prefetch className="p-2 relative">
                     <Bell className="h-5 w-5" />
                     {unreadCount > 0 && (
@@ -769,7 +768,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
 
             <header className="hidden h-14 items-center justify-end border-b bg-background/80 px-4 backdrop-blur-sm md:sticky md:top-0 md:z-20 md:flex">
               <div className="flex items-center gap-2">
-                <HeaderPwaInstallButton />
+                
                 <Button variant="ghost" size="icon" asChild className="relative">
                   <Link href="/dashboard/messages" prefetch>
                     <Bell className="h-5 w-5" />

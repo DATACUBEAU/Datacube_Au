@@ -46,16 +46,34 @@ object AndroidUpdateManager {
 
     /** HTTPS metadata only: a small public JSON served by the user's website. */
     suspend fun check(context: Context): AndroidUpdateRelease? = withContext(Dispatchers.IO) {
-        val url = URL(BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/api/android-update")
+        // Independent of authentication callbacks: use the official domain first,
+        // retain the legacy endpoint for existing deployments and recovery.
+        val origins = listOf("https://datacube.fabianodev.xyz", BuildConfig.AUTH_WEBSITE_URL.trimEnd('/')).distinct()
+        var failure: Exception? = null
+        for (origin in origins) {
+            try {
+                return@withContext checkOrigin(origin)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                failure = error
+            }
+        }
+        throw failure ?: IllegalStateException("Update server is unavailable.")
+    }
+
+    private suspend fun checkOrigin(origin: String): AndroidUpdateRelease? = withContext(Dispatchers.IO) {
+        val url = URL(origin + "/api/android-update")
         require(url.protocol == "https") { "Update metadata requires HTTPS." }
         val connection = (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = 10_000
             readTimeout = 12_000
             requestMethod = "GET"
+            instanceFollowRedirects = false
             setRequestProperty("Accept", "application/json")
         }
         try {
-            if (connection.responseCode == 404) return@withContext null
+            if (connection.responseCode == 404) error("No published APK metadata is available yet.")
             check(connection.responseCode == 200) { "Update server is unavailable." }
             val output = java.io.ByteArrayOutputStream()
             connection.inputStream.use { input ->
