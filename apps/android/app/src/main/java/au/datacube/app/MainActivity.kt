@@ -554,7 +554,8 @@ private fun AuthenticatedWorkspace(
                     },
                     onOpenDocuments = { navController.navigate("collection/$collectionId") },
                     collectionId = collectionId,
-                    collectionName = collection?.name ?: "Collection AU"
+                    collectionName = collection?.name ?: "Collection AU",
+                    onOpenModels = { navController.navigate(Screen.Models.route) }
                 )
             }
             composable(
