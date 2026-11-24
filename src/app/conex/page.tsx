@@ -353,50 +353,7 @@ const AdminBilling = (_props: { token?: string }) => {
 
   useEffect(() => { void fetchConfig(); }, [fetchConfig]);
 
-  useEffect(() => {
-    let refreshTimeout: ReturnType<typeof setTimeout> | null = null;
-
-    const scheduleRefresh = () => {
-      if (refreshTimeout !== null) {
-        return;
-      }
-      refreshTimeout = setTimeout(() => {
-        refreshTimeout = null;
-        void fetchConfig({ silent: true });
-      }, 150);
-    };
-
-    const channel = supabase
-      .channel('conex-billing-sync')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_conex_config' },
-        scheduleRefresh,
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_plan_metadata' },
-        scheduleRefresh,
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'au_config' },
-        scheduleRefresh,
-      )
-      .subscribe((status) => {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          console.warn('[AdminBilling] realtime sync degraded; fallback refresh will continue.');
-          scheduleRefresh();
-        }
-      });
-
-    return () => {
-      if (refreshTimeout !== null) {
-        clearTimeout(refreshTimeout);
-      }
-      void supabase.removeChannel(channel);
-    };
-  }, [fetchConfig]);
+  // Billing refreshes on entry and explicit actions, not realtime subscriptions.
 
   const setFeatureFlag = useCallback(async (key: string, nextEnabled: boolean) => {
     const row = featureFlagRecords[key];
