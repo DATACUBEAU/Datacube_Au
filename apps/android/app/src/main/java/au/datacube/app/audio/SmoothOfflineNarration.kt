@@ -1,0 +1,108 @@
+package au.datacube.app.audio
+
+import android.content.Context
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import java.util.Locale
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+
+/**
+ * Low-latency system speech using only voices installed on the device.
+ * One natural offline voice is preferable to lengthy pauses between neural
+ * segments on low-memory phones. Never selects network-required voices.
+ */
+object SmoothOfflineNarration {
+    private val mutex = Mutex()
+    @Volatile private var active: TextToSpeech? = null
+
+    suspend fun speakDialogue(
+        context: Context,
+        turns: List<PodcastTurn>,
+        speed: Float,
+        onSpeaker: suspend (Int) -> Unit,
+        onStage: suspend (String) -> Unit
+    ) = mutex.withLock {
+        require(turns.isNotEmpty()) { "Create an audio conversation first." }
+        val app = context.applicationContext
+        val ready = CompletableDeferred<Boolean>()
+        val tts = withContext(Dispatchers.Main) {
+            TextToSpeech(app) { status ->
+                ready.complete(status == TextToSpeech.SUCCESS)
+            }
+        }
+        active = tts
+        try {
+            check(withTimeout(8_000) { ready.await() }) {
+                "Android's offline speech engine is not available."
+            }
+            val offline = tts.voices.orEmpty()
+                .filter { !it.isNetworkConnectionRequired }
+                .sortedWith(
+                    compareByDescending<android.speech.tts.Voice> {
+                        it.locale.language == Locale.getDefault().language
+                    }.thenBy { it.name }
+                )
+            require(offline.isNotEmpty()) {
+                "No offline voice is installed. Add one in Android Text-to-speech settings."
+            }
+            val preference = OfflineNarrationPreferences(app)
+            val voice = offline.firstOrNull { it.name == preference.voiceName } ?: offline.first()
+            check(tts.setVoice(voice) != TextToSpeech.ERROR) {
+                "The selected offline voice could not be initialized."
+            }
+            tts.setSpeechRate(speed.coerceIn(0.7f, 1.4f))
+            tts.setPitch(preference.pitch)
+            turns.forEachIndexed { index, turn ->
+                currentCoroutineContext().ensureActive()
+                onSpeaker(index)
+                onStage("Playing ${index + 1} of ${turns.size}")
+                // Android TTS has an utterance length limit. Podcast turns are already
+                // short; reject oversized text rather than silently truncating speech.
+                val text = turn.text.trim()
+                require(text.length in 1..2_000) { "Podcast turn is too long to speak smoothly." }
+                val done = CompletableDeferred<Unit>()
+                tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                    override fun onStart(utteranceId: String?) {}
+                    override fun onDone(utteranceId: String?) { done.complete(Unit) }
+                    @Deprecated("Overload required for older Android engines")
+                    override fun onError(utteranceId: String?) {
+                        done.completeExceptionally(IllegalStateException("Android offline speech failed."))
+                    }
+                    override fun onError(utteranceId: String?, errorCode: Int) {
+                        done.completeExceptionally(
+                            IllegalStateException("Android offline speech failed ($errorCode).")
+                        )
+                    }
+                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                        done.completeExceptionally(CancellationException("Speech stopped"))
+                    }
+                })
+                check(tts.speak(text, TextToSpeech.QUEUE_FLUSH, null,
+                    "datacube-podcast-${index}") != TextToSpeech.ERROR) {
+                    "Android offline voice refused the audio request."
+                }
+                // Do not stall for a minute between sentences. The app offers
+                // the error to the user if a device voice engine hangs.
+                withTimeout(30_000) { done.await() }
+            }
+        } finally {
+            withContext(Dispatchers.Main) {
+                tts.stop()
+                tts.shutdown()
+                if (active === tts) active = null
+            }
+        }
+    }
+
+    fun stop() {
+        runCatching { active?.stop() }
+    }
+}
