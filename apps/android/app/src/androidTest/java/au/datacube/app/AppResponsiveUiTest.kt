@@ -156,7 +156,7 @@ class AppResponsiveUiTest {
                 }
             }
         }
-        composeRule.onNodeWithText("Documents").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Documents").onFirst().assertIsDisplayed()
         composeRule.onNodeWithText("Collections").assertIsDisplayed()
         composeRule.onNodeWithText("Recent Documents").performScrollTo().assertIsDisplayed()
     }
@@ -182,7 +182,7 @@ class AppResponsiveUiTest {
                 }
             }
         }
-        composeRule.onNodeWithText("Documents").assertIsDisplayed()
+        composeRule.onAllNodesWithText("Documents").onFirst().assertIsDisplayed()
         composeRule.onNodeWithText("Collections").assertIsDisplayed()
         composeRule.onNodeWithText("Recent Documents").performScrollTo().assertIsDisplayed()
     }
@@ -237,10 +237,13 @@ class AppResponsiveUiTest {
         }
         // The workspace header precedes the second copy inside the chat panel.
         composeRule.onAllNodesWithText("Study notes.pdf").onFirst().assertIsDisplayed()
-        composeRule.onNodeWithText("AU Chat").assertIsDisplayed()
-        composeRule.onNodeWithText("History").assertIsDisplayed()
-        composeRule.onNodeWithText("New").assertIsDisplayed()
         composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Enter focus mode").performClick()
+        composeRule.onNodeWithContentDescription("Exit focus mode").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Document options and tools").performClick()
+        composeRule.onNodeWithText("New chat").assertIsDisplayed()
+        composeRule.onNodeWithText("History").assertIsDisplayed()
+        composeRule.onNodeWithText("Document info").assertIsDisplayed()
     }
 
     @Test
@@ -295,17 +298,21 @@ class AppResponsiveUiTest {
             }
         }
 
+        composeRule.onNodeWithContentDescription("Document options and tools").performClick()
         composeRule.onNodeWithText("Smart Note").performClick()
         composeRule.onNodeWithText("Generate Smart Note").assertIsDisplayed()
 
+        composeRule.onNodeWithContentDescription("Document options and tools").performClick()
         composeRule.onNodeWithText("Prediction").performClick()
         composeRule.onNodeWithText("Generate revision forecast").assertIsDisplayed()
         composeRule.onNodeWithText("Attach optional reference").assertIsDisplayed()
 
+        composeRule.onNodeWithContentDescription("Document options and tools").performClick()
         composeRule.onNodeWithText("Practice").performClick()
         composeRule.onNodeWithText("Start Practice").performClick()
         composeRule.onNodeWithText("Question 1 of 5").assertIsDisplayed()
 
+        composeRule.onNodeWithContentDescription("Document options and tools").performClick()
         composeRule.onNodeWithText("Podcast").performClick()
         // The two-speaker conversation is now the default; narration is an explicit tab.
         composeRule.onNodeWithText("Audio conversation").performScrollTo().assertIsDisplayed()

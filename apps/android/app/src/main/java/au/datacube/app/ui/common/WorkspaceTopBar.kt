@@ -6,9 +6,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.Forum
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -30,30 +29,46 @@ fun WorkspaceTopBar(
     onDiscs: () -> Unit = {},
     discsSelected: Boolean = false
 ) {
-    Surface(
+    Row(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(32.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 5.dp,
-        shadowElevation = 8.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(
-            Modifier.padding(start = 7.dp, end = 5.dp, top = 7.dp, bottom = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(3.dp)
+        Surface(
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(32.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 5.dp,
+            shadowElevation = 5.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
-            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                NavPill("AU", Icons.Outlined.AutoAwesome, !documentSelected && !discsSelected,
+            Row(
+                Modifier.padding(6.dp),
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                NavPill("AU", Icons.Outlined.Home, !documentSelected,
                     onHome, Modifier.weight(1f))
-                NavPill("Gist", Icons.Outlined.Forum, discsSelected,
-                    onDiscs, Modifier.weight(1.13f))
-                NavPill("Docs", Icons.Outlined.Description, documentSelected,
-                    onDocuments, Modifier.weight(1.05f))
+                NavPill("Documents", Icons.Outlined.Description, documentSelected,
+                    onDocuments, Modifier.weight(1.5f))
             }
-            IconButton(onClick = onSettings, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Outlined.Settings, contentDescription = "Settings",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Surface(
+            onClick = onSettings,
+            shape = RoundedCornerShape(50),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 5.dp,
+            shadowElevation = 5.dp,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Box(
+                Modifier.size(52.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Outlined.Settings,
+                    contentDescription = "Settings",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }

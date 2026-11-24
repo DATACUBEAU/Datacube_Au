@@ -42,6 +42,7 @@ import au.datacube.app.data.LocalJobStatus
 import au.datacube.app.data.rag.RagTextChunker
 import au.datacube.app.data.rag.RagBm25Index
 import au.datacube.app.data.rag.LocalSemanticSearch
+import au.datacube.app.data.rag.DocumentChatIntent
 import au.datacube.app.data.rag.LocalPassageIndex
 import au.datacube.app.data.rag.LexicalIndexWorker
 import au.datacube.app.data.ExtractedTextStore
@@ -246,7 +247,9 @@ fun DocumentChatWorkspace(
     extractionStatus: String?, extractionProgress: Double?, extractionError: String?,
     showHistoryPicker: Boolean = false,
     onOpenHistory: () -> Unit = {},
-    onDismissHistory: () -> Unit = {}
+    onDismissHistory: () -> Unit = {},
+    newChatToken: Int = 0,
+    onOpenModels: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -276,6 +279,14 @@ fun DocumentChatWorkspace(
         scope.launch {
             runCatching { threads.create(documentId) }
                 .onSuccess { threadIndex = it; onDismissHistory() }
+        }
+    }
+    var handledNewChatToken by remember(documentId) { mutableIntStateOf(0) }
+    LaunchedEffect(newChatToken) {
+        if (newChatToken > handledNewChatToken) {
+            handledNewChatToken = newChatToken
+            threadIndex = runCatching { threads.create(documentId) }.getOrNull()
+            onDismissHistory()
         }
     }
     if (showHistoryPicker) {
@@ -354,7 +365,7 @@ fun DocumentChatWorkspace(
         audioPath: String? = null,
         alreadyAdded: Boolean = false
     ) {
-                        if (cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
+                        if (llmInstalled && cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
                             if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
                             if (audioPath == null) prompt = ""
                             session.searching = true
@@ -366,6 +377,48 @@ fun DocumentChatWorkspace(
                                 val events = session.activitySteps
                                 try {
                                     session.searchingStage = "Understanding your question"
+                                    if (DocumentChatIntent.isGreeting(cleanPrompt)) {
+                                        events += "Identified a conversational greeting"
+                                        val answerIndex = messages.size
+                                        messages.add(ChatMessage(
+                                            question = cleanPrompt,
+                                            matches = emptyList(),
+                                            isUser = false,
+                                            steps = events.toList(),
+                                            generating = true
+                                        ))
+                                        var answer = ""
+                                        try {
+                                            session.searchingStage = "AU is replying"
+                                            LocalGenerativeEngine.generate(
+                                                context,
+                                                "Respond naturally and briefly to this greeting: " +
+                                                    cleanPrompt.take(100) +
+                                                    ". Do not claim that the greeting is in a document.",
+                                                allowGeneral = true,
+                                                generalOnly = true
+                                            ) { part ->
+                                                answer += part
+                                                messages[answerIndex] = messages[answerIndex].copy(
+                                                    answer = ModelOutputCleaner.visible(answer, 0).take(3_000)
+                                                )
+                                            }
+                                            events += "AU answered without searching the document"
+                                            messages[answerIndex] = messages[answerIndex].copy(
+                                                answer = ModelOutputCleaner.visible(answer, 0).trim(),
+                                                generating = false,
+                                                steps = events.toList()
+                                            )
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (failure: Exception) {
+                                            messages[answerIndex] = messages[answerIndex].copy(
+                                                generating = false,
+                                                generationError = failure.message ?: "AU could not respond."
+                                            )
+                                        }
+                                        return@launch
+                                    }
                                     val priorQuestion = messages.dropLast(1)
                                         .lastOrNull { it.isUser }?.question
                                     val plan = DocumentQueryInterpreter.understand(
@@ -621,26 +674,30 @@ fun DocumentChatWorkspace(
                 })
             })
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            ConversationWindow.warning(userTurns)?.let { warning ->
-                Text(warning, Modifier.weight(1f),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelSmall)
-            } ?: Spacer(Modifier.weight(1f))
-            TextButton(
-                onClick = onOpenHistory,
-                contentPadding = PaddingValues(horizontal = 6.dp)
+        ConversationWindow.warning(userTurns)?.let { warning ->
+            Text(
+                warning,
+                Modifier.padding(horizontal = 16.dp, vertical = 5.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelSmall
+            )
+        }
+        if (!llmInstalled) {
+            Surface(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(16.dp)
             ) {
-                Icon(Icons.Outlined.History, "Document chat history", Modifier.size(19.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("History")
-            }
-            TextButton(onClick = ::startNewChat, enabled = threadIndex != null,
-                contentPadding = PaddingValues(horizontal = 6.dp)) {
-                Icon(Icons.Outlined.Add, "Start new document chat", Modifier.size(19.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("New")
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Select an AU model to chat", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Document chat needs an installed and selected local language model. " +
+                            "Your PDF can still be prepared and searched offline.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(onClick = onOpenModels) { Text("Open Models") }
+                }
             }
         }
         if (textPreview.isNullOrBlank()) {
@@ -652,12 +709,12 @@ fun DocumentChatWorkspace(
                 Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Text(
-                        if (llmInstalled) "Ask AU. Answers use your document and link to supporting passages."
-                        else "Read local source passages. Install a chat model in Models to enable answers.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall
+                    if (llmInstalled) Text(
+                        "Ask AU about this document or simply say hello.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (llmInstalled) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("Summarize the key ideas", "Find important definitions").forEach { suggestion ->
                             AssistChip(onClick = { prompt = suggestion }, label = { Text(suggestion, maxLines = 1) })
                         }
@@ -732,10 +789,12 @@ fun DocumentChatWorkspace(
                                     style = MaterialTheme.typography.bodySmall)
                                 Spacer(Modifier.height(8.dp))
                             }
-                            if (message.matches.isEmpty() && message.answer.isBlank()) {
-                                Text("No supported source passage found. Try another term or ask about a specific section.",
+                            if (message.matches.isEmpty() && message.answer.isBlank() &&
+                                !message.generating && message.generationError == null) {
+                                Text("No verified passage matched. Try a more specific question.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            } else {
+                            }
+                            if (message.matches.isNotEmpty()) {
                                 val turnIndex = messages.indexOf(message)
                                 TextButton(onClick = {
                                     expandedSources = if (turnIndex in expandedSources) expandedSources - turnIndex
@@ -853,15 +912,15 @@ fun DocumentChatWorkspace(
             onValueChange = { prompt = it.take(500) },
             onSend = { submitQuestion(prompt.trim()) },
             placeholder = "Ask AU about this document…",
-            enabled = historyReady && threadIndex != null && !session.searching,
-            sendEnabled = historyReady && threadIndex != null &&
+            enabled = historyReady && threadIndex != null && !session.searching && llmInstalled,
+            sendEnabled = historyReady && threadIndex != null && llmInstalled &&
                 userTurns < ConversationWindow.MAX_USER_TURNS && prompt.isNotBlank() &&
                 !textPreview.isNullOrBlank() && !session.searching,
             sendDescription = "Search document",
             actions = {
                 VoiceNoteInputButton(
                     ownerId = documentId,
-                    enabled = historyReady && !session.searching && threadIndex != null &&
+                    enabled = historyReady && !session.searching && threadIndex != null && llmInstalled &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->
