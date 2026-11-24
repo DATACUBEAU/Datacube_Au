@@ -37,13 +37,12 @@ async function main() {
     assert.doesNotMatch(login, /PasswordInput|signInWithPassword|signUp\(|type="password"|authMode/);
   });
 
-  await run('admin-created user password uses PasswordInput without making provider keys visible', () => {
+  await run('Conex exposes only masked passcode input and no legacy credentials editor', () => {
     const users = readRepoFile('src', 'components', 'admin', 'conex-user-management.tsx');
     const conex = readRepoFile('src', 'app', 'conex', 'page.tsx');
-    assert.match(users, /<PasswordInput/);
-    assert.match(users, /autoComplete="new-password"/);
-    assert.match(conex, /placeholder=\{initialData\?\.configured \? 'Leave blank to keep existing key' : 'sk-\.\.\.'\}/);
-    assert.doesNotMatch(conex, /<PasswordInput[\s\S]{0,300}key_value/);
+    assert.doesNotMatch(users, /<PasswordInput|create_user|reset_password/);
+    assert.match(conex, /type="password"/);
+    assert.doesNotMatch(conex, /key_value|Leave blank to keep existing key/);
   });
 
   if (failed > 0) {
