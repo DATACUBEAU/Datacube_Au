@@ -80,7 +80,9 @@ class ModelBackupManager(context: Context) {
 
         output.use { raw ->
             ZipOutputStream(BufferedOutputStream(raw)).use { zip ->
-                zip.setLevel(Deflater.BEST_SPEED)
+                // Neural model weights are already highly compressed. A no-compression
+                // ZIP stream avoids CPU-intensive multi-GB re-compression.
+                zip.setLevel(Deflater.NO_COMPRESSION)
                 val manifest = encodeManifest(fileRecords)
                 zip.putNextEntry(ZipEntry(MANIFEST_NAME))
                 zip.write(manifest)
@@ -152,6 +154,86 @@ class ModelBackupManager(context: Context) {
                     modelIds = entries.map { it.modelId }.distinct(),
                     fileCount = entries.size,
                     totalBytes = entries.sumOf { it.size }
+                )
+            }
+        }
+    }
+
+    /**
+     * Independently reopens the SAVED archive and reads every byte after export.
+     * A successful source-file write is not proof that a SAF provider retained
+     * multi-GB output (especially on SD cards/cloud-backed destinations).
+     * This streaming pass is constant memory and validates size, SHA-256, CRC
+     * and missing/extra entries before the .partial file can be published.
+     */
+    suspend fun verifySavedBackup(
+        source: Uri,
+        expectedModelId: String,
+        expected: ModelBackupSummary,
+        onProgress: suspend (verifiedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+    ): ModelBackupSummary = withContext(Dispatchers.IO) {
+        val raw = appContext.contentResolver.openInputStream(source)
+            ?: error("The model folder could not reopen the archive. Choose another storage location.")
+        raw.use { stream ->
+            ZipInputStream(BufferedInputStream(stream)).use { zip ->
+                val first = zip.nextEntry ?: error("The backup file is empty.")
+                require(first.name == MANIFEST_NAME && !first.isDirectory) {
+                    "The backup file does not contain a valid DataCube AU manifest."
+                }
+                val records = decodeManifest(readEntryBounded(zip, MAX_MANIFEST_BYTES))
+                zip.closeEntry()
+                require(records.isNotEmpty() && records.all { it.modelId == expectedModelId }) {
+                    "The saved backup is for a different model."
+                }
+                val total = records.sumOf { it.size }
+                require(total == expected.totalBytes && records.size == expected.fileCount) {
+                    "The saved archive manifest doesn't match the exported model."
+                }
+                val entries = records.associateBy { archivePath(it.modelId, it.relativePath) }
+                require(entries.size == records.size) { "Duplicate archive file entries." }
+                val seen = mutableSetOf<String>()
+                val buffer = ByteArray(BUFFER_SIZE)
+                var verified = 0L
+                var reported = 0L
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val entry = zip.nextEntry ?: break
+                    val record = entries[entry.name]
+                        ?: error("The saved archive contains an unexpected file.")
+                    require(!entry.isDirectory && seen.add(entry.name)) {
+                        "The saved archive contains duplicate or invalid entries."
+                    }
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    var copied = 0L
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val n = zip.read(buffer)
+                        if (n < 0) break
+                        copied += n.toLong()
+                        verified += n.toLong()
+                        require(copied <= record.size && verified <= total) {
+                            "The saved archive contains more bytes than expected."
+                        }
+                        digest.update(buffer, 0, n)
+                        if (verified - reported >= 32L * 1024 * 1024) {
+                            onProgress(verified, total)
+                            reported = verified
+                        }
+                    }
+                    // ZipInputStream also verifies CRC when an entry ends.
+                    zip.closeEntry()
+                    require(copied == record.size && digest.toHex() == record.sha256) {
+                        "Saved model bytes do not match the original. Backup was not completed."
+                    }
+                }
+                require(verified == total && seen.size == records.size) {
+                    "The saved archive is incomplete. Do not uninstall the application."
+                }
+                onProgress(total, total)
+                ModelBackupSummary(
+                    modelCount = records.map { it.modelId }.distinct().size,
+                    fileCount = records.size,
+                    totalBytes = total
                 )
             }
         }
