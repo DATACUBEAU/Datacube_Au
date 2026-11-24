@@ -428,7 +428,7 @@ function assertProtectedOwnerDeletionAllowed(userId: string) {
 }
 
 const querySchema = z.object({
-  q: z.string().optional(),
+  q: z.string().max(120).optional(),
   status: z.enum(['all', ...ACCOUNT_STATUSES]).optional().default('all'),
   role: z.enum(['all', ...USER_ROLES]).optional().default('all'),
   presence: z.enum(['all', 'online', 'offline']).optional().default('all'),
@@ -537,6 +537,28 @@ async function listManagedUsers(req: NextRequest) {
   });
 
   const serviceClient = tryCreateServiceRoleClient();
+  // The standard directory needs only one Auth page and its associated metadata.
+  // Keep the legacy filtered path available to existing consumers until a database-side
+  // search implementation is validated; do not fetch the full directory on every open.
+  if (serviceClient && !queryInput.q?.trim() && queryInput.status === 'all' &&
+      queryInput.role === 'all' && queryInput.presence === 'all' &&
+      queryInput.sortBy === 'created_at' && queryInput.sortDir === 'desc') {
+    const { data, error } = await serviceClient.auth.admin.listUsers({
+      page: queryInput.page, perPage: queryInput.pageSize,
+    });
+    if (error) throw new ApiError(503, 'list_users_failed');
+    const users = data.users || [];
+    const ids = users.map(user => user.id);
+    const [profiles, activity, overrides] = await Promise.all([
+      fetchProfilesMap(serviceClient, ids), fetchActivityMap(serviceClient, ids),
+      fetchAdminOverrideMap(serviceClient, ids),
+    ]);
+    const total = Number.isSafeInteger(data.total) ? data.total : users.length;
+    return NextResponse.json({
+      ok: true, users: users.map(user => mapAuthUserToManagedRecord(user, profiles.get(user.id), activity.get(user.id), overrides.get(user.id))),
+      totalUsers: total, filteredTotal: total, page: queryInput.page, pageSize: queryInput.pageSize, source: 'auth_admin',
+    }, { headers: { 'Cache-Control': 'no-store, private' } });
+  }
   let merged: ManagedUserRecord[] = [];
   let totalUsers = 0;
 
@@ -1028,6 +1050,16 @@ export async function POST(req: NextRequest) {
     }
 
     const payload = actionsSchema.parse(body);
+    // Local-first launch: no new plan overrides, credential creation, or bulk mutations.
+    // Existing billing records and normal account lifecycle remain intact.
+    if (!['get_user_activity', 'update_user'].includes(payload.action) ||
+        (payload.action === 'update_user' && !(payload.status !== undefined &&
+          payload.fullName === undefined && payload.avatarUrl === undefined &&
+          payload.role === undefined && payload.permissions === undefined && payload.tier === undefined))) {
+      return NextResponse.json({ error: 'LEGACY_ADMIN_CONTROL_RETIRED' },
+        { status: 410, headers: { 'Cache-Control': 'no-store, private' } });
+    }
+
     if (payload.action === 'get_user_activity') {
       const readClient = tryCreateServiceRoleClient() ?? createScopedRlsClient(actor.accessToken);
       return await handleUserActivity(payload, readClient);
