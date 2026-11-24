@@ -259,14 +259,6 @@ export async function middleware(req: NextRequest) {
       NextResponse.redirect(new URL('/mobile-app-required', req.url)),
     );
   }
-  // Cloud generation is deliberately unavailable during the local-first launch.
-  // Do not mint gateway tickets even for an authenticated or paying user.
-  if (pathname === '/api/au/vps-ticket' || pathname.startsWith('/api/au/vps-ticket/')) {
-    return applyProtectedHeaders(NextResponse.json(
-      { ok: false, code: 'CLOUD_AU_PAUSED', message: 'Cloud AU is not available. Use the Android app.' },
-      { status: 410 },
-    ));
-  }
   const rule = findApiAccessRule(pathname) || findPageAccessRule(pathname);
 
   if (!rule) {
@@ -275,6 +267,15 @@ export async function middleware(req: NextRequest) {
 
   const auth = await requireUserFromRequest(req).catch(() => null);
   if (!auth?.ok) return unauthorizedResponse(req, rule);
+
+  // Cloud generation is deliberately unavailable during the local-first launch.
+  // Do not mint gateway tickets even for an authenticated or paying user.
+  if (pathname === '/api/au/vps-ticket' || pathname.startsWith('/api/au/vps-ticket/')) {
+    return applyProtectedHeaders(NextResponse.json(
+      { ok: false, code: 'CLOUD_AU_PAUSED', message: 'Cloud AU is not available. Use the Android app.' },
+      { status: 410 },
+    ));
+  }
 
   // Owner-only admin routes need no subscription/profile lookups.
   if (rule.requirement === 'admin') {
