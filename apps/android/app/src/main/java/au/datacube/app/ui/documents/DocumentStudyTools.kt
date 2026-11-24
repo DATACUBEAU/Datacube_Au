@@ -538,7 +538,7 @@ fun DocumentChatWorkspace(
                                     if (llmInstalled && matches.isNotEmpty()) {
                                         session.searchingStage = "AU is preparing an answer"
                                         val previous = messages.take(resultIndex)
-                                            .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null }
+                                            .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                                             .takeLast(20)
                                             .map { RagTurn(it.question, it.answer) }
                                         val grounded = GroundedRagPlanner.build(
