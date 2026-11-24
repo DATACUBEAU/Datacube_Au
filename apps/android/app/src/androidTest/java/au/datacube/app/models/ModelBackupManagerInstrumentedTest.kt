@@ -111,6 +111,29 @@ class ModelBackupManagerInstrumentedTest {
 
 
     @Test
+    fun rereadsSavedModelBackupAndRejectsTruncatedExternalStorage() = runBlocking {
+        val model = File(installedModels, "gemma-4-e2b")
+        assertTrue(model.mkdirs())
+        val data = ByteArray(4 * 1024 * 1024) { (it * 17 % 251).toByte() }
+        File(model, "weights.task").writeBytes(data)
+
+        val manager = ModelBackupManager(context)
+        val backup = Uri.fromFile(backupFile)
+        val summary = manager.exportBackup(backup, "gemma-4-e2b")
+        val checked = manager.verifySavedBackup(backup, "gemma-4-e2b", summary)
+        assertEquals(summary.totalBytes, checked.totalBytes)
+        assertEquals(1, checked.fileCount)
+
+        // Simulate an SD-card/cloud provider losing a section of a large file.
+        val cut = backupFile.length() / 2
+        java.io.RandomAccessFile(backupFile, "rw").use { it.setLength(cut) }
+        val broken = runCatching {
+            manager.verifySavedBackup(backup, "gemma-4-e2b", summary)
+        }
+        assertTrue("A truncated destination must never be marked as saved", broken.isFailure)
+    }
+
+    @Test
     fun archiveProgressReportsVerifiedByteTotalAndCanBeCancelled() = runBlocking {
         val model = File(installedModels, "qwen3-0.6b-litert")
         assertTrue(model.mkdirs())
