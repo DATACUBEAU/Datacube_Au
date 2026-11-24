@@ -26,7 +26,11 @@ object PodcastDialogue {
                     PodcastSpeaker.HOST
                 } else PodcastSpeaker.GUIDE
                 val text = sanitize(match.groupValues[2])
-                if (text.isNotBlank()) result += PodcastTurn(speaker, text)
+                if (text.isNotBlank()) {
+                    if (result.lastOrNull()?.speaker == speaker) {
+                        result[result.lastIndex] = PodcastTurn(speaker, sanitize(result.last().text + " " + text))
+                    } else result += PodcastTurn(speaker, text)
+                }
             } else if (result.isNotEmpty() && !clean.startsWith("#")) {
                 // Some small local models wrap a long line. Preserve it as part
                 // of the preceding speaker, never as an unattributed third voice.
@@ -35,9 +39,12 @@ object PodcastDialogue {
             }
             if (result.size >= MAX_TURNS) break
         }
-        val useful = result.filter { it.text.length >= 16 }
-        require(useful.size >= 4 && useful.any { it.speaker == PodcastSpeaker.HOST } &&
-            useful.any { it.speaker == PodcastSpeaker.GUIDE }) {
+        val useful = result.dropWhile { it.speaker != PodcastSpeaker.HOST }
+            .dropLastWhile { it.speaker != PodcastSpeaker.GUIDE }
+        require(useful.size >= 4 && useful.size % 2 == 0 &&
+            useful.all { it.text.length >= 8 } &&
+            useful.zipWithNext().all { (a, b) -> a.speaker != b.speaker } &&
+            useful.any { it.speaker == PodcastSpeaker.HOST && '?' in it.text }) {
             "The AI did not produce a clear two-speaker discussion. Try generating again."
         }
         return useful
@@ -46,10 +53,11 @@ object PodcastDialogue {
     fun sanitize(text: String): String =
         text.replace(Regex("""(?s)<think>.*?</think>"""), "")
             .replace(Regex("""\[(?:\d{1,2})\]"""), "")
+            .replace(Regex("""(?i)(?:https?://|www\.)[^\s<>]+"""), "link in the document")
             .replace(Regex("""\s+"""), " ")
             .replace(Regex("""^[\"'*\s]+|[\"'*\s]+$"""), "")
             .trim()
-            .take(400)
+            .take(600)
 
     fun voiceFor(speaker: PodcastSpeaker): String =
         if (speaker == PodcastSpeaker.HOST) "af_heart" else "am_adam"

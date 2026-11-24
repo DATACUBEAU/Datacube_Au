@@ -4,10 +4,11 @@ import android.os.SystemClock
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -33,6 +34,11 @@ import au.datacube.app.ui.common.DataCubeDialog
 import au.datacube.app.ui.common.AuComposer
 import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
+import au.datacube.app.ui.common.AuRichResponse
+import au.datacube.app.ui.common.AuReadAloudAction
+import au.datacube.app.ui.common.rememberAuReadAloud
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import au.datacube.app.ui.documents.ChatMessage
 import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.ui.documents.SourceSnippet
@@ -68,10 +74,13 @@ fun DiscsScreen(
         else ScopedChatRouting.ownerId(accountId, collectionId)
     }
     val uiScope = rememberCoroutineScope()
+    val speech = rememberAuReadAloud()
+    val clipboard = LocalClipboardManager.current
     val threads = remember(context) { LocalConversationThreads(context) }
     var index by remember { mutableStateOf<ConversationThreadIndex?>(null) }
     LaunchedEffect(ownerId) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
+    LaunchedEffect(ownerId, threadId) { speech.stop() }
     val session = remember(ownerId, threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
@@ -337,7 +346,7 @@ fun DiscsScreen(
             LazyColumn(Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(turns) { message ->
+                itemsIndexed(turns) { messageIndex, message ->
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(color = MaterialTheme.colorScheme.primaryContainer,
@@ -351,21 +360,48 @@ fun DiscsScreen(
                             }
                         }
                     } else {
-                        Surface(shape = RoundedCornerShape(20.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                        Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surface) {
                             Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text("AU", fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary)
-                                if (message.answer.isNotBlank()) Text(message.answer,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    style = MaterialTheme.typography.bodyLarge)
+                                if (message.answer.isNotBlank()) AuRichResponse(message.answer)
+                                if (!message.generating && message.answer.isNotBlank() && message.generationError == null) {
+                                    Row {
+                                        TextButton(onClick = { clipboard.setText(AnnotatedString(message.answer)) }) {
+                                            Icon(Icons.Outlined.ContentCopy, null, Modifier.size(17.dp))
+                                            Spacer(Modifier.width(5.dp))
+                                            Text("Copy")
+                                        }
+                                    }
+                                    AuReadAloudAction(speech, messageIndex, message.answer)
+                                }
                                 if (message.generating) LinearProgressIndicator(Modifier.fillMaxWidth())
                                 message.generationError?.let { Text(it,
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall) }
-                                val i = turns.indexOf(message)
+                                val i = messageIndex
                                 if (message.matches.isNotEmpty()) {
+                                    if (i !in expandedSources) {
+                                        Row(Modifier.horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            message.matches.take(5).forEachIndexed { sourceIndex, source ->
+                                                Surface(onClick = { expandedSources = expandedSources + i },
+                                                    modifier = Modifier.width(174.dp),
+                                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                                    shape = RoundedCornerShape(12.dp)) {
+                                                    Column(Modifier.padding(11.dp)) {
+                                                        Text("[${sourceIndex + 1}] ${source.documentName ?: "Document"}",
+                                                            style = MaterialTheme.typography.labelMedium,
+                                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        Text(source.text.take(160), maxLines = 3,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                            style = MaterialTheme.typography.bodySmall)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     TextButton(onClick = {
                                         expandedSources = if (i in expandedSources) expandedSources - i
                                             else expandedSources + i

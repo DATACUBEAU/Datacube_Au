@@ -4,6 +4,10 @@ import au.datacube.app.ui.common.DataCubeDialog
 import au.datacube.app.ui.common.AuComposer
 import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
+import au.datacube.app.ui.common.AuRichResponse
+import au.datacube.app.ui.common.AuReadAloudAction
+import au.datacube.app.ui.common.rememberAuReadAloud
+import androidx.compose.foundation.lazy.itemsIndexed
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
 import au.datacube.app.audio.OfflineNarrationPreferences
@@ -253,6 +257,7 @@ fun DocumentChatWorkspace(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
+    val speech = rememberAuReadAloud()
     val scope = rememberCoroutineScope()
     val semanticSearch = remember(context) { LocalSemanticSearch(context) }
     val semanticSupported = semanticSearch.supported()
@@ -269,6 +274,7 @@ fun DocumentChatWorkspace(
         if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
     }
     val threadId = threadIndex?.activeId ?: "main"
+    LaunchedEffect(documentId, threadId) { speech.stop() }
     val session = remember(documentId, threadId) {
         DocumentChatSessions.get(documentId, threadId, context)
     }
@@ -728,7 +734,7 @@ fun DocumentChatWorkspace(
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(messages) { message ->
+                itemsIndexed(messages) { messageIndex, message ->
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
@@ -759,25 +765,20 @@ fun DocumentChatWorkspace(
                             }
                             Spacer(Modifier.height(8.dp))
                             if (message.answer.isNotBlank()) {
-                                ClickableText(
-                                    text = AnnotatedString(message.answer),
-                                    style = MaterialTheme.typography.bodyLarge.copy(
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    ),
-                                    onClick = { offset ->
-                                        val term = SourceTermGrounding.wordAt(message.answer, offset)
-                                        val source = term?.let { key ->
-                                            SourceTermGrounding.find(
-                                                key, message.matches.map { RagEvidence(it.text, it.page) }
-                                            )
-                                        }
-                                        if (source != null) {
-                                            termRequest?.cancel()
-                                            termExplanation = ""
-                                            tappedTerm = source
-                                        }
+                                AuRichResponse(message.answer) { visible, offset ->
+                                    val term = SourceTermGrounding.wordAt(visible, offset)
+                                    val source = term?.let { key ->
+                                        SourceTermGrounding.find(key, message.matches.map { RagEvidence(it.text, it.page) })
                                     }
-                                )
+                                    if (source != null) {
+                                        termRequest?.cancel()
+                                        termExplanation = ""
+                                        tappedTerm = source
+                                    }
+                                }
+                                if (!message.generating && message.generationError == null) {
+                                    AuReadAloudAction(speech, messageIndex, message.answer)
+                                }
                                 Spacer(Modifier.height(8.dp))
                             }
                             if (message.generating) {
@@ -796,7 +797,26 @@ fun DocumentChatWorkspace(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             if (message.matches.isNotEmpty()) {
-                                val turnIndex = messages.indexOf(message)
+                                val turnIndex = messageIndex
+                                if (turnIndex !in expandedSources) {
+                                    Row(Modifier.horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        message.matches.take(5).forEachIndexed { index, source ->
+                                            Surface(onClick = { openedEvidence = source },
+                                                modifier = Modifier.width(174.dp),
+                                                shape = RoundedCornerShape(12.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant) {
+                                                Column(Modifier.padding(11.dp)) {
+                                                    Text("[${index + 1}] " + (source.page?.let { "Page $it" } ?: "Document"),
+                                                        style = MaterialTheme.typography.labelMedium)
+                                                    Text(source.text.take(160), maxLines = 3,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        style = MaterialTheme.typography.bodySmall)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 TextButton(onClick = {
                                     expandedSources = if (turnIndex in expandedSources) expandedSources - turnIndex
                                     else expandedSources + turnIndex
@@ -863,16 +883,16 @@ fun DocumentChatWorkspace(
                                 Spacer(Modifier.weight(1f))
                                 TextButton(onClick = {
                                     expandedSteps = if (message.steps.isEmpty()) expandedSteps
-                                    else if (messages.indexOf(message) in expandedSteps) {
-                                        expandedSteps - messages.indexOf(message)
-                                    } else expandedSteps + messages.indexOf(message)
+                                    else if (messageIndex in expandedSteps) {
+                                        expandedSteps - messageIndex
+                                    } else expandedSteps + messageIndex
                                 }) {
                                     Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
                                     Spacer(Modifier.width(5.dp))
                                     Text("AU activity")
                                 }
                             }
-                            if (messages.indexOf(message) in expandedSteps) {
+                            if (messageIndex in expandedSteps) {
                                 AuActivityTimeline(message.steps)
                             }
                         }
@@ -1418,7 +1438,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
         context.getSharedPreferences("datacube_neural_voice", android.content.Context.MODE_PRIVATE)
     }
     var useNeural by remember(context) {
-        mutableStateOf(neuralInstalled && neuralPrefs.getBoolean("neural_opt_in_v2", false))
+        mutableStateOf(neuralInstalled && neuralPrefs.getBoolean("neural_opt_in_v3", true))
     }
     var neuralVoice by remember(context) {
         mutableStateOf(neuralPrefs.getString("voice", NeuralNarration.DEFAULT_VOICE)
@@ -1616,7 +1636,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                             neuralJob?.cancel()
                             NeuralNarration.stop()
                             useNeural = false
-                            neuralPrefs.edit().putBoolean("neural_opt_in_v2", false).apply()
+                            neuralPrefs.edit().putBoolean("neural_opt_in_v3", false).apply()
                             speaking = false
                         },
                         label = { Text("Smooth offline") }
@@ -1627,7 +1647,7 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
                         onClick = {
                             tts.stop()
                             useNeural = true
-                            neuralPrefs.edit().putBoolean("neural_opt_in_v2", true).apply()
+                            neuralPrefs.edit().putBoolean("neural_opt_in_v3", true).apply()
                             speaking = false
                         },
                         label = { Text("Neural (optional)") }

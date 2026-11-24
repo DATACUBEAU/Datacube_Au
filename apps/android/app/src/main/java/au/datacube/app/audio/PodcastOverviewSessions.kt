@@ -84,12 +84,19 @@ class PodcastOverviewSession(private val documentId: String) {
 
                     Return exactly 8-12 alternating spoken lines.
                     The ONLY speaker tags allowed are HOST: and GUIDE:.
-                    The HOST is curious and asks clear student-style questions.
-                    The GUIDE is patient and explains key ideas with examples that are
-                    supported by the supplied passages. Use natural, friendly speech.
-                    Keep each line to 1-3 short sentences (30-60 words maximum).
-                    Explain the main theme, two or three specific concepts, a practical
-                    application when the sources support it, and close with a takeaway.
+                    Make this sound like two people having a real educational conversation,
+                    not two lecturers reading a list. HOST opens with a natural question
+                    about what the document is about and why it matters. GUIDE answers
+                    directly in accessible language. HOST reacts briefly to the actual
+                    answer and asks a natural follow-up a student might ask: what does
+                    that mean, how does it work, or can you give an example? GUIDE
+                    explains the concept and connects it to the previous answer.
+                    Build from overview to detail, clarify a likely misunderstanding
+                    when supported by the passages, and finish with a useful takeaway.
+                    HOST questions should be short; GUIDE explanations should be
+                    2-4 conversational sentences, at most 75 words each.
+                    Every factual explanation and example must be supported by the supplied evidence.
+                    Do not force a canned opening, repeat introductions, or speak headings.
                     Do not quote copyrighted passages at length, mention page numbers
                     aloud, fabricate details, or add a topic unsupported by the evidence.
                     Do not write descriptions, stage directions, private reasoning, or headings.

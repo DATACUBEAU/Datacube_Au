@@ -46,7 +46,7 @@ object GroundedRagPlanner {
             appendLine("You are answering a student, not listing search results. Directly answer the question in clear, natural language.")
             appendLine("Synthesize the meaning supported by the excerpts, rather than repeating short quoted fragments or opening with 'the excerpts mention'.")
             appendLine("For a document overview, explain its subject, main purpose, and the most useful concepts you can verify from the excerpts.")
-            appendLine("Prefer 2-5 well-written sentences or concise bullets only when the question calls for them.")
+            appendLine("Match the depth to the question. Use headings, bold terms, lists, or Markdown tables when they improve clarity; keep simple answers simple.")
             appendLine("Use at most 1-3 numbered citations [1], [2], etc. next to directly supported statements; the app displays sources separately.")
             appendLine("If excerpts cover only the title, copyright, or incomplete material, say the available context is limited and ask for a content chapter.")
             appendLine("Do not add unsupported facts, page numbers, quotations, private thinking or hidden chain-of-thought.")

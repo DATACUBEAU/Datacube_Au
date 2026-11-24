@@ -38,4 +38,19 @@ class PodcastDialogueTest {
         assertTrue(PodcastDialogue.sanitize("Learning widgets [1] matters.").contains("Learning widgets"))
         assertTrue(PodcastDialogue.sanitize("Learning widgets [1] matters.").contains("matters."))
     }
+
+    @Test fun combinesRepeatedRolesAndKeepsAlternatingQuestionAnswerPairs() {
+        val parsed = PodcastDialogue.parse("""
+            HOST: What is this chapter about?
+            HOST: Why does it matter?
+            GUIDE: It explains how storage preserves information.
+            HOST: How is that different from memory?
+            GUIDE: Memory holds information temporarily during active work.
+            HOST: One last unfinished question?
+        """.trimIndent())
+        assertEquals(4, parsed.size)
+        assertTrue(parsed.first().text.contains("Why does it matter?"))
+        assertEquals(PodcastSpeaker.GUIDE, parsed.last().speaker)
+        assertTrue(parsed.zipWithNext().all { (a, b) -> a.speaker != b.speaker })
+    }
 }

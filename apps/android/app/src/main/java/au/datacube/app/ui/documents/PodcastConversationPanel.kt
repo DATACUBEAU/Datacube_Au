@@ -54,7 +54,7 @@ fun PodcastConversationPanel(
     var playbackError by remember(documentId) { mutableStateOf<String?>(null) }
     var playbackJob by remember(documentId) { mutableStateOf<Job?>(null) }
     var showTranscript by remember(documentId) { mutableStateOf(false) }
-    var smoothVoice by remember(documentId) { mutableStateOf(true) }
+    var smoothVoice by remember(documentId, neuralReady) { mutableStateOf(!neuralReady) }
 
     DisposableEffect(documentId) {
         onDispose {
@@ -84,7 +84,8 @@ fun PodcastConversationPanel(
                 }
                 if (smoothVoice) {
                     SmoothOfflineNarration.speakDialogue(
-                        context, turns.toList(), playbackSpeed, onSpeaker, onStage
+                        context, turns.toList(), playbackSpeed, onSpeaker, onStage,
+                        distinguishSpeakers = true
                     )
                 } else {
                     NeuralNarration.speakDialogue(
@@ -139,13 +140,13 @@ fun PodcastConversationPanel(
                     onClick = {
                         if (!listening) smoothVoice = true
                     },
-                    label = { Text("Smooth offline") }
+                    label = { Text("Mobile voice") }
                 )
                 FilterChip(
                     selected = !smoothVoice,
                     enabled = neuralReady && !listening,
                     onClick = { smoothVoice = false },
-                    label = { Text("Kokoro neural") }
+                    label = { Text("Kokoro") }
                 )
             }
             AuPodcastStage(
@@ -174,7 +175,7 @@ fun PodcastConversationPanel(
                 TextButton(onClick = session::stop) { Text("Cancel preparation") }
             } else if (turns.isEmpty()) {
                 Text(
-                    "AU first studies selected passages, then prepares a dialogue. Nothing is downloaded automatically.",
+                    "A curious host asks questions about your document, and a guide explains the answers. Choose a voice and listen offline.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -221,7 +222,7 @@ fun PodcastConversationPanel(
                     Text("Regenerate conversation")
                 }
                 if (!smoothVoice && !neuralReady) {
-                    Text("Install Kokoro in Models, or select Smooth offline below.",
+                    Text("Install Kokoro in Models, or choose Mobile voice.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
                 }

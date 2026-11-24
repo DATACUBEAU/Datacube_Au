@@ -168,7 +168,7 @@ class ModelBackupManager(context: Context) {
      */
     suspend fun verifySavedBackup(
         source: Uri,
-        expectedModelId: String,
+        expectedModelId: String?,
         expected: ModelBackupSummary,
         onProgress: suspend (verifiedBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
     ): ModelBackupSummary = withContext(Dispatchers.IO) {
@@ -182,11 +182,12 @@ class ModelBackupManager(context: Context) {
                 }
                 val records = decodeManifest(readEntryBounded(zip, MAX_MANIFEST_BYTES))
                 zip.closeEntry()
-                require(records.isNotEmpty() && records.all { it.modelId == expectedModelId }) {
+                require(records.isNotEmpty() && (expectedModelId == null || records.all { it.modelId == expectedModelId })) {
                     "The saved backup is for a different model."
                 }
                 val total = records.sumOf { it.size }
-                require(total == expected.totalBytes && records.size == expected.fileCount) {
+                require(total == expected.totalBytes && records.size == expected.fileCount &&
+                    records.map { it.modelId }.distinct().size == expected.modelCount) {
                     "The saved archive manifest doesn't match the exported model."
                 }
                 val entries = records.associateBy { archivePath(it.modelId, it.relativePath) }

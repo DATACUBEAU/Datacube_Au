@@ -13,6 +13,10 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
+import android.os.SystemClock
+import android.util.Log
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -37,7 +41,13 @@ object NeuralNarration {
         "bm_george" to "George · UK"
     )
 
+    // GPU task construction, inference and disposal stay on the same thread.
+    private val speechDispatcher = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "au-neural-speech").apply { isDaemon = true }
+    }.asCoroutineDispatcher()
     private val mutex = Mutex()
+    private var loadedDelegate: Delegate? = null
+    private var gpuRejected = false
     @Volatile private var synth: TextToSpeech? = null
     @Volatile private var audio: AudioTrack? = null
     private var loadedPath: String? = null
@@ -49,124 +59,162 @@ object NeuralNarration {
             "models/installed/$MODEL_ID/${artifact.fileName}").isFile
     }
 
-    suspend fun speak(
-        context: Context,
-        text: String,
-        voice: String,
-        speed: Float,
-        onStage: suspend (String) -> Unit = {}
-    ) =
-        withContext(Dispatchers.IO) {
-            require(installed(context)) { "Install Kokoro in Models to use neural voices." }
-            require(text.isNotBlank()) { "No narration text." }
-            require(voice in presetVoices) { "Select a supported voice." }
-            require(speed in 0.7f..1.5f) { "Unsupported narration speed." }
-            mutex.withLock {
-                currentCoroutineContext().ensureActive()
-                onStage("Verifying Kokoro and preparing the on-device engine")
-                val task = load(context)
-                val segments = NeuralTextSegmenter.split(text)
-                require(segments.isNotEmpty()) { "There is no speakable text." }
-                val options = SynthesisOptions(voice, null)
-                var player: AudioTrack? = null
-                var totalSamples = 0L
-                try {
-                    segments.forEachIndexed { index, segment ->
-                        onStage("Generating neural speech ${index + 1} of ${segments.size}")
-                        task.synthesizeStream(segment, options).collect { chunk ->
-                        currentCoroutineContext().ensureActive()
-                        if (chunk.samples.isEmpty()) return@collect
-                        val sampleRate = chunk.sampleRateHz
-                        require(sampleRate in 16_000..48_000) { "Invalid audio rate." }
-                        if (player == null) {
-                            val minimum = AudioTrack.getMinBufferSize(
-                                sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_FLOAT
-                            )
-                            check(minimum > 0) { "Audio output is unavailable." }
-                            player = AudioTrack.Builder()
-                                .setAudioAttributes(AudioAttributes.Builder()
-                                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                                    .build())
-                                .setAudioFormat(AudioFormat.Builder()
-                                    .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                                    .setSampleRate(sampleRate)
-                                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                                .setTransferMode(AudioTrack.MODE_STREAM)
-                                .setBufferSizeInBytes(maxOf(minimum, 8192))
-                                .build()
-                            audio = player
-                            player?.play()
-                            onStage("Playing Kokoro neural narration")
-                        }
-                        val samples = chunk.samples
-                        if (speed != 1f) player?.playbackRate = (sampleRate * speed).toInt()
-                        var consumed = 0
-                        while (consumed < samples.size) {
-                            currentCoroutineContext().ensureActive()
-                            val result = player?.write(
-                                samples, consumed, samples.size - consumed, AudioTrack.WRITE_BLOCKING
-                            ) ?: error("Audio output was stopped.")
-                            check(result > 0) { "Audio output failed." }
-                            consumed += result
-                        }
-                        totalSamples += samples.size
-                        }
-                    }
-                    // Draining matters: AudioTrack.write copies to its buffer before playback
-                    // completes. Do not truncate the final spoken words after synthesis finishes.
-                    val track = player
-                    if (track != null) {
-                        var polls = 0
-                        while (track.playState == AudioTrack.PLAYSTATE_PLAYING &&
-                            track.playbackHeadPosition.toLong() < totalSamples && polls++ < 750) {
-                            currentCoroutineContext().ensureActive()
-                            delay(40)
-                        }
-                    }
-                } catch (cancelled: CancellationException) {
-                    task.cancel()
-                    throw cancelled
-                } finally {
-                    player?.let { track ->
-                        runCatching { track.pause() }
-                        runCatching { track.flush() }
-                        runCatching { track.release() }
-                    }
-                    audio = null
-                }
-            }
-        }
+    private data class SpeechPart(val text: String, val voice: String, val speaker: Int)
 
-    /**
-     * Sequential alternating neural voices. Uses the single verified Kokoro
-     * model and its cached synthesizer; no second model or network service.
-     *
-     * The caller owns cancellation, and each turn completes playback before
-     * the next speaker begins.
-     */
+    suspend fun speak(
+        context: Context, text: String, voice: String, speed: Float,
+        onStage: suspend (String) -> Unit = {}
+    ) {
+        val parts = NeuralTextSegmenter.split(text, maxText = 12_000)
+            .map { SpeechPart(it, voice, 0) }
+        renderAndPlay(context, parts, speed, {}, onStage)
+    }
+
     suspend fun speakDialogue(
-        context: Context,
-        turns: List<PodcastTurn>,
-        speed: Float,
+        context: Context, turns: List<PodcastTurn>, speed: Float,
         onSpeaker: suspend (Int) -> Unit,
         onStage: suspend (String) -> Unit = {}
     ) {
-        require(turns.size in 4..PodcastDialogue.MAX_TURNS) {
-            "Prepare a valid two-speaker script first."
+        require(turns.size in 4..PodcastDialogue.MAX_TURNS) { "Prepare a valid discussion first." }
+        val parts = turns.flatMapIndexed { index, turn ->
+            NeuralTextSegmenter.split(turn.text).map {
+                SpeechPart(it, PodcastDialogue.voiceFor(turn.speaker), index)
+            }
         }
-        require(installed(context)) { "Install Kokoro to hear both speakers." }
-        for ((index, turn) in turns.withIndex()) {
-            currentCoroutineContext().ensureActive()
-            onSpeaker(index)
-            onStage("Speaker ${index + 1} of ${turns.size}")
-            speak(
-                context = context,
-                text = turn.text,
-                voice = PodcastDialogue.voiceFor(turn.speaker),
-                speed = speed,
-                onStage = onStage
-            )
+        renderAndPlay(context, parts, speed, onSpeaker, onStage)
+    }
+
+    /**
+     * Render bounded PCM to temporary private storage before playback. CPU
+     * inference can be slower than real time; playing a partially synthesized
+     * buffer caused audible gaps. The complete buffer avoids synthesis underruns.
+     */
+    private suspend fun renderAndPlay(
+        context: Context, parts: List<SpeechPart>, speed: Float,
+        onSpeaker: suspend (Int) -> Unit,
+        onStage: suspend (String) -> Unit
+    ) = withContext(speechDispatcher) {
+        require(installed(context)) { "Install Kokoro in Models to use neural voices." }
+        require(parts.isNotEmpty() && parts.all { it.voice in presetVoices })
+        require(speed in 0.7f..1.5f)
+        mutex.withLock {
+            val app = context.applicationContext
+            onStage("Preparing neural audio")
+            var task = load(app)
+            val pcm = File.createTempFile("au-narration-", ".pcm", app.cacheDir)
+            var player: AudioTrack? = null
+            var rate = 0
+            var totalSamples = 0L
+            val boundaries = mutableListOf<Pair<Long, Int>>()
+            try {
+                suspend fun prepareAudio() {
+                    rate = 0
+                    totalSamples = 0L
+                    boundaries.clear()
+                    pcm.outputStream().buffered().use { output ->
+                    parts.forEachIndexed { index, part ->
+                        currentCoroutineContext().ensureActive()
+                        if (boundaries.lastOrNull()?.second != part.speaker) {
+                            boundaries += totalSamples to part.speaker
+                        }
+                        onStage("Preparing audio ${index + 1} of ${parts.size}")
+                        task.synthesizeStream(part.text, SynthesisOptions(part.voice, null)).collect { chunk ->
+                            currentCoroutineContext().ensureActive()
+                            if (chunk.samples.isEmpty()) return@collect
+                            require(chunk.sampleRateHz in 16_000..48_000)
+                            if (rate == 0) rate = chunk.sampleRateHz
+                            check(rate == chunk.sampleRateHz) { "Audio sample rate changed." }
+                            totalSamples += chunk.samples.size
+                            check(totalSamples <= 64L * 1024 * 1024) { "Audio is too long to prepare." }
+                            val bytes = ByteArray(chunk.samples.size * 2)
+                            chunk.samples.forEachIndexed { i, sample ->
+                                val value = (sample.coerceIn(-1f, 1f) * 32767f).toInt()
+                                bytes[i * 2] = value.toByte()
+                                bytes[i * 2 + 1] = (value shr 8).toByte()
+                            }
+                            output.write(bytes)
+                        }
+                    }
+                    }
+                    check(rate > 0 && totalSamples > 0) { "No audio was generated." }
+                }
+                val began = SystemClock.elapsedRealtime()
+                try {
+                    prepareAudio()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Exception) {
+                    if (loadedDelegate != Delegate.GPU) throw failure
+                    // No audio has played yet, so retry safely without duplicate speech.
+                    gpuRejected = true
+                    onStage("Preparing audio with compatible engine")
+                    closeEngine()
+                    task = load(app)
+                    prepareAudio()
+                }
+                Log.i("AuNeuralSpeech", "delegateRequested=$loadedDelegate synthesisMs=${SystemClock.elapsedRealtime() - began} audioMs=${totalSamples * 1000 / rate}")
+                val minimum = AudioTrack.getMinBufferSize(
+                    rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
+                )
+                check(minimum > 0)
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    .setAudioFormat(AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(maxOf(minimum, rate / 2 * 2))
+                    .build()
+                player = track
+                audio = track
+                check(track.state == AudioTrack.STATE_INITIALIZED)
+                if (speed != 1f) track.playbackRate = (rate * speed).toInt()
+                var speaker = -1
+                suspend fun reportSpeaker() {
+                    val head = track.playbackHeadPosition.toLong() and 0xffffffffL
+                    val next = boundaries.lastOrNull { it.first <= head }?.second ?: 0
+                    if (next != speaker) { speaker = next; onSpeaker(next) }
+                }
+                onStage("Playing neural audio")
+                track.play()
+                reportSpeaker()
+                pcm.inputStream().buffered().use { input ->
+                    val buffer = ByteArray(8192)
+                    while (true) {
+                        currentCoroutineContext().ensureActive()
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        var offset = 0
+                        while (offset < read) {
+                            currentCoroutineContext().ensureActive()
+                            val written = track.write(buffer, offset, read - offset)
+                            check(written > 0) { "Audio output stopped." }
+                            offset += written
+                        }
+                        reportSpeaker()
+                    }
+                }
+                var polls = 0
+                while (track.playState == AudioTrack.PLAYSTATE_PLAYING &&
+                    (track.playbackHeadPosition.toLong() and 0xffffffffL) < totalSamples && polls++ < 750) {
+                    currentCoroutineContext().ensureActive()
+                    reportSpeaker()
+                    delay(40)
+                }
+            } catch (cancelled: CancellationException) {
+                task.cancel()
+                throw cancelled
+            } finally {
+                player?.let { track ->
+                    runCatching { track.pause() }
+                    runCatching { track.flush() }
+                    runCatching { track.release() }
+                }
+                audio = null
+                pcm.delete()
+            }
         }
     }
 
@@ -178,13 +226,18 @@ object NeuralNarration {
     }
 
     /** Release the large neural engine when its screen is no longer visible. */
-    suspend fun release() = withContext(Dispatchers.IO) {
+    suspend fun release() = withContext(speechDispatcher) {
         mutex.withLock {
             stop()
-            runCatching { synth?.close() }
-            synth = null
-            loadedPath = null
+            closeEngine()
         }
+    }
+
+    private fun closeEngine() {
+        runCatching { synth?.close() }
+        synth = null
+        loadedPath = null
+        loadedDelegate = null
     }
 
     private suspend fun load(context: Context): TextToSpeech {
@@ -193,25 +246,39 @@ object NeuralNarration {
             "models/installed/$MODEL_ID/${artifact.fileName}")
         check(model.isFile) { "Kokoro model is missing." }
         if (loadedPath != model.absolutePath || synth == null) {
-            synth?.close()
-            synth = null
-            loadedPath = null
+            closeEngine()
             check(sha256(model) == artifact.sha256) {
                 "Kokoro checksum failed. Restore or download the verified model."
             }
-            val base = BaseOptions.builder()
-                .setModelAssetPath(model.absolutePath)
-                .setDelegate(Delegate.CPU)
-                .build()
-            val options = TextToSpeechOptions(
-                baseOptions = base,
-                defaultVoiceId = DEFAULT_VOICE,
-                defaultLocale = null,
-                speakingRate = 1.0f,
-                targetBucket = 64,
-                cacheDir = context.cacheDir.absolutePath
-            )
-            synth = TextToSpeech.create(options)
+            fun create(delegate: Delegate): TextToSpeech {
+                val base = BaseOptions.builder()
+                    .setModelAssetPath(model.absolutePath)
+                    .setDelegate(delegate)
+                    .build()
+                val options = TextToSpeechOptions(
+                    baseOptions = base,
+                    defaultVoiceId = DEFAULT_VOICE,
+                    defaultLocale = null,
+                    speakingRate = 1.0f,
+                    targetBucket = 64,
+                    cacheDir = context.cacheDir.absolutePath
+                )
+                return TextToSpeech.create(options)
+            }
+            val canTryGpu = !gpuRejected && Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a"
+            if (canTryGpu) {
+                try {
+                    synth = create(Delegate.GPU)
+                    loadedDelegate = Delegate.GPU
+                } catch (failure: Exception) {
+                    gpuRejected = true
+                    Log.w("AuNeuralSpeech", "GPU initialization unavailable; using CPU")
+                }
+            }
+            if (synth == null) {
+                synth = create(Delegate.CPU)
+                loadedDelegate = Delegate.CPU
+            }
             loadedPath = model.absolutePath
         }
         return requireNotNull(synth)
