@@ -56,11 +56,18 @@ object DocumentQueryInterpreter {
             tokens(previous.orEmpty()) + queryTokens
         } else queryTokens
 
-        val overview = (queryTokens.any { it in overviewTerms || near(it, "document") } &&
-            queryTokens.any { it in overviewActions }) ||
-            (queryTokens.contains("summarize") && queryTokens.size <= 8) ||
-            (queryTokens.contains("overview") && queryTokens.size <= 8) ||
-            (queryTokens.contains("summary") && queryTokens.size <= 8)
+        // A targeted question ("explain ATP in this document") must retrieve
+        // that topic, not replace it with an unrelated whole-document overview.
+        val generic = overviewTerms + overviewActions + ignore + setOf(
+            "is", "in", "of", "to", "the", "a", "an", "all", "key", "brief",
+            "briefly", "whole", "entire", "give", "me", "can", "you", "does", "do",
+            "it", "its", "are", "concepts", "points", "covered", "mainly"
+        )
+        val specificTerms = queryTokens.filterNot { it in generic || near(it, "document") }
+        val asksOverview = queryTokens.any { it in overviewActions } &&
+            (queryTokens.any { it in overviewTerms || near(it, "document") } ||
+                queryTokens.any { it in setOf("summarize", "summary", "overview") })
+        val overview = asksOverview && specificTerms.isEmpty() && contextualQuestion == null
         if (overview) return DocumentQueryPlan(query.trim(), true, emptyMap(),
             contextualQuestion = contextualQuestion)
 
