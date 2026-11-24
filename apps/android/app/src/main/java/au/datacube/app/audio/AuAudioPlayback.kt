@@ -12,7 +12,7 @@ object AuAudioPlayback {
     private val playbackMutex = kotlinx.coroutines.sync.Mutex()
     private var current: Job? = null
 
-    fun launch(context: Context, label: String, block: suspend () -> Unit): Job {
+    fun launch(context: Context, label: String, onFinished: () -> Unit = {}, block: suspend () -> Unit): Job {
         stop()
         val app = context.applicationContext
         val job = scope.launch(start = CoroutineStart.LAZY) {
@@ -20,6 +20,7 @@ object AuAudioPlayback {
             try { block() } finally { playbackMutex.unlock() }
         }
         current = job
+        job.invokeOnCompletion { scope.launch { onFinished() } }
         job.start()
         AuBackgroundWork.track(app, job, label)
         return job
