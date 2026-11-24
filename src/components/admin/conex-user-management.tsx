@@ -54,6 +54,7 @@ type ManagedUser = {
   is_suspended: boolean;
   is_authorized: boolean;
   is_protected_owner?: boolean;
+  device_report?: { installation_id: string; manufacturer: string; model: string; android_version: string; sdk: number; app_version: string; app_version_code: number; reported_at: string } | null;
   admin_override_plan?: AdminOverridePlan | null;
 };
 
@@ -236,8 +237,8 @@ export function ConexUserManagement() {
         if (nextUsers.length === 0) {
           setSelectedUserId(null);
           setSelectedIds(new Set());
-        } else if (!selectedUserId || !nextUsers.find((row) => row.user_id === selectedUserId)) {
-          setSelectedUserId(nextUsers[0].user_id);
+        } else {
+          setSelectedUserId(current => current && nextUsers.some(row => row.user_id === current) ? current : null);
         }
       } catch (error: any) {
         const message = error?.message || 'Unable to load users.';
@@ -252,7 +253,7 @@ export function ConexUserManagement() {
         if (silent) setRefreshing(false);
       }
     },
-    [page, presenceFilter, roleFilter, search, selectedUserId, statusFilter, toast]
+    [page, presenceFilter, roleFilter, search, statusFilter, toast]
   );
 
   const fetchActivity = useCallback(
@@ -316,8 +317,8 @@ export function ConexUserManagement() {
     setAdminOverridePlan(
       normalizeAdminAssignablePlan(selectedUser.admin_override_plan || selectedUser.tier || selectedUser.role) || 'free',
     );
-    fetchActivity(selectedUser.user_id).catch(() => {});
-  }, [fetchActivity, selectedUser]);
+    setActivityLogs([]);
+  }, [selectedUser]);
 
 
 
@@ -1191,8 +1192,16 @@ export function ConexUserManagement() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">User Activity Logs</CardTitle>
-              <CardDescription>Recent activity for the selected user.</CardDescription>
+              <CardTitle className="text-base">Device & support information</CardTitle>
+              <CardDescription>Optional device report shared by the selected user; not verified hardware identity.</CardDescription>
+              {selectedUser?.device_report ? <div className="grid gap-2 rounded-lg border p-3 text-sm">
+                <p><strong>Device:</strong> {selectedUser.device_report.manufacturer} {selectedUser.device_report.model}</p>
+                <p><strong>Android:</strong> {selectedUser.device_report.android_version} (API {selectedUser.device_report.sdk})</p>
+                <p><strong>AU version:</strong> {selectedUser.device_report.app_version} ({selectedUser.device_report.app_version_code})</p>
+                <p className="break-all"><strong>App installation:</strong> {selectedUser.device_report.installation_id}</p>
+                <p className="text-xs text-muted-foreground">Reported {formatDate(selectedUser.device_report.reported_at)}</p>
+              </div> : <p className="text-xs text-muted-foreground">No native support report shared.</p>}
+              <Button type="button" size="sm" variant="outline" disabled={!selectedUser || loadingActivity} onClick={() => selectedUser && void fetchActivity(selectedUser.user_id)}>Load recent activity</Button>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[280px] overflow-auto">
               {loadingActivity ? (
