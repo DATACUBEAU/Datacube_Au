@@ -42,7 +42,8 @@ fun DocumentWorkspaceScreen(
     onBack: () -> Unit,
     onOpenModels: () -> Unit = {},
     initialPrompt: String? = null,
-    initialTab: Int = 0
+    initialTab: Int = 0,
+    accountId: String? = null
 ) {
     var selectedTab by remember(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
     var menuExpanded by remember(document.id) { mutableStateOf(false) }
@@ -166,6 +167,7 @@ fun DocumentWorkspaceScreen(
         when (selectedTab) {
             0 -> DocumentChatWorkspace(
                 documentId = document.id,
+                accountId = accountId,
                 documentName = document.name,
                 initialPrompt = initialPrompt,
                 textPreview = textPreview,
