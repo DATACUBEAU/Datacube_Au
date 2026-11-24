@@ -40,6 +40,7 @@ object AuBackgroundWork {
 class AuWorkService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val manager get() = requireNotNull(getSystemService(NotificationManager::class.java))
+    private var lastLabels: List<String>? = null
     private val refresh = object : Runnable {
         override fun run() {
             val labels = AuBackgroundWork.labels()
@@ -48,14 +49,18 @@ class AuWorkService : Service() {
                 stopSelf()
                 return
             }
-            manager.notify(ID, notification(labels))
+            if (lastLabels != labels) {
+                manager.notify(ID, notification(labels))
+                lastLabels = labels
+            }
             handler.postDelayed(this, 2000)
         }
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Active AU tasks", NotificationManager.IMPORTANCE_LOW))
-        val notification = notification(AuBackgroundWork.labels())
+        lastLabels = AuBackgroundWork.labels()
+        val notification = notification(lastLabels.orEmpty())
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else startForeground(ID, notification)

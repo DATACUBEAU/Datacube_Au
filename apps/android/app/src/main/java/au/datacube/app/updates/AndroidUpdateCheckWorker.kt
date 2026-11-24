@@ -39,6 +39,8 @@ class AndroidUpdateCheckWorker(
                 if (available.versionCode > shown) {
                     val manager = applicationContext.getSystemService(NotificationManager::class.java) ?: return Result.retry()
                     if (!manager.areNotificationsEnabled()) return Result.success()
+                    // Respect the user's opt-out on the previous update channel.
+                    if (manager.getNotificationChannel("datacube_app_update_alerts")?.importance == NotificationManager.IMPORTANCE_NONE) return Result.success()
                     manager.createNotificationChannel(
                         NotificationChannel(
                             CHANNEL, "AU update alerts", NotificationManager.IMPORTANCE_HIGH

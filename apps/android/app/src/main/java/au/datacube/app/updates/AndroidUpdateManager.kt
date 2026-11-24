@@ -133,7 +133,14 @@ object AndroidUpdateManager {
             checksumFormat.matches(release.sha256)) { "Invalid update request." }
         val destination = updateFile(context, release)
         if (destination.isFile && destination.length() == release.sizeBytes) {
-            if (hashFile(destination) == release.sha256) return@withContext destination
+            if (hashFile(destination) == release.sha256) {
+                try {
+                    verifyPackage(context, destination, release.versionCode)
+                    onProgress(100)
+                    return@withContext destination
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { destination.delete() }
+            }
             destination.delete()
         }
         val available = StatFs(context.cacheDir.absolutePath).availableBytes
@@ -180,7 +187,8 @@ object AndroidUpdateManager {
                 "The update download was incomplete or failed its SHA-256 check."
             }
             check(partial.renameTo(destination)) { "Could not finalize the verified APK." }
-            verifyPackage(context, destination, release.versionCode)
+            try { verifyPackage(context, destination, release.versionCode) }
+            catch (failure: Exception) { destination.delete(); throw failure }
             destination
         } catch (cancelled: CancellationException) {
             throw cancelled

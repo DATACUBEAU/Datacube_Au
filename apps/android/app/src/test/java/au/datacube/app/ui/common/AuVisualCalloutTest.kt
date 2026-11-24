@@ -20,4 +20,17 @@ class AuVisualCalloutTest {
         val blocks = AuResponseParser.parse("[BOX] Key idea\nIncomplete explanation.")
         assertTrue(blocks.any { it is AuResponseBlock.Prose && it.text.contains("Incomplete explanation") })
     }
+    @Test fun rendersCompleteFlowAndNarratesSteps() {
+        val raw = "Overview\n[FLOW] Water cycle\nEvaporation\nCondensation\nPrecipitation\n[/FLOW]\nSummary"
+        val blocks = AuResponseParser.parse(raw)
+        assertEquals(AuResponseBlock.Flow("Water cycle", listOf("Evaporation", "Condensation", "Precipitation")), blocks[1])
+        val spoken = AuSpokenResponse.format(raw)
+        assertTrue(spoken.contains("Step 2. Condensation"))
+        assertTrue(!spoken.contains("[FLOW]"))
+    }
+
+    @Test fun incompleteOrOversizedFlowFallsBackToReadableText() {
+        assertTrue(AuResponseParser.parse("[FLOW] Cycle\nFirst\nSecond").none { it is AuResponseBlock.Flow })
+        assertTrue(AuResponseParser.parse("[FLOW] Cycle\n" + (1..7).joinToString("\n") { "Step $it" } + "\n[/FLOW]").none { it is AuResponseBlock.Flow })
+    }
 }

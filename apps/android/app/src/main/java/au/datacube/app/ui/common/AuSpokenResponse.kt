@@ -35,6 +35,10 @@ internal object AuSpokenResponse {
                         add(plain(block.title))
                         add(plain(block.body))
                     }
+                    is AuResponseBlock.Flow -> {
+                        add(plain(block.title))
+                        block.steps.forEachIndexed { index, step -> add("Step ${index + 1}. " + plain(step)) }
+                    }
                     is AuResponseBlock.Code -> add("A code example is available in the written response.")
                     is AuResponseBlock.Table -> {
                         add("Here is the table, row by row.")
