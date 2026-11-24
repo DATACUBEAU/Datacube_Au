@@ -138,17 +138,20 @@ object LocalGenerativeEngine {
         studyTask: Boolean = false,
         onText: suspend (String) -> Unit
     ) = withContext(dispatcher) {
+        val queuedAt = android.os.SystemClock.elapsedRealtime()
         require(groundedPrompt.isNotBlank() && groundedPrompt.length <= 18_000) {
             "The document context is empty or too long."
         }
         mutex.withLock {
+            val acquiredAt = android.os.SystemClock.elapsedRealtime()
             val modelId = requireNotNull(ActiveLocalChatModel(context).selected()) {
                 "Download and select a compatible chat model in Models."
             }
             val artifact = requireNotNull(VerifiedModelDownloads.find(modelId))
             val file = File(File(context.filesDir, "models/installed/$modelId"), artifact.fileName)
             check(file.isFile) { "Selected chat model is missing. Open Models to restore it." }
-            if (loadedPath != file.absolutePath || engine == null) {
+            val coldLoad = loadedPath != file.absolutePath || engine == null
+            if (coldLoad) {
                 engine?.close()
                 engine = null
                 loadedPath = null
@@ -167,6 +170,7 @@ object LocalGenerativeEngine {
                 loadedPath = file.absolutePath
                 loadedWithAudio = false
             }
+            val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
@@ -213,16 +217,35 @@ object LocalGenerativeEngine {
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35)
                 )
             )
+            val startedAt = android.os.SystemClock.elapsedRealtime()
+            var firstChunkAt: Long? = null
+            var chunks = 0
+            var outputChars = 0L
+            var success = false
             try {
                 conversation.sendMessageAsync(groundedPrompt).collect { message ->
                     currentCoroutineContext().ensureActive()
-                    onText(message.toString())
+                    val part = message.toString()
+                    if (part.isNotEmpty()) {
+                        if (firstChunkAt == null) firstChunkAt = android.os.SystemClock.elapsedRealtime()
+                        chunks++
+                        outputChars += part.length
+                    }
+                    onText(part)
                 }
+                success = true
             } catch (cancelled: CancellationException) {
                 runCatching { conversation.cancelProcess() }
                 throw cancelled
             } finally {
-                conversation.close()
+                try { conversation.close() } finally {
+                    if (au.datacube.app.BuildConfig.DEBUG) {
+                        android.util.Log.d("AuInferenceTiming", "model=$modelId cold=$coldLoad success=$success " +
+                            "mutexMs=${acquiredAt - queuedAt} loadMs=${loadedAt - acquiredAt} " +
+                            "firstChunkMs=${firstChunkAt?.minus(startedAt) ?: -1} totalMs=${android.os.SystemClock.elapsedRealtime() - startedAt} " +
+                            "inputChars=${groundedPrompt.length} outputChars=$outputChars chunks=$chunks")
+                    }
+                }
             }
         }
     }
