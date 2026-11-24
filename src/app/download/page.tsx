@@ -29,7 +29,7 @@ export default function AndroidDownloadPage() {
         cache: 'no-store',
         headers: { Accept: 'application/json' },
       });
-      if (!result.ok) throw new Error('The latest signed APK is not available yet.');
+      if (!result.ok) throw new Error('The latest version is not available yet.');
       const data: AndroidRelease = await result.json();
       if (data.schema !== 1 ||
           !Number.isInteger(data.versionCode) ||
@@ -72,23 +72,23 @@ export default function AndroidDownloadPage() {
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.22em] text-primary">DataCube AU</p>
         <h1 className="font-headline text-3xl font-bold tracking-tight">Get the Android app</h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
-          One signed installation, then update from inside AU. Your app data is preserved during compatible in-place updates.
+          Download AU for your Android device. Future updates are available inside the app.
         </p>
         <div className="mt-6 grid grid-cols-2 gap-3 text-left">
           <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
             <Smartphone className="mb-2 h-5 w-5 text-primary" />
             <p className="text-xs font-semibold">Android 8.0+</p>
-            <p className="mt-1 text-xs text-muted-foreground">ARM64 devices</p>
+            <p className="mt-1 text-xs text-muted-foreground">64-bit Android devices</p>
           </div>
           <div className="rounded-2xl border border-border/70 bg-background/70 p-3">
             <ShieldCheck className="mb-2 h-5 w-5 text-primary" />
-            <p className="text-xs font-semibold">Signed APK</p>
+            <p className="text-xs font-semibold">Official AU app</p>
             <p className="mt-1 text-xs text-muted-foreground">Android confirms installation</p>
           </div>
         </div>
         <div className="mt-6 rounded-2xl border border-border/70 bg-background/60 p-4 text-left" aria-live="polite">
           {loading ? (
-            <p className="text-sm text-muted-foreground">Checking the latest verified build…</p>
+            <p className="text-sm text-muted-foreground">Checking for the latest version…</p>
           ) : release ? (
             <>
               <div className="flex items-center gap-2 text-sm font-semibold">
@@ -96,7 +96,7 @@ export default function AndroidDownloadPage() {
                 Version {release.versionName}
               </div>
               <p className="mt-2 text-xs text-muted-foreground">
-                {(release.sizeBytes / (1024 * 1024)).toFixed(1)} MiB · Full APK · No AI model weights
+                {(release.sizeBytes / (1024 * 1024)).toFixed(1)} MiB · App only (AI models downloaded separately)
               </p>
               <p className="mt-3 text-xs leading-5 text-muted-foreground">
                 {release.notes}
@@ -110,7 +110,7 @@ export default function AndroidDownloadPage() {
           <a href={release.apkUrl}
             className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-semibold text-primary-foreground hover:opacity-90">
             <Download className="h-4 w-4" />
-            Download Android APK
+            Download AU for Android
           </a>
         ) : (
           <button type="button" disabled={loading} onClick={() => void loadRelease()}
@@ -119,10 +119,23 @@ export default function AndroidDownloadPage() {
             Check again
           </button>
         )}
-        <p className="mt-4 text-xs leading-5 text-muted-foreground">
-          The APK is delivered directly by GitHub Releases, not by Vercel.
-          Android may ask you to approve installation. Do not uninstall an existing compatible AU installation before updating.
-        </p>
+        <div className="mt-5 rounded-2xl border border-primary/30 bg-primary/5 p-4 text-left">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <ShieldCheck className="h-4 w-4 shrink-0 text-primary" aria-hidden="true" />
+            Before you install
+          </div>
+          <ol className="mt-3 list-decimal space-y-2 pl-5 text-xs leading-5 text-muted-foreground">
+            <li>If your browser asks you to confirm the download, tap <strong className="text-foreground">Download anyway</strong> only if you started the download from this official AU page.</li>
+            <li>Open the downloaded file. Android may ask you to allow installation from your browser.</li>
+            <li>Tap <strong className="text-foreground">Install</strong> or <strong className="text-foreground">Update</strong> to continue.</li>
+          </ol>
+          <p className="mt-3 text-xs leading-5 text-muted-foreground">
+            If Android reports that the app is harmful, stop the installation.
+          </p>
+          <p className="mt-3 border-t border-primary/15 pt-3 text-xs leading-5 text-muted-foreground">
+            <strong className="text-foreground">Already using AU?</strong> Update without uninstalling to keep your existing app data.
+          </p>
+        </div>
         <Link href="/" className="mt-5 inline-block text-xs text-primary hover:underline">
           Return to DataCube AU
         </Link>
