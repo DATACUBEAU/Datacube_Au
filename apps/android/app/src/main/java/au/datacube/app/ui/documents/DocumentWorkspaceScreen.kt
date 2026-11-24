@@ -209,8 +209,8 @@ fun DocumentWorkspaceScreen(
                 onOpenHistory = { chatHistoryOpen = true },
                 onDismissHistory = { chatHistoryOpen = false }
             )
-            1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading)
-            2 -> PredictionWorkspace(document.name, textPreview, previewLoading)
+            1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading, document.id)
+            2 -> PredictionWorkspace(document.name, textPreview, previewLoading, document.id)
             3 -> PracticeWorkspace(document.name, textPreview, previewLoading)
             else -> PodcastWorkspace(document.id, document.name, textPreview, previewLoading)
         }

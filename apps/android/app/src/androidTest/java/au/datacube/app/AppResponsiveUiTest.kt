@@ -296,13 +296,11 @@ class AppResponsiveUiTest {
         }
 
         composeRule.onNodeWithText("Smart Note").performClick()
-        composeRule.onAllNodesWithText("Study notes").onFirst().assertIsDisplayed()
-        composeRule.onAllNodesWithText("Concept map").onFirst().performClick()
-        composeRule.onAllNodesWithText("Concept map").onFirst().assertIsDisplayed()
+        composeRule.onNodeWithText("Generate Smart Note").assertIsDisplayed()
 
         composeRule.onNodeWithText("Prediction").performClick()
-        composeRule.onNodeWithText("Generate Study Plan").performClick()
-        composeRule.onNodeWithText("Suggested revision questions").assertIsDisplayed()
+        composeRule.onNodeWithText("Generate revision forecast").assertIsDisplayed()
+        composeRule.onNodeWithText("Attach optional reference").assertIsDisplayed()
 
         composeRule.onNodeWithText("Practice").performClick()
         composeRule.onNodeWithText("Start Practice").performClick()

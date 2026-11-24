@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import au.datacube.app.audio.NeuralNarration
+import au.datacube.app.audio.SmoothOfflineNarration
 import au.datacube.app.audio.PodcastOverviewSession
 import au.datacube.app.audio.PodcastSpeaker
 import au.datacube.app.data.rag.LocalGenerativeEngine
@@ -53,16 +54,20 @@ fun PodcastConversationPanel(
     var playbackError by remember(documentId) { mutableStateOf<String?>(null) }
     var playbackJob by remember(documentId) { mutableStateOf<Job?>(null) }
     var showTranscript by remember(documentId) { mutableStateOf(false) }
+    var smoothVoice by remember(documentId) { mutableStateOf(true) }
 
     DisposableEffect(documentId) {
         onDispose {
             playbackJob?.cancel()
-            if (listening) NeuralNarration.stop()
+            if (listening) {
+                NeuralNarration.stop()
+                SmoothOfflineNarration.stop()
+            }
         }
     }
 
     fun startPlayback() {
-        if (turns.isEmpty() || !neuralReady || listening || session.generating) return
+        if (turns.isEmpty() || (!smoothVoice && !neuralReady) || listening || session.generating) return
         playbackError = null
         listening = true
         playbackStage = "Preparing the voices"
@@ -71,24 +76,26 @@ fun PodcastConversationPanel(
                 // Avoid keeping the large chat model resident while Kokoro
                 // allocates its neural speech engine on lower-RAM phones.
                 LocalGenerativeEngine.release()
-                NeuralNarration.speakDialogue(
-                    context = context,
-                    turns = turns.toList(),
-                    speed = playbackSpeed,
-                    onSpeaker = { index ->
-                        withContext(Dispatchers.Main) {
-                            activeSpeakerIndex = index
-                        }
-                    },
-                    onStage = { stage ->
-                        withContext(Dispatchers.Main) { playbackStage = stage }
-                    }
-                )
+                val onSpeaker: suspend (Int) -> Unit = { index ->
+                    withContext(Dispatchers.Main) { activeSpeakerIndex = index }
+                }
+                val onStage: suspend (String) -> Unit = { stage ->
+                    withContext(Dispatchers.Main) { playbackStage = stage }
+                }
+                if (smoothVoice) {
+                    SmoothOfflineNarration.speakDialogue(
+                        context, turns.toList(), playbackSpeed, onSpeaker, onStage
+                    )
+                } else {
+                    NeuralNarration.speakDialogue(
+                        context, turns.toList(), playbackSpeed, onSpeaker, onStage
+                    )
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
                 playbackError = "Audio conversation stopped: " +
-                    (failure.message ?: "Neural speech is unavailable on this device.")
+                    (failure.message ?: "Offline voice is unavailable on this device.")
             } finally {
                 listening = false
                 activeSpeakerIndex = -1
@@ -123,16 +130,35 @@ fun PodcastConversationPanel(
             }
             Text(documentName, style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilterChip(
+                    selected = smoothVoice,
+                    onClick = {
+                        if (!listening) smoothVoice = true
+                    },
+                    label = { Text("Smooth offline") }
+                )
+                FilterChip(
+                    selected = !smoothVoice,
+                    enabled = neuralReady && !listening,
+                    onClick = { smoothVoice = false },
+                    label = { Text("Kokoro neural") }
+                )
+            }
             AuPodcastStage(
                 playing = listening,
                 activeSpeaker = turns.getOrNull(activeSpeakerIndex)?.speaker,
                 status = if (listening) playbackStage else "",
                 hasScript = turns.isNotEmpty(),
-                enabled = neuralReady && !session.generating,
+                enabled = (smoothVoice || neuralReady) && !session.generating,
                 onPlayPause = {
                     if (listening) {
                         playbackJob?.cancel()
                         NeuralNarration.stop()
+                        SmoothOfflineNarration.stop()
                         listening = false
                     } else startPlayback()
                 }
@@ -194,8 +220,8 @@ fun PodcastConversationPanel(
                     Spacer(Modifier.width(6.dp))
                     Text("Regenerate conversation")
                 }
-                if (!neuralReady) {
-                    Text("To hear both speakers, install Kokoro under Models. The prepared transcript is still available.",
+                if (!smoothVoice && !neuralReady) {
+                    Text("Install Kokoro in Models, or select Smooth offline below.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
                 }

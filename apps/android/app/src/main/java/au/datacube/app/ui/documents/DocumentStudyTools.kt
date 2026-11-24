@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -893,159 +895,34 @@ fun DocumentChatWorkspace(
 }
 
 @Composable
-fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoading: Boolean) {
-    var selectedView by remember(documentName) { mutableIntStateOf(1) }
-    val topics = remember(textPreview) { documentTopics(textPreview) }
-    val summary = remember(textPreview) { documentSummary(textPreview) }
-    val snippets = remember(textPreview) { sourceSnippets(textPreview) }
-    val clipboard = LocalClipboardManager.current
-    var selectedSource by remember(documentName) { mutableStateOf<SourceSnippet?>(null) }
-
-    selectedSource?.let { evidence ->
-        DataCubeDialog(
-            onDismissRequest = { selectedSource = null },
-            title = { Text(evidence.page?.let { "Source · Page $it" } ?: "Source") },
-            text = {
-                Column(Modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
-                    SelectionContainer { Text(evidence.text) }
-                }
-            },
-            confirmButton = { TextButton(onClick = { selectedSource = null }) { Text("Done") } },
-            dismissButton = {
-                TextButton(onClick = { clipboard.setText(AnnotatedString(evidence.text)) }) { Text("Copy") }
-            }
+private fun GeneratedSourceList(sources: List<SourceSnippet>) {
+    var expanded by remember { mutableStateOf(false) }
+    if (sources.isEmpty()) return
+    TextButton(onClick = { expanded = !expanded }) {
+        Icon(Icons.Outlined.MenuBook, contentDescription = null)
+        Spacer(Modifier.width(7.dp))
+        Text("Source passages (${sources.size})")
+        Icon(
+            if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+            contentDescription = null
         )
     }
-
-    ToolPage("Smart Note", "Organize key ideas extracted from $documentName. Content stays on this device.") {
-        if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null) else {
-            // Two full-width targets without icons: on narrow phones the
-            // SegmentedButton default checkmark and icon collided with labels.
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                listOf("Concept map", "Study notes").forEachIndexed { index, title ->
-                    Surface(
-                        onClick = { selectedView = index },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (selectedView == index) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(
-                            1.dp,
-                            if (selectedView == index) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outlineVariant
-                        )
-                    ) {
-                        Text(
-                            title,
-                            Modifier.padding(vertical = 14.dp, horizontal = 8.dp),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            color = if (selectedView == index) MaterialTheme.colorScheme.onPrimaryContainer
-                                else MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-            if (selectedView == 1) {
-                ToolCard {
-                    Text("Study notes", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Text("Extracted from $documentName", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(12.dp))
-                    Text("Key ideas from the document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Text(summary.ifBlank { "No readable passages were extracted." }, color = MaterialTheme.colorScheme.onSurface)
-                }
-                topics.forEachIndexed { index, topic ->
-                    ToolCard {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primaryContainer) {
-                                Text((index + 1).toString(), Modifier.padding(horizontal = 11.dp, vertical = 6.dp), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(Modifier.width(9.dp))
-                            Text(topic, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        }
-                        snippets.firstOrNull { it.text.contains(topic, ignoreCase = true) }?.let { evidence ->
-                            Spacer(Modifier.height(8.dp))
-                            Text(evidence.text, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 4)
-                            TextButton(onClick = { selectedSource = evidence }) {
-                                Text(evidence.page?.let { "View page $it" } ?: "View source")
-                            }
-                        }
-                    }
-                }
-                ToolCard {
-                    Text("Source", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Text("These are extractive study aids built from available text, not an AI paraphrase.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            } else {
-                ToolCard {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.AccountTree, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Concept map", style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold)
-                    }
-                    Text("Tap a concept to see its passage.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(14.dp))
-                    Surface(
-                        shape = RoundedCornerShape(18.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Column(Modifier.fillMaxWidth().padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.MenuBook, null,
-                                tint = MaterialTheme.colorScheme.primary)
-                            Text(documentName, maxLines = 2, textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    if (topics.isEmpty()) {
-                        Text("No concepts detected in the available source text.",
-                            style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        val lineColor = MaterialTheme.colorScheme.primary
-                        Canvas(Modifier.fillMaxWidth().height(26.dp)) {
-                            val midpoint = size.width / 2f
-                            drawLine(lineColor, Offset(midpoint, 0f), Offset(midpoint, size.height), 2.dp.toPx())
-                            drawCircle(lineColor, radius = 4.dp.toPx(), center = Offset(midpoint, size.height))
-                        }
-                        Row(
-                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            topics.take(10).forEachIndexed { index, topic ->
-                                val evidence = snippets.firstOrNull { it.text.contains(topic, ignoreCase = true) }
-                                OutlinedCard(
-                                    onClick = { if (evidence != null) selectedSource = evidence },
-                                    enabled = evidence != null,
-                                    modifier = Modifier.width(174.dp),
-                                    shape = RoundedCornerShape(16.dp)
-                                ) {
-                                    Column(Modifier.padding(13.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text("${index + 1}", color = MaterialTheme.colorScheme.primary,
-                                                fontWeight = FontWeight.Bold)
-                                            Spacer(Modifier.weight(1f))
-                                            Icon(Icons.Outlined.Hub, null,
-                                                tint = MaterialTheme.colorScheme.primary,
-                                                modifier = Modifier.size(18.dp))
-                                        }
-                                        Text(topic, fontWeight = FontWeight.SemiBold, maxLines = 3)
-                                        Text(evidence?.page?.let { "Page $it · Open" }
-                                            ?: "No linked page",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                            }
-                        }
-                        Text("Concepts come from extracted text; diagrams are not generated illustrations.",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (expanded) {
+        sources.forEachIndexed { index, source ->
+            Surface(
+                Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(15.dp)
+            ) {
+                Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        source.page?.let { "Evidence ${index + 1} · Page $it" }
+                            ?: "Evidence ${index + 1}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    SelectionContainer {
+                        Text(source.text, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -1054,57 +931,250 @@ fun SmartNoteWorkspace(documentName: String, textPreview: String?, previewLoadin
 }
 
 @Composable
-fun PredictionWorkspace(documentName: String, textPreview: String?, previewLoading: Boolean) {
-    var generated by remember(documentName) { mutableStateOf(false) }
-    val topics = remember(textPreview) { documentTopics(textPreview) }
-    val questions = remember(textPreview) { suggestedStudyQuestions(textPreview, 8) }
+fun SmartNoteWorkspace(
+    documentName: String,
+    textPreview: String?,
+    previewLoading: Boolean,
+    documentId: String = documentName
+) {
+    val context = LocalContext.current
+    val session = remember(documentId) {
+        GeneratedStudySessions.get(documentId, GeneratedStudyMode.NOTES)
+    }
+    var conceptTree by remember(documentId) { mutableStateOf(false) }
+    var openTopics by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
+    val ready = LocalGenerativeEngine.installed(context)
+    val sections = remember(session.response) {
+        GeneratedStudySectionParser.parse(session.response)
+    }
 
-    ToolPage("Prediction", "Build a focused revision plan from the themes and passages in your notes.") {
-        if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null) else {
+    ToolPage("Smart Note", "AI-generated notes you can read or explore as a concept tree.") {
+        if (textPreview.isNullOrBlank()) {
+            SourceUnavailableCard(previewLoading, null)
+        } else {
             ToolCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Outlined.Description, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(documentName, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        Text(sourceSnippets(textPreview).size.toString() + " readable passages found", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Icon(Icons.Outlined.CheckCircle, contentDescription = "Document ready", tint = MaterialTheme.colorScheme.primary)
+                if (!ready) {
+                    Text("Select a local AU model before generating notes.",
+                        color = MaterialTheme.colorScheme.onSurface)
+                    Text("Open Settings → Models to install or select a chat model.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Spacer(Modifier.height(14.dp))
-                Button(onClick = { generated = true }, Modifier.fillMaxWidth().heightIn(min = 50.dp)) {
-                    Text(if (generated) "Refresh Study Plan" else "Generate Study Plan")
+                Button(
+                    onClick = {
+                        session.generate(
+                            context, documentId, documentName,
+                            textPreview, GeneratedStudyMode.NOTES
+                        )
+                    },
+                    enabled = ready && !session.working,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
+                ) {
+                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (session.response.isBlank()) "Generate Smart Note" else "Regenerate notes")
+                }
+                if (session.working) {
+                    Spacer(Modifier.height(10.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(session.stage, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = session::stop) { Text("Stop") }
+                }
+                session.error?.let { message ->
+                    Text(message, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
                 }
             }
-            if (generated) {
-                ToolCard {
-                    Text("Key topics to focus on", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Text("Topics are identified from headings and repeated terms; they are not exam-probability scores.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(12.dp))
-                    topics.forEachIndexed { index, topic ->
-                        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text((index + 1).toString() + ".", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.width(8.dp)); Text(topic, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                            AssistChip(onClick = {}, enabled = false, label = { Text("Review") })
+            if (session.response.isNotBlank()) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    FilterChip(
+                        modifier = Modifier.weight(1f),
+                        selected = !conceptTree,
+                        onClick = { conceptTree = false },
+                        label = { Text("Study notes") }
+                    )
+                    FilterChip(
+                        modifier = Modifier.weight(1f),
+                        selected = conceptTree,
+                        onClick = { conceptTree = true },
+                        label = { Text("Concept tree") }
+                    )
+                }
+                if (conceptTree) {
+                    Surface(
+                        Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.AccountTree, null)
+                            Spacer(Modifier.width(10.dp))
+                            Text(documentName, Modifier.weight(1f), maxLines = 2,
+                                style = MaterialTheme.typography.titleMedium)
                         }
                     }
-                    if (topics.isEmpty()) Text("No distinct topics could be identified from this text.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                ToolCard {
-                    Text("Suggested revision questions", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    questions.take(5).forEachIndexed { index, question ->
-                        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                            Text((index + 1).toString() + ". " + question.prompt, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Medium)
-                            Text(question.page?.let { "Source: page $it" } ?: "Source: extracted document text", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    sections.forEachIndexed { index, section ->
+                        Canvas(Modifier.fillMaxWidth().height(20.dp)) {
+                            val x = size.width * 0.14f
+                            drawLine(color = Color(0xFF66A7FF), start = Offset(x, 0f),
+                                end = Offset(x, size.height), strokeWidth = 2.dp.toPx())
                         }
-                        if (index != questions.take(5).lastIndex) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        val open = index in openTopics
+                        Surface(
+                            onClick = {
+                                openTopics = if (open) openTopics - index else openTopics + index
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(18.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Column(Modifier.padding(17.dp),
+                                verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Surface(
+                                        color = MaterialTheme.colorScheme.primaryContainer,
+                                        shape = RoundedCornerShape(50)
+                                    ) {
+                                        Text("${index + 1}", Modifier.padding(
+                                            horizontal = 10.dp, vertical = 6.dp),
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer)
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(section.topic, Modifier.weight(1f),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold)
+                                    Icon(
+                                        if (open) Icons.Outlined.ExpandLess
+                                            else Icons.Outlined.ExpandMore,
+                                        contentDescription = if (open) "Collapse topic" else "Expand topic"
+                                    )
+                                }
+                                if (open) {
+                                    SelectionContainer {
+                                        Text(section.details.ifBlank { "No additional detail was generated." },
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    sections.forEach { section ->
+                        ToolCard {
+                            Text(section.topic, style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold)
+                            if (section.details.isNotBlank()) {
+                                Spacer(Modifier.height(10.dp))
+                                SelectionContainer {
+                                    Text(section.details,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        color = MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
+                        }
                     }
                 }
-            } else {
-                ToolCard {
-                    Text("What this plan uses", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Text("The plan is derived from detected headings, recurring terms and readable passages. It does not claim to predict an actual exam.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                GeneratedSourceList(session.sources)
+            }
+        }
+    }
+}
+
+@Composable
+fun PredictionWorkspace(
+    documentName: String,
+    textPreview: String?,
+    previewLoading: Boolean,
+    documentId: String = documentName
+) {
+    val context = LocalContext.current
+    val session = remember(documentId) {
+        GeneratedStudySessions.get(documentId, GeneratedStudyMode.REVISION)
+    }
+    val ready = LocalGenerativeEngine.installed(context)
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) session.attach(context, uri)
+    }
+    val sections = remember(session.response) {
+        GeneratedStudySectionParser.parse(session.response)
+    }
+
+    ToolPage("Prediction", "Generate evidence-based revision priorities and practice questions.") {
+        if (textPreview.isNullOrBlank()) {
+            SourceUnavailableCard(previewLoading, null)
+        } else {
+            ToolCard {
+                if (!ready) Text("Select an installed AU chat model in Settings → Models.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(
+                    onClick = { picker.launch(arrayOf("application/pdf", "text/plain", "text/markdown")) },
+                    enabled = !session.attaching && !session.working,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.AttachFile, null)
+                    Spacer(Modifier.width(7.dp))
+                    Text(if (session.attachmentLabel == null) "Attach optional reference"
+                        else "Change reference")
                 }
+                session.attachmentLabel?.let { name ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(name, Modifier.weight(1f), maxLines = 1,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = session::removeAttachment) { Text("Remove") }
+                    }
+                }
+                if (session.attaching) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text("Reading additional reference on this device",
+                        style = MaterialTheme.typography.bodySmall)
+                }
+                Button(
+                    onClick = {
+                        session.generate(
+                            context, documentId, documentName,
+                            textPreview, GeneratedStudyMode.REVISION
+                        )
+                    },
+                    enabled = ready && !session.working && !session.attaching,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
+                ) {
+                    Icon(Icons.Outlined.AutoAwesome, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (session.response.isBlank()) "Generate revision forecast"
+                        else "Regenerate forecast")
+                }
+                if (session.working) {
+                    Spacer(Modifier.height(9.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(session.stage, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = session::stop) { Text("Stop") }
+                }
+                session.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (session.response.isNotBlank()) {
+                Text("Revision priorities", style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold)
+                sections.forEachIndexed { index, section ->
+                    ToolCard {
+                        Text("${index + 1}. ${section.topic}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(9.dp))
+                        SelectionContainer {
+                            Text(section.details, style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
+                }
+                Text("This is a study aid, not a guarantee of future exam questions.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                GeneratedSourceList(session.sources)
             }
         }
     }
