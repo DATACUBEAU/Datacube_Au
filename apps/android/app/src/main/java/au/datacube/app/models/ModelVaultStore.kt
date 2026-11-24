@@ -51,7 +51,8 @@ class ModelVaultStore(context: Context) {
      */
     suspend fun save(
         modelId: String,
-        onProgress: suspend (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> }
+        onProgress: suspend (writtenBytes: Long, totalBytes: Long) -> Unit = { _, _ -> },
+        onStage: suspend (String) -> Unit = {}
     ): ModelBackupSummary = withContext(Dispatchers.IO) {
         check(ModelCatalog.models.any { it.id == modelId }) { "Unknown model type." }
         val dir = requireNotNull(folder()) { "Select your model folder first." }
@@ -70,15 +71,30 @@ class ModelVaultStore(context: Context) {
             resolver, parent, "application/octet-stream", partialName
         ) ?: error("This folder cannot create a model archive.")
         try {
-            val summary = ModelBackupManager(app).exportBackup(destination, modelId, onProgress)
+            val manager = ModelBackupManager(app)
+            onStage("Writing model files to external storage")
+            val summary = manager.exportBackup(destination, modelId, onProgress)
+            // The destination may be a phone FileProvider, SD card or cloud-backed
+            // SAF provider. Reopen it and verify all saved bytes BEFORE publishing.
+            onStage("Verifying saved model archive")
+            val verified = manager.verifySavedBackup(destination, modelId, summary, onProgress)
             val finalName = partialName.removeSuffix(".partial") + ".zip"
-            check(DocumentsContract.renameDocument(resolver, destination, finalName) != null) {
-                "The storage provider could not finish the archive."
+            val published = DocumentsContract.renameDocument(resolver, destination, finalName)
+                ?: error("The selected folder could not publish the verified archive.")
+            // Verify the renamed document is still readable; some providers move it.
+            require(manager.inspectBackup(published).modelIds.contains(modelId)) {
+                "The backup disappeared after saving. Select a different folder."
             }
-            summary
+            onStage("Backup complete and verified")
+            verified
         } catch (error: Exception) {
+            // Never leave a partial archive labelled as a recoverable backup.
             runCatching { DocumentsContract.deleteDocument(resolver, destination) }
-            throw error
+            throw IllegalStateException(
+                "Backup was not saved. The external folder may lack space or support for large files. " +
+                    "Keep the model installed and try another folder. Details: " +
+                    (error.message ?: error.javaClass.simpleName), error
+            )
         }
     }
 
