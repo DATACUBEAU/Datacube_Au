@@ -119,7 +119,7 @@ export default function PolicyPage() {
             <li>Documents, extracted text, search indexes, generated answers and study outputs used by the Android workspace. Local study processing is designed to run on your device with installed models. Any cloud features you use may process the information necessary to provide them.</li>
             <li>Subscription and payment-related account information needed to manage access and billing.</li>
             <li>Voice notes you choose to record, and generated audio used by narration and study conversations.</li>
-            <li>Usage metadata, device information, and event logs for reliability and performance.</li>
+            <li>Usage metadata and event logs for reliability. Android users may optionally share their phone model, Android version and AU app version for compatibility support; they can remove that report in Settings. This report does not include a permanent hardware identifier or location.</li>
             <li>App storage, preferences, and website cookies or local storage used for account sessions and site functionality.</li>
           </ul>
           <h2 className="font-headline text-xl font-semibold">Security</h2>
