@@ -168,8 +168,6 @@ private fun ModelCard(
     val paused = remember(revision, work?.state) { verified != null && downloader.paused(model.id) }
     val percent = work?.progress?.getInt(VerifiedModelDownloadWorker.KEY_PROGRESS, -1) ?: -1
     val error = work?.outputData?.getString(VerifiedModelDownloadWorker.KEY_ERROR)
-    val backupVerified = work?.state == WorkInfo.State.SUCCEEDED &&
-        work.outputData.getBoolean(VerifiedModelDownloadWorker.KEY_BACKUP_VERIFIED, false)
 
     if (chooseNetwork && verified != null) {
         DataCubeDialog(
@@ -244,11 +242,7 @@ private fun ModelCard(
                         modifier = Modifier.weight(1f)) { Text("Cancel") }
                 }
             } else if (complete && verified != null) {
-                Text(if (backupVerified) "External backup verified during last save."
-                    else "External backup not confirmed. Keep AU installed until a backup is verified.",
-                    color = if (backupVerified) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall)
+                ModelBackupCheck(model.id, refreshKey = work?.id to work?.state)
                 if (!error.isNullOrBlank() && work?.state == WorkInfo.State.FAILED) {
                     Text(error, color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall)
@@ -260,7 +254,7 @@ private fun ModelCard(
                     } else onChooseFolder()
                 }, modifier = Modifier.fillMaxWidth()) {
                     Text(if (!canDownload) "Choose backup folder"
-                        else if (backupVerified) "Save another backup" else "Retry backup")
+                        else "Back up again")
                 }
             } else if (!complete && paused && verified != null) {
                 Text("Paused. Partial download retained.", style = MaterialTheme.typography.bodySmall)
