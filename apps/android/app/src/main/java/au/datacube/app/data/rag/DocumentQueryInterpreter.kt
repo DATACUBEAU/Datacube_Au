@@ -53,7 +53,7 @@ object DocumentQueryInterpreter {
             "Earlier question: ${previous.take(220)}. Follow-up: ${query.trim().take(350)}"
         else null
         val searchTerms = if (contextualQuestion != null) {
-            tokens(previous.orEmpty()) + queryTokens
+            queryTokens + tokens(previous.orEmpty())
         } else queryTokens
 
         // A targeted question ("explain ATP in this document") must retrieve
@@ -92,8 +92,7 @@ object DocumentQueryInterpreter {
                 val best = nearMatches.filter { it.second == bestDistance }
                 if (best.size == 1) {
                     val candidate = best.single().first
-                    if (bestDistance == 1 || (term.length >= 5 &&
-                            (frequency[candidate] ?: 0) >= 2)) {
+                    if (bestDistance == 1) {
                         corrected[term] = candidate
                     } else if (suggestions.isEmpty()) {
                         suggestions += "Did you mean '$candidate' instead of '$term'?"
@@ -103,16 +102,16 @@ object DocumentQueryInterpreter {
                         best.joinToString(" or ") { "'${it.first}'" } + "?"
                 }
             }
-        val retrievalQuery = searchTerms.joinToString(" ") { corrected[it] ?: it }
+        val retrievalQuery = searchTerms.flatMap { term -> listOfNotNull(term, corrected[term]) }.distinct().joinToString(" ")
         val clarifiedQuestion = if (contextualQuestion == null && corrected.isEmpty()) null
             else buildString {
                 if (contextualQuestion != null) appendLine(contextualQuestion)
                 else appendLine("Original question: ${query.trim().take(350)}")
                 if (corrected.isNotEmpty()) {
-                    appendLine("Source-supported query spelling: " +
+                    appendLine("Possible source-supported spelling (original question still applies): " +
                         queryTokens.joinToString(" ") { corrected[it] ?: it })
                 }
-                append("Use source evidence; ask if the interpretation is uncertain.")
+                append("Use source evidence; prefer the original meaning where supported. Ask only if a different interpretation materially changes the answer.")
             }
         return DocumentQueryPlan(
             retrievalQuery = retrievalQuery,
@@ -125,6 +124,8 @@ object DocumentQueryInterpreter {
             contextualQuestion = clarifiedQuestion
         )
     }
+
+    fun isReferentialFollowUp(query: String): Boolean = isReferentialFollowUp(query, tokens(query))
 
     private fun isReferentialFollowUp(query: String, terms: List<String>): Boolean {
         if (terms.size > 6) return false
