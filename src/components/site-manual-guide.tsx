@@ -3,6 +3,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { START_PRODUCT_TOUR_EVENT } from '@/components/au-assistant';
 
 export function SiteManualGuide({children, open, onOpenChange}: {
   children?: React.ReactNode; open?: boolean; onOpenChange?: (open: boolean) => void;
@@ -23,7 +24,7 @@ export function SiteManualGuide({children, open, onOpenChange}: {
           <p><strong className="text-foreground">3. Study your documents.</strong> Import a file, ask AU questions, generate Smart Notes or practise with source-grounded questions.</p>
           <p><strong className="text-foreground">4. Keep your models safe.</strong> Save and confirm model ZIP backups in your chosen folder. Update AU without uninstalling.</p>
         </div>
-        <DialogFooter><Button asChild><Link href="/download">Download for Android</Link></Button><Button variant="outline" onClick={() => setShown(false)}>Close guide</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => { window.dispatchEvent(new CustomEvent(START_PRODUCT_TOUR_EVENT)); setShown(false); }}>Take a product tour</Button><Button asChild><Link href="/download">Download for Android</Link></Button><Button variant="outline" onClick={() => setShown(false)}>Close guide</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );
