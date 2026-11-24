@@ -7,6 +7,7 @@ import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -105,7 +106,7 @@ object SmoothOfflineNarration {
                 withTimeout(30_000) { done.await() }
             }
         } finally {
-            withContext(Dispatchers.Main) {
+            withContext(NonCancellable + Dispatchers.Main) {
                 tts.stop()
                 tts.shutdown()
                 if (active === tts) active = null
