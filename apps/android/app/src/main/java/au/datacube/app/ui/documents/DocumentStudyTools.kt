@@ -274,6 +274,7 @@ fun DocumentChatWorkspace(
         if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
     }
     val threadId = threadIndex?.activeId ?: "main"
+    LaunchedEffect(documentId, threadId) { speech.stop() }
     val session = remember(documentId, threadId) {
         DocumentChatSessions.get(documentId, threadId, context)
     }
