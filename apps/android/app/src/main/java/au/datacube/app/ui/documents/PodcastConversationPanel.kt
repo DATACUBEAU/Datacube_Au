@@ -75,7 +75,7 @@ fun PodcastConversationPanel(
             try {
                 // Avoid keeping the large chat model resident while Kokoro
                 // allocates its neural speech engine on lower-RAM phones.
-                LocalGenerativeEngine.release()
+                if (!smoothVoice) LocalGenerativeEngine.release()
                 val onSpeaker: suspend (Int) -> Unit = { index ->
                     withContext(Dispatchers.Main) { activeSpeakerIndex = index }
                 }
@@ -123,7 +123,7 @@ fun PodcastConversationPanel(
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.titleLarge)
-                    Text("Two voices, one grounded study discussion",
+                    Text("A grounded study discussion, read aloud",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
                 }
