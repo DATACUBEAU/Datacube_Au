@@ -45,11 +45,24 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Verify checked-out revision
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+
+      - name: Set deterministic release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version_code=$(git rev-list --count HEAD)
+          if [[ "$version_code" -lt 4 || "$version_code" -gt 2100000000 ]]; then
+            echo "::error::Invalid Android version code: $version_code"
+            exit 1
+          fi
+          echo "DATACUBE_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
+          echo "DATACUBE_VERSION_NAME=1.0.$version_code" >> "$GITHUB_ENV"
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -70,9 +83,8 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "$PERSONAL_KEYSTORE" ]]; then
-            echo "SIGNING_KIND=temporary CI debug certificate" >> "$GITHUB_ENV"
-            echo "Registered test signer unavailable; browser App Links may not verify." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
+            echo "::error::Registered signing key is required. Refusing an APK that cannot update existing installations."
+            exit 1
           fi
           umask 077
           path="$RUNNER_TEMP/datacube-personal-debug.keystore"
@@ -95,7 +107,10 @@ jobs:
           printf 'AUTH_WEBSITE_URL=%s\n' "$AUTH_WEBSITE_URL" >> local.properties
 
       - name: Build smaller ARM64 APK only
-        run: bash ./gradlew :app:assembleDebug -PdatacubeArm64Only=true --no-daemon
+        run: >-
+          bash ./gradlew :app:assembleDebug -PdatacubeArm64Only=true
+          -PdatacubeVersionCode="$DATACUBE_VERSION_CODE"
+          -PdatacubeVersionName="$DATACUBE_VERSION_NAME" --no-daemon
 
       - name: Verify APK signing, ABI and actual uncompressed APK size
         id: apk
@@ -125,6 +140,30 @@ jobs:
           mkdir -p "$RUNNER_TEMP/datacube-direct-apk"
           cp "$apk" "$RUNNER_TEMP/datacube-direct-apk/DataCube-AU-Android-arm64.apk"
           sha256sum "$RUNNER_TEMP/datacube-direct-apk/DataCube-AU-Android-arm64.apk" >> "$GITHUB_STEP_SUMMARY"
+          export APK_BYTES="$bytes"
+          export APK_SHA256="$(sha256sum "$apk" | cut -d ' ' -f 1)"
+          export MANIFEST_OUTPUT="$RUNNER_TEMP/datacube-direct-apk/datacube-update.json"
+          python3 - <<'PY'
+          import json, os
+          sha = os.environ["EXPECTED_SHA"]
+          release_tag = "android-test-" + sha[:12]
+          uri = (
+              "https://github.com/" + os.environ["GITHUB_REPOSITORY"] +
+              "/releases/download/" + release_tag + "/DataCube-AU-Android-arm64.apk"
+          )
+          manifest = {
+              "schema": 1,
+              "versionCode": int(os.environ["DATACUBE_VERSION_CODE"]),
+              "versionName": os.environ["DATACUBE_VERSION_NAME"],
+              "apkUrl": uri,
+              "sizeBytes": int(os.environ["APK_BYTES"]),
+              "sha256": os.environ["APK_SHA256"],
+              "releaseSha": sha,
+              "notes": "DataCube AU improvements and fixes. Your local data is retained."
+          }
+          with open(os.environ["MANIFEST_OUTPUT"], "w", encoding="utf-8") as target:
+              json.dump(manifest, target, separators=(",", ":"))
+          PY
 
       - name: Publish direct APK as clearly labeled prerelease
         shell: bash
@@ -134,11 +173,13 @@ jobs:
           set -euo pipefail
           tag="android-test-${EXPECTED_SHA:0:12}"
           apk="$RUNNER_TEMP/datacube-direct-apk/DataCube-AU-Android-arm64.apk"
+          manifest="$RUNNER_TEMP/datacube-direct-apk/datacube-update.json"
+          test -s "$apk" && test -s "$manifest"
           message="ARM64-only debug APK for compatible Android 8.0+ phones. Direct APK, not an artifact ZIP. No AI models included or downloaded automatically. Signer: $SIGNING_KIND. Existing installations signed with a different certificate cannot be updated in place. Browser sign-in requires the registered certificate. Not a production release."
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$tag" "$apk" --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$tag" "$apk" "$manifest" --clobber --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$tag" "$apk" --repo "$GITHUB_REPOSITORY" \
+            gh release create "$tag" "$apk" "$manifest" --repo "$GITHUB_REPOSITORY" \
               --target "$EXPECTED_SHA" --title "DataCube AU ARM64 test (${EXPECTED_SHA:0:12})" \
               --notes "$message" --prerelease
           fi
