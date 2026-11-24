@@ -35,6 +35,41 @@ class StudyGenerationPromptTest {
         assertTrue(prepared.text.contains("Do not invent facts"))
     }
 
+    @Test fun practiceUsesRequestedFormatAndActualBoundedSources() {
+        val prepared = StudyGenerationPrompt.prepare(
+            "Lecture.pdf", GeneratedStudyMode.PRACTICE, passages, null,
+            questionCount = 10, questionStyle = "Recall", focus = "Chapter 3"
+        )
+        assertTrue(prepared.text.contains("10 distinct practice questions"))
+        assertTrue(prepared.text.contains("Recall key facts"))
+        assertTrue(prepared.text.contains("Chapter 3"))
+        assertTrue(prepared.text.contains("ANSWER:"))
+        assertTrue(prepared.evidence.all { it.text.length <= 1150 })
+        assertTrue(prepared.text.length <= 18_000)
+    }
+
+    @Test fun practiceParserRejectsUnlistedSourcesAndMissingAnswers() {
+        val evidence = listOf(SourceSnippet("A verified passage", 7))
+        val raw = """
+            QUESTION: What is the concept?
+            ANSWER: A useful explanation.
+            SOURCE: 1
+            TOPIC: Concept
+            QUESTION: Unsupported question?
+            ANSWER: Unsupported answer.
+            SOURCE: 9
+            TOPIC: Other
+            QUESTION: Missing answer?
+            SOURCE: 1
+            TOPIC: Other
+        """.trimIndent()
+        val parsed = GeneratedPracticeParser.parse(raw, evidence)
+        assertEquals(1, parsed.size)
+        assertEquals("A useful explanation.", parsed.single().modelAnswer)
+        assertEquals(7, parsed.single().page)
+        assertEquals("A verified passage", parsed.single().reference)
+    }
+
     @Test fun fallbackOverviewCoversStartMiddleAndEnd() {
         val chunks = (0..39).toList()
         val sample = StudyGenerationPrompt.spreadAcross(chunks, 10)
