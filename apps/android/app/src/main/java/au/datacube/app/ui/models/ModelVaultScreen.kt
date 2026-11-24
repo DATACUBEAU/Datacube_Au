@@ -51,7 +51,7 @@ fun ModelVaultScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Model Vault", fontWeight = FontWeight.Bold) },
+                title = { Text("Model backups", fontWeight = FontWeight.Bold) },
                 navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } }
             )
         },
@@ -87,7 +87,7 @@ fun ModelVaultScreen(
             }
             item {
                 Text("Back up installed models", style = MaterialTheme.typography.titleMedium)
-                Text("Each archive includes its model ID and integrity checks.",
+                Text("Check your saved ZIP or back up again if it is missing.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
             }
             val installedModels = ModelCatalog.models.filter { installed(it.id) }
@@ -108,7 +108,7 @@ fun ModelVaultScreen(
             }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Saved archives", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Text("Smart Recovery", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                     TextButton(onClick = { refresh += 1 }, enabled = folder != null) { Text("Refresh") }
                 }
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -137,9 +137,11 @@ fun ModelVaultScreen(
                             }
                             Text(archive.filename, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("Integrity is checked during restore.",
+                            Text("${archive.preview.totalBytes / (1024L * 1024L)} MB of model files",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            ModelBackupCheck(archive.preview.modelIds.first(), archive = archive,
+                                refreshKey = refresh)
                             OutlinedButton(onClick = { onRestoreArchive(archive.uri) },
                                 modifier = Modifier.fillMaxWidth()) {
                                 Text("Restore model")
@@ -186,8 +188,7 @@ private fun VaultModelRow(
     ) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(spec.name, fontWeight = FontWeight.SemiBold)
-            Text("${spec.id} · ${spec.role.name.lowercase()}",
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!active) ModelBackupCheck(spec.id, refreshKey = work?.id to work?.state)
             if (active) {
                 if (percentage != null) {
                     LinearProgressIndicator(progress = { percentage / 100f }, modifier = Modifier.fillMaxWidth())
