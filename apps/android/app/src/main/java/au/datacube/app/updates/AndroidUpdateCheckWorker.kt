@@ -14,6 +14,8 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.ExistingWorkPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import au.datacube.app.MainActivity
@@ -35,12 +37,14 @@ class AndroidUpdateCheckWorker(
                 )
                 val shown = settings.getInt("last_notified_version", 0)
                 if (available.versionCode > shown) {
-                    val manager = applicationContext.getSystemService(NotificationManager::class.java)
+                    val manager = applicationContext.getSystemService(NotificationManager::class.java) ?: return Result.retry()
+                    if (!manager.areNotificationsEnabled()) return Result.success()
                     manager.createNotificationChannel(
                         NotificationChannel(
-                            CHANNEL, "App updates", NotificationManager.IMPORTANCE_LOW
+                            CHANNEL, "AU update alerts", NotificationManager.IMPORTANCE_HIGH
                         )
                     )
+                    if (manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) return Result.success()
                     val open = Intent(applicationContext, MainActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                     val tap = PendingIntent.getActivity(
@@ -78,7 +82,7 @@ class AndroidUpdateCheckWorker(
             PackageManager.PERMISSION_GRANTED
 
     companion object {
-        private const val CHANNEL = "datacube_app_updates"
+        private const val CHANNEL = "datacube_app_update_alerts_v2"
         private const val NOTIFICATION_ID = 76001
         private const val WORK_NAME = "datacube-android-update-check"
 
@@ -89,10 +93,19 @@ class AndroidUpdateCheckWorker(
             val request = PeriodicWorkRequestBuilder<AndroidUpdateCheckWorker>(
                 12, TimeUnit.HOURS
             ).setConstraints(constraints).build()
-            WorkManager.getInstance(context.applicationContext)
-                .enqueueUniquePeriodicWork(
-                    WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request
+            val work = WorkManager.getInstance(context.applicationContext)
+            work.enqueueUniquePeriodicWork(
+                    WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request
                 )
+            // Refresh on launch, throttled to avoid repeated network traffic.
+            val prefs = context.getSharedPreferences("datacube_updates", Context.MODE_PRIVATE)
+            val now = System.currentTimeMillis()
+            if (now - prefs.getLong("last_launch_check", 0L) >= TimeUnit.MINUTES.toMillis(30)) {
+                val immediate = OneTimeWorkRequestBuilder<AndroidUpdateCheckWorker>()
+                    .setConstraints(constraints).build()
+                work.enqueueUniqueWork("datacube-launch-update-check", ExistingWorkPolicy.KEEP, immediate)
+                prefs.edit().putLong("last_launch_check", now).apply()
+            }
         }
     }
 }
