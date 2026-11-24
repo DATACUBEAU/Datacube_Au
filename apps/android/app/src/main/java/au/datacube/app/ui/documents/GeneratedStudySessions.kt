@@ -27,7 +27,33 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.os.SystemClock
 
-enum class GeneratedStudyMode { NOTES, REVISION }
+enum class GeneratedStudyMode { NOTES, REVISION, PRACTICE }
+
+internal data class GeneratedPracticeQuestion(
+    val prompt: String, val modelAnswer: String, val reference: String,
+    val page: Int?, val topic: String
+)
+
+internal object GeneratedPracticeParser {
+    fun parse(raw: String, evidence: List<SourceSnippet>): List<GeneratedPracticeQuestion> {
+        val marker = Regex("(?im)^QUESTION:\\s*(.+)$")
+        val matches = marker.findAll(raw).toList()
+        return matches.mapIndexedNotNull { i, match ->
+            val block = raw.substring(match.range.last + 1,
+                matches.getOrNull(i + 1)?.range?.first ?: raw.length)
+            fun field(name: String): String = Regex("(?im)^" + name + ":\\s*(.+)$")
+                .find(block)?.groupValues?.get(1)?.trim().orEmpty()
+            val answer = field("ANSWER")
+            val sourceIndex = field("SOURCE").trim('[', ']').toIntOrNull()
+                ?: return@mapIndexedNotNull null
+            val source = evidence.getOrNull(sourceIndex - 1) ?: return@mapIndexedNotNull null
+            val prompt = match.groupValues[1].trim()
+            if (prompt.isBlank() || answer.isBlank()) return@mapIndexedNotNull null
+            GeneratedPracticeQuestion(prompt.take(500), answer.take(1800), source.text,
+                source.page, field("TOPIC").take(100).ifBlank { "Practice" })
+        }.distinctBy { it.prompt.lowercase() }.take(15)
+    }
+}
 internal data class GeneratedStudySection(val topic: String, val details: String)
 
 /** Only represent sections actually emitted by AU; no fabricated concepts. */
@@ -78,7 +104,9 @@ class GeneratedStudySession {
 
     fun generate(
         context: Context, documentId: String, documentName: String,
-        textPreview: String, mode: GeneratedStudyMode
+        textPreview: String, mode: GeneratedStudyMode,
+        questionCount: Int = 5, questionStyle: String = "Explain",
+        focus: String = "All topics"
     ) {
         if (working || !LocalGenerativeEngine.installed(context)) {
             if (!working) error = "Select an installed AU model in Models to generate content."
@@ -116,7 +144,7 @@ class GeneratedStudySession {
                 val prepared = StudyGenerationPrompt.prepare(
                     documentName, mode,
                     excerpts.map { RagEvidence(it.text, it.page) },
-                    attached
+                    attached, questionCount, questionStyle, focus
                 )
                 withContext(Dispatchers.Main) {
                     // These are exactly the passages supplied to AU, not a larger
@@ -126,7 +154,7 @@ class GeneratedStudySession {
                 }
                 val answer = StringBuilder()
                 var last = 0L
-                LocalGenerativeEngine.generate(app, prepared.text) { chunk ->
+                LocalGenerativeEngine.generate(app, prepared.text, studyTask = true) { chunk ->
                     answer.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - last >= 120) {
@@ -137,6 +165,11 @@ class GeneratedStudySession {
                 }
                 val complete = ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size).trim()
                 check(complete.isNotBlank()) { "AU did not produce readable study content." }
+                if (mode == GeneratedStudyMode.PRACTICE) {
+                    check(GeneratedPracticeParser.parse(complete, sources).isNotEmpty()) {
+                        "AU could not generate valid practice questions. Try again."
+                    }
+                }
                 withContext(Dispatchers.Main) {
                     response = complete.take(18_000)
                     stage = "Completed with source evidence"

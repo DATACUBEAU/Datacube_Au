@@ -97,7 +97,7 @@ class PodcastOverviewSession(private val documentId: String) {
                 """.trimIndent().take(16_000)
                 val raw = StringBuilder()
                 stage = "AU is preparing the conversation"
-                LocalGenerativeEngine.generate(app, instructions) { part ->
+                LocalGenerativeEngine.generate(app, instructions, studyTask = true) { part ->
                     if (raw.length < 12_000) raw.append(part.take(12_000 - raw.length))
                 }
                 stage = "Checking the two-speaker transcript"
