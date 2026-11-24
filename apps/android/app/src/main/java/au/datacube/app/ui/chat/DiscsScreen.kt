@@ -1,6 +1,7 @@
 package au.datacube.app.ui.chat
 
 import android.os.SystemClock
+import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -287,6 +288,7 @@ fun DiscsScreen(
                 session.activeRequest = null
             }
         }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response") }
     }
 
     Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
