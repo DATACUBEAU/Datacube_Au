@@ -356,12 +356,12 @@ export default function ConexPlanLimitsPage() {
     const run = async () => {
       if (isUserLoading) return;
       if (!user) {
-        router.replace('/login?redirectTo=/conex/plan-limits');
+        router.replace('/');
         return;
       }
       const access = await getSupabaseAccessToken();
       if (!access) {
-        router.replace('/login?redirectTo=/conex/plan-limits');
+        router.replace('/');
         return;
       }
       const res = await fetch('/conex/users?mode=access', {
@@ -371,7 +371,7 @@ export default function ConexPlanLimitsPage() {
       }).catch(() => null);
       if (cancelled) return;
       if (!res?.ok) {
-        router.replace(res?.status === 403 ? '/403' : '/conex');
+        router.replace('/');
         return;
       }
       setCheckingAccess(false);
