@@ -1,6 +1,7 @@
 package au.datacube.app.ui.documents
 
 import au.datacube.app.data.rag.RagEvidence
+import au.datacube.app.data.rag.AuTeachingPolicy
 
 internal data class PreparedStudyPrompt(
     val text: String,
@@ -39,10 +40,8 @@ internal object StudyGenerationPrompt {
                     "After each heading explain the concept in 2-5 clear, useful " +
                     "sentences, including an example only if the text supports it. " +
                     "Explain relationships among important concepts. Bold key terms, definitions and formulas using Markdown. " +
-                    "Use a short [FLOW] Title block with 2 to 6 source-supported steps and [/FLOW] for a genuine process. " +
-                    "Use a [WORKFLOW] Title block with 2 to 6 stage lines, cards separated by | and optional title :: description, then [/WORKFLOW], only when relationships are supported. " +
                     "Use source references [1], [2] beside supported explanations. Clearly state that these notes cover selected passages, not necessarily every chapter. " +
-                    "For source-supported introductory ball projectile motion only, use the standalone line [DIAGRAM] projectile for a conceptual illustration. For other helpful conceptual sketches, use [SKETCH] Title then ALT | description, then up to 20 lines with LINE or ARROW | x1 | y1 | x2 | y2, CIRCLE | x | y | radius, RECT or ELLIPSE | x1 | y1 | x2 | y2, CURVE | x1 | y1 | cx | cy | x2 | y2, or LABEL | x | y | text. Coordinates are schematic integers 0 to 100, x right and y down. End with [/SKETCH]. Do not output a generic list of short copied phrases."
+                    "Do not output a generic list of short copied phrases."
             GeneratedStudyMode.REVISION ->
                 "Create an evidence-based revision forecast. Use 4-8 meaningful " +
                     "sections only if the sources support that many topics. " +
@@ -67,7 +66,7 @@ internal object StudyGenerationPrompt {
             appendLine("Main document: " + documentName.take(100).replace('\n', ' '))
             appendLine(instructions)
             if (mode != GeneratedStudyMode.PRACTICE) {
-                appendLine("Use compact Markdown tables or lists when they clarify the material. For a key concept or worked example use [BOX] Title on its own line, then the explanation, then [/BOX] on its own line. Use boxes sparingly.")
+                appendLine(AuTeachingPolicy.plan("",documentName).instruction())
             }
             appendLine("Use source material for factual claims. Be clear, complete and context-aware.")
             appendLine("Do not invent facts, page numbers, exam probabilities or quotations.")

@@ -145,7 +145,7 @@ class GeneratedStudySession {
         val app = context.applicationContext
         working = true
         error = null
-        stage = "Preparing verified passages"
+        stage = "Reading document"
         response = ""
         sources = emptyList()
         val attached = attachmentText
@@ -184,7 +184,7 @@ class GeneratedStudySession {
                 }
                 val answer = StringBuilder()
                 var last = 0L
-                LocalGenerativeEngine.generate(app, prepared.text, studyTask = true) { chunk ->
+                LocalGenerativeEngine.generate(app, prepared.text, studyTask = true, studyVisuals = mode != GeneratedStudyMode.PRACTICE) { chunk ->
                     answer.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - last >= 120) {
@@ -209,7 +209,7 @@ class GeneratedStudySession {
                 }
                 withContext(Dispatchers.Main) {
                     response = complete.take(18_000)
-                    stage = "Completed with source evidence"
+                    stage = "Ready"
                 }
                 LocalNotificationService(app).showAiReady("$documentId-${mode.name}", when (mode) {
                     GeneratedStudyMode.NOTES -> "Smart Notes are ready"
