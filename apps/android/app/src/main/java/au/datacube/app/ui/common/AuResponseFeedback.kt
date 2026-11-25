@@ -67,6 +67,7 @@ internal object ResponseFeedbackStore {
     }
 
     fun schedule(context: Context,account: String) {
+        if (pending(context,account).isEmpty()) return
         val work = OneTimeWorkRequestBuilder<ResponseFeedbackWorker>()
             .setInputData(workDataOf("account" to account))
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()).build()
@@ -79,8 +80,8 @@ class ResponseFeedbackWorker(context: Context,params: WorkerParameters): Corouti
         val account = inputData.getString("account") ?: return@withContext Result.failure()
         for (row in ResponseFeedbackStore.pending(applicationContext,account)) {
             currentCoroutineContext().ensureActive()
-            val session = SupabaseClient.auth.currentSessionOrNull()
-            if (session?.user?.id != account || session.accessToken.isBlank()) return@withContext Result.success()
+            val session = SupabaseClient.auth.currentSessionOrNull() ?: return@withContext Result.success()
+            if (session.user?.id != account || session.accessToken.isBlank()) return@withContext Result.success()
             try {
                 val payload = JSONObject().put("responseId",row.getString("id"))
                     .put("section",row.getString("section"))
