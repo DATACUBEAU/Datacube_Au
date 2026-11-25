@@ -45,6 +45,8 @@ class PodcastOverviewSession(private val documentId: String) {
         private set
     var activeSpeakerIndex by mutableStateOf(-1)
         private set
+    var resumeTurn by mutableStateOf(0)
+        private set
     var playbackStage by mutableStateOf("")
         private set
     var playbackError by mutableStateOf<String?>(null)
@@ -53,7 +55,8 @@ class PodcastOverviewSession(private val documentId: String) {
     fun play(context: Context, mobileVoice: Boolean, speed: Float) {
         if (listening || generating || turns.isEmpty()) return
         val app = context.applicationContext
-        val dialogue = turns.toList()
+        val offset = resumeTurn.coerceIn(0, turns.lastIndex)
+        val dialogue = turns.drop(offset)
         playbackError = null
         listening = true
         playbackStage = "Preparing the voices"
@@ -66,7 +69,10 @@ class PodcastOverviewSession(private val documentId: String) {
         }) {
             try {
                 val onSpeaker: suspend (Int) -> Unit = { index ->
-                    withContext(Dispatchers.Main) { activeSpeakerIndex = index }
+                    withContext(Dispatchers.Main) {
+                        activeSpeakerIndex = offset + index
+                        resumeTurn = activeSpeakerIndex.coerceIn(0, turns.lastIndex)
+                    }
                 }
                 val onStage: suspend (String) -> Unit = { value ->
                     withContext(Dispatchers.Main) { playbackStage = value }
@@ -78,6 +84,7 @@ class PodcastOverviewSession(private val documentId: String) {
                     LocalGenerativeEngine.release()
                     NeuralNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage)
                 }
+                resumeTurn = 0
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -93,6 +100,9 @@ class PodcastOverviewSession(private val documentId: String) {
 
     fun stopPlayback() {
         playbackJob?.cancel()
+    }
+    fun restartPlayback() {
+        if (!listening) resumeTurn = 0
     }
     private var loaded = false
 
@@ -183,6 +193,7 @@ class PodcastOverviewSession(private val documentId: String) {
                 val text = ModelOutputCleaner.visible(raw.toString(), evidence.size)
                 val parsed = PodcastDialogue.parse(text)
                 withContext(Dispatchers.IO) { saveFile(app.filesDir, parsed) }
+                resumeTurn = 0
                 turns.clear()
                 turns.addAll(parsed)
                 LocalNotificationService(app).showAiReady("$documentId-podcast", "Podcast conversation is ready")
@@ -252,6 +263,7 @@ class PodcastOverviewSession(private val documentId: String) {
     }
 
     fun clearLocal(context: Context) {
+        resumeTurn = 0
         turns.clear()
         AtomicFile(fileFor(context.filesDir)).delete()
     }
