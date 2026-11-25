@@ -99,16 +99,27 @@ class CrossDocumentSearch(
                 )
             }
         }
-        result.sortedWith(
-            compareByDescending<CrossDocumentEvidence> { it.score }
-                .thenBy { it.documentName }
-        ).distinctBy { it.documentId to it.text }.take(limit)
+        rankEvidence(result, limit, tokens)
+
         } finally {
             persistent?.close()
         }
     }
 
     companion object {
+        // Reserve a passage for each explicitly named document before filling the remaining budget.
+        // Without a title match, ordinary relevance ranking is unchanged.
+        internal fun rankEvidence(candidates: List<CrossDocumentEvidence>, limit: Int, tokens: List<String>): List<CrossDocumentEvidence> {
+            val ranked = candidates.sortedWith(compareByDescending<CrossDocumentEvidence> { it.score }
+                .thenBy { it.documentName }.thenBy { it.documentId })
+                .distinctBy { Triple(it.documentId, it.page, it.text) }
+            val named = ranked.filter { evidence ->
+                val titleTokens = evidence.documentName.substringBeforeLast('.').lowercase(Locale.ROOT)
+                    .split(Regex("""[^\p{L}\p{N}]+""")).toSet()
+                tokens.any { it.length >= 3 && it in titleTokens }
+            }.distinctBy { it.documentId }.take(limit)
+            return (named + ranked).distinctBy { Triple(it.documentId,it.page,it.text) }.take(limit)
+        }
         // Bound each scan, irrespective of original document size, to prevent
         // the global chat allocating huge extracted PDFs in one phone heap.
         const val MAX_CHARACTERS_PER_DOCUMENT = 240_000
@@ -116,7 +127,7 @@ class CrossDocumentSearch(
             "about", "this", "that", "from", "what", "when", "with", "would",
             "could", "should", "which", "give", "tell", "explain", "please",
             "summary", "summarize", "your", "document", "documents", "across",
-            "these", "those", "have", "their", "there", "is", "it", "of", "to", "in", "on", "as", "at", "be", "by", "an", "or", "do", "me", "how", "why", "the", "and", "my", "are", "for", "you"
+            "these", "those", "have", "their", "there", "compare", "comparison", "between", "versus", "difference", "differences", "pdf", "is", "it", "of", "to", "in", "on", "as", "at", "be", "by", "an", "or", "do", "me", "how", "why", "the", "and", "my", "are", "for", "you"
         )
     }
 }

@@ -4,6 +4,9 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 
 data class AuPersonalization(
     val enabled: Boolean = false,
@@ -15,7 +18,8 @@ data class AuPersonalization(
 /** Explicit, account-scoped preferences. Never learns sensitive traits or saves chat automatically. */
 class AuPersonalizationStore(context: Context, private val accountId: String) {
     init { require(accountId.matches(Regex("[A-Za-z0-9_-]{8,64}"))) }
-    private val prefs = context.applicationContext.getSharedPreferences("au_personalization_v1", Context.MODE_PRIVATE)
+    private val app = context.applicationContext
+    private val prefs = app.getSharedPreferences("au_personalization_v1", Context.MODE_PRIVATE)
 
     fun read(): AuPersonalization = synchronized(lock) {
         runCatching {
@@ -85,6 +89,27 @@ class AuPersonalizationStore(context: Context, private val accountId: String) {
 
     fun promptContext(question: String): String = AuMemoryCommand.context(read(), question)
 
+    /** Bounded semantic fallback for explicitly saved notes, never automatic memory writes.
+     * No embedding files or cloud requests. Fast and Balanced avoid extra inference latency.
+     */
+    suspend fun contextFor(question: String, effort: AuEffort): String {
+        val value = read()
+        if (!value.enabled || effort.sourceLimit < 6 || question.isBlank() ||
+            value.notes.isEmpty() || !LocalEmbeddingRuntime.available(app) ||
+            AuMemoryCommand.relevantNotes(value.notes, question).isNotEmpty()) return AuMemoryCommand.context(value,question)
+        val semantic = try {
+            val query = LocalEmbeddingRuntime.embed(app,question.take(6000))
+            value.notes.takeLast(6).map { note ->
+                currentCoroutineContext().ensureActive()
+                note to DenseVectorCodec.cosine(query, LocalEmbeddingRuntime.embed(app,note))
+            }.filter { it.second >= 0.80 }.sortedByDescending { it.second }.take(2).map { it.first }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { emptyList() }
+        // A preference change or deletion while inference was running takes precedence.
+        val latest = read()
+        return AuMemoryCommand.context(latest,question,semantic.filter { it in latest.notes })
+    }
+
     companion object {
         const val MAX_NOTES = 20
         val STYLES = listOf("Adaptive", "Concise", "Detailed", "Step by step")
@@ -136,9 +161,9 @@ object AuMemoryCommand {
             .take(3).map { it.first }
     }
 
-    fun context(value: AuPersonalization, question: String): String {
+    fun context(value: AuPersonalization, question: String, semantic: List<String> = emptyList()): String {
         if (!value.enabled) return ""
-        val relevant = relevantNotes(value.notes, question)
+        val relevant = (relevantNotes(value.notes, question) + semantic.filter { it in value.notes }).distinct().take(3)
         val details = buildList {
             if (value.name.isNotBlank()) add("Preferred name: " + value.name.replace('\n', ' ').take(60))
             if (value.style != "Adaptive") add("Response style: " + value.style)

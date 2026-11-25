@@ -291,7 +291,7 @@ fun DiscsScreen(
                         val raw = StringBuilder()
                         var lastUpdate = 0L
                         try {
-                            LocalGenerativeEngine.generate(context, input + personalization.promptContext(question), allowGeneral = !searchDocuments,
+                            LocalGenerativeEngine.generate(context, input + personalization.contextFor(question, requestEffort), allowGeneral = !searchDocuments,
                                 generalOnly = !searchDocuments, effort = requestEffort) { text ->
                                 raw.append(text)
                                 val now = SystemClock.elapsedRealtime()

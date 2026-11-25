@@ -634,7 +634,7 @@ fun DocumentChatWorkspace(
                                         var lastUpdate = 0L
                                         try {
                                             session.searchingStage = "AU is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.promptContext(cleanPrompt).orEmpty(), effort = requestEffort) { part ->
+                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.contextFor(cleanPrompt, requestEffort).orEmpty(), effort = requestEffort) { part ->
                                                 generated.append(part)
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate > 90L) {
@@ -1168,6 +1168,7 @@ fun SmartNoteWorkspace(
     val sections = remember(session.response) {
         GeneratedStudySectionParser.parse(session.response)
     }
+    val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
 
     ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
         if (textPreview.isNullOrBlank()) {
@@ -1208,6 +1209,7 @@ fun SmartNoteWorkspace(
                 }
             }
             if (session.response.isNotBlank()) {
+                if (!session.working) AuReadAloudAction(notesSpeech, 0, session.response)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FilterChip(
                         modifier = Modifier.weight(1f),
