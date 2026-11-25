@@ -176,6 +176,23 @@ fun ProfileScreen(
                     Icons.Outlined.CreditCard, "Manage subscription", "Usage and plan & billing", onOpenSubscription
                 )
             }
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Cloud AI", fontWeight = FontWeight.SemiBold)
+                        Text("Coming soon", color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelMedium)
+                        Text("AU currently runs AI on your device. Cloud models and AU credits are not available yet.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
             item { SettingsSection("On-device") }
             item {
                 SettingsEntry(Icons.Outlined.Memory, "Models", "Download or import models", onOpenModels)
