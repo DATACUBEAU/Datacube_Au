@@ -98,6 +98,7 @@ fun DiscsScreen(
     // No global workspace files can enter source retrieval through this argument.
     val library = documents.map { it.document }
     var prompt by remember(ownerId, threadId) { mutableStateOf("") }
+    var effort by remember(threadId) { mutableStateOf(au.datacube.app.data.rag.AuEffort.BALANCED) }
     var attachment by remember(ownerId, threadId) { mutableStateOf<GistAttachment?>(null) }
     var preparingAttachment by remember(ownerId, threadId) { mutableStateOf(false) }
     var attachmentError by remember(ownerId, threadId) { mutableStateOf<String?>(null) }
@@ -174,6 +175,7 @@ fun DiscsScreen(
             (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
         if (audioPath == null) prompt = ""
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
+        val requestEffort = effort
         session.searching = true
         session.activitySteps.clear()
         session.searchingStage = "Understanding your question"
@@ -184,7 +186,7 @@ fun DiscsScreen(
                 val personalization = AuPersonalizationStore(context, accountId)
                 val memoryReply = if (audioPath == null && !alreadyAdded) personalization.command(question) else null
                 if (memoryReply != null) {
-                    turns.add(ChatMessage(question, emptyList(), false, answer = memoryReply))
+                    turns.add(ChatMessage(question, emptyList(), false, answer = memoryReply, steps = if (memoryReply.startsWith("Saved to your local AU memory.")) listOf("Memory saved") else emptyList()))
                     return@launch
                 }
                 if (AuConversationContext.asksYesterdayRecap(question)) {
@@ -217,7 +219,7 @@ fun DiscsScreen(
                     else question
                     session.searchingStage = if (searchDocuments) "Searching your documents" else "Preparing a reply"
                     val sourceResults = if (searchDocuments) {
-                        CrossDocumentSearch(context).search(library, retrievalQuestion)
+                        CrossDocumentSearch(context).search(library, retrievalQuestion, limit = requestEffort.sourceLimit)
                     } else emptyList()
                     if (searchDocuments) {
                         events += "Searched extracted text across ${library.size} document(s)"
@@ -285,7 +287,7 @@ fun DiscsScreen(
                         var lastUpdate = 0L
                         try {
                             LocalGenerativeEngine.generate(context, input + personalization.promptContext(question), allowGeneral = !searchDocuments,
-                                generalOnly = !searchDocuments) { text ->
+                                generalOnly = !searchDocuments, effort = requestEffort) { text ->
                                 raw.append(text)
                                 val now = SystemClock.elapsedRealtime()
                                 if (now - lastUpdate > 120L) {
@@ -350,6 +352,7 @@ fun DiscsScreen(
         val question = prompt.trim().ifBlank {
             if (selected is GistAttachment.Photo) "Explain this image." else "Explain this file."
         }
+        val requestEffort = effort
         val label = selected.label
         val sources = if (selected is GistAttachment.Document)
             listOf(SourceSnippet(selected.excerpt, null, documentName = label)) else emptyList()
@@ -374,7 +377,7 @@ fun DiscsScreen(
                 }
                 var lastUpdate = 0L
                 LocalGenerativeEngine.generate(context, input,
-                    image = (selected as? GistAttachment.Photo)?.bytes) { part ->
+                    image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort) { part ->
                     raw.append(part)
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastUpdate >= 120) {
@@ -479,11 +482,11 @@ fun DiscsScreen(
                             }
                         }
                     } else {
-                        Surface(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surface) {
-                            Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Box(Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Text("AU", fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary)
+                                if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                                 if (message.answer.isNotBlank()) AuRichResponse(message.answer)
                                 if (!message.generating && message.answer.isNotBlank() && message.generationError == null) {
                                     Row {
@@ -647,6 +650,8 @@ fun DiscsScreen(
                  else prompt.isNotBlank() && (AuScheduleIntent.matches(prompt) || (ready && !needsCollectionModel &&
                     userTurns < ConversationWindow.MAX_USER_TURNS))),
             sendDescription = "Send Gist message",
+            effort = effort,
+            onEffortChange = { effort = it },
             onStop = if (session.searching) ({ session.activeRequest?.cancel() }) else null,
             actions = {
                 if (collectionId == null) key(ownerId, threadId) {
