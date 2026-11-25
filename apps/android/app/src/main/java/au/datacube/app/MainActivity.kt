@@ -244,6 +244,32 @@ private fun AuthenticatedWorkspace(
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     LaunchedEffect(authState.user?.id) { authState.user?.id?.let { au.datacube.app.ui.common.ResponseFeedbackStore.schedule(context,it) } }
+    val communityAccount = authState.user?.id
+    val communityPrefs = remember(context) { context.getSharedPreferences("au_community_prompt_v1", android.content.Context.MODE_PRIVATE) }
+    var communityOpen by remember(communityAccount) {
+        mutableStateOf(communityAccount != null && !communityPrefs.getBoolean(communityAccount, false))
+    }
+    fun dismissCommunity() {
+        communityAccount?.let { communityPrefs.edit().putBoolean(it,true).apply() }
+        communityOpen = false
+    }
+    if (communityOpen) {
+        DataCubeDialog(
+            onDismissRequest = ::dismissCommunity,
+            title = { Text("DataCube AU community") },
+            text = { Text("Join the optional WhatsApp community for announcements, study-app guidance and support. WhatsApp may expose your phone number or profile to others; never post private documents or account details.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    dismissCommunity()
+                    runCatching {
+                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            Uri.parse("https://chat.whatsapp.com/D7GGIjLQitIFHRoEbBQsY0")))
+                    }.onFailure { scope.launch { snackbar.showSnackbar("Community link could not be opened.") } }
+                }) { Text("Open WhatsApp") }
+            },
+            dismissButton = { TextButton(onClick = ::dismissCommunity) { Text("Not now") } }
+        )
+    }
     LaunchedEffect(updateJustCompleted) {
         if (updateJustCompleted) {
             snackbar.showSnackbar("DataCube AU updated successfully. Your local data is retained.")
