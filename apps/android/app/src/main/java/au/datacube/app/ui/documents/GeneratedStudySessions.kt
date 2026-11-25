@@ -88,6 +88,9 @@ internal object GeneratedStudySectionParser {
 class GeneratedStudySession {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var generation: Job? = null
+    private var restored = false
+    var restoring by mutableStateOf(false)
+        private set
     var response by mutableStateOf("")
         private set
     var working by mutableStateOf(false)
@@ -105,13 +108,36 @@ class GeneratedStudySession {
     var attaching by mutableStateOf(false)
         private set
 
+    fun restoreNotes(context: Context, documentId: String) {
+        if (restored || restoring || working) return
+        restoring = true
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                val saved = PersistentStudyNotes.load(app.filesDir,documentId)
+                withContext(Dispatchers.Main) {
+                    if (!working && response.isBlank() && saved != null) {
+                        response = saved.text
+                        sources = saved.sources
+                        stage = "Saved Smart Notes"
+                    }
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Unreadable or obsolete notes can be regenerated. */ }
+            finally { withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                restored = true
+                restoring = false
+            } }
+        }
+    }
+
     fun generate(
         context: Context, documentId: String, documentName: String,
         textPreview: String, mode: GeneratedStudyMode,
         questionCount: Int = 5, questionStyle: String = "Explain",
         focus: String = "All topics"
     ) {
-        if (working || !LocalGenerativeEngine.installed(context)) {
+        if (working || restoring || !LocalGenerativeEngine.installed(context)) {
             if (!working) error = "Select an installed AU model in Models to generate content."
             return
         }
@@ -125,6 +151,7 @@ class GeneratedStudySession {
         val attached = attachmentText
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                val sourceHash = if (mode == GeneratedStudyMode.NOTES) PersistentStudyNotes.sourceHash(app.filesDir,documentId) else null
                 val excerpts = runCatching {
                     val index = LocalPassageIndex(app)
                     try {
@@ -135,7 +162,7 @@ class GeneratedStudySession {
                     } finally {
                         index.close()
                     }
-                }.getOrDefault(emptyList()).ifEmpty {
+                }.getOrElse { if (it is CancellationException) throw it; emptyList() }.ifEmpty {
                     val previewChunks = RagTextChunker(maxChunks = 40)
                         .chunk(documentId, textPreview.take(240_000))
                     StudyGenerationPrompt.spreadAcross(previewChunks, count = 10)
@@ -176,6 +203,9 @@ class GeneratedStudySession {
                     check(GeneratedPracticeParser.parse(complete, sources).isNotEmpty()) {
                         "AU could not generate valid practice questions. Try again."
                     }
+                }
+                if (mode == GeneratedStudyMode.NOTES && sourceHash != null) {
+                    PersistentStudyNotes.save(app.filesDir,documentId,sourceHash,complete,sources)
                 }
                 withContext(Dispatchers.Main) {
                     response = complete.take(18_000)
@@ -296,6 +326,10 @@ object GeneratedStudySessions {
     @Synchronized fun get(documentId: String, mode: GeneratedStudyMode): GeneratedStudySession {
         val key = "$documentId:${mode.name}"
         return active.getOrPut(key) { GeneratedStudySession() }
+    }
+    @Synchronized fun releaseAll() {
+        active.values.forEach { it.stop() }
+        active.clear()
     }
     @Synchronized fun clear(documentId: String) {
         active.keys.filter { it.startsWith("$documentId:") }.forEach { key ->
