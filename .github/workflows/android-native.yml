@@ -85,7 +85,7 @@ jobs:
           # A publishable key is safe in client builds; never place service-role keys here.
           SUPABASE_URL: https://dhmukdeljiwvvwjdcxgn.supabase.co
           SUPABASE_ANON_KEY: sb_publishable_6N4nuBJIaXzOVYYUXSzomA_R8TB1vc_
-          AUTH_WEBSITE_URL: https://datacube-au.vercel.app
+          AUTH_WEBSITE_URL: https://datacube.fabianodev.xyz
         run: |
           if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
             echo "::error::Android build needs Supabase project URL and publishable key."

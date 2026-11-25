@@ -73,7 +73,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="datacube-au.vercel.app"
+                    android:host="datacube.fabianodev.xyz"
                     android:path="/mobile-auth/return" />
             </intent-filter>
         </activity>

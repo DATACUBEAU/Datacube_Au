@@ -66,7 +66,7 @@ assert.match(androidManifest, /android:roundIcon="@mipmap\/ic_launcher_round"/);
 assert.doesNotMatch(androidManifest, /auth-callback/);
 assert.match(androidManifest, /android:autoVerify="true"/);
 assert.match(androidManifest, /android:scheme="https"/);
-assert.match(androidManifest, /android:host="datacube-au.vercel.app"/);
+assert.match(androidManifest, /android:host="datacube.fabianodev.xyz"/);
 assert.match(androidManifest, /android:path="\/mobile-auth\/return"/);
 assert.doesNotMatch(androidActivity, /handleAuthIntent|completeWebsiteAuthentication|createWebsiteLoginUrl/);
 assert.match(androidViewModel, /startMobileSignIn/);

@@ -22,16 +22,16 @@ class MobileAuthLinkTest {
     private val app get() = ApplicationProvider.getApplicationContext<Context>()
     private val instrumentation get() = InstrumentationRegistry.getInstrumentation()
     private val request = "AQ-_".repeat(10) + "Abc"
-    private val callback = "https://datacube-au.vercel.app/mobile-auth/return"
+    private val callback = "https://datacube.fabianodev.xyz/mobile-auth/return"
 
     @Test
     fun callbackRequiresTheExactHttpsHostPathAndSingleOpaqueRequest() {
         assertEquals(request, mobileSignInRequestId(viewIntent("$callback?request=$request")))
         listOf(
-            "http://datacube-au.vercel.app/mobile-auth/return?request=$request",
-            "https://datacube-au.vercel.app.example/mobile-auth/return?request=$request",
-            "https://app@datacube-au.vercel.app/mobile-auth/return?request=$request",
-            "https://datacube-au.vercel.app:443/mobile-auth/return?request=$request",
+            "http://datacube.fabianodev.xyz/mobile-auth/return?request=$request",
+            "https://datacube.fabianodev.xyz.example/mobile-auth/return?request=$request",
+            "https://app@datacube.fabianodev.xyz/mobile-auth/return?request=$request",
+            "https://datacube.fabianodev.xyz:443/mobile-auth/return?request=$request",
             "$callback/?request=$request",
             "$callback?request=$request#",
             "$callback?request=$request&request=$request",
