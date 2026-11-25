@@ -108,7 +108,7 @@ jobs:
 
       - name: Build smaller ARM64 APK only
         run: >-
-          bash ./gradlew :app:assembleDebug -PdatacubeArm64Only=true
+          bash ./gradlew :app:assembleDebug -PdatacubeArm64Only=true -PdatacubeDistribution=website
           -PdatacubeVersionCode="$DATACUBE_VERSION_CODE"
           -PdatacubeVersionName="$DATACUBE_VERSION_NAME" --no-daemon
 
