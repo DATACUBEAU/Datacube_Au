@@ -23,18 +23,28 @@ object AuFollowUp {
         val options = choices(last?.answer.orEmpty())
         val requested = selection.matchEntire(q)?.groupValues?.get(1)?.uppercase(Locale.ROOT)
         val chosen = options.firstOrNull { it.first == requested }
-        if (chosen != null) return Resolution("Explain "+chosen.second, true)
+        if (chosen != null) {
+            val task = if (documentScope) when (chosen.second) {
+                "Key concepts" -> "Summarize the key concepts in this document"
+                "Section-by-section explanation" -> "Outline the sections of this document"
+                "Practice questions" -> "Create practice questions from this document"
+                else -> "Explain " + chosen.second
+            } else "Explain " + chosen.second + " for " + previous.asReversed().firstOrNull {
+                normalized(it.question) !in continuation && normalized(it.question) !in completeness
+            }?.question.orEmpty().take(240)
+            return Resolution(task,true)
+        }
         if (requested != null) return Resolution(question)
         if (q in completeness && last != null) return Resolution(question,true,reply=if (documentScope)
             "There may be more to explore. What would help you most?\nA. Key concepts\nB. Section-by-section explanation\nC. Practice questions"
-            else "We can explore this further. Would you like examples, a deeper explanation, or a practical application?")
+            else "We can explore this further. What would help you most?\nA. Examples\nB. A deeper explanation\nC. Practical applications")
         if (q !in continuation) return Resolution(question)
         if (last == null) return Resolution(question,reply="What would you like me to continue with?")
         if (options.size > 1 && (last.answer.contains('?') || last.answer.contains("choose",true) || last.answer.contains("would you like",true))) {
             return Resolution(question,true,reply="Which would you like me to continue with?\n"+
                 options.joinToString("\n") { (key,label) -> "$key. $label" })
         }
-        if (last.answer.takeLast(600).contains('?') && q in setOf("yes","okay","ok","sure","go on","continue","okay go on","ok go on","yes go on","proceed")) {
+        if (last.answer.takeLast(600).contains('?') && Regex("""\b(?:or|which)\b""", RegexOption.IGNORE_CASE).containsMatchIn(last.answer.takeLast(600)) && q in setOf("yes","okay","ok","sure","go on","continue","okay go on","ok go on","yes go on","proceed")) {
             return Resolution(question,true,reply="Which part would you like me to continue with?")
         }
         val anchor = previous.asReversed().firstOrNull { normalized(it.question) !in continuation && normalized(it.question) !in completeness } ?: last
