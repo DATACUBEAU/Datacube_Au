@@ -488,7 +488,7 @@ fun DocumentChatWorkspace(
                                             steps = events.toList(),
                                             generating = true
                                         ))
-                                        var answer = ""
+                                        val answer = StringBuilder()
                                         try {
                                             session.searchingStage = "AU is replying"
                                             LocalGenerativeEngine.generate(
@@ -499,14 +499,16 @@ fun DocumentChatWorkspace(
                                                 allowGeneral = true,
                                                 generalOnly = true
                                             ) { part ->
-                                                answer += part
-                                                messages[answerIndex] = messages[answerIndex].copy(
-                                                    answer = ModelOutputCleaner.visible(answer, 0).take(3_000)
-                                                )
+                                                answer.append(part)
+                                                withContext(Dispatchers.Main) {
+                                                    messages[answerIndex] = messages[answerIndex].copy(
+                                                        answer = ModelOutputCleaner.visible(answer.toString(), 0).take(3_000)
+                                                    )
+                                                }
                                             }
                                             events += "AU answered without searching the document"
                                             messages[answerIndex] = messages[answerIndex].copy(
-                                                answer = ModelOutputCleaner.visible(answer, 0).trim(),
+                                                answer = ModelOutputCleaner.visible(answer.toString(), 0).trim(),
                                                 generating = false,
                                                 steps = events.toList()
                                             )
@@ -555,7 +557,7 @@ fun DocumentChatWorkspace(
                                                 } finally {
                                                     index.close()
                                                 }
-                                            }.getOrDefault(emptyList())
+                                            }.getOrElse { if (it is CancellationException) throw it; emptyList() }
                                         }
                                         val overviewCandidates = if (indexedOverview.isNotEmpty()) {
                                             indexedOverview.map { RagEvidence(it.text, it.page) }
@@ -580,7 +582,7 @@ fun DocumentChatWorkspace(
                                                 } finally {
                                                     index.close()
                                                 }
-                                            }.getOrNull()
+                                            }.getOrElse { if (it is CancellationException) throw it; null }
                                         }
                                         val keywordMatches = if (indexedMatches != null) {
                                             indexedMatches.map { SourceSnippet(it.text, it.page) }
@@ -681,7 +683,7 @@ fun DocumentChatWorkspace(
                                     throw cancelled
                                 } catch (error: Exception) {
                                     events += "Search could not finish: ${error.message ?: "unknown error"}"
-                                    messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList()))
+                                    messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList(), generationError = "Document search could not finish. Try again."))
                                 } finally {
                                     session.searching = false
                                     session.searchingStage = ""
@@ -908,7 +910,7 @@ fun DocumentChatWorkspace(
                             }
                             if (message.matches.isEmpty() && message.answer.isBlank() &&
                                 !message.generating && message.generationError == null) {
-                                Text("No verified passage matched. Try a more specific question.",
+                                Text("I could not verify that in the available document passages. Try another term or select a relevant chapter.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             if (message.matches.isNotEmpty()) {
