@@ -70,5 +70,7 @@ class ActiveLocalChatModel(context: Context) {
 
     private fun verifiedInstalled(id: String): Boolean =
         ModelCatalog.models.any { it.id == id && it.role == ModelRole.GENERATION } &&
-            VerifiedModelDownloads.find(id) != null && library.installed(id)
+            library.installed(id) && VerifiedModelDownloads.find(id)?.let { artifact ->
+                java.io.File(app.filesDir, "models/installed/$id/${artifact.fileName}").isFile
+            } == true
 }
