@@ -39,5 +39,16 @@ class AuthSessionStore(private val context: Context) {
         }
     }
 
+    // Read only the authenticated, Keystore-protected SDK record, never display preferences.
+    internal suspend fun localUser(): UserInfo? = EncryptedSupabaseSessionManager(context).loadSession()
+        ?.takeIf { it.accessToken.isNotBlank() && it.refreshToken.isNotBlank() &&
+            it.tokenType.equals("bearer", ignoreCase = true) }
+        ?.user?.takeIf { it.id.isNotBlank() }
+
+    internal suspend fun clearLocalSession() {
+        EncryptedSupabaseSessionManager(context).deleteSession()
+        clear()
+    }
+
     suspend fun clear() = persist(null)
 }
