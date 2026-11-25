@@ -1169,7 +1169,7 @@ fun SmartNoteWorkspace(
         GeneratedStudySectionParser.parse(session.response)
     }
 
-    ToolPage("Smart Note", "AI-generated notes you can read or explore as a concept tree.") {
+    ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
         if (textPreview.isNullOrBlank()) {
             SourceUnavailableCard(previewLoading, null)
         } else {
@@ -1222,6 +1222,8 @@ fun SmartNoteWorkspace(
                         label = { Text("Concept tree") }
                     )
                 }
+                Text("Based on selected source passages. Check the original document for complete coverage.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (conceptTree) {
                     Surface(
                         Modifier.fillMaxWidth(),
@@ -1286,7 +1288,8 @@ fun SmartNoteWorkspace(
                     }
                 } else {
                     sections.forEach { section ->
-                        ToolCard {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(section.topic, style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold)
                             if (section.details.isNotBlank()) {
