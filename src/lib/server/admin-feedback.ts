@@ -1,6 +1,9 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+export const FEEDBACK_TABLES = ['au_feedback', 'au_user_feedback'] as const;
+export type FeedbackTable = typeof FEEDBACK_TABLES[number];
 type FeedbackRow = {
+  source_table: FeedbackTable;
   id: string;
   created_at: string | null;
   user_id: string | null;
@@ -22,6 +25,7 @@ type ProfileRow = {
 };
 
 export type AdminFeedbackRecord = {
+  source_table: FeedbackTable;
   id: string;
   created_at: string | null;
   user_id: string | null;
@@ -76,21 +80,21 @@ export async function listAdminFeedback(
   },
 ): Promise<{ rows: AdminFeedbackRecord[]; count: number }> {
   const limit = Math.min(10000, Math.max(1, Math.floor(options?.limit || 200)));
-  let query = supabase
-    .from('au_feedback')
-    .select('id,created_at,user_id,section,rating,comment,metadata')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-
-  if (options?.from) query = query.gte('created_at', options.from);
-  if (options?.to) query = query.lte('created_at', options.to);
-
-  const { data, error } = await query;
-  if (error) {
-    throw error;
-  }
-
-  const feedbackRows = (data || []) as FeedbackRow[];
+  const groups = await Promise.all(FEEDBACK_TABLES.map(async (table) => {
+    let query = supabase.from(table)
+      .select('id,created_at,user_id,section,rating,comment,metadata')
+      .order('created_at', { ascending: false }).limit(limit);
+    if (options?.from) query = query.gte('created_at', options.from);
+    if (options?.to) query = query.lte('created_at', options.to);
+    const { data, error } = await query;
+    if (error) {
+      if (['42P01', 'PGRST205'].includes(error.code)) return [];
+      throw error;
+    }
+    return (data || []).map(row => ({ ...row, source_table: table })) as FeedbackRow[];
+  }));
+  const feedbackRows = groups.flat().sort((a,b) =>
+    String(b.created_at || '').localeCompare(String(a.created_at || ''))).slice(0, limit);
   const userIds = Array.from(
     new Set(
       feedbackRows
@@ -139,6 +143,7 @@ export async function listAdminFeedback(
 
     return {
       id: row.id,
+      source_table: row.source_table,
       created_at: row.created_at,
       user_id: row.user_id,
       section: String(row.section || 'unknown'),
