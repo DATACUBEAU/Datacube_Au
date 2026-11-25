@@ -20,6 +20,7 @@ import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -122,7 +123,7 @@ class GeneratedStudySession {
         response = ""
         sources = emptyList()
         val attached = attachmentText
-        generation = scope.launch {
+        val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val excerpts = runCatching {
                     val index = LocalPassageIndex(app)
@@ -191,17 +192,28 @@ class GeneratedStudySession {
                 withContext(Dispatchers.Main) {
                     error = failure.message ?: "AU could not generate study content."
                 }
-            } finally {
-                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) { working = false }
             }
         }
-        generation?.let { AuBackgroundWork.track(app, it, "Preparing study content") }
+        generation = job
+        job.invokeOnCompletion { cause ->
+            scope.launch(Dispatchers.Main) {
+                if (generation === job) {
+                    if (cause is CancellationException) stage = "Stopped"
+                    working = false
+                    generation = null
+                }
+            }
+        }
+        job.start()
+        AuBackgroundWork.track(app, job, "Preparing study content")
     }
 
     fun stop() {
-        generation?.cancel()
-        working = false
-        stage = "Stopped"
+        val job = generation ?: return
+        if (job.isActive) {
+            stage = "Stopping…"
+            job.cancel()
+        }
     }
 
     /** Optional PDF/TXT/MD attachment, chosen explicitly by the user. */
