@@ -49,17 +49,10 @@ object AndroidUpdateManager {
         // Independent of authentication callbacks: use the official domain first,
         // retain the legacy endpoint for existing deployments and recovery.
         val origins = listOf("https://datacube.fabianodev.xyz", BuildConfig.AUTH_WEBSITE_URL.trimEnd('/')).distinct()
-        var failure: Exception? = null
-        for (origin in origins) {
-            try {
-                return@withContext checkOrigin(origin)
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (error: Exception) {
-                failure = error
-            }
-        }
-        throw failure ?: IllegalStateException("Update server is unavailable.")
+        val sources: List<suspend () -> AndroidUpdateRelease?> =
+            origins.map { origin -> suspend { checkOrigin(origin) } } +
+                listOf(suspend { GithubUpdateFallback.check(installedVersion(), ::parseManifest) })
+        resolveUpdateSources(sources)
     }
 
     private suspend fun checkOrigin(origin: String): AndroidUpdateRelease? = withContext(Dispatchers.IO) {
@@ -86,28 +79,31 @@ object AndroidUpdateManager {
                     output.write(buffer, 0, n)
                 }
             }
-            val json = JSONObject(output.toString(Charsets.UTF_8.name()))
-            require(json.optInt("schema") == 1) { "Unsupported update metadata." }
-            val code = json.getInt("versionCode")
-            val size = json.getLong("sizeBytes")
-            val hash = json.getString("sha256").lowercase(Locale.ROOT)
-            val link = json.getString("apkUrl")
-            require(code in 4..2_100_000_000 && size in 1_000_000L..MAX_APK_BYTES &&
-                checksumFormat.matches(hash) && releaseUrl.matches(link)) {
-                "Update verification failed. Try again later."
-            }
-            if (code <= BuildConfig.VERSION_CODE) return@withContext null
-            AndroidUpdateRelease(
-                versionCode = code,
-                versionName = json.optString("versionName", "Update $code").take(36),
-                apkUrl = link,
-                sizeBytes = size,
-                sha256 = hash,
-                notes = json.optString("notes", "New improvements").take(500)
-            )
+            val release = parseManifest(JSONObject(output.toString(Charsets.UTF_8.name())))
+            release.takeIf { it.versionCode > installedVersion() }
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun parseManifest(json: JSONObject): AndroidUpdateRelease {
+        require(json.optInt("schema") == 1) { "Unsupported update metadata." }
+        val code = json.getInt("versionCode")
+        val size = json.getLong("sizeBytes")
+        val hash = json.getString("sha256").lowercase(Locale.ROOT)
+        val link = json.getString("apkUrl")
+        require(code in 4..2_100_000_000 && size in 1_000_000L..MAX_APK_BYTES &&
+            checksumFormat.matches(hash) && releaseUrl.matches(link)) {
+            "Update verification failed. Try again later."
+        }
+        return AndroidUpdateRelease(
+            versionCode = code,
+            versionName = json.optString("versionName", "Update $code").take(36),
+            apkUrl = link,
+            sizeBytes = size,
+            sha256 = hash,
+            notes = json.optString("notes", "New improvements").take(500)
+        )
     }
 
     private fun updateFile(context: Context, release: AndroidUpdateRelease): File {
