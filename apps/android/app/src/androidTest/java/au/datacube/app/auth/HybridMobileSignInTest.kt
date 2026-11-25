@@ -153,9 +153,10 @@ class HybridMobileSignInTest {
         val uri = requireNotNull(browserUri)
         assertEquals("https", uri.scheme)
         assertEquals("fixture.invalid", uri.host)
-        assertEquals("/mobile-auth/approve", uri.path)
-        assertEquals(setOf("request"), uri.queryParameterNames)
-        assertEquals(requestId, uri.getQueryParameter("request"))
+        assertEquals("/login", uri.path)
+        assertEquals(setOf("redirectTo", "forceReauth"), uri.queryParameterNames)
+        assertEquals("1", uri.getQueryParameter("forceReauth"))
+        assertEquals("/mobile-auth/approve?request=$requestId", uri.getQueryParameter("redirectTo"))
         ui.onNodeWithText(pairingCode).assertIsDisplayed()
         assertNotNull(runBlocking { pendingStore.load() })
     }

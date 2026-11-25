@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useSupabaseUser } from '@/hooks/use-supabase-auth';
+import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import {
   MOBILE_AUTH_APPROVAL_PATH,
   MOBILE_AUTH_RETURN_PATH,
@@ -33,15 +34,30 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
   const [pending, setPending] = useState<Decision | null>(null);
   const [result, setResult] = useState<DecisionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
   const approvalPath = `${MOBILE_AUTH_APPROVAL_PATH}?request=${requestId}`;
   const loginPath = `/login?redirectTo=${encodeURIComponent(approvalPath)}`;
 
   useEffect(() => {
-    if (!loading && !session && !result) router.replace(loginPath);
-  }, [loading, loginPath, result, router, session]);
+    if (!loading && !session && !result && !signingOut) router.replace(loginPath);
+  }, [loading, loginPath, result, router, session, signingOut]);
+
+  async function signOutBrowser() {
+    if (signingOut || pending) return;
+    setSigningOut(true);
+    setPairingCode('');
+    setError(null);
+    try {
+      await explicitSignOut(user?.id ?? null);
+      router.replace(result ? '/login?forceReauth=1' : `${loginPath}&forceReauth=1`);
+    } catch {
+      setError('Could not clear the website session. Try again.');
+      setSigningOut(false);
+    }
+  }
 
   async function sendDecision(action: Decision) {
-    if (pending || !session?.access_token || result) return;
+    if (pending || signingOut || !session?.access_token || result) return;
     const code = pairingCode.toUpperCase().replace(/[\s-]/g, '');
     if (!/^[A-Z2-9]{8}$/.test(code)) {
       setError('Enter the eight-character code shown in the DataCube AU app.');
@@ -103,6 +119,10 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
         <Button asChild className="min-h-11 w-full">
           <a href={`${MOBILE_AUTH_RETURN_PATH}?request=${requestId}`}>Open DataCube AU</a>
         </Button>
+        <Button type="button" variant="ghost" disabled={signingOut} onClick={() => void signOutBrowser()}>
+          {signingOut ? 'Signing out…' : 'Sign out of website'}
+        </Button>
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
         <p className="text-sm text-muted-foreground">
           If the link doesn’t open the app, reopen DataCube AU from your home screen.
         </p>
@@ -119,7 +139,7 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
     );
   }
 
-  if (loading || !session) return <LoadingApproval />;
+  if (loading || (!session && !signingOut)) return <LoadingApproval />;
 
   return (
     <div className="space-y-5">
@@ -132,6 +152,14 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
           </p>
         </div>
         {user?.email && <p className="break-all text-sm font-medium">Signed in as {user.email}</p>}
+        <Button type="button" variant="ghost" className="min-h-11 w-full" disabled={pending !== null || signingOut}
+          onClick={() => void signOutBrowser()}>
+          Use another Google account
+        </Button>
+        <Button type="button" variant="outline" className="min-h-11 w-full" disabled={pending !== null || signingOut}
+          onClick={() => void signOutBrowser()}>
+          {signingOut ? 'Signing out…' : 'Sign out of website'}
+        </Button>
       </div>
       <div className="space-y-2 text-left">
         <Label htmlFor="pairing-code" className="text-sm font-semibold text-foreground">Pairing code</Label>

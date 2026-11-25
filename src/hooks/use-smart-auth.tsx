@@ -324,7 +324,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
-        options: redirectTo ? { redirectTo } : undefined,
+        options: { redirectTo, queryParams: { prompt: 'select_account' } },
       });
       if (error) throw error;
     } catch (error) {

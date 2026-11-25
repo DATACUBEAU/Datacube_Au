@@ -28,6 +28,7 @@ export default function LoginPage() {
   const { signInWithGoogle } = useSmartAuth();
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
   const [isResolvingRedirect, setIsResolvingRedirect] = useState(false);
+  const [forceReauthReady, setForceReauthReady] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [user, , isUserLoading] = useSupabaseUser();
@@ -54,17 +55,17 @@ export default function LoginPage() {
     let cancelled = false;
 
     if (forceReauth) {
-      if (!user) {
-        setIsResolvingRedirect(false);
-        return;
-      }
+      setForceReauthReady(false);
       setIsResolvingRedirect(true);
-      void explicitSignOut(user.id).finally(() => {
+      // Clear stale website storage/cookies even if no in-memory user is restored.
+      void explicitSignOut(user?.id ?? null).then(() => {
+        if (!cancelled) setForceReauthReady(true);
+      }).catch(() => {
+        if (!cancelled) setAuthError('Could not clear the previous website session. Reload this page and try again.');
+      }).finally(() => {
         if (!cancelled) setIsResolvingRedirect(false);
       });
-      return () => {
-        cancelled = true;
-      };
+      return () => { cancelled = true; };
     }
 
     if (!user) return;
@@ -172,7 +173,7 @@ export default function LoginPage() {
   }, [user, isUserLoading, router, safeRedirectPath, isMobileDestination, isConexDestination, forceReauth]);
 
   const handleGoogleSignIn = async () => {
-    if (isLoadingGoogle || isUserLoading) return;
+    if (isLoadingGoogle || isUserLoading || (forceReauth && !forceReauthReady)) return;
     setIsLoadingGoogle(true);
     setAuthError(null);
 
@@ -244,7 +245,7 @@ export default function LoginPage() {
               onClick={handleGoogleSignIn}
               className="h-12 w-full rounded-xl text-sm font-semibold shadow-lg shadow-primary/15"
               variant="outline"
-              disabled={isLoadingGoogle || isUserLoading}
+              disabled={isLoadingGoogle || isUserLoading || (forceReauth && !forceReauthReady)}
             >
               {isLoadingGoogle ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

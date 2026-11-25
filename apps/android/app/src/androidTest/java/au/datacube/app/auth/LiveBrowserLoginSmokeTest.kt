@@ -19,6 +19,7 @@ import io.ktor.client.engine.mock.MockEngine
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
@@ -71,8 +72,9 @@ class LiveBrowserLoginSmokeTest {
             val destination = requireNotNull(launchedUri) { "App did not generate browser intent" }
             assertEquals("https", destination.scheme)
             assertEquals("datacube-au.vercel.app", destination.host)
-            assertEquals("/mobile-auth/approve", destination.path)
-            assertNotNull("Missing request id", destination.getQueryParameter("request"))
+            assertEquals("/login", destination.path)
+            assertEquals("1", destination.getQueryParameter("forceReauth"))
+            assertTrue(Regex("/mobile-auth/approve\\?request=[A-Za-z0-9_-]{43}").matches(destination.getQueryParameter("redirectTo").orEmpty()))
             assertNotNull("Device code was not shown", state.pairingCode)
             val browser = Intent(Intent.ACTION_VIEW, destination).addCategory(Intent.CATEGORY_BROWSABLE)
             // PackageManager browser discovery may be hidden by Android 11+ package visibility,

@@ -4,6 +4,7 @@ import android.util.Log
 import kotlinx.coroutines.CancellationException
 import au.datacube.app.BuildConfig
 import io.github.jan.supabase.auth.Auth
+import io.github.jan.supabase.auth.SignOutScope
 import io.github.jan.supabase.auth.user.UserSession
 import kotlinx.datetime.Clock
 import kotlinx.coroutines.sync.Mutex
@@ -37,7 +38,8 @@ class AuthRepository(
 
     suspend fun signOut(): AuthResult {
         try {
-            auth.signOut()
+            // Explicit account sign-out also revokes this user's web and other AU sessions when online.
+            auth.signOut(SignOutScope.GLOBAL)
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
