@@ -91,7 +91,6 @@ fun UpdateSettingsCard() {
             }
             val current = release
             if (current != null) {
-                Text(current.notes, style = MaterialTheme.typography.bodySmall)
                 Text(
                     "Full APK · " + (current.sizeBytes / (1024 * 1024)) + " MB",
                     style = MaterialTheme.typography.labelSmall
