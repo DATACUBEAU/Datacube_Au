@@ -575,7 +575,7 @@ fun DocumentChatWorkspace(
                                                 try {
                                                     val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
                                                     if (index.hasCurrent(documentId, source)) {
-                                                        index.search(documentId, plan.retrievalQuery, source, limit = 6)
+                                                        index.search(documentId, plan.retrievalQuery, source, limit = requestEffort.sourceLimit)
                                                     } else null
                                                 } finally {
                                                     index.close()
@@ -592,7 +592,7 @@ fun DocumentChatWorkspace(
                                             session.searchingStage = "Checking semantic matches"
                                             events += "Queried the on-device vector index"
                                             try {
-                                                semanticSearch.search(documentId, plan.retrievalQuery, 6)
+                                                semanticSearch.search(documentId, plan.retrievalQuery, requestEffort.sourceLimit)
                                             } catch (cancelled: CancellationException) {
                                                 throw cancelled
                                             } catch (_: Exception) {
@@ -603,7 +603,7 @@ fun DocumentChatWorkspace(
                                         matches = GroundedRagPlanner.fuse(
                                             keywordMatches.map { RagEvidence(it.text, it.page) },
                                             vectorMatches.map { RagEvidence(it.text, it.page) },
-                                            limit = minOf(requestEffort.sourceLimit, 5)
+                                            limit = requestEffort.sourceLimit
                                         ).map { SourceSnippet(it.text, it.page) }
                                         if (usedSemantic) events += "Combined keyword and vector results"
                                     }
@@ -624,7 +624,8 @@ fun DocumentChatWorkspace(
                                         val grounded = GroundedRagPlanner.build(
                                             plan.contextualQuestion ?: cleanPrompt, previous,
                                             matches.map { RagEvidence(it.text, it.page) },
-                                            compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected())
+                                            compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
+                                            effort = requestEffort
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
                                         matches = grounded.evidence.map { SourceSnippet(it.text, it.page) }
