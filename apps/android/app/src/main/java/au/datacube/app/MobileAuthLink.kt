@@ -7,7 +7,7 @@ internal fun mobileSignInRequestId(intent: Intent): String? {
     if (intent.action != Intent.ACTION_VIEW) return null
     val uri = intent.data ?: return null
     if (uri.scheme != "https" ||
-        uri.encodedAuthority != "datacube-au.vercel.app" ||
+        uri.encodedAuthority != "datacube.fabianodev.xyz" ||
         uri.encodedPath != "/mobile-auth/return" ||
         uri.encodedFragment != null
     ) return null
