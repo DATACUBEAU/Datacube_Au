@@ -1266,6 +1266,7 @@ fun SmartNoteWorkspace(
         GeneratedStudySectionParser.parse(session.response)
     }
     val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
+    LaunchedEffect(documentId, textPreview) { if (!textPreview.isNullOrBlank()) session.restoreNotes(context,documentId) }
 
     ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
         AuReadAloudBar(notesSpeech)
@@ -1287,13 +1288,14 @@ fun SmartNoteWorkspace(
                             textPreview, GeneratedStudyMode.NOTES
                         )
                     },
-                    enabled = ready && !session.working,
+                    enabled = ready && !session.working && !session.restoring,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
                 ) {
                     Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (session.response.isBlank()) "Generate Smart Note" else "Regenerate notes")
                 }
+                if (session.restoring) Text("Opening saved notes…", style = MaterialTheme.typography.bodySmall)
                 if (session.working) {
                     Spacer(Modifier.height(10.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
