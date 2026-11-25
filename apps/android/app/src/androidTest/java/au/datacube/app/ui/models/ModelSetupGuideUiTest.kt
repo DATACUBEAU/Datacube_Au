@@ -42,4 +42,17 @@ class ModelSetupGuideUiTest {
         composeRule.onNodeWithText("Import anyway").assertIsDisplayed().performClick()
         composeRule.runOnIdle { assertEquals(1,opened);assertEquals(1,imported) }
     }
+
+    @Test fun communityInvitationRequiresExplicitChoice() {
+        var joined=0
+        var dismissed=0
+        composeRule.setContent {
+            DataCubeTheme { CommunityInviteDialog(onDismiss={dismissed++},onJoin={joined++}) }
+        }
+        composeRule.onNodeWithText("Join the AU community").assertIsDisplayed()
+        composeRule.onNodeWithText("Not now").performClick()
+        composeRule.runOnIdle { assertEquals(1,dismissed); assertEquals(0,joined) }
+        composeRule.onNodeWithText("Open WhatsApp").performClick()
+        composeRule.runOnIdle { assertEquals(1,joined) }
+    }
 }
