@@ -142,7 +142,7 @@ class AuthViewModel internal constructor(
                 pendingStore.save(request)
                 pending = request
                 _state.value = _state.value.copy(isLoading = false, pairingCode = request.pairingCode)
-                openPendingSignIn(openBrowser)
+                openPendingSignInInternal(openBrowser, fresh = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -163,7 +163,9 @@ class AuthViewModel internal constructor(
         }
     }
 
-    fun openPendingSignIn(openBrowser: (Uri) -> Unit) {
+    fun openPendingSignIn(openBrowser: (Uri) -> Unit) = openPendingSignInInternal(openBrowser, fresh = false)
+
+    private fun openPendingSignInInternal(openBrowser: (Uri) -> Unit, fresh: Boolean) {
         val request = pending ?: return
         if (_state.value.isLoading || _state.value.user != null) return
         if (request.expiresAt <= now()) {
@@ -172,7 +174,8 @@ class AuthViewModel internal constructor(
         }
         try {
             _state.value = _state.value.copy(error = null)
-            openBrowser(mobileAuthorization.approvalPage(request.requestId))
+            openBrowser(if (fresh) mobileAuthorization.signInPage(request.requestId)
+                else mobileAuthorization.approvalPage(request.requestId))
         } catch (_: Exception) {
             Log.w(TAG, "mobile_browser_unavailable")
             _state.value = _state.value.copy(error = "Couldn’t open your browser. Check your browser settings, then try again.")
