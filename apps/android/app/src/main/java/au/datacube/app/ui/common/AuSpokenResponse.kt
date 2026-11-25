@@ -55,6 +55,11 @@ internal object AuSpokenResponse {
                         add(plain(block.title))
                         block.rows.forEach { (label, value) -> add(plain(label) + ": " + value.toString().removeSuffix(".0")) }
                     }
+                    is AuResponseBlock.Sketch -> {
+                        add(plain(block.scene.title))
+                        add(plain(block.scene.description))
+                    }
+                    AuResponseBlock.ProjectileIllustration -> add("Illustration: a person tosses a ball. It rises, reaches its highest point, and falls under gravity. The path is schematic and not to scale.")
                     is AuResponseBlock.Code -> add("A code example is available in the written response.")
                     is AuResponseBlock.Table -> {
                         add("Here is the table, row by row.")

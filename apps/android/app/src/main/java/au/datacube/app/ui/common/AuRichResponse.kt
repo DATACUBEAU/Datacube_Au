@@ -35,6 +35,8 @@ internal sealed interface AuResponseBlock {
     data class WorkflowNode(val title: String, val detail: String)
     data class BarChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
     data class PieChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
+    data object ProjectileIllustration : AuResponseBlock
+    data class Sketch(val scene: AuSketchScene) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -73,6 +75,23 @@ internal object AuResponseParser {
                     result += AuResponseBlock.Table(header, rows)
                     continue
                 }
+            }
+            if (line.startsWith("[SKETCH] ")) {
+                val end = (i + 1 until minOf(lines.size, i + 24)).firstOrNull { lines[it].trim() == "[/SKETCH]" }
+                if (end != null) {
+                    val scene = AuSketchParser.parse(line.removePrefix("[SKETCH] "), lines.subList(i + 1,end))
+                    if (scene != null) {
+                        result += AuResponseBlock.Sketch(scene)
+                        i = end + 1
+                        continue
+                    }
+                }
+            }
+            // Only an exact allowlisted schematic is recognized; no generated coordinates or code.
+            if (line == "[DIAGRAM] projectile") {
+                result += AuResponseBlock.ProjectileIllustration
+                i++
+                continue
             }
             // Each workflow row is one stage; sibling cards are separated by a pipe.
             // Bound the layout and accept only plain text nodes, never executable UI.
@@ -334,6 +353,8 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                         }
                     }
                 }
+                AuResponseBlock.ProjectileIllustration -> AuProjectileIllustration()
+                is AuResponseBlock.Sketch -> AuSketchIllustration(block.scene)
                 is AuResponseBlock.Callout -> Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),

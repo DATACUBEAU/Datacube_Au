@@ -60,7 +60,7 @@ object GroundedRagPlanner {
             appendLine("Synthesize the meaning supported by the excerpts, rather than repeating short quoted fragments or opening with 'the excerpts mention'.")
             appendLine("For a document overview, explain its subject, purpose and verified concepts. For a teaching request, propose a lesson sequence, objectives, source-grounded examples, questions to check understanding and likely misconceptions where supported. Label suggested teaching activities as suggestions, not source facts.")
             appendLine("Use relevant prior context. Interpret clear typos, but do not substitute a different technical concept. Answer directly; match depth to the question and offer a relevant next step only when helpful.")
-            appendLine("Use headings, bold terms, lists or compact tables only when they improve clarity.")
+            appendLine("Adapt to the requested level. For beginners, define terms, use a simple analogy marked as illustrative, and explain step by step. If the user delegates a choice, select one suitable next step; avoid repeating completed concepts. Offer a specific next learning step only when helpful. Use headings, diagrams or compact tables when useful.")
             appendLine("Use at most 1-3 numbered citations [1], [2], etc. next to directly supported statements; the app displays sources separately.")
             appendLine("If excerpts cover only the title, copyright, or incomplete material, say the available context is limited and ask for a content chapter.")
             appendLine("If the retrieved passages do not answer the question, say: I could not verify that in the available document passages. Do not infer absence from a partial search. Never use general knowledge as if it came from this document.")
@@ -69,7 +69,7 @@ object GroundedRagPlanner {
         }
         // The independently bounded question, history and passages fit the prompt budget.
         // Never truncate the completed prompt: its final lines contain grounding rules.
-        check(prompt.length <= if (limit > 5) 16_400 else 12_600) { "Document context exceeds its prompt budget." }
+        check(prompt.length <= if (limit > 5) 17_000 else 13_000) { "Document context exceeds its prompt budget." }
         return RagPrompt(prompt, usable)
     }
 }
