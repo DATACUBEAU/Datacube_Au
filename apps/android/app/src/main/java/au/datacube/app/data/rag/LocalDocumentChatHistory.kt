@@ -126,7 +126,11 @@ class LocalDocumentChatHistory(filesDir: File) {
     }
 
     suspend fun clear(documentId: String) = withContext(Dispatchers.IO) {
-        lock.withLock { AtomicFile(fileFor(documentId)).delete() }
+        lock.withLock {
+            val file = fileFor(documentId)
+            AtomicFile(file).delete()
+            check(!file.exists() && !File(file.path + ".bak").exists() && !File(file.path + ".new").exists()) { "Could not clear history." }
+        }
     }
 
     private fun fileFor(id: String): File {
