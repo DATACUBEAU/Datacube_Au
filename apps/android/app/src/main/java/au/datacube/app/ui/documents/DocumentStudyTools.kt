@@ -7,6 +7,7 @@ import au.datacube.app.ui.chat.GistAttachmentMenu
 import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
+import au.datacube.app.ui.common.AuResponseFeedback
 import au.datacube.app.ui.common.AuReadAloudAction
 import au.datacube.app.ui.common.AuReadAloudBar
 import au.datacube.app.ui.common.rememberAuReadAloud
@@ -990,6 +991,7 @@ fun DocumentChatWorkspace(
                                 }
                                 if (!message.generating && message.generationError == null) {
                                     AuReadAloudAction(speech, messageIndex, message.answer)
+                                    AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
                                 }
                                 Spacer(Modifier.height(8.dp))
                             }
