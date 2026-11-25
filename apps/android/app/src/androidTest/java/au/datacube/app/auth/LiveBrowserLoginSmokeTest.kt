@@ -45,7 +45,7 @@ class LiveBrowserLoginSmokeTest {
             install(Auth) { sessionManager = sessionStore; alwaysAutoRefresh = false }
         }
         val repository = AuthRepository(AuthSessionStore(app)) { supabase.auth }
-        val live = MobileAuthorizationClient("https://datacube-au.vercel.app")
+        val live = MobileAuthorizationClient("https://datacube.fabianodev.xyz")
         val gateway = object : MobileAuthorizationGateway by live {
             override suspend fun create(challenge: String): MobileAuthorizationCreated {
                 return try { live.create(challenge) } catch (error: Throwable) {
@@ -71,7 +71,7 @@ class LiveBrowserLoginSmokeTest {
                 createFailure?.javaClass?.name + ": " + createFailure?.message, state.error)
             val destination = requireNotNull(launchedUri) { "App did not generate browser intent" }
             assertEquals("https", destination.scheme)
-            assertEquals("datacube-au.vercel.app", destination.host)
+            assertEquals("datacube.fabianodev.xyz", destination.host)
             assertEquals("/login", destination.path)
             assertEquals("1", destination.getQueryParameter("forceReauth"))
             assertTrue(Regex("/mobile-auth/approve\\?request=[A-Za-z0-9_-]{43}").matches(destination.getQueryParameter("redirectTo").orEmpty()))
