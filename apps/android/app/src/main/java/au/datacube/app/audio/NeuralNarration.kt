@@ -64,11 +64,12 @@ object NeuralNarration {
 
     suspend fun speak(
         context: Context, text: String, voice: String, speed: Float,
+        onProgress: suspend (Long, Long) -> Unit = { _, _ -> },
         onStage: suspend (String) -> Unit = {}
     ) {
         val parts = NeuralTextSegmenter.split(text, maxText = 12_000)
             .map { SpeechPart(it, voice, 0) }
-        renderAndPlay(context, parts, speed, {}, onStage)
+        renderAndPlay(context, parts, speed, {}, onStage, onProgress)
     }
 
     suspend fun speakDialogue(
@@ -93,7 +94,8 @@ object NeuralNarration {
     private suspend fun renderAndPlay(
         context: Context, parts: List<SpeechPart>, speed: Float,
         onSpeaker: suspend (Int) -> Unit,
-        onStage: suspend (String) -> Unit
+        onStage: suspend (String) -> Unit,
+        onProgress: suspend (Long, Long) -> Unit = { _, _ -> }
     ) = withContext(speechDispatcher) {
         require(installed(context)) { "Install Kokoro in Models to use neural voices." }
         require(parts.isNotEmpty() && parts.all { it.voice in presetVoices })
@@ -181,8 +183,14 @@ object NeuralNarration {
                     }
                 }
                 var speaker = -1
+                var lastProgress = 0L
                 suspend fun reportSpeaker() {
                     val head = track.playbackHeadPosition.toLong() and 0xffffffffL
+                    val now = SystemClock.elapsedRealtime()
+                    if (now - lastProgress >= 200L) {
+                        onProgress(head.coerceAtMost(totalSamples) * 1000 / rate, totalSamples * 1000 / rate)
+                        lastProgress = now
+                    }
                     val next = boundaries.lastOrNull { it.first <= head }?.second ?: 0
                     if (next != speaker) { speaker = next; onSpeaker(next) }
                 }
