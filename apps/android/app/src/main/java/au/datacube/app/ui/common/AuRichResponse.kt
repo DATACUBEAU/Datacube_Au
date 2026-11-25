@@ -35,6 +35,7 @@ internal sealed interface AuResponseBlock {
     data class WorkflowNode(val title: String, val detail: String)
     data class BarChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
     data class PieChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
+    data object ProjectileIllustration : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -73,6 +74,12 @@ internal object AuResponseParser {
                     result += AuResponseBlock.Table(header, rows)
                     continue
                 }
+            }
+            // Only an exact allowlisted schematic is recognized; no generated coordinates or code.
+            if (line == "[DIAGRAM] projectile") {
+                result += AuResponseBlock.ProjectileIllustration
+                i++
+                continue
             }
             // Each workflow row is one stage; sibling cards are separated by a pipe.
             // Bound the layout and accept only plain text nodes, never executable UI.
@@ -334,6 +341,7 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                         }
                     }
                 }
+                AuResponseBlock.ProjectileIllustration -> AuProjectileIllustration()
                 is AuResponseBlock.Callout -> Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),

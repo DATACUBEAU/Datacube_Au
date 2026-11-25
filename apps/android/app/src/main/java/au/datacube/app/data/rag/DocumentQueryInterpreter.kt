@@ -72,7 +72,9 @@ object DocumentQueryInterpreter {
         val wholeDocumentTeaching = Regex("""\b(?:teach|teaching|lesson plan|prepare a lesson)\b""", RegexOption.IGNORE_CASE).containsMatchIn(query) &&
             sourceReference.containsMatchIn(query) &&
             tokens(sourceReference.replace(query, " ")).all { it in generic || it in teacherWords }
-        val overview = ((asksOverview && specificTerms.isEmpty()) || wholeDocumentTeaching) && contextualQuestion == null
+        val introductoryOverview = Regex("""^(?:please\s+)?(?:explain|teach|simplify|summari[sz]e)\s+(?:this|the|my)\s+(?:document|book|textbook|pdf|file|notes|material)(?:\s+to me)?\s+(?:like|as if|for|in|that)\b.*$""", RegexOption.IGNORE_CASE).matches(query.trim()) &&
+            Regex("""\b(?:beginner|newbie|child|three|five|simple|plain|easy|years? old|nerd)\b""",RegexOption.IGNORE_CASE).containsMatchIn(query)
+        val overview = ((asksOverview && specificTerms.isEmpty()) || wholeDocumentTeaching || introductoryOverview) && contextualQuestion == null
         if (overview) return DocumentQueryPlan(query.trim(), true, emptyMap(),
             contextualQuestion = contextualQuestion)
 

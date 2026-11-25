@@ -55,4 +55,10 @@ class AuResponseParserTest {
             assertTrue(AuResponseParser.parse(raw).none { it is AuResponseBlock.Workflow })
         }
     }
+
+    @Test fun onlyAllowedSchematicRendersAndNarrates() {
+        assertEquals(AuResponseBlock.ProjectileIllustration,AuResponseParser.parse("[DIAGRAM] projectile").single())
+        assertTrue(AuSpokenResponse.format("[DIAGRAM] projectile").contains("not to scale"))
+        assertTrue(AuResponseParser.parse("[DIAGRAM] arbitrary code").none { it == AuResponseBlock.ProjectileIllustration })
+    }
 }

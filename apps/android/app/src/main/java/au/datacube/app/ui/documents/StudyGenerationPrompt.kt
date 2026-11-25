@@ -42,7 +42,7 @@ internal object StudyGenerationPrompt {
                     "Use a short [FLOW] Title block with 2 to 6 source-supported steps and [/FLOW] for a genuine process. " +
                     "Use a [WORKFLOW] Title block with 2 to 6 stage lines, cards separated by | and optional title :: description, then [/WORKFLOW], only when relationships are supported. " +
                     "Use source references [1], [2] beside supported explanations. Clearly state that these notes cover selected passages, not necessarily every chapter. " +
-                    "Do not output a generic list of short copied phrases."
+                    "For source-supported introductory ball projectile motion only, use the standalone line [DIAGRAM] projectile for a conceptual illustration. Do not output a generic list of short copied phrases."
             GeneratedStudyMode.REVISION ->
                 "Create an evidence-based revision forecast. Use 4-8 meaningful " +
                     "sections only if the sources support that many topics. " +
