@@ -1,6 +1,7 @@
 package au.datacube.app.ui.common
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -31,6 +32,7 @@ internal sealed interface AuResponseBlock {
     data class Callout(val title: String, val body: String) : AuResponseBlock
     data class Flow(val title: String, val steps: List<String>) : AuResponseBlock
     data class BarChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
+    data class PieChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -84,10 +86,12 @@ internal object AuResponseParser {
                 }
             }
             // Only complete, bounded numeric charts are eligible for native rendering.
-            if (line.startsWith("[BAR] ")) {
-                val end = (i + 1 until minOf(lines.size, i + 11)).firstOrNull { lines[it].trim() == "[/BAR]" }
+            if (line.startsWith("[BAR] ") || line.startsWith("[PIE] ")) {
+                val pie = line.startsWith("[PIE] ")
+                val endTag = if (pie) "[/PIE]" else "[/BAR]"
+                val end = (i + 1 until minOf(lines.size, i + 11)).firstOrNull { lines[it].trim() == endTag }
                 if (end != null) {
-                    val title = line.removePrefix("[BAR] ").trim()
+                    val title = line.removePrefix(if (pie) "[PIE] " else "[BAR] ").trim()
                     val rows = lines.subList(i + 1, end).mapNotNull { row ->
                         val parts = row.split('|')
                         val label = parts.firstOrNull()?.trim().orEmpty()
@@ -96,8 +100,8 @@ internal object AuResponseParser {
                             value.isFinite() && value in 0.0..1.0e12) label to value else null
                     }
                     if (title.length in 1..100 && rows.size in 2..8 && rows.size == end - i - 1 &&
-                        rows.map { it.first }.distinct().size == rows.size) {
-                        result += AuResponseBlock.BarChart(title, rows)
+                        rows.map { it.first }.distinct().size == rows.size && (!pie || rows.sumOf { it.second } > 0.0)) {
+                        result += if (pie) AuResponseBlock.PieChart(title, rows) else AuResponseBlock.BarChart(title, rows)
                         i = end + 1
                         continue
                     }
@@ -244,6 +248,30 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                                 LinearProgressIndicator(progress = { (value / maximum).toFloat().coerceIn(0f, 1f) },
                                     modifier = Modifier.fillMaxWidth().height(9.dp),
                                     trackColor = MaterialTheme.colorScheme.surfaceVariant)
+                            }
+                        }
+                    }
+                }
+                is AuResponseBlock.PieChart -> {
+                    val colors = listOf(Color(0xFF2563EB), Color(0xFF0891B2), Color(0xFF64748B),
+                        Color(0xFF0F766E), Color(0xFF93C5FD), Color(0xFF475569), Color(0xFF60A5FA), Color(0xFF334155))
+                    val total = block.rows.sumOf { it.second }
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(inlineText(block.title), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Canvas(Modifier.size(160.dp).align(Alignment.CenterHorizontally)) {
+                            var start = -90f
+                            block.rows.forEachIndexed { index, row ->
+                                val sweep = (360.0 * row.second / total).toFloat()
+                                if (sweep > 0f) drawArc(colors[index], start, sweep, useCenter = true)
+                                start += sweep
+                            }
+                        }
+                        block.rows.forEachIndexed { index, (label, value) ->
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(Modifier.size(12.dp).background(colors[index], RoundedCornerShape(3.dp)))
+                                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                Text(value.toString().removeSuffix(".0"), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }
