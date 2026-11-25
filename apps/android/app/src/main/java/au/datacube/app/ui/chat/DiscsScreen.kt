@@ -1,6 +1,11 @@
 package au.datacube.app.ui.chat
 
 import android.os.SystemClock
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import au.datacube.app.schedule.AuScheduleDialog
 import au.datacube.app.schedule.AuScheduleIntent
 import au.datacube.app.data.rag.AuConversationContext
@@ -623,6 +628,18 @@ fun DiscsScreen(
             }
         }
         if (attachment != null) {
+            val photo = attachment as? GistAttachment.Photo
+            if (photo != null) {
+                val thumbnail = remember(photo) {
+                    val options = BitmapFactory.Options().apply { inSampleSize = 4 }
+                    BitmapFactory.decodeByteArray(photo.bytes, 0, photo.bytes.size, options)
+                }
+                if (thumbnail != null) {
+                    Image(thumbnail.asImageBitmap(), contentDescription = "Attached image preview",
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+                            .size(88.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
+                }
+            }
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(attachment?.label.orEmpty(), Modifier.weight(1f), maxLines = 1,
                     overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
