@@ -474,7 +474,7 @@ fun DocumentChatWorkspace(
                                     if (plan.contextualQuestion != null) {
                                         events += "Used conversation context to interpret the question"
                                     }
-                                    val matches: List<SourceSnippet>
+                                    var matches: List<SourceSnippet>
                                     var usedSemantic = false
                                     if (plan.overview) {
                                         session.searchingStage = "Collecting source excerpts"
