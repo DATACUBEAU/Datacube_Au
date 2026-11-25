@@ -46,7 +46,7 @@ Hook your alerting system (Sentry/Datadog/log forwarder) to this exact message.
 Run:
 
 ```bash
-AUTH_BEARER_TOKEN=<token> BASE_URL=https://datacube-au.vercel.app npm run test:ai-endpoints-smoke
+AUTH_BEARER_TOKEN=<token> BASE_URL=https://datacube.fabianodev.xyz npm run test:ai-endpoints-smoke
 ```
 
 The smoke test fails if any AI endpoint returns `404`.
