@@ -20,7 +20,7 @@ jobs:
           import { randomBytes, createHash } from 'node:crypto';
           import assert from 'node:assert/strict';
 
-          const endpoint = 'https://datacube-au.vercel.app/api/auth/mobile-authorization';
+          const endpoint = 'https://datacube.fabianodev.xyz/api/auth/mobile-authorization';
           const verifier = randomBytes(32).toString('base64url');
           const challenge = createHash('sha256').update(verifier, 'ascii').digest('base64url');
 
