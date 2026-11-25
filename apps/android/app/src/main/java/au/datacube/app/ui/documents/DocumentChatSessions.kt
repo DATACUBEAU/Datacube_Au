@@ -162,7 +162,7 @@ internal object DocumentChatSessions {
     }
 
     fun forgetGlobal() {
-        sessions.keys.filter { it == "global" || it.startsWith("global--") || it.startsWith("global-") }.forEach { key ->
+        sessions.keys.filter { it == "global" || it.startsWith("global--") || it.startsWith("global-") || it.contains("--c-") }.forEach { key ->
             sessions.remove(key)?.stop()
         }
     }
