@@ -44,7 +44,9 @@ fun DocumentWorkspaceScreen(
     onOpenModels: () -> Unit = {},
     initialPrompt: String? = null,
     initialTab: Int = 0,
-    accountId: String? = null
+    accountId: String? = null,
+    collectionId: String? = null,
+    collectionDocuments: List<LocalDocument> = emptyList()
 ) {
     var selectedTab by remember(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
     var menuExpanded by remember(document.id) { mutableStateOf(false) }
@@ -182,6 +184,8 @@ fun DocumentWorkspaceScreen(
             0 -> DocumentChatWorkspace(
                 documentId = document.id,
                 accountId = accountId,
+                collectionId = collectionId,
+                collectionDocuments = collectionDocuments,
                 documentName = document.name,
                 initialPrompt = initialPrompt,
                 textPreview = textPreview,
