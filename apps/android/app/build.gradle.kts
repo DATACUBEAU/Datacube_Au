@@ -38,6 +38,12 @@ fun buildConfigLiteral(value: String): String = groovy.json.JsonOutput.toJson(va
 val supabaseUrl = configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL") ?: ""
 val supabaseAnonKey = configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY") ?: ""
 val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube.fabianodev.xyz"
+// Select at build time, never infer the ad provider from installer metadata.
+// Unconfigured builds are ad-free. The channel alone does not enable an SDK.
+val distributionChannel = providers.gradleProperty("datacubeDistribution").orNull ?: "development"
+require(distributionChannel in setOf("development", "website", "oppo")) {
+    "Unsupported DataCube AU distribution channel."
+}
 if (supabaseUrl.isNullOrBlank() || !supabaseUrl.startsWith("https://") || supabaseAnonKey.isNullOrBlank()) {
     throw GradleException(
         "DataCube AU Android build is missing Supabase configuration. Add SUPABASE_URL and " +
@@ -70,6 +76,7 @@ android {
      buildConfigField("String", "SUPABASE_URL", buildConfigLiteral(supabaseUrl))
      buildConfigField("String", "SUPABASE_ANON_KEY", buildConfigLiteral(supabaseAnonKey))
      buildConfigField("String", "AUTH_WEBSITE_URL", buildConfigLiteral(authWebsiteUrl))
+     buildConfigField("String", "DISTRIBUTION_CHANNEL", buildConfigLiteral(distributionChannel))
  }
  providers.environmentVariable("ANDROID_PERSONAL_DEBUG_KEYSTORE_PATH").orNull?.let { keystorePath ->
      signingConfigs.named("debug") {
