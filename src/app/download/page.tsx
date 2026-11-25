@@ -98,9 +98,6 @@ export default function AndroidDownloadPage() {
               <p className="mt-2 text-xs text-muted-foreground">
                 {(release.sizeBytes / (1024 * 1024)).toFixed(1)} MiB · App only (AU models downloaded separately)
               </p>
-              <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                {release.notes}
-              </p>
             </>
           ) : (
             <p className="text-sm text-muted-foreground">{error}</p>
@@ -130,7 +127,7 @@ export default function AndroidDownloadPage() {
             <li>Tap <strong className="text-foreground">Install</strong> or <strong className="text-foreground">Update</strong> to continue.</li>
           </ol>
           <p className="mt-3 text-xs leading-5 text-muted-foreground">
-            If Android reports that the app is harmful, stop the installation.
+            If Play Protect flags the app as harmful, don’t install it.
           </p>
           <p className="mt-3 border-t border-primary/15 pt-3 text-xs leading-5 text-muted-foreground">
             <strong className="text-foreground">Already using AU?</strong> Update without uninstalling to keep your existing app data.
