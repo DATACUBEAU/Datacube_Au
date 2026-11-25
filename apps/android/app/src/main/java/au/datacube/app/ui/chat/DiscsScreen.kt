@@ -100,7 +100,7 @@ fun DiscsScreen(
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
     val modelReady = LocalGenerativeEngine.installed(context)
-    val needsCollectionModel = collectionId != null && !modelReady
+    val needsCollectionModel = !modelReady
     // In collection mode callers pass only documents in the selected collection.
     // No global workspace files can enter source retrieval through this argument.
     val library = documents.map { it.document }
@@ -658,12 +658,12 @@ fun DiscsScreen(
                 color = MaterialTheme.colorScheme.surfaceVariant
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Choose an AU model to chat with this collection",
+                    Text("Set up AU chat",
                         style = MaterialTheme.typography.titleSmall)
-                    Text("Collection answers require an installed local language model.",
+                    Text("Download a chat model to ask questions.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Button(onClick = onOpenModels) { Text("Open Models") }
+                    Button(onClick = onOpenModels) { Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS) }
                 }
             }
         }

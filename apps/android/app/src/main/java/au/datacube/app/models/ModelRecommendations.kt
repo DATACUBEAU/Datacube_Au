@@ -12,6 +12,26 @@ object ModelRecommendations {
     }
     fun bestSearchModel(): String = "embeddinggemma-2-270m"
 
+    data class SetupPlan(val chat: String?, val search: String?, val voice: String?)
+    /** Advisory, conservative combined budget: download plus backup, with room for documents. */
+    fun setupPlan(ramGb: Int, freeStorageGb: Int, sdk: Int, arm64: Boolean,
+                  installed: Set<String> = emptySet()): SetupPlan {
+        if (!arm64 || sdk < 26) return SetupPlan(null,null,null)
+        val gib = 1024L * 1024 * 1024
+        var remaining = (freeStorageGb.toLong().coerceAtLeast(0) - 1).coerceAtLeast(0) * gib
+        fun cost(id: String) = if (id in installed) 0L else
+            (VerifiedModelDownloads.find(id)?.maximumBytes ?: Long.MAX_VALUE / 2) * 2
+        val search = bestSearchModel().takeIf { sdk >= 28 && compatible(it,ramGb) && cost(it) <= remaining }
+        if (search != null) remaining -= cost(search)
+        val chat = listOf("gemma-4-e4b","gemma-4-e2b","qwen3-0.6b-litert")
+            .filter { compatible(it,ramGb) && cost(it) <= remaining }
+            .let { eligible -> eligible.firstOrNull { it in installed } ?: eligible.firstOrNull() }
+        if (chat != null) remaining -= cost(chat)
+        val voice = "kokoro-82m-cpu".takeIf { sdk >= 28 && compatible(it,ramGb) &&
+            chat != null && cost(it) <= remaining }
+        return SetupPlan(chat,search,voice)
+    }
+
     fun recommendedFor(context: Context): String? {
         val device = DeviceCapabilityScanner.scan(context)
         return bestChatModel(device.ramGb, device.freeStorageGb)

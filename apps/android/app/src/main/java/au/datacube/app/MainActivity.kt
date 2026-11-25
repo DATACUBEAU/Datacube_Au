@@ -55,7 +55,6 @@ import au.datacube.app.ui.models.ModelVaultScreen
 import au.datacube.app.models.LocalModelLibrary
 import au.datacube.app.models.ModelCatalog
 import au.datacube.app.models.ModelSpec
-import au.datacube.app.models.DeviceCapabilityScanner
 import au.datacube.app.ui.models.ModelsScreen
 import au.datacube.app.ui.theme.ThemePreference
 import au.datacube.app.ui.theme.ThemePreferenceStore
@@ -244,30 +243,20 @@ private fun AuthenticatedWorkspace(
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     LaunchedEffect(authState.user?.id) { authState.user?.id?.let { au.datacube.app.ui.common.ResponseFeedbackStore.schedule(context,it) } }
-    val communityAccount = authState.user?.id
-    val communityPrefs = remember(context) { context.getSharedPreferences("au_community_prompt_v1", android.content.Context.MODE_PRIVATE) }
-    var communityOpen by remember(communityAccount) {
-        mutableStateOf(communityAccount != null && !communityPrefs.getBoolean(communityAccount, false))
-    }
-    fun dismissCommunity() {
-        communityAccount?.let { communityPrefs.edit().putBoolean(it,true).apply() }
-        communityOpen = false
-    }
-    if (communityOpen) {
+    var showCommunity by remember { mutableStateOf(false) }
+    if (showCommunity) {
         DataCubeDialog(
-            onDismissRequest = ::dismissCommunity,
+            onDismissRequest = { showCommunity = false },
             title = { Text("DataCube AU community") },
-            text = { Text("Join the optional WhatsApp community for announcements, study-app guidance and support. WhatsApp may expose your phone number or profile to others; never post private documents or account details.") },
+            text = { Text("Optional WhatsApp community for help and updates. Other members may see your profile or phone number. Never share private documents or account details.") },
             confirmButton = {
                 TextButton(onClick = {
-                    dismissCommunity()
-                    runCatching {
-                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
-                            Uri.parse("https://chat.whatsapp.com/D7GGIjLQitIFHRoEbBQsY0")))
-                    }.onFailure { scope.launch { snackbar.showSnackbar("Community link could not be opened.") } }
+                    showCommunity = false
+                    if (!au.datacube.app.ui.models.ModelSetupGuide.openCommunity(context))
+                        scope.launch { snackbar.showSnackbar("Community link could not be opened.") }
                 }) { Text("Open WhatsApp") }
             },
-            dismissButton = { TextButton(onClick = ::dismissCommunity) { Text("Not now") } }
+            dismissButton = { TextButton(onClick = { showCommunity = false }) { Text("Not now") } }
         )
     }
     LaunchedEffect(updateJustCompleted) {
@@ -377,41 +366,17 @@ private fun AuthenticatedWorkspace(
         context.getSharedPreferences("datacube_model_setup", android.content.Context.MODE_PRIVATE)
     }
     val userSetupKey = "offered_" + authState.user?.id.orEmpty()
-    var setupStep by remember(userSetupKey) {
-        mutableIntStateOf(if (setupPrefs.getBoolean(userSetupKey, false)) -1 else 0)
+    var showSetupGuide by remember(userSetupKey) {
+        mutableStateOf(!setupPrefs.getBoolean(userSetupKey, false))
     }
-    if (setupStep >= 0) {
-        val capability = remember(setupStep) {
-            if (setupStep == 1) DeviceCapabilityScanner.scan(context) else null
-        }
-        DataCubeDialog(
-            onDismissRequest = {
-                setupPrefs.edit().putBoolean(userSetupKey, true).apply()
-                setupStep = -1
-            },
-            title = { Text(if (setupStep == 0) "Set up local models?" else "Your device") },
-            text = {
-                Text(
-                    if (capability == null) "Check memory and free space to recommend a model. No personal files are scanned."
-                    else "${capability.ramGb} GB memory · ${capability.freeStorageGb} GB free. Suggested: ${capability.recommendedModel}."
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (setupStep == 0) setupStep = 1
-                    else {
-                        setupPrefs.edit().putBoolean(userSetupKey, true).apply()
-                        setupStep = -1
-                        navController.navigate(Screen.Models.route)
-                    }
-                }) { Text(if (setupStep == 0) "Check device" else "View models") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    setupPrefs.edit().putBoolean(userSetupKey, true).apply()
-                    setupStep = -1
-                }) { Text("Not now") }
-            }
+    fun closeSetupGuide() {
+        setupPrefs.edit().putBoolean(userSetupKey,true).apply()
+        showSetupGuide = false
+    }
+    if (showSetupGuide) {
+        au.datacube.app.ui.models.ModelSetupTour(
+            onDismiss = ::closeSetupGuide,
+            onOpenModels = { closeSetupGuide(); navController.navigate(Screen.Models.route) }
         )
     }
 
@@ -492,6 +457,35 @@ private fun AuthenticatedWorkspace(
         }
     }
 
+    var importSetupPrompt by remember { mutableStateOf<au.datacube.app.ui.models.ModelSetupGuide.Readiness?>(null) }
+    var pendingCollection by remember { mutableStateOf<String?>(null) }
+    fun launchImport(collectionId:String?) {
+        collectionPickerTarget = collectionId
+        multiPicker.launch(mimeTypes)
+    }
+    fun requestImport(collectionId:String? = null) {
+        val state = au.datacube.app.ui.models.ModelSetupGuide.readiness(context)
+        if (state.needsSetup) {
+            pendingCollection = collectionId
+            importSetupPrompt = state
+        } else launchImport(collectionId)
+    }
+    importSetupPrompt?.let { state ->
+        au.datacube.app.ui.models.MissingModelPrompt(state,
+            onDismiss = { importSetupPrompt = null; pendingCollection = null },
+            onOpenModels = {
+                importSetupPrompt = null
+                pendingCollection = null
+                navController.navigate(Screen.Models.route)
+            },
+            onImportAnyway = {
+                val target = pendingCollection
+                importSetupPrompt = null
+                pendingCollection = null
+                launchImport(target)
+            })
+    }
+
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val isWorkspaceRoute = currentRoute == Screen.Collection.route || currentRoute == Screen.Document.route
@@ -523,7 +517,7 @@ private fun AuthenticatedWorkspace(
                 HomeScreen(
                     user = authState.user,
                     recentDocuments = documents,
-                    onImportDocument = { multiPicker.launch(mimeTypes) },
+                    onImportDocument = { requestImport() },
                     onNavigateToDocuments = { navController.navigate(Screen.Documents.route) },
                     onNavigateToGist = { navController.navigate(Screen.Discs.route) },
                     onNavigateToChat = { navController.navigate(Screen.Documents.route) },
@@ -540,14 +534,15 @@ private fun AuthenticatedWorkspace(
                     documents = documents,
                     onBack = { navController.popBackStack() },
                     onOpenDocument = { id -> navController.navigate("document/$id") },
-                    onOpenDocuments = { navController.navigate(Screen.Documents.route) }
+                    onOpenDocuments = { navController.navigate(Screen.Documents.route) },
+                    onOpenModels = { navController.navigate(Screen.Models.route) }
                 )
             }
             composable(Screen.Documents.route) {
                 DocumentsScreen(
                     documents = documents,
                     collections = collections,
-                    onImport = { multiPicker.launch(mimeTypes) },
+                    onImport = { requestImport() },
                     onNavigateHome = { navController.navigate(Screen.Home.route) },
                     onNavigateSettings = { navController.navigate(Screen.Settings.route) },
                     onNavigateToDiscs = { navController.navigate(Screen.Discs.route) },
@@ -570,8 +565,7 @@ private fun AuthenticatedWorkspace(
                     documents = collectionDocuments,
                     onBack = { navController.popBackStack() },
                     onAddDocuments = {
-                        collectionPickerTarget = collectionId
-                        multiPicker.launch(mimeTypes)
+                        requestImport(collectionId)
                     },
                     onRemoveDocument = { id ->
                         documentsViewModel.removeDocumentFromCollection(collectionId, id)
@@ -712,6 +706,8 @@ private fun AuthenticatedWorkspace(
                     onThemeChange = onThemeChange,
                     onOpenModels = { navController.navigate(Screen.Models.route) },
                     onOpenVault = { navController.navigate(Screen.ModelVault.route) },
+                    onShowSetupGuide = { showSetupGuide = true },
+                    onOpenCommunity = { showCommunity = true },
                     onOpenSubscription = {
                         val url = BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/dashboard/settings/usage"
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))

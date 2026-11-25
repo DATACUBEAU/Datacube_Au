@@ -35,7 +35,9 @@ fun ProfileScreen(
     onOpenModels: () -> Unit = {},
     onOpenVault: () -> Unit = {},
     onOpenSubscription: () -> Unit = {},
-    onEnableNotifications: () -> Unit = {}
+    onEnableNotifications: () -> Unit = {},
+    onShowSetupGuide: () -> Unit = {},
+    onOpenCommunity: () -> Unit = {}
 ) {
     val email = user?.email ?: "—"
     var showProfile by remember { mutableStateOf(false) }
@@ -197,6 +199,8 @@ fun ProfileScreen(
             item {
                 SettingsEntry(Icons.Outlined.Memory, "Models", "Download or import models", onOpenModels)
             }
+            item { SettingsEntry(Icons.Outlined.Info, "Getting started", "See how to set up AU", onShowSetupGuide) }
+            item { SettingsEntry(Icons.Outlined.ChatBubbleOutline, "Community", "Optional help and updates", onOpenCommunity) }
             item {
                 SettingsEntry(Icons.Outlined.Backup, "Backups", "Export or restore models", { showBackups = true })
             }
