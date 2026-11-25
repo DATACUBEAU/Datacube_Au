@@ -11,6 +11,8 @@ import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ThinkingConfig
+import android.app.ActivityManager
 import java.io.File
 import java.security.MessageDigest
 import java.util.concurrent.Executors
@@ -183,6 +185,8 @@ object LocalGenerativeEngine {
             }
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
+            val lowRam = (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.isLowRamDevice == true
+            val thinkingBudget = if (studyTask) null else effort.thinkingBudget(modelId, lowRam)
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
@@ -229,7 +233,9 @@ object LocalGenerativeEngine {
                                 "For a useful self-contained explanation, optionally use [BOX] Title on its own line, body on following lines, and [/BOX] on its own line."
                         } + if (!studyTask) " When a process benefits from a diagram, optionally include [FLOW] Title on its own line, then 2 to 6 short steps in order, then [/FLOW] on its own line. Use source-supported steps; omit the diagram when unnecessary. For an architecture or grouped workflow use [WORKFLOW] Title, then 2 to 6 stage lines, each with 1 to 3 cards separated by |. Each card is a short title optionally followed by :: and a short description. Finish with [/WORKFLOW]. Keep at most 12 cards total; use only factual labels and grounded values. For a meaningful numeric comparison, optionally use [BAR] Title, then 2 to 8 lines formatted Label | nonnegative number, then [/BAR]. For parts of a real whole use [PIE] Title, the same numeric row format, and [/PIE]; do not use it for unrelated quantities. Use only supported comparable values and put the unit in the title. Never invent numbers or output executable visual code. " + effort.instruction else ""
                     ),
-                    samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35)
+                    samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
+                    maxOutputToken = if (studyTask) null else if (lowRam) minOf(effort.outputTokens, 1536) else effort.outputTokens,
+                    thinkingConfig = thinkingBudget?.let { ThinkingConfig(enableThinking = it > 0, thinkingTokenBudget = it) }
                 )
             )
             val startedAt = android.os.SystemClock.elapsedRealtime()
