@@ -132,6 +132,10 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
           </p>
         </div>
         {user?.email && <p className="break-all text-sm font-medium">Signed in as {user.email}</p>}
+        <Button type="button" variant="ghost" className="min-h-11 w-full" disabled={pending !== null}
+          onClick={() => { setPairingCode(''); router.replace(`${loginPath}&forceReauth=1`); }}>
+          Use another Google account
+        </Button>
       </div>
       <div className="space-y-2 text-left">
         <Label htmlFor="pairing-code" className="text-sm font-semibold text-foreground">Pairing code</Label>
