@@ -670,7 +670,7 @@ fun DiscsScreen(
             effort = effort,
             onEffortChange = { effort = it },
             onStop = if (session.searching) ({ session.activeRequest?.cancel() }) else null,
-            actions = {
+            leadingActions = {
                 if (collectionId == null) key(ownerId, threadId) {
                     GistAttachmentMenu(
                         enabled = ready && modelReady && !session.searching && userTurns < ConversationWindow.MAX_USER_TURNS,
@@ -680,6 +680,8 @@ fun DiscsScreen(
                         onError = { attachmentError = it }
                     )
                 }
+            },
+            actions = {
                 VoiceNoteInputButton(
                     ownerId = ownerId,
                     enabled = ready && !needsCollectionModel && !session.searching && !preparingAttachment && attachment == null &&
