@@ -560,17 +560,17 @@ fun DocumentChatWorkspace(
                                         events += "Built context from ${grounded.evidence.size} source passages"
                                         matches = grounded.evidence.map { SourceSnippet(it.text, it.page) }
                                         messages[resultIndex] = messages[resultIndex].copy(matches = matches)
-                                        var generated = ""
+                                        val generated = StringBuilder()
                                         var lastUpdate = 0L
                                         try {
                                             session.searchingStage = "AU is thinking"
                                             LocalGenerativeEngine.generate(context, grounded.value + personalization?.promptContext(cleanPrompt).orEmpty()) { part ->
-                                                generated += part
+                                                generated.append(part)
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate > 90L) {
                                                     withContext(Dispatchers.Main) {
                                                         messages[resultIndex] = messages[resultIndex].copy(
-                                                            answer = ModelOutputCleaner.visible(generated, matches.size)
+                                                            answer = ModelOutputCleaner.visible(generated.toString(), matches.size)
                                                         )
                                                     }
                                                     lastUpdate = now
@@ -578,16 +578,19 @@ fun DocumentChatWorkspace(
                                             }
                                             events += "AU generated an answer using the selected evidence"
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
+                                                answer = ModelOutputCleaner.visible(generated.toString(), matches.size).trim(),
                                                 generating = false,
                                                 steps = events.toList()
                                             )
                                         } catch (cancelled: CancellationException) {
+                                            messages[resultIndex] = messages[resultIndex].copy(
+                                                answer = ModelOutputCleaner.visible(generated.toString(), matches.size).trim()
+                                            )
                                             throw cancelled
                                         } catch (generationError: Exception) {
                                             events += "AU response failed; retrieved sources remain available"
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated, matches.size).trim(),
+                                                answer = ModelOutputCleaner.visible(generated.toString(), matches.size).trim(),
                                                 generating = false,
                                                 generationError = generationError.message
                                                     ?: "AU could not finish the answer.",
@@ -597,11 +600,13 @@ fun DocumentChatWorkspace(
                                     }
                                 } catch (cancelled: CancellationException) {
                                     val lastIndex = messages.lastIndex
-                                    if (lastIndex >= 0 && !messages[lastIndex].isUser) {
+                                    if (lastIndex >= 0 && !messages[lastIndex].isUser && messages[lastIndex].generating) {
                                         messages[lastIndex] = messages[lastIndex].copy(
                                             generating = false,
                                             generationError = "Generation stopped."
                                         )
+                                    } else if (lastIndex >= 0 && messages[lastIndex].isUser) {
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, generationError = "Generation stopped."))
                                     }
                                     throw cancelled
                                 } catch (error: Exception) {
@@ -611,6 +616,7 @@ fun DocumentChatWorkspace(
                                     session.searching = false
                                     session.searchingStage = ""
                                     session.activitySteps.clear()
+                                    session.activeRequest = null
                                 }
                             }
                         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer") }
@@ -977,6 +983,7 @@ fun DocumentChatWorkspace(
                     (historyReady && threadIndex != null && llmInstalled &&
                         userTurns < ConversationWindow.MAX_USER_TURNS && !textPreview.isNullOrBlank())),
             sendDescription = "Search document",
+            onStop = if (session.searching) ({ session.activeRequest?.cancel() }) else null,
             actions = {
                 VoiceNoteInputButton(
                     ownerId = documentId,

@@ -278,15 +278,15 @@ fun DiscsScreen(
                             GistPrompt.build(question, contextPairs,
                                 compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()))
                         }
-                        var raw = ""
+                        val raw = StringBuilder()
                         var lastUpdate = 0L
                         try {
                             LocalGenerativeEngine.generate(context, input + personalization.promptContext(question), allowGeneral = !searchDocuments,
                                 generalOnly = !searchDocuments) { text ->
-                                raw += text
+                                raw.append(text)
                                 val now = SystemClock.elapsedRealtime()
                                 if (now - lastUpdate > 120L) {
-                                    val visible = ModelOutputCleaner.visible(raw, matches.size)
+                                    val visible = ModelOutputCleaner.visible(raw.toString(), matches.size)
                                     withContext(Dispatchers.Main) {
                                         turns[answerIndex] = turns[answerIndex].copy(answer = visible)
                                     }
@@ -297,11 +297,14 @@ fun DiscsScreen(
                                 "AU generated a document-grounded response"
                             else "AU generated a general-knowledge response"
                             turns[answerIndex] = turns[answerIndex].copy(
-                                answer = ModelOutputCleaner.visible(raw, matches.size).trim(),
+                                answer = ModelOutputCleaner.visible(raw.toString(), matches.size).trim(),
                                 generating = false,
                                 steps = events.toList()
                             )
                         } catch (cancelled: CancellationException) {
+                            turns[answerIndex] = turns[answerIndex].copy(
+                                answer = ModelOutputCleaner.visible(raw.toString(), matches.size).trim()
+                            )
                             throw cancelled
                         } catch (error: Exception) {
                             turns[answerIndex] = turns[answerIndex].copy(
@@ -313,9 +316,11 @@ fun DiscsScreen(
                 }
             } catch (cancelled: CancellationException) {
                 val last = turns.lastIndex
-                if (last >= 0 && !turns[last].isUser) {
+                if (last >= 0 && !turns[last].isUser && turns[last].generating) {
                     turns[last] = turns[last].copy(generating = false,
                         generationError = "Reply stopped.")
+                } else if (last >= 0 && turns[last].isUser) {
+                    turns.add(ChatMessage(question, emptyList(), false, generationError = "Reply stopped."))
                 }
                 throw cancelled
             } catch (error: Exception) {
@@ -556,6 +561,7 @@ fun DiscsScreen(
                 (AuScheduleIntent.matches(prompt) || (ready && !needsCollectionModel &&
                     userTurns < ConversationWindow.MAX_USER_TURNS)),
             sendDescription = "Send Gist message",
+            onStop = if (session.searching) ({ session.activeRequest?.cancel() }) else null,
             actions = {
                 VoiceNoteInputButton(
                     ownerId = ownerId,

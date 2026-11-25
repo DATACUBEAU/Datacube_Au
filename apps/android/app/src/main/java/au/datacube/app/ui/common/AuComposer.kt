@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowUpward
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -29,6 +30,7 @@ fun AuComposer(
     sendEnabled: Boolean,
     sendDescription: String = "Send to AU",
     modifier: Modifier = Modifier,
+    onStop: (() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     Surface(
@@ -88,12 +90,15 @@ fun AuComposer(
                 actions()
                 Spacer(Modifier.width(6.dp))
                 FilledIconButton(
-                    onClick = onSend,
-                    enabled = sendEnabled,
+                    onClick = onStop ?: onSend,
+                    enabled = onStop != null || sendEnabled,
                     modifier = Modifier.size(44.dp),
                     shape = CircleShape
                 ) {
-                    Icon(Icons.Outlined.ArrowUpward, contentDescription = sendDescription)
+                    Icon(
+                        if (onStop != null) Icons.Outlined.Stop else Icons.Outlined.ArrowUpward,
+                        contentDescription = if (onStop != null) "Stop generating" else sendDescription
+                    )
                 }
             }
         }
