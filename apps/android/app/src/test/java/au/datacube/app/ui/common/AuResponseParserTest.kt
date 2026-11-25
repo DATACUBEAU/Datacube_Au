@@ -25,4 +25,19 @@ class AuResponseParserTest {
         val code = AuResponseParser.parse("\u0060\u0060\u0060kotlin\nval x = 1")
         assertEquals("val x = 1", (code.single() as AuResponseBlock.Code).text)
     }
+    @Test fun completeBarChartRendersAndNarratesExactValues() {
+        val raw = "[BAR] Downloads (count)\nA | 12\nB | 4.5\n[/BAR]"
+        val chart = AuResponseParser.parse(raw).single() as AuResponseBlock.BarChart
+        assertEquals(listOf("A" to 12.0, "B" to 4.5), chart.rows)
+        assertTrue(AuSpokenResponse.format(raw).contains("B: 4.5"))
+    }
+
+    @Test fun malformedBarChartDoesNotBecomeAVisual() {
+        listOf("[BAR] Chart\nA | NaN\nB | 2\n[/BAR]",
+            "[BAR] Chart\nA | -1\nB | 2\n[/BAR]",
+            "[BAR] Chart\nA | 1\nA | 2\n[/BAR]",
+            "[BAR] Chart\nA | 1\nB | 2").forEach { raw ->
+            assertTrue(AuResponseParser.parse(raw).none { it is AuResponseBlock.BarChart })
+        }
+    }
 }
