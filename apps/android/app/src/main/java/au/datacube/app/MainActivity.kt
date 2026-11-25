@@ -243,6 +243,7 @@ private fun AuthenticatedWorkspace(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
+    LaunchedEffect(authState.user?.id) { authState.user?.id?.let { au.datacube.app.ui.common.ResponseFeedbackStore.schedule(context,it) } }
     LaunchedEffect(updateJustCompleted) {
         if (updateJustCompleted) {
             snackbar.showSnackbar("DataCube AU updated successfully. Your local data is retained.")
