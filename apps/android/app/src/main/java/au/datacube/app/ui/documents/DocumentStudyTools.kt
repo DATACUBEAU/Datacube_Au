@@ -671,16 +671,16 @@ fun DocumentChatWorkspace(
                                         steps = events.toList(), corrected = plan.correctedTerms,
                                         generating = llmInstalled
                                     ))
-                                    if (llmInstalled && matches.isEmpty()) {
+                                    suspend fun generalExplanation() {
                                         // Application-owned origin label, persisted with the turn. Never rely on the model to label itself.
-                                        events += "General knowledge · Not verified in document"
-                                        messages[resultIndex] = messages[resultIndex].copy(steps = events.toList())
+                                        events.add(0, "General knowledge · Not verified in document")
+                                        messages[resultIndex] = messages[resultIndex].copy(steps = events.toList(), matches = emptyList(), answer = "", generating = true)
                                         session.searchingStage = "Preparing general explanation"
                                         val raw = StringBuilder()
                                         var lastUpdate = 0L
                                         try {
                                             LocalGenerativeEngine.generate(context,
-                                                "No supporting document passages were retrieved. Answer this question from general knowledge only. " +
+                                                 "The retrieved document passages did not establish the answer. Answer this question from general knowledge only. " +
                                                     "Do not claim to have found it in any textbook. State uncertainty if needed. Question: " +
                                                     cleanPrompt.take(700),
                                                 allowGeneral = true, generalOnly = true, effort = requestEffort) { part ->
@@ -701,6 +701,9 @@ fun DocumentChatWorkspace(
                                             messages[resultIndex] = messages[resultIndex].copy(generating = false,
                                                 generationError = "Could not finish the general explanation.")
                                         }
+                                    }
+                                    if (llmInstalled && matches.isEmpty()) {
+                                        generalExplanation()
                                         return@launch
                                     }
                                     if (llmInstalled && matches.isNotEmpty()) {
@@ -734,9 +737,14 @@ fun DocumentChatWorkspace(
                                                     lastUpdate = now
                                                 }
                                             }
+                                            val completed = ModelOutputCleaner.visible(generated.toString(), matches.size).trim()
+                                            if (completed.startsWith("I could not verify that in the available document passages", ignoreCase = true)) {
+                                                generalExplanation()
+                                                return@launch
+                                            }
                                             events += "AU generated an answer using the selected evidence"
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated.toString(), matches.size).trim(),
+                                                answer = completed,
                                                 generating = false,
                                                 steps = events.toList()
                                             )
