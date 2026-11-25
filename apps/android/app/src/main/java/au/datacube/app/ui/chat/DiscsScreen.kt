@@ -49,6 +49,7 @@ import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuReadAloudAction
+import au.datacube.app.ui.common.AuReadAloudBar
 import au.datacube.app.ui.common.rememberAuReadAloud
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -445,6 +446,7 @@ fun DiscsScreen(
             }
         }
 
+        AuReadAloudBar(speech)
         if (turns.isEmpty() && !session.searching) {
             Column(Modifier.weight(1f).fillMaxWidth().padding(25.dp),
                 verticalArrangement = Arrangement.Center,
