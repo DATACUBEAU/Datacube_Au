@@ -33,4 +33,16 @@ class AuPersonalizationTest {
         assertTrue(DocumentQueryInterpreter.understand("How can I teach my students using this physics lecture note?", text).overview)
         assertFalse(DocumentQueryInterpreter.understand("Teach my students about ATP using this document", text).overview)
     }
+
+    @Test fun memoryRetrievalMatchesPluralAndPrioritizesSpecificTerms() {
+        val notes = listOf("I enjoy mechanical engineering", "I study chemical reactions", "I enjoy music")
+        assertEquals(listOf("I study chemical reactions"), AuMemoryCommand.relevantNotes(notes, "Explain a chemical reaction"))
+        assertTrue(AuMemoryCommand.relevantNotes(notes, "Hello").isEmpty())
+    }
+
+    @Test fun explicitForgetAndNormalizedDuplicate() {
+        assertEquals("forget", AuMemoryCommand.parse("AU, forget that I teach physics")?.kind)
+        assertNull(AuMemoryCommand.parse("Explain how to forget a formula"))
+        assertEquals(AuMemoryCommand.normalized("I  teach physics."), AuMemoryCommand.normalized("i teach physics"))
+    }
 }
