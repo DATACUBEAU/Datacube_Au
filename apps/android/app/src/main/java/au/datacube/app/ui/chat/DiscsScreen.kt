@@ -313,6 +313,7 @@ fun DiscsScreen(
                             DOCUMENT SEARCH RESULTS:
                             $evidenceText
 
+                            ${au.datacube.app.data.rag.AuTeachingPolicy.plan(followUp.query, matches.firstOrNull()?.documentName.orEmpty()).instruction()}
                             Answer clearly using the numbered document passages.
                             Cite only passages that support the claim. If passages
                             are inconclusive, ask which document or term was intended.

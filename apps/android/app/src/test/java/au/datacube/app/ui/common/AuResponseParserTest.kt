@@ -71,4 +71,13 @@ class AuResponseParserTest {
         assertTrue(AuResponseParser.parse(raw.replace("RECT | 10 | 10 | 90 | 90","SCRIPT | arbitrary")).none { it is AuResponseBlock.Sketch })
         assertTrue(AuResponseParser.parse(raw.substringBefore("[/SKETCH]")).none { it is AuResponseBlock.Sketch })
     }
+
+    @Test fun formulaCardKeepsSymbolsAndNarration() {
+        val raw = "[FORMULA] Newton's second law\nF = m × a\nF | net force in newtons\nm | mass in kilograms\na | acceleration\n[/FORMULA]"
+        val block = AuResponseParser.parse(raw).single() as AuResponseBlock.Formula
+        assertEquals("F = m × a",block.equation)
+        assertEquals(3,block.symbols.size)
+        assertTrue(AuSpokenResponse.format(raw).contains("F means net force in newtons"))
+        assertTrue(AuResponseParser.parse(raw.substringBefore("[/FORMULA]")).none { it is AuResponseBlock.Formula })
+    }
 }
