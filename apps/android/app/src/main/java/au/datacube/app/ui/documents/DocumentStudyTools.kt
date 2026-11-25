@@ -8,6 +8,7 @@ import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuReadAloudAction
+import au.datacube.app.ui.common.AuReadAloudBar
 import au.datacube.app.ui.common.rememberAuReadAloud
 import androidx.compose.foundation.lazy.itemsIndexed
 import au.datacube.app.work.AuBackgroundWork
@@ -780,6 +781,7 @@ fun DocumentChatWorkspace(
     }
 
     Column(Modifier.fillMaxSize()) {
+        AuReadAloudBar(speech)
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(8.dp))
@@ -1173,6 +1175,7 @@ fun SmartNoteWorkspace(
     val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
 
     ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
+        AuReadAloudBar(notesSpeech)
         if (textPreview.isNullOrBlank()) {
             SourceUnavailableCard(previewLoading, null)
         } else {
