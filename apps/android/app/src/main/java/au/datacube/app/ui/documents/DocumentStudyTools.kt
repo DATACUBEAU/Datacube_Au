@@ -305,12 +305,38 @@ fun DocumentChatWorkspace(
             onDismissHistory()
         }
     }
+    var confirmClearChat by remember(documentId, threadId) { mutableStateOf(false) }
+    var clearChatError by remember(documentId, threadId) { mutableStateOf<String?>(null) }
+    if (confirmClearChat) {
+        DataCubeDialog(
+            onDismissRequest = { confirmClearChat = false },
+            title = { Text("Clear this chat?") },
+            text = { Text("Delete the messages and voice notes in this conversation. Your documents and other chats will stay.") },
+            confirmButton = { TextButton(onClick = {
+                confirmClearChat = false
+                onDismissHistory()
+                speech.stop()
+                session.scope.launch {
+                    if (!session.clearHistory(context, documentId)) clearChatError = "Chat cleanup could not finish. Try again."
+                }
+            }, enabled = session.historyReady && !session.searching) { Text("Clear chat") } },
+            dismissButton = { TextButton(onClick = { confirmClearChat = false }) { Text("Cancel") } }
+        )
+    }
+    clearChatError?.let { error ->
+        DataCubeDialog(onDismissRequest = { clearChatError = null },
+            title = { Text("Chat cleanup") }, text = { Text(error) },
+            confirmButton = { TextButton(onClick = { clearChatError = null }) { Text("OK") } })
+    }
+
     if (showHistoryPicker) {
         DataCubeDialog(
             onDismissRequest = onDismissHistory,
             title = { Text("Your chat history", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onDismissHistory(); confirmClearChat = true },
+                        enabled = session.historyReady && !session.searching) { Text("Clear current chat") }
                     Text("Each chat has its own context. Running replies keep working when you switch chats.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
