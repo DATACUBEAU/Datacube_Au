@@ -63,6 +63,7 @@ internal interface MobileAuthorizationGateway {
     suspend fun consume(pending: PendingMobileAuthorization): MobileAuthorizationResult
     suspend fun cancel(pending: PendingMobileAuthorization)
     fun approvalPage(requestId: String): Uri
+    fun signInPage(requestId: String): Uri = approvalPage(requestId)
 }
 
 internal class MobileAuthorizationClient(
@@ -85,7 +86,10 @@ internal class MobileAuthorizationClient(
     }
     private val json by lazy { Json { ignoreUnknownKeys = true } }
 
-    override fun approvalPage(requestId: String): Uri {
+    override fun approvalPage(requestId: String): Uri = origin.buildUpon()
+        .appendPath("mobile-auth").appendPath("approve").appendQueryParameter("request", requestId).build()
+
+    override fun signInPage(requestId: String): Uri {
         require(MobileAuthorizationRequestId.matches(requestId))
         val approval = "/mobile-auth/approve?request=$requestId"
         return origin.buildUpon().appendPath("login")
