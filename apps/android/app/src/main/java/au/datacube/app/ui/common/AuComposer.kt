@@ -37,6 +37,7 @@ fun AuComposer(
     onStop: (() -> Unit)? = null,
     effort: AuEffort = AuEffort.BALANCED,
     onEffortChange: ((AuEffort) -> Unit)? = null,
+    leadingActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     var expanded by remember { mutableStateOf(false) }
@@ -83,7 +84,7 @@ fun AuComposer(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                actions()
+                leadingActions()
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { expanded = !expanded }) {
                     Icon(if (expanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
@@ -111,6 +112,7 @@ fun AuComposer(
                         }
                     }
                 }
+                actions()
                 Spacer(Modifier.width(4.dp))
                 FilledIconButton(
                     onClick = onStop ?: onSend,
