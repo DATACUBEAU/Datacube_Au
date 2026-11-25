@@ -200,7 +200,7 @@ fun ProfileScreen(
                 SettingsEntry(Icons.Outlined.Memory, "Models", "Download or import models", onOpenModels)
             }
             item { SettingsEntry(Icons.Outlined.Info, "Getting started", "See how to set up AU", onShowSetupGuide) }
-            item { SettingsEntry(Icons.Outlined.ChatBubbleOutline, "Community", "Optional help and updates", onOpenCommunity) }
+            item { SettingsEntry(Icons.Outlined.ChatBubbleOutline, "Community", "WhatsApp · Help and updates", onOpenCommunity, communityIcon=true) }
             item {
                 SettingsEntry(Icons.Outlined.Backup, "Backups", "Export or restore models", { showBackups = true })
             }
@@ -250,7 +250,8 @@ private fun SettingsEntry(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     title: String,
     subtitle: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    communityIcon: Boolean = false
 ) {
     Surface(
         onClick = onClick,
@@ -262,7 +263,8 @@ private fun SettingsEntry(
             Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+            if (communityIcon) au.datacube.app.ui.models.WhatsAppCommunityIcon()
+            else Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, fontWeight = FontWeight.SemiBold)

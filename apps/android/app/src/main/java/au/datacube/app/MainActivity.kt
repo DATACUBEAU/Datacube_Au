@@ -245,18 +245,13 @@ private fun AuthenticatedWorkspace(
     LaunchedEffect(authState.user?.id) { authState.user?.id?.let { au.datacube.app.ui.common.ResponseFeedbackStore.schedule(context,it) } }
     var showCommunity by remember { mutableStateOf(false) }
     if (showCommunity) {
-        DataCubeDialog(
-            onDismissRequest = { showCommunity = false },
-            title = { Text("DataCube AU community") },
-            text = { Text("Optional WhatsApp community for help and updates. Other members may see your profile or phone number. Never share private documents or account details.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    showCommunity = false
-                    if (!au.datacube.app.ui.models.ModelSetupGuide.openCommunity(context))
-                        scope.launch { snackbar.showSnackbar("Community link could not be opened.") }
-                }) { Text("Open WhatsApp") }
-            },
-            dismissButton = { TextButton(onClick = { showCommunity = false }) { Text("Not now") } }
+        au.datacube.app.ui.models.CommunityInviteDialog(
+            onDismiss={showCommunity=false},
+            onJoin={
+                showCommunity=false
+                if (!au.datacube.app.ui.models.ModelSetupGuide.openCommunity(context))
+                    scope.launch { snackbar.showSnackbar("Community link could not be opened.") }
+            }
         )
     }
     LaunchedEffect(updateJustCompleted) {
@@ -370,8 +365,14 @@ private fun AuthenticatedWorkspace(
         mutableStateOf(!setupPrefs.getBoolean(userSetupKey, false))
     }
     fun closeSetupGuide() {
-        setupPrefs.edit().putBoolean(userSetupKey,true).apply()
+        val firstTime = !setupPrefs.getBoolean(userSetupKey,false)
+        val offeredKey = "community_offered_" + authState.user?.id.orEmpty()
+        val offer = firstTime && authState.user != null && !setupPrefs.getBoolean(offeredKey,false)
+        setupPrefs.edit().putBoolean(userSetupKey,true).apply {
+            if(offer) putBoolean(offeredKey,true)
+        }.apply()
         showSetupGuide = false
+        if(offer) showCommunity = true
     }
     if (showSetupGuide) {
         au.datacube.app.ui.models.ModelSetupTour(

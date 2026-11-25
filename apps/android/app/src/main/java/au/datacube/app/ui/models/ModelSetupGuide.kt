@@ -27,7 +27,7 @@ import kotlinx.coroutines.launch
 internal object ModelSetupGuide {
     const val OPEN_MODELS = "Open Models"
     const val FIND_MODELS = "Find best models"
-    const val COMMUNITY_URL = "https://chat.whatsapp.com/D7GGIjLQitIFHRoEbBQsY0"
+    const val COMMUNITY_URL = "https://chat.whatsapp.com/DpSUsodSKvi4xcF1lpwdbN"
     data class Readiness(val chat: Boolean,val search: Boolean,val searchSupported: Boolean) {
         val needsSetup get() = !chat || (searchSupported && !search)
     }
@@ -69,7 +69,8 @@ internal fun ModelSetupTour(onDismiss:()->Unit,onOpenModels:()->Unit) {
                                 GuideStep("1","Chat","Explains, reasons and creates notes.")
                                 GuideStep("2","Search","Finds related document passages.")
                                 GuideStep("3","Voice (optional)","Natural read-aloud and podcasts.")
-                                Text("Review the sizes and choose Wi-Fi or mobile data before downloading.",
+                                GuideStep("4","Choose a backup folder","Select Documents or an SD card. Then tap Download on each recommended model.")
+                                Text("Review the download sizes. Choose Wi-Fi or mobile data before confirming.",
                                     style=MaterialTheme.typography.bodySmall)
                             }
                             2 -> {
@@ -85,10 +86,10 @@ internal fun ModelSetupTour(onDismiss:()->Unit,onOpenModels:()->Unit) {
                         }
                     }
                 }
-                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.Center) {
-                    Text("Step ${pager.currentPage+1} of 4 · Swipe or tap Next",style=MaterialTheme.typography.labelMedium,
-                        color=MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                au.datacube.app.ui.common.AuStepProgress(pager.currentPage,4)
+                if (pager.currentPage > 0) TextButton(onClick={scope.launch {
+                    pager.animateScrollToPage(pager.currentPage-1)
+                }}) { Text("Previous") }
             }
         },
         confirmButton={
@@ -125,4 +126,29 @@ internal fun MissingModelPrompt(state:ModelSetupGuide.Readiness,onDismiss:()->Un
         }},
         confirmButton={Button(onClick=onOpenModels){Text(ModelSetupGuide.OPEN_MODELS)}},
         dismissButton={TextButton(onClick=onImportAnyway){Text("Import anyway")}})
+}
+
+@Composable
+internal fun CommunityInviteDialog(onDismiss:()->Unit,onJoin:()->Unit) {
+    DataCubeDialog(onDismissRequest=onDismiss,
+        title={Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+            WhatsAppCommunityIcon()
+            Text("Join the AU community",style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold)
+        }},
+        text={Column(verticalArrangement=Arrangement.spacedBy(10.dp)){
+            Text("Learn how to use AU, share feedback and receive product updates.")
+            Text("Joining is optional. WhatsApp members may see your phone number or profile. Avoid sharing private documents, passwords or personal information.",
+                style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+        }},
+        confirmButton={Button(onClick=onJoin){Text("Open WhatsApp")}},
+        dismissButton={TextButton(onClick=onDismiss){Text("Not now")}})
+}
+
+@Composable
+internal fun WhatsAppCommunityIcon(modifier:Modifier=Modifier) {
+    val green=androidx.compose.ui.graphics.Color(0xFF128C7E)
+    Box(modifier.size(36.dp),contentAlignment=Alignment.Center) {
+        Icon(Icons.Outlined.ChatBubbleOutline,null,tint=green,modifier=Modifier.fillMaxSize())
+        Icon(Icons.Outlined.Call,null,tint=green,modifier=Modifier.size(18.dp).offset(y=(-2).dp))
+    }
 }
