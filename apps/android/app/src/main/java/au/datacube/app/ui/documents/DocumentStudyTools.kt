@@ -634,7 +634,7 @@ fun DocumentChatWorkspace(
                                         var lastUpdate = 0L
                                         try {
                                             session.searchingStage = "AU is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.promptContext(cleanPrompt).orEmpty(), effort = requestEffort) { part ->
+                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.contextFor(cleanPrompt, requestEffort).orEmpty(), effort = requestEffort) { part ->
                                                 generated.append(part)
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate > 90L) {
