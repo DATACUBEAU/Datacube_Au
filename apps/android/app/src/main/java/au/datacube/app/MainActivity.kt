@@ -178,7 +178,7 @@ private sealed class Screen(val route: String) {
     object Discs : Screen("discs")
     object Collection : Screen("collection/{id}")
     object CollectionChat : Screen("collection-chat/{id}")
-    object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
+    object Document : Screen("document/{id}?prompt={prompt}&tab={tab}&collection={collection}")
     object Settings : Screen("settings")
     object Models : Screen("models")
     object ModelVault : Screen("model-vault")
@@ -549,7 +549,7 @@ private fun AuthenticatedWorkspace(
                     onRemoveDocument = { id ->
                         documentsViewModel.removeDocumentFromCollection(collectionId, id)
                     },
-                    onOpenDocument = { id -> navController.navigate("document/$id") },
+                    onOpenDocument = { id -> navController.navigate("document/$id?collection=" + Uri.encode(collectionId)) },
                     onOpenCollectionChat = {
                         if (collectionId.isNotBlank()) navController.navigate("collection-chat/$collectionId")
                     }
@@ -570,7 +570,7 @@ private fun AuthenticatedWorkspace(
                     documents = documents.filter { it.document.id in allowedIds },
                     onBack = { navController.popBackStack() },
                     onOpenDocument = { id ->
-                        if (id in allowedIds) navController.navigate("document/$id")
+                        if (id in allowedIds) navController.navigate("document/$id?collection=" + Uri.encode(collectionId))
                     },
                     onOpenDocuments = { navController.navigate("collection/$collectionId") },
                     collectionId = collectionId,
@@ -588,12 +588,21 @@ private fun AuthenticatedWorkspace(
                     androidx.navigation.navArgument("tab") {
                         type = androidx.navigation.NavType.IntType
                         defaultValue = 0
+                    },
+                    androidx.navigation.navArgument("collection") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = ""
                     }
                 )
             ) { entry ->
                 val documentId = entry.arguments?.getString("id").orEmpty()
                 val initialPrompt = entry.arguments?.getString("prompt")
                 val initialTab = entry.arguments?.getInt("tab") ?: 0
+                val sourceCollection = entry.arguments?.getString("collection").orEmpty()
+                val relatedFlow = remember(sourceCollection) { documentsViewModel.observeCollectionDocuments(sourceCollection) }
+                val related by relatedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+                val collectionScope = sourceCollection.takeIf { it.isNotBlank() && related.any { doc -> doc.id == documentId } }
+                val relatedDocuments = if (collectionScope != null) related else emptyList()
                 val selectedProcessing = documents.firstOrNull { it.document.id == documentId }
                 val selectedDocument = selectedProcessing?.document
                 var textPreview by remember(documentId) { mutableStateOf<String?>(null) }
@@ -633,6 +642,8 @@ private fun AuthenticatedWorkspace(
                         accountId = requireNotNull(authState.user).id,
                         initialPrompt = initialPrompt,
                         initialTab = initialTab,
+                        collectionId = collectionScope,
+                        collectionDocuments = relatedDocuments,
                         extractionStatus = selectedProcessing?.extractionStatus,
                         extractionProgress = selectedProcessing?.extractionProgress,
                         extractionError = selectedProcessing?.extractionError,
