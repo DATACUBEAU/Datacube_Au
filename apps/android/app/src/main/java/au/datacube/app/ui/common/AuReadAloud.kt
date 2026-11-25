@@ -6,6 +6,9 @@ import au.datacube.app.audio.AuAudioPlayback
 import android.content.Intent
 import android.speech.tts.TextToSpeech
 import androidx.compose.foundation.layout.*
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Stop
@@ -24,6 +27,8 @@ import kotlinx.coroutines.*
 
 internal class AuReadAloudState(private val context: Context, private val scope: CoroutineScope) {
     var active by mutableStateOf<Int?>(null)
+        private set
+    var voiceLabel by mutableStateOf("")
         private set
     var stage by mutableStateOf("")
         private set
@@ -53,7 +58,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         stage = ""
     }
 
-    fun play(id: Int, answer: String, systemVoice: Boolean = false, enginePackage: String? = null) {
+    fun play(id: Int, answer: String, systemVoice: Boolean = false, enginePackage: String? = null, neuralVoice: String = NeuralNarration.DEFAULT_VOICE) {
         stop()
         val token = revision
         val plain = AuSpokenResponse.format(answer)
@@ -61,6 +66,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         active = id
         error = null
         errorId = null
+        voiceLabel = if (systemVoice) "Offline mobile voice" else NeuralNarration.presetVoices[neuralVoice] ?: "Kokoro"
         stage = "Preparing audio"
         job = AuAudioPlayback.launch(context, "Preparing or playing response audio",
             onFinished = { if (token == revision) { active = null; stage = "" } }) {
@@ -70,8 +76,10 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 }
                 if (!systemVoice) {
                     check(neuralAvailable) { "Download Kokoro in Models to use neural speech." }
+                    report("Waiting for local model memory")
                     LocalGenerativeEngine.release()
-                    NeuralNarration.speak(context, plain, NeuralNarration.DEFAULT_VOICE, 1f, report)
+                    report("Preparing selected neural voice")
+                    NeuralNarration.speak(context, plain, neuralVoice, 1f, report)
                 } else {
                     val turns = NeuralTextSegmenter.split(plain, maxChunk = 350, maxText = 12_000)
                         .map { PodcastTurn(PodcastSpeaker.GUIDE, it) }
@@ -136,6 +144,12 @@ internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String
                     text = { Column { Text("Kokoro"); Text(if (speech.neuralAvailable) "Natural voice · prepares audio first" else "Install in Models", style = MaterialTheme.typography.bodySmall) } },
                     onClick = { voiceMenu = false; speech.play(id, answer, systemVoice = false) }
                 )
+                if (speech.neuralAvailable) {
+                    NeuralNarration.presetVoices.filterKeys { it != NeuralNarration.DEFAULT_VOICE }.forEach { (voice, label) ->
+                        DropdownMenuItem(text = { Text("Kokoro · " + label) },
+                            onClick = { voiceMenu = false; speech.play(id, answer, neuralVoice = voice) })
+                    }
+                }
                 if (installedEngines.isNotEmpty()) {
                     HorizontalDivider()
                     Text("Other installed speech engines", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
@@ -158,6 +172,35 @@ internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String
                 style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { speech.play(id, answer, systemVoice = true) }) {
                 Text("Try offline system voice")
+            }
+        }
+    }
+}
+
+/** Fixed at the workspace header, independent of the message's scroll position. */
+@Composable
+internal fun AuReadAloudBar(speech: AuReadAloudState) {
+    AnimatedVisibility(visible = speech.active != null) {
+        Surface(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.surfaceVariant,
+            tonalElevation = 2.dp) {
+            Column(Modifier.fillMaxWidth()) {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.VolumeUp, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(if (speech.stage.startsWith("Playing")) "Reading aloud" else "Preparing voice",
+                            fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.bodyMedium)
+                        Text(speech.voiceLabel + " · " + speech.stage,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = speech::stop) {
+                        Icon(Icons.Outlined.Stop, contentDescription = "Stop read aloud")
+                    }
+                }
+                if (!speech.stage.startsWith("Playing")) LinearProgressIndicator(Modifier.fillMaxWidth())
             }
         }
     }
