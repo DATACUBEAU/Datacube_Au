@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
         feedback: rows,
         meta: {
           count,
-          sourceTable: 'au_feedback',
+          sourceTables: ['au_feedback','au_user_feedback'],
         },
       },
       { status: 200, headers: { 'Cache-Control': 'no-store' } },
