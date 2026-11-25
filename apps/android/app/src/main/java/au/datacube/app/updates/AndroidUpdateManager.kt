@@ -47,7 +47,7 @@ object AndroidUpdateManager {
     /** HTTPS metadata only: a small public JSON served by the user's website. */
     suspend fun check(context: Context): AndroidUpdateRelease? = withContext(Dispatchers.IO) {
         // Independent of authentication callbacks: use the official domain first,
-        // retain the legacy endpoint for existing deployments and recovery.
+        // fall back to independent GitHub release metadata when necessary.
         val origins = listOf("https://datacube.fabianodev.xyz", BuildConfig.AUTH_WEBSITE_URL.trimEnd('/')).distinct()
         val sources: List<suspend () -> AndroidUpdateRelease?> =
             origins.map { origin -> suspend { checkOrigin(origin) } } +
@@ -102,7 +102,7 @@ object AndroidUpdateManager {
             apkUrl = link,
             sizeBytes = size,
             sha256 = hash,
-            notes = json.optString("notes", "New improvements").take(500)
+            notes = json.optString("notes", "").take(500)
         )
     }
 
