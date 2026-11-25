@@ -31,16 +31,23 @@ fun ModelsScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val device = remember(context) { DeviceCapabilityScanner.scan(context) }
-    val bestChatId = remember(device) {
-        ModelRecommendations.bestChatModel(device.ramGb, device.freeStorageGb)
-    }
-    val recommendedChat = bestChatId?.let(ModelCatalog::find)
-        ?: ModelCatalog.find("qwen3-0.6b-litert")
+    var device by remember(context) { mutableStateOf(DeviceCapabilityScanner.scan(context)) }
     val hasFolder = remember(context, folderRevision) { ModelVaultStore(context).folder() != null }
     var advanced by remember { mutableStateOf(false) }
     var activeRevision by remember { mutableIntStateOf(0) }
     val activeChat = remember(context, activeRevision) { ActiveLocalChatModel(context).selected() }
+    val installedIds = ModelCatalog.models.filter { installed(it.id) }.map { it.id }.toSet()
+    val arm64 = android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")
+    val plan = ModelRecommendations.setupPlan(device.ramGb,device.freeStorageGb,
+        android.os.Build.VERSION.SDK_INT,arm64,installedIds)
+    val recommendedIds = setOfNotNull(plan.search,plan.chat,plan.voice)
+    val readiness = ModelSetupGuide.readiness(context)
+    val recommendedCount = recommendedIds.size
+    val availableCount = recommendedIds.count { it in installedIds }
+    val refreshRecommendations: () -> Unit = {
+        device = DeviceCapabilityScanner.scan(context)
+        activeRevision++
+    }
     Scaffold(modifier = modifier, topBar = {
         TopAppBar(title = { Text("On-device models", fontWeight = FontWeight.Bold) },
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } })
@@ -56,11 +63,21 @@ fun ModelsScreen(
                     color = MaterialTheme.colorScheme.primaryContainer
                 ) {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Recommended for your device", fontWeight = FontWeight.SemiBold)
-                        Text("${device.ramGb} GB RAM · ${device.freeStorageGb} GB free",
-                            style = MaterialTheme.typography.bodySmall)
-                        Text("One chat model + one search model. Voice is optional.",
-                            style = MaterialTheme.typography.bodySmall)
+                        Text("Set up AU",fontWeight=FontWeight.SemiBold)
+                        Text("${device.ramGb} GB RAM · ${device.freeStorageGb} GB free", style = MaterialTheme.typography.bodySmall)
+                        Text(ModelSetupGuide.missingText(readiness),style=MaterialTheme.typography.bodySmall)
+                        if (recommendedCount > 0) {
+                            LinearProgressIndicator(progress={availableCount.toFloat()/recommendedCount},
+                                modifier=Modifier.fillMaxWidth())
+                            Text("$availableCount of $recommendedCount suggested models installed",
+                                style=MaterialTheme.typography.labelSmall)
+                        }
+                        Button(onClick=refreshRecommendations,modifier=Modifier.fillMaxWidth()){
+                            Text(ModelSetupGuide.FIND_MODELS)
+                        }
+                        Text("Suggestions use available memory and space for downloads and backups. Actual performance can vary.",
+                            style=MaterialTheme.typography.bodySmall)
+
                     }
                 }
             }
@@ -77,32 +94,40 @@ fun ModelsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item {
-                Text("1 · Document search", style = MaterialTheme.typography.titleMedium)
-                val spec = ModelCatalog.find(ModelRecommendations.bestSearchModel())
-                ModelCard(spec, { installed(spec.id) }, onGet, onImport,
-                    canDownload = hasFolder, onChooseFolder = onChooseFolder)
+                Text("1 · Document search", style=MaterialTheme.typography.titleMedium)
+                val id=plan.search
+                if(id!=null) {
+                    val spec=ModelCatalog.find(id)
+                    ModelCard(spec,{installed(id)},onGet,onImport,
+                        canDownload=hasFolder,onChooseFolder=onChooseFolder,
+                        onAvailabilityChanged=refreshRecommendations)
+                } else Text(if(android.os.Build.VERSION.SDK_INT<28)
+                    "This Android version uses keyword search." else "No search model fits the current device budget. Keyword search still works.",
+                    style=MaterialTheme.typography.bodySmall)
             }
             item {
-                Text("2 · Chat & reasoning", style = MaterialTheme.typography.titleMedium)
-                Text(if (bestChatId == null) "Limited free memory. Model may not run smoothly."
-                    else "Suggested for this device", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                ModelCard(recommendedChat, { installed(recommendedChat.id) }, onGet, onImport,
-                    canDownload = hasFolder, onChooseFolder = onChooseFolder,
-                    isActive = activeChat == recommendedChat.id,
-                    onUse = {
-                        ActiveLocalChatModel(context).setSelected(recommendedChat.id)
-                        activeRevision++
-                    })
+                Text("2 · Chat & reasoning",style=MaterialTheme.typography.titleMedium)
+                val id=plan.chat
+                if(id!=null) {
+                    val spec=ModelCatalog.find(id)
+                    ModelCard(spec,{installed(id)},onGet,onImport,
+                        canDownload=hasFolder,onChooseFolder=onChooseFolder,
+                        isActive=activeChat==id,
+                        onUse={ ActiveLocalChatModel(context).setSelected(id);activeRevision++ },
+                        onAvailabilityChanged=refreshRecommendations)
+                } else Text("No compatible chat model fits the current device budget. Free up storage or review other models.",
+                    style=MaterialTheme.typography.bodySmall)
             }
             item {
-                Text("3 · Voice", style = MaterialTheme.typography.titleMedium)
-                Text("Natural narration · optional offline pack",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                val spec = ModelCatalog.find("kokoro-82m-cpu")
-                ModelCard(spec, { installed(spec.id) }, onGet, onImport,
-                    canDownload = hasFolder, onChooseFolder = onChooseFolder)
+                Text("3 · Voice (optional)",style=MaterialTheme.typography.titleMedium)
+                val id=plan.voice
+                if(id!=null) {
+                    val spec=ModelCatalog.find(id)
+                    ModelCard(spec,{installed(id)},onGet,onImport,
+                        canDownload=hasFolder,onChooseFolder=onChooseFolder,
+                        onAvailabilityChanged=refreshRecommendations)
+                } else Text("Natural offline voices are not recommended for the current device budget.",
+                    style=MaterialTheme.typography.bodySmall)
             }
             item {
                 OutlinedButton(onClick = onOpenVault, modifier = Modifier.fillMaxWidth()) {
@@ -117,9 +142,7 @@ fun ModelsScreen(
             }
             if (advanced) {
                 ModelCatalog.models.filter {
-                    it.id != recommendedChat.id &&
-                        it.id != ModelRecommendations.bestSearchModel() &&
-                        it.id != "kokoro-82m-cpu"
+                    it.id !in recommendedIds
                 }.forEach { spec ->
                     item(key = spec.id) {
                         ModelCard(spec, { installed(spec.id) }, onGet, onImport,
@@ -128,7 +151,7 @@ fun ModelsScreen(
                             onUse = {
                                 ActiveLocalChatModel(context).setSelected(spec.id)
                                 activeRevision++
-                            })
+                            }, onAvailabilityChanged=refreshRecommendations)
                     }
                 }
             }
@@ -145,7 +168,8 @@ private fun ModelCard(
     canDownload: Boolean,
     onChooseFolder: () -> Unit,
     isActive: Boolean = false,
-    onUse: () -> Unit = {}
+    onUse: () -> Unit = {},
+    onAvailabilityChanged: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -163,6 +187,7 @@ private fun ModelCard(
     val working = work?.state == WorkInfo.State.RUNNING ||
         work?.state == WorkInfo.State.ENQUEUED || work?.state == WorkInfo.State.BLOCKED
     val complete = installed()
+    LaunchedEffect(model.id, complete) { if(complete) onAvailabilityChanged() }
     var chooseNetwork by remember(model.id) { mutableStateOf(false) }
     var revision by remember(model.id) { mutableIntStateOf(0) }
     val paused = remember(revision, work?.state) { verified != null && downloader.paused(model.id) }
