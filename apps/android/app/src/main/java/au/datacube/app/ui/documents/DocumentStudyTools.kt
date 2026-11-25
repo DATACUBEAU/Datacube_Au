@@ -264,7 +264,9 @@ fun DocumentChatWorkspace(
     newChatToken: Int = 0,
     onOpenModels: () -> Unit = {},
     onScheduleRequest: ((String) -> Unit)? = null,
-    accountId: String? = null
+    accountId: String? = null,
+    collectionId: String? = null,
+    collectionDocuments: List<au.datacube.app.data.LocalDocument> = emptyList()
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -636,6 +638,23 @@ fun DocumentChatWorkspace(
                                         ).map { SourceSnippet(it.text, it.page) }
                                         if (usedSemantic) events += "Combined keyword and vector results"
                                     }
+                                    if (collectionId != null && !plan.overview) {
+                                        session.searchingStage = "Searching collection"
+                                        val other = au.datacube.app.data.rag.CrossDocumentSearch(context).search(
+                                            collectionDocuments.filter { it.id != documentId }, plan.retrievalQuery, requestEffort.sourceLimit)
+                                        val local = matches.map { it.copy(documentId = documentId, documentName = documentName) }
+                                        val related = other.map { SourceSnippet(it.text,it.page,it.documentId,it.documentName) }
+                                        // Interleave so neither the open file nor its collection peers crowd out all evidence.
+                                        matches = buildList {
+                                            for (i in 0 until maxOf(local.size, related.size)) {
+                                                local.getOrNull(i)?.let { add(it) }
+                                                related.getOrNull(i)?.let { add(it) }
+                                            }
+                                        }.distinctBy { Triple(it.documentId,it.page,it.text) }.take(requestEffort.sourceLimit)
+                                        events += "Searched readable documents in this collection"
+                                    } else {
+                                        matches = matches.map { it.copy(documentId = documentId, documentName = documentName) }
+                                    }
                                     events += "Linked ${matches.size} source passage(s)"
                                     val resultIndex = messages.size
                                     messages.add(ChatMessage(
@@ -652,12 +671,12 @@ fun DocumentChatWorkspace(
                                             .map { RagTurn(it.question, it.answer) }
                                         val grounded = GroundedRagPlanner.build(
                                             plan.contextualQuestion ?: cleanPrompt, previous,
-                                            matches.map { RagEvidence(it.text, it.page) },
+                                            matches.map { RagEvidence(it.text, it.page,it.documentId,it.documentName) },
                                             compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
                                             effort = requestEffort
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
-                                        matches = grounded.evidence.map { SourceSnippet(it.text, it.page) }
+                                        matches = grounded.evidence.map { SourceSnippet(it.text, it.page,it.documentId,it.documentName) }
                                         messages[resultIndex] = messages[resultIndex].copy(matches = matches)
                                         val generated = StringBuilder()
                                         var lastUpdate = 0L
@@ -788,7 +807,7 @@ fun DocumentChatWorkspace(
         DataCubeDialog(
             onDismissRequest = { openedEvidence = null },
             title = {
-                Text(evidence.page?.let { "Source · Page $it" } ?: "Source · Extracted text")
+                Text((evidence.documentName ?: "Source") + (evidence.page?.let { " · Page $it" } ?: " · Extracted text"))
             },
             text = {
                 Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState())) {
@@ -812,7 +831,7 @@ fun DocumentChatWorkspace(
             Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("Searching in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (collectionId != null) "Searching this collection" else "Searching in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             }
             AssistChip(onClick = {}, enabled = false, label = {
@@ -1002,7 +1021,7 @@ fun DocumentChatWorkspace(
                                             modifier = Modifier.size(15.dp))
                                         Spacer(Modifier.width(5.dp))
                                         TextButton(onClick = { openedEvidence = snippet }) {
-                                            Text(snippet.page?.let { "[${index + 1}] Page $it · View source" } ?: "[${index + 1}] View source")
+                                            Text("[${index + 1}] " + (snippet.documentName?.let { "$it · " } ?: "") + (snippet.page?.let { "Page $it" } ?: "View source"))
                                         }
                                     }
                                     if (index != message.matches.lastIndex) {
