@@ -69,4 +69,12 @@ class CrossDocumentSearchTest {
             assertEquals(listOf("ai"), hits.map { it.documentId }.distinct())
         } finally { root.deleteRecursively() }
     }
+
+    @Test fun comparisonPreservesNamedSourcesEvenWhenOneRanksHigher() {
+        val candidates = (1..5).map { CrossDocumentEvidence("physics","Physics.pdf",it,"motion $it",100-it) } +
+            CrossDocumentEvidence("chemistry","Chemistry.pdf",1,"matter",10)
+        val hits = CrossDocumentSearch.rankEvidence(candidates,3,listOf("physics","chemistry"))
+        assertEquals(setOf("physics","chemistry"),hits.map { it.documentId }.toSet())
+        assertEquals(3,hits.size)
+    }
 }
