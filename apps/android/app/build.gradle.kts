@@ -37,7 +37,7 @@ fun buildConfigLiteral(value: String): String = groovy.json.JsonOutput.toJson(va
 
 val supabaseUrl = configuredValue("SUPABASE_URL", "NEXT_PUBLIC_SUPABASE_URL") ?: ""
 val supabaseAnonKey = configuredValue("SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY") ?: ""
-val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube-au.vercel.app"
+val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube.fabianodev.xyz"
 if (supabaseUrl.isNullOrBlank() || !supabaseUrl.startsWith("https://") || supabaseAnonKey.isNullOrBlank()) {
     throw GradleException(
         "DataCube AU Android build is missing Supabase configuration. Add SUPABASE_URL and " +
