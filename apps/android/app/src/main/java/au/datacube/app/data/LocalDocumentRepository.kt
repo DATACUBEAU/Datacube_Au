@@ -134,6 +134,7 @@ class LocalDocumentRepository(
         }
         // Erase persisted chat turns and citations even after an interrupted prior deletion.
         val threads = LocalConversationThreads(filesDir)
+        au.datacube.app.ui.documents.PersistentStudyNotes.delete(filesDir,id)
         threads.clear(id)
         threads.clearCollectionDocumentChats(id)
         au.datacube.app.audio.PodcastOverviewSession.delete(id, filesDir)
