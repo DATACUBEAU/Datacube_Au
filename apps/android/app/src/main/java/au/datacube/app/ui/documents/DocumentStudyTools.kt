@@ -1168,6 +1168,7 @@ fun SmartNoteWorkspace(
     val sections = remember(session.response) {
         GeneratedStudySectionParser.parse(session.response)
     }
+    val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
 
     ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
         if (textPreview.isNullOrBlank()) {
@@ -1208,6 +1209,7 @@ fun SmartNoteWorkspace(
                 }
             }
             if (session.response.isNotBlank()) {
+                if (!session.working) AuReadAloudAction(notesSpeech, 0, session.response)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FilterChip(
                         modifier = Modifier.weight(1f),
