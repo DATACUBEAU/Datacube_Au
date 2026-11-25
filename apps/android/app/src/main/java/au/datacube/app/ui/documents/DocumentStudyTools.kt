@@ -277,25 +277,32 @@ fun DocumentChatWorkspace(
     val indexingFlow = remember(documentId) { semanticSearch.observeIndex(documentId) }
     val indexingWorks by indexingFlow.collectAsState(initial = emptyList())
     val indexing = indexingWorks.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val chatOwner = remember(documentId, collectionId) {
+        if (collectionId == null) documentId else {
+            val suffix = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(collectionId.toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it) }
+            documentId + "--c-" + suffix
+        }
+    }
     val threads = remember(context) { LocalConversationThreads(context) }
-    var threadIndex by remember(documentId) { mutableStateOf<ConversationThreadIndex?>(null) }
-    LaunchedEffect(documentId) {
-        threadIndex = runCatching { threads.list(documentId) }.getOrNull()
+    var threadIndex by remember(chatOwner) { mutableStateOf<ConversationThreadIndex?>(null) }
+    LaunchedEffect(chatOwner) {
+        threadIndex = runCatching { threads.list(chatOwner) }.getOrNull()
     }
     LaunchedEffect(showHistoryPicker) {
-        if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
+        if (showHistoryPicker) threadIndex = runCatching { threads.list(chatOwner) }.getOrNull()
     }
     val threadId = threadIndex?.activeId ?: "main"
-    val speech = rememberAuReadAloud("document:$documentId:$threadId")
-    val session = remember(documentId, threadId) {
-        DocumentChatSessions.get(documentId, threadId, context)
+    val speech = rememberAuReadAloud("document:$chatOwner:$threadId")
+    val session = remember(chatOwner, threadId) {
+        DocumentChatSessions.get(chatOwner, threadId, context)
     }
     val messages = session.messages
     val historyReady = session.historyReady
     val userTurns = messages.count { it.isUser }
     fun startNewChat() {
         scope.launch {
-            runCatching { threads.create(documentId) }
+            runCatching { threads.create(chatOwner) }
                 .onSuccess { threadIndex = it; onDismissHistory() }
         }
     }
@@ -303,12 +310,12 @@ fun DocumentChatWorkspace(
     LaunchedEffect(newChatToken) {
         if (newChatToken > handledNewChatToken) {
             handledNewChatToken = newChatToken
-            threadIndex = runCatching { threads.create(documentId) }.getOrNull()
+            threadIndex = runCatching { threads.create(chatOwner) }.getOrNull()
             onDismissHistory()
         }
     }
-    var confirmClearChat by remember(documentId, threadId) { mutableStateOf(false) }
-    var clearChatError by remember(documentId, threadId) { mutableStateOf<String?>(null) }
+    var confirmClearChat by remember(chatOwner, threadId) { mutableStateOf(false) }
+    var clearChatError by remember(chatOwner, threadId) { mutableStateOf<String?>(null) }
     if (confirmClearChat) {
         DataCubeDialog(
             onDismissRequest = { confirmClearChat = false },
@@ -319,7 +326,7 @@ fun DocumentChatWorkspace(
                 onDismissHistory()
                 speech.stop()
                 session.scope.launch {
-                    if (!session.clearHistory(context, documentId)) clearChatError = "Chat cleanup could not finish. Try again."
+                    if (!session.clearHistory(context, chatOwner)) clearChatError = "Chat cleanup could not finish. Try again."
                 }
             }, enabled = session.historyReady && !session.searching) { Text("Clear chat") } },
             dismissButton = { TextButton(onClick = { confirmClearChat = false }) { Text("Cancel") } }
@@ -348,7 +355,7 @@ fun DocumentChatWorkspace(
                             Surface(
                                 onClick = {
                                     scope.launch {
-                                        threadIndex = threads.activate(documentId, item.id)
+                                        threadIndex = threads.activate(chatOwner, item.id)
                                         onDismissHistory()
                                     }
                                 },
@@ -376,9 +383,9 @@ fun DocumentChatWorkspace(
         )
     }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
-    var expandedSteps by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var liveActivityOpen by remember(documentId, threadId) { mutableStateOf(false) }
-    var expandedSources by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var expandedSteps by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var liveActivityOpen by remember(chatOwner, threadId) { mutableStateOf(false) }
+    var expandedSources by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
     var explainingTerm by remember(documentId) { mutableStateOf(false) }
@@ -402,11 +409,11 @@ fun DocumentChatWorkspace(
             if (semanticSupported) semanticSearch.scheduleIndex(documentId)
         }
     }
-    var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
+    var prompt by remember(chatOwner, threadId, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
     var effort by remember(threadId) { mutableStateOf(au.datacube.app.data.rag.AuEffort.BALANCED) }
-    var attached by remember(documentId, threadId) { mutableStateOf<GistAttachment?>(null) }
-    var preparingAttachment by remember(documentId, threadId) { mutableStateOf(false) }
-    var attachmentError by remember(documentId, threadId) { mutableStateOf<String?>(null) }
+    var attached by remember(chatOwner, threadId) { mutableStateOf<GistAttachment?>(null) }
+    var preparingAttachment by remember(chatOwner, threadId) { mutableStateOf(false) }
+    var attachmentError by remember(chatOwner, threadId) { mutableStateOf<String?>(null) }
 
     fun sendAttached() {
         val selected = attached ?: return
@@ -487,7 +494,7 @@ fun DocumentChatWorkspace(
                             session.activitySteps.clear()
                             // The response belongs to the document/thread session, not
                             // this Compose screen; navigation must not cancel it.
-                            session.scope.launch { threads.nameFromQuestion(documentId, threadId, cleanPrompt) }
+                            session.scope.launch { threads.nameFromQuestion(chatOwner, threadId, cleanPrompt) }
                             session.activeRequest = session.scope.launch {
                                 val events = session.activitySteps
                                 try {
@@ -500,7 +507,7 @@ fun DocumentChatWorkspace(
                                         return@launch
                                     }
                                     if (AuConversationContext.asksYesterdayRecap(cleanPrompt)) {
-                                        val recap = threads.yesterdayReply(documentId, threadId, messages.map {
+                                        val recap = threads.yesterdayReply(chatOwner, threadId, messages.map {
                                             ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
                                         })
                                         events += "Checked dated saved conversations in this workspace"
@@ -1158,7 +1165,7 @@ fun DocumentChatWorkspace(
             onEffortChange = { effort = it },
             onStop = if (session.searching) ({ session.activeRequest?.cancel() }) else null,
             leadingActions = {
-                key(documentId, threadId) {
+                key(chatOwner, threadId) {
                     GistAttachmentMenu(
                         enabled = historyReady && threadIndex != null && llmInstalled && !session.searching &&
                             userTurns < ConversationWindow.MAX_USER_TURNS,
@@ -1171,7 +1178,7 @@ fun DocumentChatWorkspace(
             },
             actions = {
                 VoiceNoteInputButton(
-                    ownerId = documentId,
+                    ownerId = chatOwner,
                     enabled = historyReady && !session.searching && !preparingAttachment && attached == null && threadIndex != null && llmInstalled &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
