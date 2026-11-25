@@ -28,7 +28,7 @@ assert.match(login, /isConexDestination \|\| safeRedirectPath === '\/'/);
 assert.match(login, /\/conex\/users\?mode=access/);
 assert.match(login, /router\.replace\('\/conex'\)/);
 assert.match(login, /router\.replace\(safeRedirectPath\)/);
-assert.match(login, /disabled=\{isLoadingGoogle \|\| isUserLoading\}/);
+assert.match(login, /disabled=\{isLoadingGoogle \|\| isUserLoading \|\| \(forceReauth && !forceReauthReady\)\}/);
 assert.match(smartAuth, /\/auth\/callback\?next=/);
 assert.match(smartAuth, /sanitizeLocalRedirectPath\(redirectPath, '\/'\)/);
 assert.match(callback, /exchangeCodeForSession\(code\)/);
