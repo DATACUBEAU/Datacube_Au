@@ -49,7 +49,13 @@ class AuthRepository(
                 return AuthResult.Error("The app could not securely clear its local session. Please try again.")
             }
         }
-        syncDisplayAccount()
+        try {
+            displayAccountMutex.withLock { sessionStore.clearLocalSession() }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return AuthResult.Error("The app could not securely clear its local session. Please try again.")
+        }
         return AuthResult.Success
     }
 
@@ -90,11 +96,20 @@ class AuthRepository(
         }
     }
 
+    // Local access is based on the encrypted record written by the authenticated SDK.
+    // Do not import an expired token or use this identity to authorize server requests.
+    internal suspend fun savedLocalUser() = sessionStore.localUser()
+
+    internal suspend fun restoreLocalUser(): io.github.jan.supabase.auth.user.UserInfo? {
+        savedLocalUser()?.let { return it }
+        return if (restoreSession()) currentUser() else savedLocalUser()
+    }
+
     // These preferences are display metadata. The SDK has already persisted the
     // authenticated session in the Keystore-backed session manager.
     internal suspend fun syncDisplayAccount() {
         try {
-            displayAccountMutex.withLock { sessionStore.persist(auth.currentUserOrNull()) }
+            displayAccountMutex.withLock { sessionStore.persist(auth.currentUserOrNull() ?: sessionStore.localUser()) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {

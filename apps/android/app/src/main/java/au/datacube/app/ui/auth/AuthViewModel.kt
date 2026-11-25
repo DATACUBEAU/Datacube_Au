@@ -79,7 +79,7 @@ class AuthViewModel internal constructor(
                 return@launch
             }
             val user = withContext(Dispatchers.IO) {
-                if (repository.restoreSession()) repository.currentUser() else null
+                repository.restoreLocalUser()
             }
             val savedRequest = loadPendingRequest()
             val expired = savedRequest != null && savedRequest.expiresAt <= now()
@@ -101,13 +101,21 @@ class AuthViewModel internal constructor(
             queuedCallbackId = null
             repository.sessionStatus.collect { status ->
                 when (status) {
-                    is SessionStatus.Authenticated -> _state.value = _state.value.copy(user = status.session.user)
-                    is SessionStatus.NotAuthenticated -> _state.value = _state.value.copy(user = null)
-                    // A temporary network refresh error does not revoke an already restored
-                    // encrypted session. NotAuthenticated remains the real sign-out signal.
-                    is SessionStatus.RefreshFailure -> _state.value = _state.value.copy(
-                        error = "Couldn't refresh your session. Offline features are still available."
+                    is SessionStatus.Authenticated -> _state.value = _state.value.copy(
+                        user = status.session.user, error = null
                     )
+                    is SessionStatus.NotAuthenticated -> {
+                        // The SDK can transiently have no in-memory session. Only its
+                        // durable removal (or explicit local sign-out) locks the workspace.
+                        val saved = withContext(Dispatchers.IO) { repository.savedLocalUser() }
+                        _state.value = _state.value.copy(user = saved)
+                    }
+                    is SessionStatus.RefreshFailure -> {
+                        // Server tokens are not valid for online requests during this state.
+                        // The encrypted local account still permits on-device work.
+                        val saved = withContext(Dispatchers.IO) { repository.savedLocalUser() }
+                        _state.value = _state.value.copy(user = saved, error = null)
+                    }
                     SessionStatus.Initializing -> Unit
                 }
             }
@@ -332,7 +340,7 @@ class AuthViewModel internal constructor(
             _state.value = _state.value.copy(isLoading = true)
             val result = repository.signOut()
             _state.value = AuthState(
-                user = repository.currentUser(),
+                user = if (result is AuthRepository.AuthResult.Success) null else repository.savedLocalUser(),
                 sessionRestored = true,
                 error = (result as? AuthRepository.AuthResult.Error)?.message
             )
