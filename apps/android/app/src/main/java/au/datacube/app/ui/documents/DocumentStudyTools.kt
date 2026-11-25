@@ -559,12 +559,23 @@ fun DocumentChatWorkspace(
                                         }
                                         return@launch
                                     }
-                                    val priorQuestion = messages.dropLast(1)
-                                        .lastOrNull { it.isUser }?.question
+                                    val completed = messages.dropLast(1).filter {
+                                        !it.isUser && !it.generating && it.generationError == null && it.answer.isNotBlank() &&
+                                            au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null
+                                    }.takeLast(20).map { RagTurn(it.question,it.answer) }
+                                    val followUp = au.datacube.app.data.rag.AuFollowUp.resolve(cleanPrompt,completed,true)
+                                    followUp.reply?.let {
+                                        messages.add(ChatMessage(cleanPrompt,emptyList(),false,answer=it))
+                                        return@launch
+                                    }
                                     val plan = withContext(Dispatchers.Default) {
-                                        DocumentQueryInterpreter.understand(
-                                            cleanPrompt, textPreview.orEmpty(), priorQuestion
+                                        val understood = DocumentQueryInterpreter.understand(
+                                            followUp.query, textPreview.orEmpty(), if (followUp.contextual) null else completed.lastOrNull()?.question
                                         )
+                                        if (followUp.contextual) understood.copy(
+                                            contextualQuestion=followUp.query, clarification=null,
+                                            overview=understood.overview || listOf("Summarize the key concepts in this document","Outline the sections of this document","Create practice questions from this document").any { followUp.query.startsWith(it) }
+                                        ) else understood
                                     }
                                     if (plan.clarification != null) {
                                         events += "Asked for clarification before retrieving document text"
@@ -666,7 +677,7 @@ fun DocumentChatWorkspace(
                                     events += "Linked ${matches.size} source passage(s)"
                                     val resultIndex = messages.size
                                     messages.add(ChatMessage(
-                                        question = cleanPrompt, matches = matches, isUser = false,
+                                        question = if (followUp.contextual) followUp.query else cleanPrompt, matches = matches, isUser = false,
                                         semantic = usedSemantic, overview = plan.overview,
                                         steps = events.toList(), corrected = plan.correctedTerms,
                                         generating = llmInstalled
@@ -682,7 +693,7 @@ fun DocumentChatWorkspace(
                                             LocalGenerativeEngine.generate(context,
                                                  "The retrieved document passages did not establish the answer. Answer this question from general knowledge only. " +
                                                     "Do not claim to have found it in any textbook. State uncertainty if needed. Question: " +
-                                                    cleanPrompt.take(700),
+                                                    followUp.query.take(700),
                                                 allowGeneral = true, generalOnly = true, effort = requestEffort) { part ->
                                                 raw.append(part)
                                                 val now = SystemClock.elapsedRealtime()
@@ -1441,7 +1452,7 @@ fun PredictionWorkspace(
             SourceUnavailableCard(previewLoading, null)
         } else {
             ToolCard {
-                if (!ready) Text("Select an installed AU chat model in Settings → Models.",
+                if (!ready) Text("Choose a model in Settings → Models.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(
                     onClick = { picker.launch(arrayOf("application/pdf", "text/plain", "text/markdown")) },
@@ -1462,7 +1473,7 @@ fun PredictionWorkspace(
                 }
                 if (session.attaching) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Text("Reading additional reference on this device",
+                    Text("Reading reference…",
                         style = MaterialTheme.typography.bodySmall)
                 }
                 Button(

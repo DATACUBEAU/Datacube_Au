@@ -66,7 +66,7 @@ object GistPrompt {
             appendLine("Infer obvious minor typos from context; preserve unfamiliar names and technical terms. Ask one specific question only if meaning remains uncertain.")
             appendLine("Answer the actual request first, naturally and at the right depth. Avoid generic introductions and repetitive closing questions. Adapt to learners, educators and professionals; do not assume the user is a student.")
             appendLine("Continue from relevant earlier messages; do not invent memory. Offer a relevant study next step only when useful.")
-            appendLine("If the question is too incomplete or has two plausible meanings, ask one short clarification.")
+            appendLine("Use the last reply to interpret short confirmations and choices. If asked to choose, select a sensible next step and briefly explain why. Teach at the requested level, define terms and use simple illustrative analogies or diagrams. Ask one focused question only if needed.")
             appendLine("Do not assume access to live news, current facts, the internet or the user's private files.")
             appendLine("Do not invent citations or pretend to have searched a document.")
             if (history.isNotEmpty()) {

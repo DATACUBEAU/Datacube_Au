@@ -230,7 +230,16 @@ fun DiscsScreen(
                     turns.add(ChatMessage(question, emptyList(), false, answer = recap, steps = events.toList()))
                     return@launch
                 }
-                val intent = GistRequestRouter.classify(question)
+                val completedTurns = turns.dropLast(1).filter {
+                    !it.isUser && !it.generating && it.generationError == null && it.answer.isNotBlank() &&
+                        au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null
+                }.takeLast(20).map { au.datacube.app.data.rag.RagTurn(it.question,it.answer) }
+                val followUp = au.datacube.app.data.rag.AuFollowUp.resolve(question,completedTurns,collectionId != null)
+                followUp.reply?.let {
+                    turns.add(ChatMessage(question,emptyList(),false,answer=it))
+                    return@launch
+                }
+                val intent = GistRequestRouter.classify(followUp.query)
                 if (intent == GistIntent.LIBRARY_COUNT || intent == GistIntent.LIBRARY_LIST) {
                     events += "Checked local document library"
                     turns.add(ChatMessage(question, emptyList(), false,
@@ -243,13 +252,13 @@ fun DiscsScreen(
                     val previousGrounded = turns.dropLast(1).lastOrNull { !it.isUser && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                         ?.takeIf { it.matches.isNotEmpty() }
                     val groundedFollowUp = previousGrounded != null &&
-                        DocumentQueryInterpreter.isReferentialFollowUp(question)
+                        (followUp.contextual || DocumentQueryInterpreter.isReferentialFollowUp(question))
                     val searchDocuments = if (collectionId != null) {
                         !ScopedChatRouting.isSocialGreeting(question)
                     } else intent == GistIntent.DOCUMENT_SEARCH || groundedFollowUp
                     val retrievalQuestion = if (groundedFollowUp && previousGrounded != null)
-                        question.take(700) + " " + previousGrounded.question.take(350)
-                    else question
+                        followUp.query.take(700) + " " + previousGrounded.question.take(350)
+                    else followUp.query
                     session.searchingStage = if (searchDocuments) "Searching your documents" else "Preparing a reply"
                     val sourceResults = if (searchDocuments) {
                         CrossDocumentSearch(context).search(library, retrievalQuestion, limit = requestEffort.sourceLimit)
@@ -264,13 +273,13 @@ fun DiscsScreen(
                     }
                     if (searchDocuments) events += "Selected ${matches.size} supporting passage(s)"
                     val answerIndex = turns.size
-                    turns.add(ChatMessage(question, matches, false,
+                    turns.add(ChatMessage(if (followUp.contextual) followUp.query else question, matches, false,
                         generating = modelReady && (!searchDocuments || matches.isNotEmpty()),
                         steps = events.toList()))
                     if (!modelReady) {
                         turns[answerIndex] = turns[answerIndex].copy(
                             answer = if (!searchDocuments)
-                                "Install and select an AU chat model in Models to use Gist offline."
+                                "Choose a model in Models to use Gist offline."
                             else if (matches.isEmpty())
                                 "I couldn't find a matching passage in your imported documents. Try another keyword or open a specific document."
                             else "I found related passages in ${matches.mapNotNull { it.documentName }.distinct().size} documents. Open Sources to inspect them. Install a chat model for a synthesized answer.",
@@ -297,7 +306,7 @@ fun DiscsScreen(
                             .takeLast(2).joinToString("\n") { "Previous reply: ${it.answer.take(240)}" }
                         val input = if (searchDocuments) {
                             """
-                            QUESTION: ${question.take(700)}
+                            QUESTION: ${followUp.query.take(700)}
                             ${if (groundedFollowUp) "Earlier document question: " + previousGrounded?.question.orEmpty().take(350) else ""}
                             PREVIOUS CHAT (not source evidence):
                             $lastAnswers
@@ -313,7 +322,7 @@ fun DiscsScreen(
                             val contextPairs = turns.take(answerIndex)
                                 .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                                 .takeLast(20).map { it.question to it.answer }
-                            GistPrompt.build(question, contextPairs,
+                            GistPrompt.build(followUp.query, contextPairs,
                                 compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()), effort = requestEffort)
                         }
                         val raw = StringBuilder()
