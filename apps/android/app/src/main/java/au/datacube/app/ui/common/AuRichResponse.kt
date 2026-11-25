@@ -30,6 +30,7 @@ internal sealed interface AuResponseBlock {
     data class Status(val kind: String, val text: String) : AuResponseBlock
     data class Callout(val title: String, val body: String) : AuResponseBlock
     data class Flow(val title: String, val steps: List<String>) : AuResponseBlock
+    data class BarChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -77,6 +78,26 @@ internal object AuResponseParser {
                     val steps = lines.subList(i + 1, end).map(String::trim).filter(String::isNotBlank)
                     if (title.length in 1..100 && steps.size in 2..6 && steps.all { it.length in 1..120 && !it.contains("[FLOW]") && !it.contains("[/FLOW]") }) {
                         result += AuResponseBlock.Flow(title, steps)
+                        i = end + 1
+                        continue
+                    }
+                }
+            }
+            // Only complete, bounded numeric charts are eligible for native rendering.
+            if (line.startsWith("[BAR] ")) {
+                val end = (i + 1 until minOf(lines.size, i + 11)).firstOrNull { lines[it].trim() == "[/BAR]" }
+                if (end != null) {
+                    val title = line.removePrefix("[BAR] ").trim()
+                    val rows = lines.subList(i + 1, end).mapNotNull { row ->
+                        val parts = row.split('|')
+                        val label = parts.firstOrNull()?.trim().orEmpty()
+                        val value = parts.getOrNull(1)?.trim()?.toDoubleOrNull()
+                        if (parts.size == 2 && label.length in 1..64 && value != null &&
+                            value.isFinite() && value in 0.0..1.0e12) label to value else null
+                    }
+                    if (title.length in 1..100 && rows.size in 2..8 && rows.size == end - i - 1 &&
+                        rows.map { it.first }.distinct().size == rows.size) {
+                        result += AuResponseBlock.BarChart(title, rows)
                         i = end + 1
                         continue
                     }
@@ -200,6 +221,29 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                                         fontWeight = FontWeight.SemiBold)
                                     SelectionContainer { Text(inlineText(step), style = MaterialTheme.typography.bodyMedium) }
                                 }
+                            }
+                        }
+                    }
+                }
+                is AuResponseBlock.BarChart -> Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(inlineText(block.title), style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold)
+                        val maximum = block.rows.maxOf { it.second }.coerceAtLeast(0.000000001)
+                        block.rows.forEach { (label, value) ->
+                            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                    Text(value.toString().removeSuffix(".0"), style = MaterialTheme.typography.labelMedium)
+                                }
+                                LinearProgressIndicator(progress = { (value / maximum).toFloat().coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth().height(9.dp),
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant)
                             }
                         }
                     }
