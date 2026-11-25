@@ -669,6 +669,7 @@ private fun AuthenticatedWorkspace(
                          au.datacube.app.ui.common.AuReadAloudSessions.stopAll()
                          au.datacube.app.audio.AuAudioPlayback.stop()
                          DocumentChatSessions.releaseAll()
+                         au.datacube.app.ui.documents.GeneratedStudySessions.releaseAll()
                          au.datacube.app.audio.PodcastOverviewSession.stopAll()
                          authViewModel.signOut()
                      },
