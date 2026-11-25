@@ -286,7 +286,7 @@ fun DiscsScreen(
                                 .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                                 .takeLast(20).map { it.question to it.answer }
                             GistPrompt.build(question, contextPairs,
-                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()))
+                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()), effort = requestEffort)
                         }
                         val raw = StringBuilder()
                         var lastUpdate = 0L

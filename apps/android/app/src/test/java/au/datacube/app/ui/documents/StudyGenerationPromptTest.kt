@@ -78,4 +78,13 @@ class StudyGenerationPromptTest {
         assertEquals(39, sample.last())
         assertTrue(sample.any { it in 18..22 })
     }
+
+    @Test fun boundedNotesRetainLastChapterAndRequestVisuals() {
+        val prepared = StudyGenerationPrompt.prepare("Lecture.pdf", GeneratedStudyMode.NOTES, passages, null)
+        assertEquals(1, prepared.evidence.first().page)
+        assertEquals(12, prepared.evidence.last().page)
+        assertTrue(prepared.text.contains("[FLOW]"))
+        assertTrue(prepared.text.contains("[WORKFLOW]"))
+        assertTrue(prepared.text.contains("selected passages"))
+    }
 }

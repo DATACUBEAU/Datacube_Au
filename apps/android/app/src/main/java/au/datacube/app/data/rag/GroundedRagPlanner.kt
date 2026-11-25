@@ -30,16 +30,18 @@ object GroundedRagPlanner {
             .take(limit.coerceIn(1, 8)).map { it.first }
     }
 
-    fun build(question: String, history: List<RagTurn>, passages: List<RagEvidence>, compact: Boolean = false): RagPrompt {
+    fun build(question: String, history: List<RagTurn>, passages: List<RagEvidence>, compact: Boolean = false, effort: AuEffort = AuEffort.BALANCED): RagPrompt {
         require(question.isNotBlank()) { "Ask a document question first." }
-        val usable = passages.filter { it.text.isNotBlank() }.take(5)
-            .map { it.copy(text = it.text.trim().take(1300)) }
+        val limit = if (compact) minOf(effort.sourceLimit, 5) else effort.sourceLimit
+        val passageChars = if (limit > 5) 1000 else 1300
+        val usable = passages.filter { it.text.isNotBlank() }.take(limit)
+            .map { it.copy(text = it.text.trim().take(passageChars)) }
         require(usable.isNotEmpty()) { "No supporting document text was retrieved." }
         val prompt = buildString {
             appendLine("DOCUMENT QUESTION")
             appendLine(question.trim().take(700))
             appendLine()
-            val recent = AuConversationContext.select(question, history, 3)
+            val recent = AuConversationContext.select(question, history, if (compact) minOf(effort.historyLimit, 3) else effort.historyLimit)
             if (recent.isNotEmpty()) {
                 appendLine("PREVIOUS CONVERSATION (context only; not evidence)")
                 recent.forEachIndexed { index, turn ->
@@ -66,7 +68,7 @@ object GroundedRagPlanner {
         }
         // The independently bounded question, history and passages fit the prompt budget.
         // Never truncate the completed prompt: its final lines contain grounding rules.
-        check(prompt.length <= 11_500) { "Document context exceeds its prompt budget." }
+        check(prompt.length <= if (limit > 5) 15_000 else 11_500) { "Document context exceeds its prompt budget." }
         return RagPrompt(prompt, usable)
     }
 }

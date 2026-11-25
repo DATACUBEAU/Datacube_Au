@@ -575,7 +575,7 @@ fun DocumentChatWorkspace(
                                                 try {
                                                     val source = ExtractedTextStore.fileFor(context.filesDir, documentId)
                                                     if (index.hasCurrent(documentId, source)) {
-                                                        index.search(documentId, plan.retrievalQuery, source, limit = 6)
+                                                        index.search(documentId, plan.retrievalQuery, source, limit = requestEffort.sourceLimit)
                                                     } else null
                                                 } finally {
                                                     index.close()
@@ -592,7 +592,7 @@ fun DocumentChatWorkspace(
                                             session.searchingStage = "Checking semantic matches"
                                             events += "Queried the on-device vector index"
                                             try {
-                                                semanticSearch.search(documentId, plan.retrievalQuery, 6)
+                                                semanticSearch.search(documentId, plan.retrievalQuery, requestEffort.sourceLimit)
                                             } catch (cancelled: CancellationException) {
                                                 throw cancelled
                                             } catch (_: Exception) {
@@ -603,7 +603,7 @@ fun DocumentChatWorkspace(
                                         matches = GroundedRagPlanner.fuse(
                                             keywordMatches.map { RagEvidence(it.text, it.page) },
                                             vectorMatches.map { RagEvidence(it.text, it.page) },
-                                            limit = minOf(requestEffort.sourceLimit, 5)
+                                            limit = requestEffort.sourceLimit
                                         ).map { SourceSnippet(it.text, it.page) }
                                         if (usedSemantic) events += "Combined keyword and vector results"
                                     }
@@ -624,7 +624,8 @@ fun DocumentChatWorkspace(
                                         val grounded = GroundedRagPlanner.build(
                                             plan.contextualQuestion ?: cleanPrompt, previous,
                                             matches.map { RagEvidence(it.text, it.page) },
-                                            compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected())
+                                            compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
+                                            effort = requestEffort
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
                                         matches = grounded.evidence.map { SourceSnippet(it.text, it.page) }
@@ -1168,7 +1169,7 @@ fun SmartNoteWorkspace(
         GeneratedStudySectionParser.parse(session.response)
     }
 
-    ToolPage("Smart Note", "AI-generated notes you can read or explore as a concept tree.") {
+    ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
         if (textPreview.isNullOrBlank()) {
             SourceUnavailableCard(previewLoading, null)
         } else {
@@ -1221,6 +1222,8 @@ fun SmartNoteWorkspace(
                         label = { Text("Concept tree") }
                     )
                 }
+                Text("Based on selected source passages. Check the original document for complete coverage.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (conceptTree) {
                     Surface(
                         Modifier.fillMaxWidth(),
@@ -1285,7 +1288,8 @@ fun SmartNoteWorkspace(
                     }
                 } else {
                     sections.forEach { section ->
-                        ToolCard {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(section.topic, style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold)
                             if (section.details.isNotBlank()) {

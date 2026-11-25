@@ -56,9 +56,9 @@ object GistRequestRouter {
 
 object GistPrompt {
     /** Recent pairs supply context to follow-ups; they are not evidence of facts. */
-    fun build(question: String, previous: List<Pair<String, String>>, compact: Boolean = false): String {
+    fun build(question: String, previous: List<Pair<String, String>>, compact: Boolean = false, effort: AuEffort = AuEffort.BALANCED): String {
         require(question.isNotBlank())
-        val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) 3 else 5)
+        val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) minOf(3, effort.historyLimit) else effort.historyLimit)
         return buildString {
             appendLine("GIST — NORMAL OFFLINE AU CONVERSATION")
             appendLine("You are chatting without searching imported documents.")
