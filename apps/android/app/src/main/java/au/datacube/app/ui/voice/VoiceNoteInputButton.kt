@@ -21,6 +21,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Slider
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -181,13 +182,13 @@ fun VoiceNoteInputButton(
 
 /** Serialize voice notes with read-aloud and podcasts. Release the player on stop,
  * screen disposal, errors and natural completion. Never start overlapping playback. */
-private suspend fun playPrivateVoiceNote(path: String) = suspendCancellableCoroutine<Unit> { continuation ->
+private suspend fun playPrivateVoiceNote(path: String, onPlayer: (MediaPlayer?) -> Unit) = suspendCancellableCoroutine<Unit> { continuation ->
     val player = MediaPlayer()
     fun release() { runCatching { player.release() } }
     continuation.invokeOnCancellation { release() }
     try {
         player.setDataSource(path)
-        player.setOnPreparedListener { if (continuation.isActive) runCatching { it.start() }.onFailure { error ->
+        player.setOnPreparedListener { if (continuation.isActive) runCatching { onPlayer(it); it.start() }.onFailure { error ->
             release()
             if (continuation.isActive) continuation.resumeWithException(error)
         } }
@@ -222,7 +223,18 @@ fun VoiceNotePlayback(audioPath: String, label: String) {
     val state = remember(audioPath) { mutableStateOf<Job?>(null) }
     var playing by remember(audioPath) { mutableStateOf(false) }
     var failed by remember(audioPath) { mutableStateOf(false) }
+    var player by remember(audioPath) { mutableStateOf<MediaPlayer?>(null) }
+    var position by remember(audioPath) { mutableIntStateOf(0) }
+    var duration by remember(audioPath) { mutableIntStateOf(0) }
+    var dragging by remember(audioPath) { mutableStateOf(false) }
+    LaunchedEffect(player, playing) {
+        while (playing && player != null) {
+            if (!dragging) runCatching { position = player?.currentPosition ?: 0; duration = player?.duration ?: 0 }
+            delay(200)
+        }
+    }
     DisposableEffect(audioPath) { onDispose { state.value?.cancel() } }
+    Column(Modifier.fillMaxWidth()) {
     TextButton(
         enabled = valid,
         onClick = {
@@ -231,8 +243,8 @@ fun VoiceNotePlayback(audioPath: String, label: String) {
                 failed = false
                 playing = true
                 state.value = AuAudioPlayback.launch(context, "Playing voice note",
-                    onFinished = { playing = false; state.value = null }) {
-                    try { playPrivateVoiceNote(audioPath) }
+                    onFinished = { playing = false; state.value = null; player = null; dragging = false }) {
+                    try { playPrivateVoiceNote(audioPath) { current -> player = current } }
                     catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
                     catch (_: Exception) { failed = true }
                 }
@@ -243,5 +255,15 @@ fun VoiceNotePlayback(audioPath: String, label: String) {
             contentDescription = if (playing) "Stop voice note" else "Play voice note")
         Spacer(Modifier.width(7.dp))
         Text(if (failed) "Playback failed · Retry" else if (valid) label else "Voice note unavailable")
+    }
+    if (playing && duration > 0) {
+        Slider(value = position.coerceIn(0,duration).toFloat(), onValueChange = {
+            dragging = true; position = it.toInt()
+        }, valueRange = 0f..duration.toFloat(), onValueChangeFinished = {
+            runCatching { player?.seekTo(position.coerceIn(0,duration)) }
+            dragging = false
+        }, modifier = Modifier.fillMaxWidth())
+        Text("${position / 1000}s / ${duration / 1000}s",style = MaterialTheme.typography.labelSmall)
+    }
     }
 }

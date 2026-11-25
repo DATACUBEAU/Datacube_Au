@@ -26,6 +26,10 @@ import au.datacube.app.data.rag.LocalGenerativeEngine
 import kotlinx.coroutines.*
 
 internal class AuReadAloudState(private val context: Context, private val scope: CoroutineScope) {
+    var positionMs by mutableLongStateOf(0L)
+        private set
+    var durationMs by mutableLongStateOf(0L)
+        private set
     var active by mutableStateOf<Int?>(null)
         private set
     var voiceLabel by mutableStateOf("")
@@ -56,6 +60,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         job = null
         active = null
         stage = ""
+        positionMs = 0L
+        durationMs = 0L
     }
 
     fun play(id: Int, answer: String, systemVoice: Boolean = false, enginePackage: String? = null, neuralVoice: String = NeuralNarration.DEFAULT_VOICE) {
@@ -79,7 +85,10 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                     report("Waiting for local model memory")
                     LocalGenerativeEngine.release()
                     report("Preparing selected neural voice")
-                    NeuralNarration.speak(context, plain, neuralVoice, 1f, report)
+                    NeuralNarration.speak(context, plain, neuralVoice, 1f,
+                        onProgress = { position, duration -> withContext(Dispatchers.Main) {
+                            if (token == revision) { positionMs = position; durationMs = duration }
+                        } }, onStage = report)
                 } else {
                     val turns = NeuralTextSegmenter.split(plain, maxChunk = 350, maxText = 12_000)
                         .map { PodcastTurn(PodcastSpeaker.GUIDE, it) }
@@ -201,6 +210,10 @@ internal fun AuReadAloudBar(speech: AuReadAloudState) {
                     }
                 }
                 if (!speech.stage.startsWith("Playing")) LinearProgressIndicator(Modifier.fillMaxWidth())
+                else if (speech.durationMs > 0L) {
+                    LinearProgressIndicator(progress = { (speech.positionMs.toFloat() / speech.durationMs).coerceIn(0f,1f) }, modifier = Modifier.fillMaxWidth())
+                    Text("${speech.positionMs / 1000}s / ${speech.durationMs / 1000}s", Modifier.padding(horizontal = 16.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }

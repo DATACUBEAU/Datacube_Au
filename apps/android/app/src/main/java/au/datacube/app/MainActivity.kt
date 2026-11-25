@@ -178,7 +178,7 @@ private sealed class Screen(val route: String) {
     object Discs : Screen("discs")
     object Collection : Screen("collection/{id}")
     object CollectionChat : Screen("collection-chat/{id}")
-    object Document : Screen("document/{id}?prompt={prompt}&tab={tab}")
+    object Document : Screen("document/{id}?prompt={prompt}&tab={tab}&collection={collection}")
     object Settings : Screen("settings")
     object Models : Screen("models")
     object ModelVault : Screen("model-vault")
@@ -243,6 +243,33 @@ private fun AuthenticatedWorkspace(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
+    LaunchedEffect(authState.user?.id) { authState.user?.id?.let { au.datacube.app.ui.common.ResponseFeedbackStore.schedule(context,it) } }
+    val communityAccount = authState.user?.id
+    val communityPrefs = remember(context) { context.getSharedPreferences("au_community_prompt_v1", android.content.Context.MODE_PRIVATE) }
+    var communityOpen by remember(communityAccount) {
+        mutableStateOf(communityAccount != null && !communityPrefs.getBoolean(communityAccount, false))
+    }
+    fun dismissCommunity() {
+        communityAccount?.let { communityPrefs.edit().putBoolean(it,true).apply() }
+        communityOpen = false
+    }
+    if (communityOpen) {
+        DataCubeDialog(
+            onDismissRequest = ::dismissCommunity,
+            title = { Text("DataCube AU community") },
+            text = { Text("Join the optional WhatsApp community for announcements, study-app guidance and support. WhatsApp may expose your phone number or profile to others; never post private documents or account details.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    dismissCommunity()
+                    runCatching {
+                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW,
+                            Uri.parse("https://chat.whatsapp.com/D7GGIjLQitIFHRoEbBQsY0")))
+                    }.onFailure { scope.launch { snackbar.showSnackbar("Community link could not be opened.") } }
+                }) { Text("Open WhatsApp") }
+            },
+            dismissButton = { TextButton(onClick = ::dismissCommunity) { Text("Not now") } }
+        )
+    }
     LaunchedEffect(updateJustCompleted) {
         if (updateJustCompleted) {
             snackbar.showSnackbar("DataCube AU updated successfully. Your local data is retained.")
@@ -549,7 +576,7 @@ private fun AuthenticatedWorkspace(
                     onRemoveDocument = { id ->
                         documentsViewModel.removeDocumentFromCollection(collectionId, id)
                     },
-                    onOpenDocument = { id -> navController.navigate("document/$id") },
+                    onOpenDocument = { id -> navController.navigate("document/$id?collection=" + Uri.encode(collectionId)) },
                     onOpenCollectionChat = {
                         if (collectionId.isNotBlank()) navController.navigate("collection-chat/$collectionId")
                     }
@@ -570,7 +597,7 @@ private fun AuthenticatedWorkspace(
                     documents = documents.filter { it.document.id in allowedIds },
                     onBack = { navController.popBackStack() },
                     onOpenDocument = { id ->
-                        if (id in allowedIds) navController.navigate("document/$id")
+                        if (id in allowedIds) navController.navigate("document/$id?collection=" + Uri.encode(collectionId))
                     },
                     onOpenDocuments = { navController.navigate("collection/$collectionId") },
                     collectionId = collectionId,
@@ -588,12 +615,21 @@ private fun AuthenticatedWorkspace(
                     androidx.navigation.navArgument("tab") {
                         type = androidx.navigation.NavType.IntType
                         defaultValue = 0
+                    },
+                    androidx.navigation.navArgument("collection") {
+                        type = androidx.navigation.NavType.StringType
+                        defaultValue = ""
                     }
                 )
             ) { entry ->
                 val documentId = entry.arguments?.getString("id").orEmpty()
                 val initialPrompt = entry.arguments?.getString("prompt")
                 val initialTab = entry.arguments?.getInt("tab") ?: 0
+                val sourceCollection = entry.arguments?.getString("collection").orEmpty()
+                val relatedFlow = remember(sourceCollection) { documentsViewModel.observeCollectionDocuments(sourceCollection) }
+                val related by relatedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+                val collectionScope = sourceCollection.takeIf { it.isNotBlank() && related.any { doc -> doc.id == documentId } }
+                val relatedDocuments = if (collectionScope != null) related else emptyList()
                 val selectedProcessing = documents.firstOrNull { it.document.id == documentId }
                 val selectedDocument = selectedProcessing?.document
                 var textPreview by remember(documentId) { mutableStateOf<String?>(null) }
@@ -633,6 +669,8 @@ private fun AuthenticatedWorkspace(
                         accountId = requireNotNull(authState.user).id,
                         initialPrompt = initialPrompt,
                         initialTab = initialTab,
+                        collectionId = collectionScope,
+                        collectionDocuments = relatedDocuments,
                         extractionStatus = selectedProcessing?.extractionStatus,
                         extractionProgress = selectedProcessing?.extractionProgress,
                         extractionError = selectedProcessing?.extractionError,
@@ -658,6 +696,7 @@ private fun AuthenticatedWorkspace(
                          au.datacube.app.ui.common.AuReadAloudSessions.stopAll()
                          au.datacube.app.audio.AuAudioPlayback.stop()
                          DocumentChatSessions.releaseAll()
+                         au.datacube.app.ui.documents.GeneratedStudySessions.releaseAll()
                          au.datacube.app.audio.PodcastOverviewSession.stopAll()
                          authViewModel.signOut()
                      },

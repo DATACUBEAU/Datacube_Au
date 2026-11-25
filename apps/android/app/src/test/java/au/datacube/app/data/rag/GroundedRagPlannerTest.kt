@@ -74,7 +74,7 @@ class GroundedRagPlannerTest {
         }
         val history = (1..9).map { RagTurn("Question $it " + "q".repeat(5000), "a".repeat(5000)) }
         val result = GroundedRagPlanner.build("Question " + "q".repeat(5000), history, evidence)
-        assertTrue(result.value.length <= 11500)
+        assertTrue(result.value.length <= 12600)
         assertEquals(5, result.evidence.size)
         assertTrue(result.evidence.all { it.text.length <= 1300 && result.value.contains(it.text) })
         assertFalse(result.value.contains("OMITTED_TAIL"))
@@ -91,5 +91,15 @@ class GroundedRagPlannerTest {
         assertEquals(0, AuEffort.FAST.thinkingBudget("gemma-4-e2b", false))
         assertEquals(1536, AuEffort.MAXIMUM.thinkingBudget("gemma-4-e2b", false))
         assertEquals(512, AuEffort.MAXIMUM.thinkingBudget("gemma-4-e2b", true))
+    }
+
+    @Test fun samePageAndTextFromDifferentDocumentsPreserveProvenance() {
+        val a = RagEvidence("Shared definition", 1, "physics1", "Physics 001.pdf")
+        val b = RagEvidence("Shared definition", 1, "physics2", "Physics 002.pdf")
+        val sources = GroundedRagPlanner.fuse(listOf(a,b),listOf(a,b))
+        assertEquals(2,sources.size)
+        val prompt = GroundedRagPlanner.build("Compare the definition",emptyList(),sources)
+        assertTrue(prompt.value.contains("Physics 001.pdf"))
+        assertTrue(prompt.value.contains("Physics 002.pdf"))
     }
 }

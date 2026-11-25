@@ -48,6 +48,7 @@ import au.datacube.app.ui.common.AuComposer
 import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
+import au.datacube.app.ui.common.AuResponseFeedback
 import au.datacube.app.ui.common.AuReadAloudAction
 import au.datacube.app.ui.common.AuReadAloudBar
 import au.datacube.app.ui.common.rememberAuReadAloud
@@ -530,6 +531,7 @@ fun DiscsScreen(
                                         }
                                     }
                                     AuReadAloudAction(speech, messageIndex, message.answer)
+                                    AuResponseFeedback(accountId, "$ownerId:$threadId", messageIndex, message.createdAtEpochMs, "android_gist")
                                 }
                                 if (message.generating) LinearProgressIndicator(Modifier.fillMaxWidth())
                                 message.generationError?.let { Text(it,

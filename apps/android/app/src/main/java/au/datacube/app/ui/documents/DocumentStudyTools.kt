@@ -7,6 +7,7 @@ import au.datacube.app.ui.chat.GistAttachmentMenu
 import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
+import au.datacube.app.ui.common.AuResponseFeedback
 import au.datacube.app.ui.common.AuReadAloudAction
 import au.datacube.app.ui.common.AuReadAloudBar
 import au.datacube.app.ui.common.rememberAuReadAloud
@@ -264,7 +265,9 @@ fun DocumentChatWorkspace(
     newChatToken: Int = 0,
     onOpenModels: () -> Unit = {},
     onScheduleRequest: ((String) -> Unit)? = null,
-    accountId: String? = null
+    accountId: String? = null,
+    collectionId: String? = null,
+    collectionDocuments: List<au.datacube.app.data.LocalDocument> = emptyList()
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -275,25 +278,32 @@ fun DocumentChatWorkspace(
     val indexingFlow = remember(documentId) { semanticSearch.observeIndex(documentId) }
     val indexingWorks by indexingFlow.collectAsState(initial = emptyList())
     val indexing = indexingWorks.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val chatOwner = remember(documentId, collectionId) {
+        if (collectionId == null) documentId else {
+            val suffix = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(collectionId.toByteArray(Charsets.UTF_8)).take(8).joinToString("") { "%02x".format(it) }
+            documentId + "--c-" + suffix
+        }
+    }
     val threads = remember(context) { LocalConversationThreads(context) }
-    var threadIndex by remember(documentId) { mutableStateOf<ConversationThreadIndex?>(null) }
-    LaunchedEffect(documentId) {
-        threadIndex = runCatching { threads.list(documentId) }.getOrNull()
+    var threadIndex by remember(chatOwner) { mutableStateOf<ConversationThreadIndex?>(null) }
+    LaunchedEffect(chatOwner) {
+        threadIndex = runCatching { threads.list(chatOwner) }.getOrNull()
     }
     LaunchedEffect(showHistoryPicker) {
-        if (showHistoryPicker) threadIndex = runCatching { threads.list(documentId) }.getOrNull()
+        if (showHistoryPicker) threadIndex = runCatching { threads.list(chatOwner) }.getOrNull()
     }
     val threadId = threadIndex?.activeId ?: "main"
-    val speech = rememberAuReadAloud("document:$documentId:$threadId")
-    val session = remember(documentId, threadId) {
-        DocumentChatSessions.get(documentId, threadId, context)
+    val speech = rememberAuReadAloud("document:$chatOwner:$threadId")
+    val session = remember(chatOwner, threadId) {
+        DocumentChatSessions.get(chatOwner, threadId, context)
     }
     val messages = session.messages
     val historyReady = session.historyReady
     val userTurns = messages.count { it.isUser }
     fun startNewChat() {
         scope.launch {
-            runCatching { threads.create(documentId) }
+            runCatching { threads.create(chatOwner) }
                 .onSuccess { threadIndex = it; onDismissHistory() }
         }
     }
@@ -301,12 +311,12 @@ fun DocumentChatWorkspace(
     LaunchedEffect(newChatToken) {
         if (newChatToken > handledNewChatToken) {
             handledNewChatToken = newChatToken
-            threadIndex = runCatching { threads.create(documentId) }.getOrNull()
+            threadIndex = runCatching { threads.create(chatOwner) }.getOrNull()
             onDismissHistory()
         }
     }
-    var confirmClearChat by remember(documentId, threadId) { mutableStateOf(false) }
-    var clearChatError by remember(documentId, threadId) { mutableStateOf<String?>(null) }
+    var confirmClearChat by remember(chatOwner, threadId) { mutableStateOf(false) }
+    var clearChatError by remember(chatOwner, threadId) { mutableStateOf<String?>(null) }
     if (confirmClearChat) {
         DataCubeDialog(
             onDismissRequest = { confirmClearChat = false },
@@ -317,7 +327,7 @@ fun DocumentChatWorkspace(
                 onDismissHistory()
                 speech.stop()
                 session.scope.launch {
-                    if (!session.clearHistory(context, documentId)) clearChatError = "Chat cleanup could not finish. Try again."
+                    if (!session.clearHistory(context, chatOwner)) clearChatError = "Chat cleanup could not finish. Try again."
                 }
             }, enabled = session.historyReady && !session.searching) { Text("Clear chat") } },
             dismissButton = { TextButton(onClick = { confirmClearChat = false }) { Text("Cancel") } }
@@ -346,7 +356,7 @@ fun DocumentChatWorkspace(
                             Surface(
                                 onClick = {
                                     scope.launch {
-                                        threadIndex = threads.activate(documentId, item.id)
+                                        threadIndex = threads.activate(chatOwner, item.id)
                                         onDismissHistory()
                                     }
                                 },
@@ -374,9 +384,9 @@ fun DocumentChatWorkspace(
         )
     }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
-    var expandedSteps by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var liveActivityOpen by remember(documentId, threadId) { mutableStateOf(false) }
-    var expandedSources by remember(documentId, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var expandedSteps by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
+    var liveActivityOpen by remember(chatOwner, threadId) { mutableStateOf(false) }
+    var expandedSources by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
     var explainingTerm by remember(documentId) { mutableStateOf(false) }
@@ -400,11 +410,11 @@ fun DocumentChatWorkspace(
             if (semanticSupported) semanticSearch.scheduleIndex(documentId)
         }
     }
-    var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
+    var prompt by remember(chatOwner, threadId, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
     var effort by remember(threadId) { mutableStateOf(au.datacube.app.data.rag.AuEffort.BALANCED) }
-    var attached by remember(documentId, threadId) { mutableStateOf<GistAttachment?>(null) }
-    var preparingAttachment by remember(documentId, threadId) { mutableStateOf(false) }
-    var attachmentError by remember(documentId, threadId) { mutableStateOf<String?>(null) }
+    var attached by remember(chatOwner, threadId) { mutableStateOf<GistAttachment?>(null) }
+    var preparingAttachment by remember(chatOwner, threadId) { mutableStateOf(false) }
+    var attachmentError by remember(chatOwner, threadId) { mutableStateOf<String?>(null) }
 
     fun sendAttached() {
         val selected = attached ?: return
@@ -485,7 +495,7 @@ fun DocumentChatWorkspace(
                             session.activitySteps.clear()
                             // The response belongs to the document/thread session, not
                             // this Compose screen; navigation must not cancel it.
-                            session.scope.launch { threads.nameFromQuestion(documentId, threadId, cleanPrompt) }
+                            session.scope.launch { threads.nameFromQuestion(chatOwner, threadId, cleanPrompt) }
                             session.activeRequest = session.scope.launch {
                                 val events = session.activitySteps
                                 try {
@@ -498,7 +508,7 @@ fun DocumentChatWorkspace(
                                         return@launch
                                     }
                                     if (AuConversationContext.asksYesterdayRecap(cleanPrompt)) {
-                                        val recap = threads.yesterdayReply(documentId, threadId, messages.map {
+                                        val recap = threads.yesterdayReply(chatOwner, threadId, messages.map {
                                             ConversationEntry(it.question, it.createdAtEpochMs, it.isUser)
                                         })
                                         events += "Checked dated saved conversations in this workspace"
@@ -636,14 +646,66 @@ fun DocumentChatWorkspace(
                                         ).map { SourceSnippet(it.text, it.page) }
                                         if (usedSemantic) events += "Combined keyword and vector results"
                                     }
+                                    if (collectionId != null && !plan.overview) {
+                                        session.searchingStage = "Searching collection"
+                                        val other = au.datacube.app.data.rag.CrossDocumentSearch(context).search(
+                                            collectionDocuments.filter { it.id != documentId }, plan.retrievalQuery, requestEffort.sourceLimit)
+                                        val local = matches.map { it.copy(documentId = documentId, documentName = documentName) }
+                                        val related = other.map { SourceSnippet(it.text,it.page,it.documentId,it.documentName) }
+                                        // Interleave so neither the open file nor its collection peers crowd out all evidence.
+                                        matches = buildList {
+                                            for (i in 0 until maxOf(local.size, related.size)) {
+                                                local.getOrNull(i)?.let { add(it) }
+                                                related.getOrNull(i)?.let { add(it) }
+                                            }
+                                        }.distinctBy { Triple(it.documentId,it.page,it.text) }.take(requestEffort.sourceLimit)
+                                        events += "Searched readable documents in this collection"
+                                    } else {
+                                        matches = matches.map { it.copy(documentId = documentId, documentName = documentName) }
+                                    }
                                     events += "Linked ${matches.size} source passage(s)"
                                     val resultIndex = messages.size
                                     messages.add(ChatMessage(
                                         question = cleanPrompt, matches = matches, isUser = false,
                                         semantic = usedSemantic, overview = plan.overview,
                                         steps = events.toList(), corrected = plan.correctedTerms,
-                                        generating = llmInstalled && matches.isNotEmpty()
+                                        generating = llmInstalled
                                     ))
+                                    suspend fun generalExplanation() {
+                                        // Application-owned origin label, persisted with the turn. Never rely on the model to label itself.
+                                        events.add(0, "General knowledge · Not verified in document")
+                                        messages[resultIndex] = messages[resultIndex].copy(steps = events.toList(), matches = emptyList(), answer = "", generating = true)
+                                        session.searchingStage = "Preparing general explanation"
+                                        val raw = StringBuilder()
+                                        var lastUpdate = 0L
+                                        try {
+                                            LocalGenerativeEngine.generate(context,
+                                                 "The retrieved document passages did not establish the answer. Answer this question from general knowledge only. " +
+                                                    "Do not claim to have found it in any textbook. State uncertainty if needed. Question: " +
+                                                    cleanPrompt.take(700),
+                                                allowGeneral = true, generalOnly = true, effort = requestEffort) { part ->
+                                                raw.append(part)
+                                                val now = SystemClock.elapsedRealtime()
+                                                if (now - lastUpdate >= 90L) {
+                                                    withContext(Dispatchers.Main) {
+                                                        messages[resultIndex] = messages[resultIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(),0))
+                                                    }
+                                                    lastUpdate = now
+                                                }
+                                            }
+                                            messages[resultIndex] = messages[resultIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(),0).trim(),
+                                                generating = false)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            messages[resultIndex] = messages[resultIndex].copy(generating = false,
+                                                generationError = "Could not finish the general explanation.")
+                                        }
+                                    }
+                                    if (llmInstalled && matches.isEmpty()) {
+                                        generalExplanation()
+                                        return@launch
+                                    }
                                     if (llmInstalled && matches.isNotEmpty()) {
                                         session.searchingStage = "AU is preparing an answer"
                                         val previous = messages.take(resultIndex)
@@ -652,12 +714,12 @@ fun DocumentChatWorkspace(
                                             .map { RagTurn(it.question, it.answer) }
                                         val grounded = GroundedRagPlanner.build(
                                             plan.contextualQuestion ?: cleanPrompt, previous,
-                                            matches.map { RagEvidence(it.text, it.page) },
+                                            matches.map { RagEvidence(it.text, it.page,it.documentId,it.documentName) },
                                             compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
                                             effort = requestEffort
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
-                                        matches = grounded.evidence.map { SourceSnippet(it.text, it.page) }
+                                        matches = grounded.evidence.map { SourceSnippet(it.text, it.page,it.documentId,it.documentName) }
                                         messages[resultIndex] = messages[resultIndex].copy(matches = matches)
                                         val generated = StringBuilder()
                                         var lastUpdate = 0L
@@ -675,9 +737,14 @@ fun DocumentChatWorkspace(
                                                     lastUpdate = now
                                                 }
                                             }
+                                            val completed = ModelOutputCleaner.visible(generated.toString(), matches.size).trim()
+                                            if (completed.startsWith("I could not verify that in the available document passages", ignoreCase = true)) {
+                                                generalExplanation()
+                                                return@launch
+                                            }
                                             events += "AU generated an answer using the selected evidence"
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated.toString(), matches.size).trim(),
+                                                answer = completed,
                                                 generating = false,
                                                 steps = events.toList()
                                             )
@@ -788,7 +855,7 @@ fun DocumentChatWorkspace(
         DataCubeDialog(
             onDismissRequest = { openedEvidence = null },
             title = {
-                Text(evidence.page?.let { "Source · Page $it" } ?: "Source · Extracted text")
+                Text((evidence.documentName ?: "Source") + (evidence.page?.let { " · Page $it" } ?: " · Extracted text"))
             },
             text = {
                 Column(Modifier.heightIn(max = 350.dp).verticalScroll(rememberScrollState())) {
@@ -812,7 +879,7 @@ fun DocumentChatWorkspace(
             Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text("Searching in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(if (collectionId != null) "Searching this collection" else "Searching in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
             }
             AssistChip(onClick = {}, enabled = false, label = {
@@ -902,6 +969,15 @@ fun DocumentChatWorkspace(
                                 },
                                 fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
                             )
+                            if ("General knowledge · Not verified in document" in message.steps) {
+                                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("General knowledge · Not verified in this document",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
                             if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                             if (message.corrected.isNotEmpty()) {
                                 Text("Matched: " + message.corrected.entries.joinToString { "${it.key} → ${it.value}" },
@@ -923,6 +999,7 @@ fun DocumentChatWorkspace(
                                 }
                                 if (!message.generating && message.generationError == null) {
                                     AuReadAloudAction(speech, messageIndex, message.answer)
+                                    AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
                                 }
                                 Spacer(Modifier.height(8.dp))
                             }
@@ -1002,7 +1079,7 @@ fun DocumentChatWorkspace(
                                             modifier = Modifier.size(15.dp))
                                         Spacer(Modifier.width(5.dp))
                                         TextButton(onClick = { openedEvidence = snippet }) {
-                                            Text(snippet.page?.let { "[${index + 1}] Page $it · View source" } ?: "[${index + 1}] View source")
+                                            Text("[${index + 1}] " + (snippet.documentName?.let { "$it · " } ?: "") + (snippet.page?.let { "Page $it" } ?: "View source"))
                                         }
                                     }
                                     if (index != message.matches.lastIndex) {
@@ -1098,7 +1175,7 @@ fun DocumentChatWorkspace(
             onEffortChange = { effort = it },
             onStop = if (session.searching) ({ session.activeRequest?.cancel() }) else null,
             leadingActions = {
-                key(documentId, threadId) {
+                key(chatOwner, threadId) {
                     GistAttachmentMenu(
                         enabled = historyReady && threadIndex != null && llmInstalled && !session.searching &&
                             userTurns < ConversationWindow.MAX_USER_TURNS,
@@ -1111,7 +1188,7 @@ fun DocumentChatWorkspace(
             },
             actions = {
                 VoiceNoteInputButton(
-                    ownerId = documentId,
+                    ownerId = chatOwner,
                     enabled = historyReady && !session.searching && !preparingAttachment && attached == null && threadIndex != null && llmInstalled &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
@@ -1199,6 +1276,7 @@ fun SmartNoteWorkspace(
         GeneratedStudySectionParser.parse(session.response)
     }
     val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
+    LaunchedEffect(documentId, textPreview) { if (!textPreview.isNullOrBlank()) session.restoreNotes(context,documentId) }
 
     ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
         AuReadAloudBar(notesSpeech)
@@ -1220,13 +1298,14 @@ fun SmartNoteWorkspace(
                             textPreview, GeneratedStudyMode.NOTES
                         )
                     },
-                    enabled = ready && !session.working,
+                    enabled = ready && !session.working && !session.restoring,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
                 ) {
                     Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (session.response.isBlank()) "Generate Smart Note" else "Regenerate notes")
                 }
+                if (session.restoring) Text("Opening saved notes…", style = MaterialTheme.typography.bodySmall)
                 if (session.working) {
                     Spacer(Modifier.height(10.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
