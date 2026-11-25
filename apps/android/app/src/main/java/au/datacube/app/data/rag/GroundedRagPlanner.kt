@@ -3,7 +3,7 @@ package au.datacube.app.data.rag
 import java.util.Locale
 
 /** A document passage is source data, not a model instruction. */
-data class RagEvidence(val text: String, val page: Int?)
+data class RagEvidence(val text: String, val page: Int?, val documentId: String? = null, val documentName: String? = null)
 data class RagTurn(val question: String, val answer: String)
 data class RagPrompt(val value: String, val evidence: List<RagEvidence>)
 
@@ -11,10 +11,10 @@ data class RagPrompt(val value: String, val evidence: List<RagEvidence>)
 object GroundedRagPlanner {
     private val whitespace = Regex("\\s+")
     private fun key(item: RagEvidence) =
-        item.page to item.text.trim().replace(whitespace, " ").lowercase(Locale.ROOT)
+        Triple(item.documentId, item.page, item.text.trim().replace(whitespace, " ").lowercase(Locale.ROOT))
 
     fun fuse(keyword: List<RagEvidence>, semantic: List<RagEvidence>, limit: Int = 4): List<RagEvidence> {
-        val scores = linkedMapOf<Pair<Int?, String>, Pair<RagEvidence, Double>>()
+        val scores = linkedMapOf<Triple<String?, Int?, String>, Pair<RagEvidence, Double>>()
         listOf(keyword, semantic).forEach { ranked ->
             // A passage can contribute at most one vote per retrieval method.
             // Keep the page in the identity so identical text on distinct pages
@@ -52,7 +52,7 @@ object GroundedRagPlanner {
             }
             appendLine("RETRIEVED DOCUMENT EXCERPTS")
             usable.forEachIndexed { index, item ->
-                appendLine("[${index + 1}] ${item.page?.let { "Page $it" } ?: "Page unspecified"}:")
+                appendLine("[${index + 1}] " + (item.documentName?.replace('\n', ' ')?.take(100)?.let { "$it · " } ?: "") + (item.page?.let { "Page $it" } ?: "Page unspecified") + ":")
                 appendLine(item.text)
                 appendLine()
             }
@@ -69,7 +69,7 @@ object GroundedRagPlanner {
         }
         // The independently bounded question, history and passages fit the prompt budget.
         // Never truncate the completed prompt: its final lines contain grounding rules.
-        check(prompt.length <= if (limit > 5) 15_500 else 12_000) { "Document context exceeds its prompt budget." }
+        check(prompt.length <= if (limit > 5) 16_400 else 12_600) { "Document context exceeds its prompt budget." }
         return RagPrompt(prompt, usable)
     }
 }
