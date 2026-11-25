@@ -661,8 +661,40 @@ fun DocumentChatWorkspace(
                                         question = cleanPrompt, matches = matches, isUser = false,
                                         semantic = usedSemantic, overview = plan.overview,
                                         steps = events.toList(), corrected = plan.correctedTerms,
-                                        generating = llmInstalled && matches.isNotEmpty()
+                                        generating = llmInstalled
                                     ))
+                                    if (llmInstalled && matches.isEmpty()) {
+                                        // Application-owned origin label, persisted with the turn. Never rely on the model to label itself.
+                                        events += "General knowledge · Not verified in document"
+                                        messages[resultIndex] = messages[resultIndex].copy(steps = events.toList())
+                                        session.searchingStage = "Preparing general explanation"
+                                        val raw = StringBuilder()
+                                        var lastUpdate = 0L
+                                        try {
+                                            LocalGenerativeEngine.generate(context,
+                                                "No supporting document passages were retrieved. Answer this question from general knowledge only. " +
+                                                    "Do not claim to have found it in any textbook. State uncertainty if needed. Question: " +
+                                                    cleanPrompt.take(700),
+                                                allowGeneral = true, generalOnly = true, effort = requestEffort) { part ->
+                                                raw.append(part)
+                                                val now = SystemClock.elapsedRealtime()
+                                                if (now - lastUpdate >= 90L) {
+                                                    withContext(Dispatchers.Main) {
+                                                        messages[resultIndex] = messages[resultIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(),0))
+                                                    }
+                                                    lastUpdate = now
+                                                }
+                                            }
+                                            messages[resultIndex] = messages[resultIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(),0).trim(),
+                                                generating = false)
+                                        } catch (cancelled: CancellationException) {
+                                            throw cancelled
+                                        } catch (_: Exception) {
+                                            messages[resultIndex] = messages[resultIndex].copy(generating = false,
+                                                generationError = "Could not finish the general explanation.")
+                                        }
+                                        return@launch
+                                    }
                                     if (llmInstalled && matches.isNotEmpty()) {
                                         session.searchingStage = "AU is preparing an answer"
                                         val previous = messages.take(resultIndex)
@@ -921,6 +953,15 @@ fun DocumentChatWorkspace(
                                 },
                                 fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
                             )
+                            if ("General knowledge · Not verified in document" in message.steps) {
+                                Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("General knowledge · Not verified in this document",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
                             if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                             if (message.corrected.isNotEmpty()) {
                                 Text("Matched: " + message.corrected.entries.joinToString { "${it.key} → ${it.value}" },
