@@ -38,4 +38,26 @@ class AuComposerUiTest {
         rule.onNodeWithContentDescription("Send to AU").performClick()
         rule.runOnIdle { assertEquals("Explain this document", sent) }
     }
+    @Test fun stopReplacesSendDuringGenerationEvenWhenInputDisabled() {
+        var stops = 0
+        var sends = 0
+        rule.setContent {
+            DataCubeTheme {
+                AuComposer(
+                    value = "",
+                    onValueChange = {},
+                    onSend = { sends++ },
+                    placeholder = "Ask AU",
+                    enabled = false,
+                    sendEnabled = false,
+                    onStop = { stops++ }
+                )
+            }
+        }
+        rule.onNodeWithContentDescription("Stop generating").performClick()
+        rule.runOnIdle {
+            assertEquals(1, stops)
+            assertEquals(0, sends)
+        }
+    }
 }
