@@ -30,7 +30,6 @@ class LocalDocumentChatHistory(filesDir: File) {
     constructor(context: Context) : this(context.filesDir)
 
     private val root = File(filesDir, "document-chat-history")
-    private val lock = Mutex()
 
     suspend fun load(documentId: String): List<SavedDocumentTurn> = withContext(Dispatchers.IO) {
         lock.withLock {
@@ -44,7 +43,7 @@ class LocalDocumentChatHistory(filesDir: File) {
                 (0 until minOf(array.length(), MAX_TURNS)).mapNotNull { i ->
                     val entry = array.optJSONObject(i) ?: return@mapNotNull null
                     val sourceArray = entry.optJSONArray("sources") ?: JSONArray()
-                    val sources = (0 until minOf(sourceArray.length(), 6)).mapNotNull { index ->
+                    val sources = (0 until minOf(sourceArray.length(), MAX_SOURCES)).mapNotNull { index ->
                         val source = sourceArray.optJSONObject(index) ?: return@mapNotNull null
                         SavedSource(
                             text = source.optString("text").take(1500),
@@ -96,7 +95,7 @@ class LocalDocumentChatHistory(filesDir: File) {
                     .put("audioPath", turn.audioPath ?: JSONObject.NULL)
                     .put("createdAtEpochMs", turn.createdAtEpochMs ?: JSONObject.NULL)
                 val matches = JSONArray()
-                turn.matches.take(6).forEach { src ->
+                turn.matches.take(MAX_SOURCES).forEach { src ->
                     matches.put(JSONObject().put("text", src.text.take(1500))
                         .put("page", src.page ?: JSONObject.NULL)
                         .put("documentId", src.documentId ?: JSONObject.NULL)
@@ -137,6 +136,8 @@ class LocalDocumentChatHistory(filesDir: File) {
 
     companion object {
         const val MAX_TURNS = 40
+        private const val MAX_SOURCES = 8
+        private val lock = Mutex()
         private const val MAX_BYTES = 900_000L
     }
 }
