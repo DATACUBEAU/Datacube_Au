@@ -61,4 +61,14 @@ class AuResponseParserTest {
         assertTrue(AuSpokenResponse.format("[DIAGRAM] projectile").contains("not to scale"))
         assertTrue(AuResponseParser.parse("[DIAGRAM] arbitrary code").none { it == AuResponseBlock.ProjectileIllustration })
     }
+
+    @Test fun nativeSketchSupportsDifferentSubjectsAndNarration() {
+        val raw = "[SKETCH] Plant cell\nALT | A cell wall surrounds the cell and its nucleus.\nRECT | 10 | 10 | 90 | 90\nCIRCLE | 50 | 50 | 15\nLABEL | 50 | 65 | Nucleus\n[/SKETCH]"
+        val scene = (AuResponseParser.parse(raw).single() as AuResponseBlock.Sketch).scene
+        assertEquals(3,scene.commands.size)
+        assertTrue(AuSpokenResponse.format(raw).contains("cell wall"))
+        assertTrue(AuResponseParser.parse(raw.replace("50 | 50 | 15","500 | 50 | 15")).none { it is AuResponseBlock.Sketch })
+        assertTrue(AuResponseParser.parse(raw.replace("RECT | 10 | 10 | 90 | 90","SCRIPT | arbitrary")).none { it is AuResponseBlock.Sketch })
+        assertTrue(AuResponseParser.parse(raw.substringBefore("[/SKETCH]")).none { it is AuResponseBlock.Sketch })
+    }
 }
