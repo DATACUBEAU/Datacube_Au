@@ -523,8 +523,13 @@ fun DocumentChatWorkspace(
                                         val vectorMatches = if (semanticSupported && !indexing) {
                                             session.searchingStage = "Checking semantic matches"
                                             events += "Queried the on-device vector index"
-                                            runCatching { semanticSearch.search(documentId, plan.retrievalQuery, 6) }
-                                                .getOrDefault(emptyList())
+                                            try {
+                                                semanticSearch.search(documentId, plan.retrievalQuery, 6)
+                                            } catch (cancelled: CancellationException) {
+                                                throw cancelled
+                                            } catch (_: Exception) {
+                                                emptyList()
+                                            }
                                         } else emptyList()
                                         usedSemantic = vectorMatches.isNotEmpty()
                                         matches = GroundedRagPlanner.fuse(
@@ -553,6 +558,8 @@ fun DocumentChatWorkspace(
                                             compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected())
                                         )
                                         events += "Built context from ${grounded.evidence.size} source passages"
+                                        matches = grounded.evidence.map { SourceSnippet(it.text, it.page) }
+                                        messages[resultIndex] = messages[resultIndex].copy(matches = matches)
                                         var generated = ""
                                         var lastUpdate = 0L
                                         try {
