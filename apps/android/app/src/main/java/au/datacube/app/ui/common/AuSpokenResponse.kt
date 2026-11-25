@@ -43,6 +43,10 @@ internal object AuSpokenResponse {
                         add(plain(block.title))
                         block.rows.forEach { (label, value) -> add(plain(label) + ": " + value.toString().removeSuffix(".0")) }
                     }
+                    is AuResponseBlock.PieChart -> {
+                        add(plain(block.title))
+                        block.rows.forEach { (label, value) -> add(plain(label) + ": " + value.toString().removeSuffix(".0")) }
+                    }
                     is AuResponseBlock.Code -> add("A code example is available in the written response.")
                     is AuResponseBlock.Table -> {
                         add("Here is the table, row by row.")
