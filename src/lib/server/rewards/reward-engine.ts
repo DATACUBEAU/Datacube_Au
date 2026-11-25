@@ -45,7 +45,9 @@ export async function acceptReward(
   now = Date.now(),
 ): Promise<'granted' | 'duplicate' | 'rejected'> {
   const verifier = verifiers[provider];
-  if (!verifier || !rawCallback || rawCallback.length > 8192) return 'rejected';
+  if (!verifier || !rawCallback || rawCallback.length > 8192 || !Number.isSafeInteger(now) || now <= 0) return 'rejected';
+  // A provider verification outage must not create a grant. Let the caller
+  // distinguish a transient verifier failure from a rejected receipt.
   const receipt = await verifier.verify(rawCallback);
   if (!receipt || receipt.provider !== provider ||
       !receipt.transactionId || receipt.transactionId.length > 256 ||
