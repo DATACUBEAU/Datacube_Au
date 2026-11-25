@@ -101,6 +101,16 @@ class LocalConversationThreads(private val filesDir: File) {
         }
     }
 
+    suspend fun clearCollectionDocumentChats(documentId: String) = withContext(Dispatchers.IO) {
+        require(safeId(documentId))
+        val owners = root.listFiles().orEmpty().map { it.nameWithoutExtension }
+            .filter { it.startsWith("$documentId--c-") && safeId(it) }.distinct()
+        for (owner in owners) {
+            clear(owner)
+            au.datacube.app.ui.voice.LocalVoiceNoteRecorder.clearOwner(filesDir, owner)
+        }
+    }
+
     /**
      * Deleting an imported file must not leave its extracted text in Discs
      * citations or generated reply history. Other unrelated chats survive.
@@ -111,7 +121,7 @@ class LocalConversationThreads(private val filesDir: File) {
         val owners = root.listFiles().orEmpty().filter { file ->
             file.isFile && file.extension == "json" &&
                 (file.nameWithoutExtension == "global" ||
-                 file.nameWithoutExtension.startsWith("global-"))
+                 file.nameWithoutExtension.startsWith("global-") || file.nameWithoutExtension.contains("--c-"))
         }.map { it.nameWithoutExtension }.filter { safeId(it) }
 
         val histories = LocalDocumentChatHistory(filesDir)
