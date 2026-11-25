@@ -55,9 +55,10 @@ jobs:
 
       - name: Verified reward service tests
         run: |
-          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/reward-verification.unit.test.ts
+          pnpm exec tsc --skipLibCheck --module commonjs --target es2020 --moduleResolution node --esModuleInterop --outDir .tmp-tests tests/reward-verification.unit.test.ts tests/offline-reward-lease.unit.test.ts
           node -e "require('node:fs').writeFileSync('.tmp-tests/package.json', '{\"type\":\"commonjs\"}')"
           node .tmp-tests/tests/reward-verification.unit.test.js
+          node .tmp-tests/tests/offline-reward-lease.unit.test.js
 
       - name: Auth state hardening tests
         run: pnpm test:auth-state-hardening
