@@ -83,8 +83,9 @@ class StudyGenerationPromptTest {
         val prepared = StudyGenerationPrompt.prepare("Lecture.pdf", GeneratedStudyMode.NOTES, passages, null)
         assertEquals(1, prepared.evidence.first().page)
         assertEquals(12, prepared.evidence.last().page)
-        assertTrue(prepared.text.contains("[FLOW]"))
-        assertTrue(prepared.text.contains("[WORKFLOW]"))
+        assertTrue(au.datacube.app.data.rag.AuTeachingPolicy.VISUALS.contains("[FLOW]"))
+        assertTrue(au.datacube.app.data.rag.AuTeachingPolicy.VISUALS.contains("[WORKFLOW]"))
+        assertFalse(prepared.text.contains("[SKETCH]"))
         assertTrue(prepared.text.contains("selected passages"))
     }
 }

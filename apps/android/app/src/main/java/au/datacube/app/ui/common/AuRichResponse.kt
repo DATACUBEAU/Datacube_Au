@@ -37,6 +37,7 @@ internal sealed interface AuResponseBlock {
     data class PieChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
     data object ProjectileIllustration : AuResponseBlock
     data class Sketch(val scene: AuSketchScene) : AuResponseBlock
+    data class Formula(val title: String, val equation: String, val symbols: List<Pair<String,String>>) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -74,6 +75,23 @@ internal object AuResponseParser {
                     }
                     result += AuResponseBlock.Table(header, rows)
                     continue
+                }
+            }
+            if (line.startsWith("[FORMULA] ")) {
+                val end = (i + 1 until minOf(lines.size, i + 10)).firstOrNull { lines[it].trim() == "[/FORMULA]" }
+                if (end != null && end - i in 3..8) {
+                    val title = line.removePrefix("[FORMULA] ").trim()
+                    val equation = lines[i + 1].trim()
+                    val rows = lines.subList(i + 2,end).map { it.split('|').map(String::trim) }
+                    if (title.length in 1..100 && equation.length in 1..160 &&
+                        !equation.contains('[') && !equation.contains(']') && !equation.contains('|') &&
+                        rows.all { it.size == 2 && it[0].length in 1..24 && it[1].length in 1..140 &&
+                            it.none { part -> part.contains('[') || part.contains(']') } } &&
+                        rows.map { it[0] }.distinct().size == rows.size) {
+                        result += AuResponseBlock.Formula(title,equation,rows.map { it[0] to it[1] })
+                        i = end + 1
+                        continue
+                    }
                 }
             }
             if (line.startsWith("[SKETCH] ")) {
@@ -355,6 +373,24 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                 }
                 AuResponseBlock.ProjectileIllustration -> AuProjectileIllustration()
                 is AuResponseBlock.Sketch -> AuSketchIllustration(block.scene)
+                is AuResponseBlock.Formula -> Surface(
+                    modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(block.title, style = MaterialTheme.typography.titleMedium)
+                        SelectionContainer {
+                            Text(block.equation, Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(vertical = 6.dp),
+                                style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
+                        }
+                        block.symbols.forEach { (symbol,meaning) ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text(symbol, Modifier.widthIn(min=28.dp,max=88.dp), fontWeight=FontWeight.SemiBold)
+                                Text(meaning, Modifier.weight(1f), style=MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                }
                 is AuResponseBlock.Callout -> Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),

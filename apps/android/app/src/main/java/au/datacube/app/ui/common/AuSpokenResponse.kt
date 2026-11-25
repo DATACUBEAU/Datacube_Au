@@ -55,6 +55,11 @@ internal object AuSpokenResponse {
                         add(plain(block.title))
                         block.rows.forEach { (label, value) -> add(plain(label) + ": " + value.toString().removeSuffix(".0")) }
                     }
+                    is AuResponseBlock.Formula -> {
+                        add(plain(block.title))
+                        add("Formula: " + block.equation)
+                        block.symbols.forEach { (symbol, meaning) -> add(symbol + " means " + plain(meaning)) }
+                    }
                     is AuResponseBlock.Sketch -> {
                         add(plain(block.scene.title))
                         add(plain(block.scene.description))
