@@ -85,8 +85,13 @@ internal class MobileAuthorizationClient(
     }
     private val json by lazy { Json { ignoreUnknownKeys = true } }
 
-    override fun approvalPage(requestId: String): Uri = origin.buildUpon()
-        .appendPath("mobile-auth").appendPath("approve").appendQueryParameter("request", requestId).build()
+    override fun approvalPage(requestId: String): Uri {
+        require(MobileAuthorizationRequestId.matches(requestId))
+        val approval = "/mobile-auth/approve?request=$requestId"
+        return origin.buildUpon().appendPath("login")
+            .appendQueryParameter("redirectTo", approval)
+            .appendQueryParameter("forceReauth", "1").build()
+    }
 
     override suspend fun create(challenge: String): MobileAuthorizationCreated {
         val payload = request(buildJsonObject {
