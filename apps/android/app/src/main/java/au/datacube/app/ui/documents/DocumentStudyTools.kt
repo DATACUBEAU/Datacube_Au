@@ -925,7 +925,7 @@ fun DocumentChatWorkspace(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Button(onClick = onOpenModels) { Text("Open Models") }
+                    Button(onClick = onOpenModels) { Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS) }
                 }
             }
         }
@@ -1274,7 +1274,8 @@ fun SmartNoteWorkspace(
     documentName: String,
     textPreview: String?,
     previewLoading: Boolean,
-    documentId: String = documentName
+    documentId: String = documentName,
+    onOpenModels: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val session = remember(documentId) {
@@ -1296,11 +1297,7 @@ fun SmartNoteWorkspace(
         } else {
             ToolCard {
                 if (!ready) {
-                    Text("Select a local AU model before generating notes.",
-                        color = MaterialTheme.colorScheme.onSurface)
-                    Text("Open Settings → Models to install or select a chat model.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    StudyModelSetup(onOpenModels)
                 }
                 Button(
                     onClick = {
@@ -1433,7 +1430,8 @@ fun PredictionWorkspace(
     documentName: String,
     textPreview: String?,
     previewLoading: Boolean,
-    documentId: String = documentName
+    documentId: String = documentName,
+    onOpenModels: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val session = remember(documentId) {
@@ -1452,8 +1450,7 @@ fun PredictionWorkspace(
             SourceUnavailableCard(previewLoading, null)
         } else {
             ToolCard {
-                if (!ready) Text("Choose a model in Settings → Models.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!ready) StudyModelSetup(onOpenModels)
                 OutlinedButton(
                     onClick = { picker.launch(arrayOf("application/pdf", "text/plain", "text/markdown")) },
                     enabled = !session.attaching && !session.working,
@@ -1526,7 +1523,7 @@ fun PredictionWorkspace(
 
 @Composable
 fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading: Boolean,
-    documentId: String = documentName) {
+    documentId: String = documentName, onOpenModels: () -> Unit = {}) {
     val context = LocalContext.current
     val session = remember(documentId) {
         GeneratedStudySessions.get(documentId, GeneratedStudyMode.PRACTICE)
@@ -1586,8 +1583,7 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                     enabled = ready && !session.working) {
                     Icon(Icons.Outlined.PlayArrow, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Generate practice")
                 }
-                if (!ready) Text("Install and select an AU chat model in Models.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!ready) StudyModelSetup(onOpenModels)
                 if (session.working) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text("AI is preparing your questions", style = MaterialTheme.typography.bodySmall)
@@ -2073,5 +2069,14 @@ fun PodcastWorkspace(documentId: String, documentName: String, textPreview: Stri
             }
             }
         }
+    }
+}
+
+@Composable
+private fun StudyModelSetup(onOpenModels:()->Unit) {
+    val state = au.datacube.app.ui.models.ModelSetupGuide.readiness(LocalContext.current)
+    Text(au.datacube.app.ui.models.ModelSetupGuide.missingText(state),style=MaterialTheme.typography.bodySmall)
+    OutlinedButton(onClick=onOpenModels,modifier=Modifier.fillMaxWidth()) {
+        Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS)
     }
 }

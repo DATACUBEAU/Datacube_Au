@@ -204,9 +204,9 @@ fun DocumentWorkspaceScreen(
                     schedulesOpen = true
                 } else null
             )
-            1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading, document.id)
-            2 -> PredictionWorkspace(document.name, textPreview, previewLoading, document.id)
-            3 -> PracticeWorkspace(document.name, textPreview, previewLoading, document.id)
+            1 -> SmartNoteWorkspace(document.name, textPreview, previewLoading, document.id, onOpenModels)
+            2 -> PredictionWorkspace(document.name, textPreview, previewLoading, document.id, onOpenModels)
+            3 -> PracticeWorkspace(document.name, textPreview, previewLoading, document.id, onOpenModels)
             else -> PodcastWorkspace(document.id, document.name, textPreview, previewLoading)
         }
     }

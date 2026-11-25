@@ -525,7 +525,8 @@ private fun AuthenticatedWorkspace(
                     onSendPromptToDocument = { id, prompt ->
                         navController.navigate("document/$id?prompt=" + Uri.encode(prompt) + "&tab=0")
                     },
-                    onNavigateSettings = { navController.navigate(Screen.Settings.route) }
+                    onNavigateSettings = { navController.navigate(Screen.Settings.route) },
+                    onOpenModels = { navController.navigate(Screen.Models.route) }
                 )
             }
             composable(Screen.Discs.route) {

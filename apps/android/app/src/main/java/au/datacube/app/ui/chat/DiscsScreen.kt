@@ -100,7 +100,7 @@ fun DiscsScreen(
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
     val modelReady = LocalGenerativeEngine.installed(context)
-    val needsCollectionModel = !modelReady
+    val needsCollectionModel = collectionId != null && !modelReady
     // In collection mode callers pass only documents in the selected collection.
     // No global workspace files can enter source retrieval through this argument.
     val library = documents.map { it.document }
@@ -651,7 +651,7 @@ fun DiscsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall)
         }
-        if (needsCollectionModel) {
+        if (!modelReady) {
             Surface(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
                 shape = RoundedCornerShape(18.dp),
