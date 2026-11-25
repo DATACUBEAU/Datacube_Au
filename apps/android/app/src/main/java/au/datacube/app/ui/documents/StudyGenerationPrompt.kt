@@ -27,7 +27,7 @@ internal object StudyGenerationPrompt {
         questionStyle: String = "Explain",
         focus: String = "All topics"
     ): PreparedStudyPrompt {
-        val evidence = passages.filter { it.text.isNotBlank() }.take(MAX_PASSAGES)
+        val evidence = spreadAcross(passages.filter { it.text.isNotBlank() }, MAX_PASSAGES)
             .map { it.copy(text = it.text.trim().take(MAX_CHARS_PER_PASSAGE)) }
         require(evidence.isNotEmpty()) { "No readable document passages are available." }
         val includeExtra = mode == GeneratedStudyMode.REVISION && !attachmentText.isNullOrBlank()
@@ -38,7 +38,10 @@ internal object StudyGenerationPrompt {
                     "Start each section with TOPIC: followed by a precise name. " +
                     "After each heading explain the concept in 2-5 clear, useful " +
                     "sentences, including an example only if the text supports it. " +
-                    "Explain relationships among important concepts. " +
+                    "Explain relationships among important concepts. Bold key terms, definitions and formulas using Markdown. " +
+                    "Use a short [FLOW] Title block with 2 to 6 source-supported steps and [/FLOW] for a genuine process. " +
+                    "Use a [WORKFLOW] Title block with 2 to 6 stage lines, cards separated by | and optional title :: description, then [/WORKFLOW], only when relationships are supported. " +
+                    "Use source references [1], [2] beside supported explanations. Clearly state that these notes cover selected passages, not necessarily every chapter. " +
                     "Do not output a generic list of short copied phrases."
             GeneratedStudyMode.REVISION ->
                 "Create an evidence-based revision forecast. Use 4-8 meaningful " +
