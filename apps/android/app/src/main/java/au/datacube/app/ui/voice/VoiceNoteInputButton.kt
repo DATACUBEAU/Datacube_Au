@@ -3,6 +3,11 @@ package au.datacube.app.ui.voice
 import android.Manifest
 import android.content.pm.PackageManager
 import android.media.MediaPlayer
+import au.datacube.app.audio.AuAudioPlayback
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -114,10 +119,7 @@ fun VoiceNoteInputButton(
                     Text("Send this audio to AU. Your selected Gemma model will listen and answer; the app won't replace your voice note with text.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { playPrivateVoiceNote(note.file.absolutePath) }) {
-                            Icon(Icons.Outlined.PlayArrow, "Preview voice note")
-                        }
-                        Text("Preview recording")
+                        VoiceNotePlayback(note.file.absolutePath, "Preview recording")
                     }
                 }
             },
@@ -177,23 +179,35 @@ fun VoiceNoteInputButton(
     }
 }
 
-internal fun playPrivateVoiceNote(path: String) {
+/** Serialize voice notes with read-aloud and podcasts. Release the player on stop,
+ * screen disposal, errors and natural completion. Never start overlapping playback. */
+private suspend fun playPrivateVoiceNote(path: String) = suspendCancellableCoroutine<Unit> { continuation ->
     val player = MediaPlayer()
+    fun release() { runCatching { player.release() } }
+    continuation.invokeOnCancellation { release() }
     try {
         player.setDataSource(path)
-        player.setOnPreparedListener { it.start() }
-        player.setOnCompletionListener { it.release() }
-        player.setOnErrorListener { mediaPlayer, _, _ ->
-            mediaPlayer.release()
+        player.setOnPreparedListener { if (continuation.isActive) runCatching { it.start() }.onFailure { error ->
+            release()
+            if (continuation.isActive) continuation.resumeWithException(error)
+        } }
+        player.setOnCompletionListener {
+            release()
+            if (continuation.isActive) continuation.resume(Unit)
+        }
+        player.setOnErrorListener { _, _, _ ->
+            release()
+            if (continuation.isActive) continuation.resumeWithException(IllegalStateException("Voice note could not play."))
             true
         }
         player.prepareAsync()
-    } catch (_: Exception) {
-        player.release()
+    } catch (error: Exception) {
+        release()
+        if (continuation.isActive) continuation.resumeWithException(error)
     }
 }
 
-/** A visible/playable voice bubble without showing a transcription. */
+/** Private voice bubble with an actual stop control. */
 @Composable
 fun VoiceNotePlayback(audioPath: String, label: String) {
     val context = LocalContext.current
@@ -205,14 +219,29 @@ fun VoiceNotePlayback(audioPath: String, label: String) {
                 file.path.startsWith(base.path + java.io.File.separator)
         }.getOrDefault(false)
     }
+    val state = remember(audioPath) { mutableStateOf<Job?>(null) }
+    var playing by remember(audioPath) { mutableStateOf(false) }
+    var failed by remember(audioPath) { mutableStateOf(false) }
+    DisposableEffect(audioPath) { onDispose { state.value?.cancel() } }
     TextButton(
         enabled = valid,
-        onClick = { if (valid) playPrivateVoiceNote(audioPath) }
+        onClick = {
+            if (playing) state.value?.cancel()
+            else if (valid) {
+                failed = false
+                playing = true
+                state.value = AuAudioPlayback.launch(context, "Playing voice note",
+                    onFinished = { playing = false; state.value = null }) {
+                    try { playPrivateVoiceNote(audioPath) }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { failed = true }
+                }
+            }
+        }
     ) {
-        Icon(Icons.Outlined.PlayArrow, contentDescription = null,
-            tint = MaterialTheme.colorScheme.onPrimaryContainer)
+        Icon(if (playing) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+            contentDescription = if (playing) "Stop voice note" else "Play voice note")
         Spacer(Modifier.width(7.dp))
-        Text(if (valid) label else "Voice note unavailable",
-            color = MaterialTheme.colorScheme.onPrimaryContainer)
+        Text(if (failed) "Playback failed · Retry" else if (valid) label else "Voice note unavailable")
     }
 }

@@ -8,6 +8,7 @@ import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuReadAloudAction
+import au.datacube.app.ui.common.AuReadAloudBar
 import au.datacube.app.ui.common.rememberAuReadAloud
 import androidx.compose.foundation.lazy.itemsIndexed
 import au.datacube.app.work.AuBackgroundWork
@@ -304,12 +305,38 @@ fun DocumentChatWorkspace(
             onDismissHistory()
         }
     }
+    var confirmClearChat by remember(documentId, threadId) { mutableStateOf(false) }
+    var clearChatError by remember(documentId, threadId) { mutableStateOf<String?>(null) }
+    if (confirmClearChat) {
+        DataCubeDialog(
+            onDismissRequest = { confirmClearChat = false },
+            title = { Text("Clear this chat?") },
+            text = { Text("Delete the messages and voice notes in this conversation. Your documents and other chats will stay.") },
+            confirmButton = { TextButton(onClick = {
+                confirmClearChat = false
+                onDismissHistory()
+                speech.stop()
+                session.scope.launch {
+                    if (!session.clearHistory(context, documentId)) clearChatError = "Chat cleanup could not finish. Try again."
+                }
+            }, enabled = session.historyReady && !session.searching) { Text("Clear chat") } },
+            dismissButton = { TextButton(onClick = { confirmClearChat = false }) { Text("Cancel") } }
+        )
+    }
+    clearChatError?.let { error ->
+        DataCubeDialog(onDismissRequest = { clearChatError = null },
+            title = { Text("Chat cleanup") }, text = { Text(error) },
+            confirmButton = { TextButton(onClick = { clearChatError = null }) { Text("OK") } })
+    }
+
     if (showHistoryPicker) {
         DataCubeDialog(
             onDismissRequest = onDismissHistory,
             title = { Text("Your chat history", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { onDismissHistory(); confirmClearChat = true },
+                        enabled = session.historyReady && !session.searching) { Text("Clear current chat") }
                     Text("Each chat has its own context. Running replies keep working when you switch chats.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
@@ -488,7 +515,7 @@ fun DocumentChatWorkspace(
                                             steps = events.toList(),
                                             generating = true
                                         ))
-                                        var answer = ""
+                                        val answer = StringBuilder()
                                         try {
                                             session.searchingStage = "AU is replying"
                                             LocalGenerativeEngine.generate(
@@ -499,14 +526,16 @@ fun DocumentChatWorkspace(
                                                 allowGeneral = true,
                                                 generalOnly = true
                                             ) { part ->
-                                                answer += part
-                                                messages[answerIndex] = messages[answerIndex].copy(
-                                                    answer = ModelOutputCleaner.visible(answer, 0).take(3_000)
-                                                )
+                                                answer.append(part)
+                                                withContext(Dispatchers.Main) {
+                                                    messages[answerIndex] = messages[answerIndex].copy(
+                                                        answer = ModelOutputCleaner.visible(answer.toString(), 0).take(3_000)
+                                                    )
+                                                }
                                             }
                                             events += "AU answered without searching the document"
                                             messages[answerIndex] = messages[answerIndex].copy(
-                                                answer = ModelOutputCleaner.visible(answer, 0).trim(),
+                                                answer = ModelOutputCleaner.visible(answer.toString(), 0).trim(),
                                                 generating = false,
                                                 steps = events.toList()
                                             )
@@ -555,7 +584,7 @@ fun DocumentChatWorkspace(
                                                 } finally {
                                                     index.close()
                                                 }
-                                            }.getOrDefault(emptyList())
+                                            }.getOrElse { if (it is CancellationException) throw it; emptyList() }
                                         }
                                         val overviewCandidates = if (indexedOverview.isNotEmpty()) {
                                             indexedOverview.map { RagEvidence(it.text, it.page) }
@@ -580,7 +609,7 @@ fun DocumentChatWorkspace(
                                                 } finally {
                                                     index.close()
                                                 }
-                                            }.getOrNull()
+                                            }.getOrElse { if (it is CancellationException) throw it; null }
                                         }
                                         val keywordMatches = if (indexedMatches != null) {
                                             indexedMatches.map { SourceSnippet(it.text, it.page) }
@@ -681,7 +710,7 @@ fun DocumentChatWorkspace(
                                     throw cancelled
                                 } catch (error: Exception) {
                                     events += "Search could not finish: ${error.message ?: "unknown error"}"
-                                    messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList()))
+                                    messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList(), generationError = "Document search could not finish. Try again."))
                                 } finally {
                                     session.searching = false
                                     session.searchingStage = ""
@@ -778,6 +807,7 @@ fun DocumentChatWorkspace(
     }
 
     Column(Modifier.fillMaxSize()) {
+        AuReadAloudBar(speech)
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(8.dp))
@@ -908,7 +938,7 @@ fun DocumentChatWorkspace(
                             }
                             if (message.matches.isEmpty() && message.answer.isBlank() &&
                                 !message.generating && message.generationError == null) {
-                                Text("No verified passage matched. Try a more specific question.",
+                                Text("I could not verify that in the available document passages. Try another term or select a relevant chapter.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             if (message.matches.isNotEmpty()) {
@@ -1171,6 +1201,7 @@ fun SmartNoteWorkspace(
     val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
 
     ToolPage("Smart Note", "Read structured study notes or explore a concept tree.") {
+        AuReadAloudBar(notesSpeech)
         if (textPreview.isNullOrBlank()) {
             SourceUnavailableCard(previewLoading, null)
         } else {

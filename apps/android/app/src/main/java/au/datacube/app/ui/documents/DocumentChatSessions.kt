@@ -17,6 +17,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.withContext
+import java.io.File
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -38,12 +41,13 @@ internal class DocumentChatSession(private val historyKey: String) {
     var historyReady by mutableStateOf(false)
         private set
     private var initialized = false
+    private var historyJob: Job? = null
 
     fun initialize(context: Context) {
         if (initialized) return
         initialized = true
         val appContext = context.applicationContext
-        scope.launch {
+        historyJob = scope.launch {
             val store = LocalDocumentChatHistory(appContext)
             try {
                 val saved = store.load(historyKey)
@@ -98,6 +102,40 @@ internal class DocumentChatSession(private val historyKey: String) {
                     // Never crash the UI for a full or temporarily unavailable store.
                 }
             }
+        }
+    }
+
+    /** Clear only the selected idle conversation. Stop the saver before deleting
+     * so a delayed snapshot cannot recreate the old history. */
+    suspend fun clearHistory(context: Context, ownerId: String): Boolean {
+        if (!historyReady || searching) return false
+        require(ownerId.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+        searching = true
+        historyReady = false
+        try {
+            historyJob?.cancelAndJoin()
+            val audioPaths = messages.mapNotNull { it.audioPath }.distinct()
+            LocalDocumentChatHistory(context).clear(historyKey)
+            messages.clear()
+            activitySteps.clear()
+            return withContext(Dispatchers.IO) {
+                val base = File(context.filesDir, "voice-notes/$ownerId").canonicalFile
+                audioPaths.map { path ->
+                    runCatching {
+                        val file = File(path).canonicalFile
+                        if (file.parentFile != base || file.extension != "wav") false
+                        else !file.exists() || file.delete()
+                    }.getOrDefault(false)
+                }.all { it }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return false
+        } finally {
+            searching = false
+            initialized = false
+            if (scope.coroutineContext[Job]?.isActive == true) initialize(context)
         }
     }
 

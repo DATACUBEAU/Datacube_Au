@@ -76,7 +76,7 @@ object NeuralNarration {
         onSpeaker: suspend (Int) -> Unit,
         onStage: suspend (String) -> Unit = {}
     ) {
-        require(turns.size in 4..PodcastDialogue.MAX_TURNS) { "Prepare a valid discussion first." }
+        require(turns.size in 1..PodcastDialogue.MAX_TURNS) { "Prepare a valid discussion first." }
         val parts = turns.flatMapIndexed { index, turn ->
             NeuralTextSegmenter.split(turn.text).map {
                 SpeechPart(it, PodcastDialogue.voiceFor(turn.speaker), index)

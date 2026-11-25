@@ -10,6 +10,8 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
+import au.datacube.app.data.ExtractedTextStore
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.PriorityQueue
 import kotlinx.coroutines.currentCoroutineContext
@@ -53,9 +55,21 @@ class LocalSemanticSearch(private val context: Context) {
         withContext(Dispatchers.IO) {
             if (!supported() || query.isBlank()) return@withContext emptyList()
             // Do not load/run the embedding model when this document has no vector index.
-            if (database.semanticChunks().sourceHash(documentId, LocalEmbeddingRuntime.MODEL_ID) == null) {
-                return@withContext emptyList()
+            val indexedHash = database.semanticChunks().sourceHash(documentId, LocalEmbeddingRuntime.MODEL_ID)
+                ?: return@withContext emptyList()
+            val source = ExtractedTextStore.fileFor(app.filesDir, documentId)
+            if (!source.isFile || source.length() > 21L * 1024 * 1024) return@withContext emptyList()
+            val digest = MessageDigest.getInstance("SHA-256")
+            source.inputStream().buffered().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val n = input.read(buffer)
+                    if (n < 0) break
+                    digest.update(buffer,0,n)
+                }
             }
+            if (indexedHash != digest.digest().joinToString("") { "%02x".format(it) }) return@withContext emptyList()
             val queryVector = LocalEmbeddingRuntime.embed(app, query.take(6_000))
             val count = maxResults.coerceIn(1, 12)
             val best = PriorityQueue<SemanticSearchHit>(compareBy { it.score })
@@ -67,13 +81,13 @@ class LocalSemanticSearch(private val context: Context) {
                 )
                 if (page.isEmpty()) break
                 for (chunk in page) {
-                    if (queryVector.size != chunk.dimension) continue
+                    if (chunk.sourceHash != indexedHash || queryVector.size != chunk.dimension) continue
                     val score = runCatching {
                         DenseVectorCodec.cosine(
                             queryVector, DenseVectorCodec.decode(chunk.vectorBytes, chunk.dimension)
                         )
                     }.getOrNull() ?: continue
-                    if (!score.isFinite()) continue
+                    if (!acceptScore(score)) continue
                     val candidate = SemanticSearchHit(chunk.text, chunk.page, score)
                     if (best.size < count) best.add(candidate)
                     else if (score > best.peek().score) {
@@ -87,6 +101,9 @@ class LocalSemanticSearch(private val context: Context) {
         }
 
     companion object {
+        // Conservative initial threshold; tune with labelled retrieval benchmarks.
+        // Similarity is not evidence verification or a probability of correctness.
+        internal fun acceptScore(score: Double): Boolean = score.isFinite() && score >= 0.65 && score <= 1.0
         private fun workName(documentId: String): String = "datacube-semantic-index-$documentId"
     }
 }

@@ -49,6 +49,7 @@ import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuReadAloudAction
+import au.datacube.app.ui.common.AuReadAloudBar
 import au.datacube.app.ui.common.rememberAuReadAloud
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -123,12 +124,38 @@ fun DiscsScreen(
             runCatching { threads.create(ownerId) }.onSuccess { index = it; historyOpen = false }
         }
     }
+    var confirmClearChat by remember(ownerId, threadId) { mutableStateOf(false) }
+    var clearChatError by remember(ownerId, threadId) { mutableStateOf<String?>(null) }
+    if (confirmClearChat) {
+        DataCubeDialog(
+            onDismissRequest = { confirmClearChat = false },
+            title = { Text("Clear this chat?") },
+            text = { Text("Delete the messages and voice notes in this conversation. Your documents and other chats will stay.") },
+            confirmButton = { TextButton(onClick = {
+                confirmClearChat = false
+                historyOpen = false
+                speech.stop()
+                session.scope.launch {
+                    if (!session.clearHistory(context, ownerId)) clearChatError = "Chat cleanup could not finish. Try again."
+                }
+            }, enabled = session.historyReady && !session.searching) { Text("Clear chat") } },
+            dismissButton = { TextButton(onClick = { confirmClearChat = false }) { Text("Cancel") } }
+        )
+    }
+    clearChatError?.let { error ->
+        DataCubeDialog(onDismissRequest = { clearChatError = null },
+            title = { Text("Chat cleanup") }, text = { Text(error) },
+            confirmButton = { TextButton(onClick = { clearChatError = null }) { Text("OK") } })
+    }
+
     if (historyOpen) {
         DataCubeDialog(
             onDismissRequest = { historyOpen = false },
             title = { Text("Gist history", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    TextButton(onClick = { historyOpen = false; confirmClearChat = true },
+                        enabled = session.historyReady && !session.searching) { Text("Clear current chat") }
                     Text("Independent private conversations. Each new chat starts with a fresh context.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -445,6 +472,7 @@ fun DiscsScreen(
             }
         }
 
+        AuReadAloudBar(speech)
         if (turns.isEmpty() && !session.searching) {
             Column(Modifier.weight(1f).fillMaxWidth().padding(25.dp),
                 verticalArrangement = Arrangement.Center,
