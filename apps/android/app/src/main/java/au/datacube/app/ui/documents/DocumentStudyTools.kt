@@ -372,6 +372,7 @@ fun DocumentChatWorkspace(
         }
     }
     var prompt by remember(documentName, initialPrompt) { mutableStateOf(initialPrompt.orEmpty()) }
+    var effort by remember(threadId) { mutableStateOf(au.datacube.app.data.rag.AuEffort.BALANCED) }
     fun submitQuestion(
         cleanPrompt: String,
         displayQuestion: String = cleanPrompt,
@@ -384,6 +385,7 @@ fun DocumentChatWorkspace(
             return
         }
                         if (llmInstalled && cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
+                            val requestEffort = effort
                             if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
                             if (audioPath == null) prompt = ""
                             session.searching = true
@@ -399,7 +401,7 @@ fun DocumentChatWorkspace(
                                     val memoryReply = if (audioPath == null && !alreadyAdded)
                                         personalization?.command(cleanPrompt) else null
                                     if (memoryReply != null) {
-                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = memoryReply))
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = memoryReply, steps = if (memoryReply.startsWith("Saved to your local AU memory.")) listOf("Memory saved") else emptyList()))
                                         return@launch
                                     }
                                     if (AuConversationContext.asksYesterdayRecap(cleanPrompt)) {
@@ -534,7 +536,8 @@ fun DocumentChatWorkspace(
                                         usedSemantic = vectorMatches.isNotEmpty()
                                         matches = GroundedRagPlanner.fuse(
                                             keywordMatches.map { RagEvidence(it.text, it.page) },
-                                            vectorMatches.map { RagEvidence(it.text, it.page) }
+                                            vectorMatches.map { RagEvidence(it.text, it.page) },
+                                            limit = minOf(requestEffort.sourceLimit, 5)
                                         ).map { SourceSnippet(it.text, it.page) }
                                         if (usedSemantic) events += "Combined keyword and vector results"
                                     }
@@ -564,7 +567,7 @@ fun DocumentChatWorkspace(
                                         var lastUpdate = 0L
                                         try {
                                             session.searchingStage = "AU is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.promptContext(cleanPrompt).orEmpty()) { part ->
+                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.promptContext(cleanPrompt).orEmpty(), effort = requestEffort) { part ->
                                                 generated.append(part)
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate > 90L) {
@@ -791,7 +794,7 @@ fun DocumentChatWorkspace(
                             }
                         }
                     } else {
-                        ToolCard {
+                        Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
                                 when {
                                     message.answer.isNotBlank() -> "AU"
@@ -802,6 +805,7 @@ fun DocumentChatWorkspace(
                                 },
                                 fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
                             )
+                            if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                             if (message.corrected.isNotEmpty()) {
                                 Text("Matched: " + message.corrected.entries.joinToString { "${it.key} → ${it.value}" },
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -983,6 +987,8 @@ fun DocumentChatWorkspace(
                     (historyReady && threadIndex != null && llmInstalled &&
                         userTurns < ConversationWindow.MAX_USER_TURNS && !textPreview.isNullOrBlank())),
             sendDescription = "Search document",
+            effort = effort,
+            onEffortChange = { effort = it },
             onStop = if (session.searching) ({ session.activeRequest?.cancel() }) else null,
             actions = {
                 VoiceNoteInputButton(
