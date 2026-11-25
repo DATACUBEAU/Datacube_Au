@@ -35,7 +35,7 @@ jobs:
       # These are public client settings, never a server service-role key.
       SUPABASE_URL: https://dhmukdeljiwvvwjdcxgn.supabase.co
       SUPABASE_ANON_KEY: sb_publishable_6N4nuBJIaXzOVYYUXSzomA_R8TB1vc_
-      AUTH_WEBSITE_URL: https://datacube-au.vercel.app
+      AUTH_WEBSITE_URL: https://datacube.fabianodev.xyz
     defaults:
       run:
         working-directory: apps/android
@@ -159,7 +159,7 @@ jobs:
               "sizeBytes": int(os.environ["APK_BYTES"]),
               "sha256": os.environ["APK_SHA256"],
               "releaseSha": sha,
-              "notes": "DataCube AU improvements and fixes. Your local data is retained."
+              "notes": ""
           }
           with open(os.environ["MANIFEST_OUTPUT"], "w", encoding="utf-8") as target:
               json.dump(manifest, target, separators=(",", ":"))
