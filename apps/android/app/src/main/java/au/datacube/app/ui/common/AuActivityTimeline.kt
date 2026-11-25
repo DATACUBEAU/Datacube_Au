@@ -147,8 +147,8 @@ fun AuWorkingStatus(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.50f)
+        shape = RoundedCornerShape(8.dp),
+        color = Color.Transparent
     ) {
         Row(
             Modifier.padding(start = 15.dp, top = 7.dp, bottom = 7.dp, end = 5.dp),
@@ -162,7 +162,7 @@ fun AuWorkingStatus(
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    "AU is working",
+                    "AU is thinking",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurface
                 )
