@@ -113,11 +113,11 @@ function AdminHealth() {
   const verify = async () => {
     setLoading(true); setError('');
     try {
-      const res = await fetchAdmin('admin-handler',{method:'POST',body:JSON.stringify({action:'verify_system'}),cache:'no-store'});
+      const res = await fetchAdmin('/api/admin/handler',{method:'POST',body:JSON.stringify({action:'verify_system'}),cache:'no-store'});
       const payload = readAdminPayload<any>(res);
-      if (!payload?.checks || typeof payload.checks !== 'object') throw new Error('Health check unavailable.');
+      if (!payload?.checks || typeof payload.checks !== 'object') throw new Error(readAdminError(res, 'Health check unavailable.'));
       setChecks(payload.checks);
-      if (!res.ok) setError('One or more checks failed.');
+      if (!res.ok || Object.values(payload.checks).some((c:any) => !c.ok)) setError('One or more checks failed. See the individual results below.');
     } catch(e) { setError(e instanceof Error ? e.message : 'Health check unavailable.'); }
     finally { setLoading(false); }
   };
@@ -135,6 +135,7 @@ const AdminFeedback = (_props: { token?: string }) => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const fetchFeedback = useCallback(async () => {
     setLoading(true);
@@ -166,6 +167,23 @@ const AdminFeedback = (_props: { token?: string }) => {
   useEffect(() => {
     fetchFeedback();
   }, [fetchFeedback]);
+
+  const removeFeedback = async (records: any[]) => {
+    if (deleting || !records.length || !window.confirm('Permanently delete ' + records.length + ' selected feedback records?')) return;
+    setDeleting(true); setLoadError(null);
+    try {
+      const res = await fetchAdmin('/api/admin/feedback', {
+        method: 'DELETE',
+        body: JSON.stringify({confirm:true, records:records.map(({id,source_table}) => ({id,source_table}))}),
+      });
+      if (!res.ok) throw new Error(readAdminError(res, 'Feedback deletion failed.'));
+      await fetchFeedback();
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'Feedback deletion failed.');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleExport = useCallback(async () => {
     setExporting(true);
@@ -211,6 +229,7 @@ const AdminFeedback = (_props: { token?: string }) => {
           <Button variant="outline" size="sm" onClick={() => void fetchFeedback()} disabled={loading}>
             <Activity className="h-4 w-4 mr-2" /> Refresh
           </Button>
+          <Button variant="outline" size="sm" onClick={() => void removeFeedback(feedback)} disabled={deleting || !feedback.length}>Clear displayed</Button>
           <Button variant="outline" size="sm" onClick={() => void handleExport()} disabled={feedback.length === 0 || exporting}>
             {exporting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Download className="h-4 w-4 mr-2" />} Export CSV
           </Button>
@@ -226,14 +245,15 @@ const AdminFeedback = (_props: { token?: string }) => {
               <th className="p-2 text-left">Rating</th>
               <th className="p-2 text-left">Comment</th>
               <th className="p-2 text-left">User</th>
+              <th className="p-2 text-left">Action</th>
             </tr>
           </thead>
           <tbody>
             {feedback.length === 0 ? (
-              <tr><td colSpan={5} className="p-8 text-center text-muted-foreground italic">No feedback received yet.</td></tr>
+              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground italic">No feedback received yet.</td></tr>
             ) : (
               feedback.map((f) => (
-                <tr key={f.id} className="border-t hover:bg-muted/30 transition-colors">
+                <tr key={`${f.source_table}:${f.id}`} className="border-t hover:bg-muted/30 transition-colors">
                   <td className="p-2 text-xs">{new Date(f.created_at).toLocaleString()}</td>
                   <td className="p-2"><Badge variant="outline" className="text-[10px]">{f.section}</Badge></td>
                   <td className="p-2">
@@ -258,6 +278,7 @@ const AdminFeedback = (_props: { token?: string }) => {
                       {f.user_email ? <span className="font-mono text-[10px] text-muted-foreground">{f.user_email}</span> : null}
                     </div>
                   </td>
+                  <td className="p-2"><Button variant="ghost" size="sm" disabled={deleting} onClick={() => void removeFeedback([f])}>Delete</Button></td>
                 </tr>
               ))
             )}
