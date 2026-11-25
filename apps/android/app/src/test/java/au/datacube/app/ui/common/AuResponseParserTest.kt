@@ -40,4 +40,19 @@ class AuResponseParserTest {
             assertTrue(AuResponseParser.parse(raw).none { it is AuResponseBlock.BarChart })
         }
     }
+    @Test fun groupedWorkflowPreservesStageCardsAndSpokenDescriptions() {
+        val raw = "[WORKFLOW] Reward pipeline\nProvider :: Verified callback\n30 min :: Podcast | +10 :: Images | +10 :: Voice\nLedger\n[/WORKFLOW]"
+        val workflow = AuResponseParser.parse(raw).single() as AuResponseBlock.Workflow
+        assertEquals(listOf(1, 3, 1), workflow.stages.map { it.size })
+        assertEquals("+10", workflow.stages[1][1].title)
+        assertEquals("Images", workflow.stages[1][1].detail)
+        assertTrue(AuSpokenResponse.format(raw).contains("30 min: Podcast"))
+    }
+
+    @Test fun invalidOrUnfinishedWorkflowDoesNotRender() {
+        listOf("[WORKFLOW] Test\nA\nB", "[WORKFLOW] Test\nA | B | C | D\nE\n[/WORKFLOW]",
+            "[WORKFLOW] Test\nA | \nB\n[/WORKFLOW]").forEach { raw ->
+            assertTrue(AuResponseParser.parse(raw).none { it is AuResponseBlock.Workflow })
+        }
+    }
 }
