@@ -8,8 +8,12 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.OpenInFull
+import androidx.compose.material.icons.outlined.CloseFullscreen
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import au.datacube.app.data.rag.AuEffort
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
@@ -31,8 +35,13 @@ fun AuComposer(
     sendDescription: String = "Send to AU",
     modifier: Modifier = Modifier,
     onStop: (() -> Unit)? = null,
+    effort: AuEffort = AuEffort.BALANCED,
+    onEffortChange: ((AuEffort) -> Unit)? = null,
+    leadingActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {}
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    var tuning by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier.fillMaxWidth()
             .navigationBarsPadding()
@@ -57,7 +66,7 @@ fun AuComposer(
                     color = MaterialTheme.colorScheme.onSurface
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                maxLines = 5,
+                maxLines = if (expanded) 14 else 5,
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty()) {
@@ -75,20 +84,36 @@ fun AuComposer(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    shape = RoundedCornerShape(13.dp)
-                ) {
-                    Text(
-                        "AU",
-                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
+                leadingActions()
                 Spacer(Modifier.weight(1f))
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(if (expanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
+                        contentDescription = if (expanded) "Collapse composer" else "Expand composer")
+                }
+                if (onEffortChange != null) {
+                    Box {
+                        IconButton(onClick = { tuning = true }, enabled = enabled) {
+                            Icon(Icons.Outlined.Tune, contentDescription = "Response effort: " + effort.label,
+                                tint = MaterialTheme.colorScheme.primary)
+                        }
+                        DropdownMenu(expanded = tuning, onDismissRequest = { tuning = false }) {
+                            AuEffort.entries.forEach { mode ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(mode.label)
+                                            Text(mode.description, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    },
+                                    onClick = { onEffortChange(mode); tuning = false },
+                                    trailingIcon = { if (effort == mode) Text("✓") }
+                                )
+                            }
+                        }
+                    }
+                }
                 actions()
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(4.dp))
                 FilledIconButton(
                     onClick = onStop ?: onSend,
                     enabled = onStop != null || sendEnabled,

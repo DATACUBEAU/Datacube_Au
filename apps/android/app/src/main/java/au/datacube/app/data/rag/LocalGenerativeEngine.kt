@@ -141,6 +141,7 @@ object LocalGenerativeEngine {
         generalOnly: Boolean = false,
         studyTask: Boolean = false,
         image: ByteArray? = null,
+        effort: AuEffort = AuEffort.BALANCED,
         onText: suspend (String) -> Unit
     ) = withContext(dispatcher) {
         val queuedAt = android.os.SystemClock.elapsedRealtime()
@@ -226,7 +227,7 @@ object LocalGenerativeEngine {
                                 "Use Markdown headings, bold text, lists or compact pipe tables when helpful. " +
                                 "Use [OK], [WARN], [ERROR] only for supported factual statuses. " +
                                 "For a useful self-contained explanation, optionally use [BOX] Title on its own line, body on following lines, and [/BOX] on its own line."
-                        } + if (!studyTask) " When a process benefits from a diagram, optionally include [FLOW] Title on its own line, then 2 to 6 short steps in order, then [/FLOW] on its own line. Use source-supported steps; omit the diagram when unnecessary. For a meaningful numeric comparison, optionally use [BAR] Title, then 2 to 8 lines formatted Label | nonnegative number, then [/BAR]. Use only supported comparable values and put the unit in the title. Never invent numbers or output executable visual code." else ""
+                        } + if (!studyTask) " When a process benefits from a diagram, optionally include [FLOW] Title on its own line, then 2 to 6 short steps in order, then [/FLOW] on its own line. Use source-supported steps; omit the diagram when unnecessary. For an architecture or grouped workflow use [WORKFLOW] Title, then 2 to 6 stage lines, each with 1 to 3 cards separated by |. Each card is a short title optionally followed by :: and a short description. Finish with [/WORKFLOW]. Keep at most 12 cards total; use only factual labels and grounded values. For a meaningful numeric comparison, optionally use [BAR] Title, then 2 to 8 lines formatted Label | nonnegative number, then [/BAR]. For parts of a real whole use [PIE] Title, the same numeric row format, and [/PIE]; do not use it for unrelated quantities. Use only supported comparable values and put the unit in the title. Never invent numbers or output executable visual code. " + effort.instruction else ""
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35)
                 )

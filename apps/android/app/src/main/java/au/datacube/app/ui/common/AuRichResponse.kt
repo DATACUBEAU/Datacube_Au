@@ -1,6 +1,7 @@
 package au.datacube.app.ui.common
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -30,7 +31,10 @@ internal sealed interface AuResponseBlock {
     data class Status(val kind: String, val text: String) : AuResponseBlock
     data class Callout(val title: String, val body: String) : AuResponseBlock
     data class Flow(val title: String, val steps: List<String>) : AuResponseBlock
+    data class Workflow(val title: String, val stages: List<List<WorkflowNode>>) : AuResponseBlock
+    data class WorkflowNode(val title: String, val detail: String)
     data class BarChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
+    data class PieChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -70,6 +74,30 @@ internal object AuResponseParser {
                     continue
                 }
             }
+            // Each workflow row is one stage; sibling cards are separated by a pipe.
+            // Bound the layout and accept only plain text nodes, never executable UI.
+            if (line.startsWith("[WORKFLOW] ")) {
+                val end = (i + 1 until minOf(lines.size, i + 9)).firstOrNull { lines[it].trim() == "[/WORKFLOW]" }
+                if (end != null) {
+                    val title = line.removePrefix("[WORKFLOW] ").trim()
+                    val stages = lines.subList(i + 1, end).map { row ->
+                        row.split('|').map { cell ->
+                            val parts = cell.split("::", limit = 2)
+                            AuResponseBlock.WorkflowNode(parts.first().trim(), parts.getOrNull(1)?.trim().orEmpty())
+                        }
+                    }
+                    val valid = stages.size in 2..6 && stages.sumOf { it.size } <= 12 &&
+                        stages.all { row -> row.size in 1..3 && row.all { node ->
+                            node.title.length in 1..80 && node.detail.length <= 120 &&
+                                listOf(node.title, node.detail).none { it.contains("[WORKFLOW]") || it.contains("[/WORKFLOW]") }
+                        } }
+                    if (title.length in 1..100 && valid) {
+                        result += AuResponseBlock.Workflow(title, stages)
+                        i = end + 1
+                        continue
+                    }
+                }
+            }
             // Only a small, complete, declarative flow is accepted. No HTML, URLs or scripts.
             if (line.startsWith("[FLOW] ")) {
                 val end = (i + 1 until minOf(lines.size, i + 9)).firstOrNull { lines[it].trim() == "[/FLOW]" }
@@ -84,10 +112,12 @@ internal object AuResponseParser {
                 }
             }
             // Only complete, bounded numeric charts are eligible for native rendering.
-            if (line.startsWith("[BAR] ")) {
-                val end = (i + 1 until minOf(lines.size, i + 11)).firstOrNull { lines[it].trim() == "[/BAR]" }
+            if (line.startsWith("[BAR] ") || line.startsWith("[PIE] ")) {
+                val pie = line.startsWith("[PIE] ")
+                val endTag = if (pie) "[/PIE]" else "[/BAR]"
+                val end = (i + 1 until minOf(lines.size, i + 11)).firstOrNull { lines[it].trim() == endTag }
                 if (end != null) {
-                    val title = line.removePrefix("[BAR] ").trim()
+                    val title = line.removePrefix(if (pie) "[PIE] " else "[BAR] ").trim()
                     val rows = lines.subList(i + 1, end).mapNotNull { row ->
                         val parts = row.split('|')
                         val label = parts.firstOrNull()?.trim().orEmpty()
@@ -96,8 +126,8 @@ internal object AuResponseParser {
                             value.isFinite() && value in 0.0..1.0e12) label to value else null
                     }
                     if (title.length in 1..100 && rows.size in 2..8 && rows.size == end - i - 1 &&
-                        rows.map { it.first }.distinct().size == rows.size) {
-                        result += AuResponseBlock.BarChart(title, rows)
+                        rows.map { it.first }.distinct().size == rows.size && (!pie || rows.sumOf { it.second } > 0.0)) {
+                        result += if (pie) AuResponseBlock.PieChart(title, rows) else AuResponseBlock.BarChart(title, rows)
                         i = end + 1
                         continue
                     }
@@ -225,6 +255,38 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                         }
                     }
                 }
+                is AuResponseBlock.Workflow -> Column(
+                    Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(inlineText(block.title), style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold, modifier = Modifier.fillMaxWidth())
+                    block.stages.forEachIndexed { index, stage ->
+                        if (index > 0) Text("↓", style = MaterialTheme.typography.titleLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            stage.forEach { node ->
+                                Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                                    Column(Modifier.padding(if (stage.size > 1) 8.dp else 14.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(inlineText(node.title), fontWeight = FontWeight.SemiBold,
+                                            style = if (stage.size > 1) MaterialTheme.typography.titleSmall else MaterialTheme.typography.titleMedium,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                        if (node.detail.isNotBlank()) Text(inlineText(node.detail),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 is AuResponseBlock.BarChart -> Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -244,6 +306,30 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                                 LinearProgressIndicator(progress = { (value / maximum).toFloat().coerceIn(0f, 1f) },
                                     modifier = Modifier.fillMaxWidth().height(9.dp),
                                     trackColor = MaterialTheme.colorScheme.surfaceVariant)
+                            }
+                        }
+                    }
+                }
+                is AuResponseBlock.PieChart -> {
+                    val colors = listOf(Color(0xFF2563EB), Color(0xFF0891B2), Color(0xFF64748B),
+                        Color(0xFF0F766E), Color(0xFF93C5FD), Color(0xFF475569), Color(0xFF60A5FA), Color(0xFF334155))
+                    val total = block.rows.sumOf { it.second }
+                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(inlineText(block.title), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        Canvas(Modifier.size(160.dp).align(Alignment.CenterHorizontally)) {
+                            var start = -90f
+                            block.rows.forEachIndexed { index, row ->
+                                val sweep = (360.0 * row.second / total).toFloat()
+                                if (sweep > 0f) drawArc(colors[index], start, sweep, useCenter = true)
+                                start += sweep
+                            }
+                        }
+                        block.rows.forEachIndexed { index, (label, value) ->
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(Modifier.size(12.dp).background(colors[index], RoundedCornerShape(3.dp)))
+                                Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                                Text(value.toString().removeSuffix(".0"), style = MaterialTheme.typography.labelMedium)
                             }
                         }
                     }

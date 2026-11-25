@@ -74,11 +74,11 @@ fun PodcastConversationPanel(
                     modifier = Modifier.size(30.dp))
                 Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Audio conversation",
+                    Text("AU Podcast",
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onSurface,
                         style = MaterialTheme.typography.titleLarge)
-                    Text("A grounded study discussion, read aloud",
+                    Text("Listen and learn offline",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall)
                 }
@@ -124,10 +124,10 @@ fun PodcastConversationPanel(
                 Text(session.stage.ifBlank { "AU is preparing your podcast" },
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.bodyMedium)
-                Text("You can leave this workspace. AU keeps preparing the conversation while Android allows the task to run.",
+                Text("You can leave while AU prepares the podcast.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = session::stop) { Text("Cancel preparation") }
+                TextButton(onClick = session::stop) { Text("Stop") }
             } else if (turns.isEmpty()) {
                 Text(
                     "A curious host asks questions about your document, and a guide explains the answers. Choose a voice and listen offline.",
@@ -147,7 +147,7 @@ fun PodcastConversationPanel(
                 ) {
                     Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Create audio conversation")
+                    Text("Create podcast")
                 }
                 if (!modelReady) {
                     Text("Choose and install a chat model in Models to write the conversation.",
@@ -159,7 +159,8 @@ fun PodcastConversationPanel(
                     Text(
                         if (listening && activeSpeakerIndex >= 0) "Speaking ${activeSpeakerIndex + 1} of ${turns.size}"
                         else if (listening) playbackStage.ifBlank { "Preparing audio" }
-                        else "${turns.size} conversational turns prepared",
+                        else if (session.resumeTurn > 0) "Resume at part ${session.resumeTurn + 1} of ${turns.size}"
+                        else "${turns.size} parts ready",
                         modifier = Modifier.weight(1f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
@@ -167,6 +168,7 @@ fun PodcastConversationPanel(
                     if (listening) CircularProgressIndicator(
                         Modifier.size(18.dp), strokeWidth = 2.dp)
                 }
+                if (!listening && session.resumeTurn > 0) TextButton(onClick = session::restartPlayback) { Text("Restart") }
                 OutlinedButton(
                     onClick = {
                         if (!listening) session.generate(context, documentName, textPreview.orEmpty())
@@ -175,7 +177,7 @@ fun PodcastConversationPanel(
                 ) {
                     Icon(Icons.Outlined.Refresh, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Regenerate conversation")
+                    Text("Regenerate")
                 }
                 if (!smoothVoice && !neuralReady) {
                     Text("Install Kokoro in Models, or choose Mobile voice.",

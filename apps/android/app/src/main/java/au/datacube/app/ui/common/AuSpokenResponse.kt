@@ -39,7 +39,19 @@ internal object AuSpokenResponse {
                         add(plain(block.title))
                         block.steps.forEachIndexed { index, step -> add("Step ${index + 1}. " + plain(step)) }
                     }
+                    is AuResponseBlock.Workflow -> {
+                        add(plain(block.title))
+                        block.stages.forEachIndexed { index, stage ->
+                            add("Stage " + (index + 1) + ". " + stage.joinToString(". ") { node ->
+                                plain(node.title) + if (node.detail.isBlank()) "" else ": " + plain(node.detail)
+                            })
+                        }
+                    }
                     is AuResponseBlock.BarChart -> {
+                        add(plain(block.title))
+                        block.rows.forEach { (label, value) -> add(plain(label) + ": " + value.toString().removeSuffix(".0")) }
+                    }
+                    is AuResponseBlock.PieChart -> {
                         add(plain(block.title))
                         block.rows.forEach { (label, value) -> add(plain(label) + ": " + value.toString().removeSuffix(".0")) }
                     }

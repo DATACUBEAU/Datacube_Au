@@ -6,6 +6,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import au.datacube.app.data.rag.AuEffort
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performClick
@@ -59,5 +61,22 @@ class AuComposerUiTest {
             assertEquals(1, stops)
             assertEquals(0, sends)
         }
+    }
+    @Test fun expansionAndResponseEffortAreInteractive() {
+        var selected = AuEffort.BALANCED
+        rule.setContent {
+            var effort by remember { mutableStateOf(AuEffort.BALANCED) }
+            DataCubeTheme {
+                AuComposer(value = "", onValueChange = {}, onSend = {},
+                    placeholder = "Ask AU", enabled = true, sendEnabled = false,
+                    effort = effort, onEffortChange = { effort = it; selected = it })
+            }
+        }
+        rule.onNodeWithContentDescription("Expand composer").performClick()
+        rule.onNodeWithContentDescription("Collapse composer").assertExists()
+        rule.onNodeWithContentDescription("Response effort: Balanced").performClick()
+        rule.onNodeWithText("Deep").performClick()
+        rule.runOnIdle { assertEquals(AuEffort.DEEP, selected) }
+        rule.onNodeWithContentDescription("Response effort: Deep").assertExists()
     }
 }
