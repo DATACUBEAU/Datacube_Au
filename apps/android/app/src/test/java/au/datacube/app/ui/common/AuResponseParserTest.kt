@@ -80,4 +80,18 @@ class AuResponseParserTest {
         assertTrue(AuSpokenResponse.format(raw).contains("F means net force in newtons"))
         assertTrue(AuResponseParser.parse(raw.substringBefore("[/FORMULA]")).none { it is AuResponseBlock.Formula })
     }
+
+    @Test fun guidedStepsRetainNestedIllustrationAndNarration() {
+        val raw="[STEPS] Learn motion\n[STEP] Start\nA ball moves forward.\n[STEP] Gravity\n[DIAGRAM] projectile\n[/STEPS]"
+        val deck=AuResponseParser.parse(raw).single() as AuResponseBlock.Steps
+        assertEquals(2,deck.pages.size)
+        assertTrue(AuResponseParser.parse(deck.pages[1].body).contains(AuResponseBlock.ProjectileIllustration))
+        assertTrue(AuSpokenResponse.format(raw).contains("Step 2. Gravity"))
+        assertTrue(AuResponseParser.parse(raw.substringBefore("[/STEPS]")).none { it is AuResponseBlock.Steps })
+    }
+
+    @Test fun nestedStepDecksAreNotAcceptedAsOuterDecks() {
+        val raw="[STEPS] Outer\n[STEP] A\n[STEPS] Inner\n[STEP] X\nOne\n[STEP] Y\nTwo\n[/STEPS]\n[STEP] B\nThree\n[/STEPS]"
+        assertFalse(AuResponseParser.parse(raw).any { it is AuResponseBlock.Steps && it.title=="Outer" })
+    }
 }
