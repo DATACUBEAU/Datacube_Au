@@ -32,6 +32,10 @@ BEGIN
     ('au_model_routing','Allow read for everyone model routing')
   ) AS expected(table_name, policy_name)
   LOOP
+    -- Legacy auth mappings may be absent from a clean local-first schema.
+    IF item.table_name = 'au_auth_mappings' AND to_regclass('public.au_auth_mappings') IS NULL THEN
+      CONTINUE;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=item.table_name
       AND p.policyname=item.policy_name AND p.roles=ARRAY['service_role']::name[]) THEN
       RAISE EXCEPTION 'Service-only policy mismatch: %.%',item.table_name,item.policy_name;

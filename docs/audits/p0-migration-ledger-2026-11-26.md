@@ -1,6 +1,6 @@
 # P0 migration ledger reconciliation
 
-Source: production migration ledger (read only), compared to main 495935d and the P0 branch. The six recovered SQL statements are preserved verbatim under their recorded production version numbers. The following two repository-only names were replaced after comparing SQL with blank-line normalization:
+Source: production migration ledger (read only), compared to main 495935d and the P0 branch. The six recovered SQL statements retain their recorded production version numbers. The four policy/index migrations retain exact ledger SQL in `migration-ledger-originals/`; active replay copies guard absent legacy relations and absent ALTER POLICY targets. CI identified `au_auth_mappings` as absent from the clean local-first schema. This compatibility adaptation is not evidence of full production parity. The following two repository-only names were replaced after comparing SQL with blank-line normalization:
 
 - `20261118090000_mobile_auth_handoffs.sql` → `20261118173850_mobile_auth_handoffs.sql`
 - `20261122175339_mobile_device_authorization.sql` → `20261123043639_mobile_device_authorization.sql`
