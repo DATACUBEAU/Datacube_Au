@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
@@ -29,6 +29,7 @@ export default function LoginPage() {
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
   const [isResolvingRedirect, setIsResolvingRedirect] = useState(false);
   const [forceReauthReady, setForceReauthReady] = useState(false);
+  const forceReauthTaskRef = useRef<{ path: string; task: Promise<void> } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [user, , isUserLoading] = useSupabaseUser();
@@ -64,8 +65,12 @@ export default function LoginPage() {
     if (forceReauth) {
       setForceReauthReady(false);
       setIsResolvingRedirect(true);
-      // Clear stale website storage/cookies even if no in-memory user is restored.
-      void explicitSignOut(user?.id ?? null).then(() => {
+      // SIGNED_OUT can re-run this effect as user changes. Reuse the same
+      // cleanup promise instead of starting another destructive sign-out.
+      if (forceReauthTaskRef.current?.path !== safeRedirectPath) {
+        forceReauthTaskRef.current = { path: safeRedirectPath, task: explicitSignOut(user?.id ?? null) };
+      }
+      void forceReauthTaskRef.current.task.then(() => {
         if (!cancelled) setForceReauthReady(true);
       }).catch(() => {
         if (!cancelled) setAuthError('Could not clear the previous website session. Reload this page and try again.');

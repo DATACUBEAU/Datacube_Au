@@ -90,6 +90,8 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   const sessionSignatureRef = useRef<string | null>(signatureFromBootstrapSession(bootstrapSession));
   const authStateRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const staleAuthCleanupRef = useRef(false);
+  const staleAuthCleanupTaskRef = useRef<Promise<void> | null>(null);
+  const oauthStartingRef = useRef(false);
 
   const sessionToUser = useCallback((nextSession: Session | null): SmartUser | null => {
     return sessionToBootstrapUser(nextSession);
@@ -169,35 +171,52 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   const clearStaleAuthState = useCallback(async (source: string) => {
-    if (sessionSignatureRef.current && authStateRef.current === 'authenticated') {
+    const oauthActive = () => oauthStartingRef.current || (
+      typeof window !== 'undefined' && window.location.pathname === '/auth/callback'
+      && new URLSearchParams(window.location.search).has('code')
+    );
+    const freshSession = () => Boolean(sessionSignatureRef.current && authStateRef.current === 'authenticated');
+
+    if (freshSession()) {
       staleAuthCleanupRef.current = false;
       markAuthSessionRestored(`${source}:fresh_session_detected`);
       return;
     }
-
-    // Supabase can emit INITIAL_SESSION(null) while the callback is exchanging
-    // its single-use code. Do not erase the PKCE verifier during that exchange.
-    if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback'
-      && new URLSearchParams(window.location.search).has('code')) {
+    // Both OAuth initiation and callback exchange own the PKCE verifier.
+    // A background INITIAL_SESSION(null) / SIGNED_OUT must not remove it.
+    if (oauthActive()) {
       markAuthRestoring(`${source}:oauth_callback`);
+      return;
+    }
+    if (staleAuthCleanupTaskRef.current) {
+      await staleAuthCleanupTaskRef.current;
       return;
     }
     if (!staleAuthCleanupRef.current) {
       staleAuthCleanupRef.current = true;
-      await clearUserScopedClientCaches(user?.id ?? null);
-      clearClientAuthStorageArtifacts();
-      clearServerAuthSessionCookie();
+      const task = (async () => {
+        await clearUserScopedClientCaches(user?.id ?? null);
+        if (oauthActive() || freshSession()) return;
+        clearClientAuthStorageArtifacts();
+        clearServerAuthSessionCookie();
+        try {
+          await supabase.auth.signOut({ scope: 'local' });
+        } catch {
+          // Local storage/cookie cleanup above is authoritative for stale browser auth.
+        }
+        if (oauthActive() || freshSession()) return;
+        clearClientAuthStorageArtifacts();
+        clearServerAuthSessionCookie();
+      })();
+      staleAuthCleanupTaskRef.current = task;
       try {
-        await supabase.auth.signOut({ scope: 'local' });
-      } catch {
-        // Local storage/cookie cleanup above is authoritative for stale browser auth.
+        await task;
+      } finally {
+        if (staleAuthCleanupTaskRef.current === task) staleAuthCleanupTaskRef.current = null;
       }
-      clearClientAuthStorageArtifacts();
-      clearServerAuthSessionCookie();
     }
-    markAuthUnauthenticated(source, 'session_missing');
+    if (!oauthActive() && !freshSession()) markAuthUnauthenticated(source, 'session_missing');
   }, [user?.id]);
-
   useEffect(() => {
     setRuntimeAuthState(getAuthRuntimeState());
     const handleRuntimeAuthStateChange = (event: Event) => {
@@ -218,8 +237,12 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
 
     const syncInitialSession = async () => {
       markAuthRestoring('useSmartAuth.bootstrap');
+      // The callback owns the exchange; avoid applying an earlier null snapshot
+      // over the SIGNED_IN event produced by the successful exchange.
+      if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback'
+        && new URLSearchParams(window.location.search).has('code')) return;
       const resolved = await resolveSessionFromSupabase();
-      if (!mounted) return;
+      if (!mounted || oauthStartingRef.current) return;
 
       applySessionState(resolved.session, {
         force: true,
@@ -320,11 +343,15 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
   }, [applySessionState, clearStaleAuthState, isOnlineNow, normalizeSession, resolveSessionFromSupabase]);
 
   const signInWithGoogle = useCallback(async (redirectPath?: string) => {
+    if (oauthStartingRef.current) return;
+    oauthStartingRef.current = true;
     authStateRef.current = 'loading';
     setAuthState('loading');
     const safePath = sanitizeLocalRedirectPath(redirectPath, '/');
     let redirectTo: string | undefined;
     try {
+      // Drain any cleanup already started before generating a fresh verifier.
+      await staleAuthCleanupTaskRef.current;
       if (typeof window !== 'undefined') {
         const mobile = isMobileAuthorizationDestination(safePath);
         // Move before creating a PKCE verifier: storage is scoped to the origin.
@@ -353,6 +380,7 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       });
       if (error) throw error;
     } catch (error) {
+      oauthStartingRef.current = false;
       const nextState = session ? 'authenticated' : 'unauthenticated';
       authStateRef.current = nextState;
       setAuthState(nextState);

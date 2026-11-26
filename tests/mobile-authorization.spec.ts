@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
 
 const requestId = 'a'.repeat(43);
@@ -170,4 +171,47 @@ test('malformed mobile login must not fall back to the website', async ({ page }
   await page.goto('/login?redirectTo=%2Fmobile-auth%2Fapprove%3Frequest%3Dinvalid');
   await expect(page.getByRole('heading', { name: 'Return to DataCube AU' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toHaveCount(0);
+});
+
+test('fresh Android login performs a real SDK PKCE round trip without seeded verifier', async ({ page }) => {
+  test.slow();
+  const user = {
+    id: '00000000-0000-4000-8000-000000000047',
+    aud: 'authenticated', email: 'member@example.test',
+    app_metadata: { provider: 'google', providers: ['google'] },
+    user_metadata: {}, role: 'authenticated', created_at: '2026-01-01T00:00:00Z',
+  };
+  const session = {
+    access_token: 'test-browser-access-token', refresh_token: 'test-browser-refresh-token',
+    token_type: 'bearer', expires_in: 3600, user,
+  };
+  let challenge: string | null = null;
+  let matched = false;
+  await page.route('**/auth/v1/authorize?**', async (route) => {
+    const url = new URL(route.request().url());
+    challenge = url.searchParams.get('code_challenge');
+    expect(challenge).toBeTruthy();
+    expect(url.searchParams.get('code_challenge_method')?.toLowerCase()).toBe('s256');
+    const callback = new URL(url.searchParams.get('redirect_to')!);
+    callback.searchParams.set('code', 'test-fresh-code');
+    // Simulate Google returning via Supabase; do not seed a verifier.
+    await route.fulfill({ status: 302, headers: { location: callback.toString() } });
+  });
+  await page.route('**/auth/v1/token?grant_type=pkce', async (route) => {
+    const body = route.request().postDataJSON();
+    expect(body.auth_code).toBe('test-fresh-code');
+    expect(typeof body.code_verifier).toBe('string');
+    matched = createHash('sha256').update(body.code_verifier).digest('base64url') === challenge;
+    expect(matched).toBe(true);
+    await route.fulfill({ json: session });
+  });
+  await page.route('**/auth/v1/user', (route) => route.fulfill({ json: user }));
+  await page.route('**/rest/v1/**', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/auth/activity', (route) => route.fulfill({ json: { ok: true } }));
+  await page.goto(`/login?redirectTo=${encodeURIComponent(approvalPath)}&forceReauth=1`);
+  const button = page.getByRole('button', { name: 'Continue with Google' });
+  await expect(button).toBeEnabled();
+  await button.click();
+  await expect(page.getByRole('textbox', { name: 'Pairing code' })).toBeVisible({ timeout: 30000 });
+  expect(matched).toBe(true);
 });
