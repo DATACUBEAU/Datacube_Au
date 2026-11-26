@@ -1,0 +1,5 @@
+# Mobile pairing callback recovery
+
+Prior hotfix stored the destination in sessionStorage only. This patch also sets a five-minute HttpOnly same-origin cookie containing only the opaque pairing request identifier on the mobile login/approval response. Provider fallback routes recover the approval path; the normal pairing code, authenticated bearer, request expiry, rate limits and Android proof remain mandatory. Successful decisions clear matching cookie and tab state. Malformed mobile login requests no longer default to the download page. Auth/landing navigation is network-only to avoid stale PWA responses.
+
+Production Supabase log aggregation reported six redirect-related messages mentioning a Vercel host; this alone does not identify the precise failing redirect or prove the hosted redirect allow-list. Hosted Auth Site URL and redirect settings still require inspection. No schema or APK changes. Verify actual new-user Google OAuth from the installed Android app, including copying the eight-character code and approving; mocked tests are not a substitute.

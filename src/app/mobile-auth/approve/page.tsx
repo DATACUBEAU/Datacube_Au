@@ -12,6 +12,7 @@ import { explicitSignOut } from '@/lib/auth/explicit-signout';
 import {
   MOBILE_AUTH_APPROVAL_PATH,
   MOBILE_AUTH_RETURN_PATH,
+  MOBILE_OAUTH_DESTINATION_KEY,
   readMobileAuthorizationRequest,
 } from '@/lib/auth/redirects';
 
@@ -69,7 +70,7 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
     try {
       const response = await fetch('/api/auth/mobile-authorization', {
         method: 'POST',
-        credentials: 'omit',
+        credentials: 'same-origin',
         cache: 'no-store',
         referrerPolicy: 'origin',
         signal: AbortSignal.timeout(20_000),
@@ -100,6 +101,7 @@ function ApprovalRequest({ requestId }: { requestId: string }) {
         setError('Your choice could not be saved. Try again or open DataCube AU to continue.');
         return;
       }
+      try { sessionStorage.removeItem(MOBILE_OAUTH_DESTINATION_KEY); } catch {}
       setPairingCode('');
       setResult(expectedStatus);
     } catch {
