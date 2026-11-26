@@ -78,7 +78,7 @@ object DeviceCapabilityScanner {
             ModelCatalog.find(it).name
         } ?: "Search model only"
         return DeviceCapability(
-            ramGb, freeGb, Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", recommended
+            ramGb, freeGb, if (Build.SUPPORTED_ABIS.contains("arm64-v8a")) "arm64-v8a" else Build.SUPPORTED_ABIS.firstOrNull() ?: "Unknown", recommended
         )
     }
 }

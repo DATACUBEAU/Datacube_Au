@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.work.WorkInfo
@@ -28,24 +29,26 @@ fun ModelsScreen(
     onChooseFolder: () -> Unit = {},
     folderRevision: Int = 0,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    scanDevice: (android.content.Context) -> DeviceCapability = DeviceCapabilityScanner::scan,
+    runtimeSdk: Int = android.os.Build.VERSION.SDK_INT
 ) {
     val context = LocalContext.current
-    var device by remember(context) { mutableStateOf(DeviceCapabilityScanner.scan(context)) }
+    var device by remember(context) { mutableStateOf(scanDevice(context)) }
     val hasFolder = remember(context, folderRevision) { ModelVaultStore(context).folder() != null }
     var advanced by remember { mutableStateOf(false) }
     var activeRevision by remember { mutableIntStateOf(0) }
     val activeChat = remember(context, activeRevision) { ActiveLocalChatModel(context).selected() }
     val installedIds = ModelCatalog.models.filter { installed(it.id) }.map { it.id }.toSet()
-    val arm64 = android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")
+    val arm64 = device.architecture == "arm64-v8a"
     val plan = ModelRecommendations.setupPlan(device.ramGb,device.freeStorageGb,
-        android.os.Build.VERSION.SDK_INT,arm64,installedIds)
+        runtimeSdk,arm64,installedIds)
     val recommendedIds = setOfNotNull(plan.search,plan.chat,plan.voice)
     val readiness = ModelSetupGuide.readiness(context)
     val recommendedCount = recommendedIds.size
     val availableCount = recommendedIds.count { it in installedIds }
     val refreshRecommendations: () -> Unit = {
-        device = DeviceCapabilityScanner.scan(context)
+        device = scanDevice(context)
         activeRevision++
     }
     Scaffold(modifier = modifier, topBar = {
@@ -53,7 +56,7 @@ fun ModelsScreen(
             navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } })
     }) { padding ->
         LazyColumn(
-            Modifier.fillMaxSize().padding(padding),
+            Modifier.fillMaxSize().padding(padding).testTag("model-list"),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -93,7 +96,7 @@ fun ModelsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            item {
+            item(key = "recommended-search") {
                 Text("1 · Document search", style=MaterialTheme.typography.titleMedium)
                 val id=plan.search
                 if(id!=null) {
@@ -101,9 +104,10 @@ fun ModelsScreen(
                     ModelCard(spec,{installed(id)},onGet,onImport,
                         canDownload=hasFolder,onChooseFolder=onChooseFolder,
                         onAvailabilityChanged=refreshRecommendations)
-                } else Text(if(android.os.Build.VERSION.SDK_INT<28)
+                } else Text(if(runtimeSdk<28)
                     "This Android version uses keyword search." else "No search model fits the current device budget. Keyword search still works.",
                     style=MaterialTheme.typography.bodySmall)
+                if(id==null) TextButton(onClick={advanced=true}) { Text("Browse other models") }
             }
             item {
                 Text("2 · Chat & reasoning",style=MaterialTheme.typography.titleMedium)
@@ -218,7 +222,7 @@ private fun ModelCard(
         )
     }
 
-    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface,
+    Surface(modifier=Modifier.testTag("model-card-" + model.id), shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), tonalElevation = 1.dp) {
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -309,7 +313,7 @@ private fun ModelCard(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { onGet(model) }, modifier = Modifier.weight(1f),
                         contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Publisher") }
-                    OutlinedButton(onClick = { onImport(model) }, modifier = Modifier.weight(1f),
+                    OutlinedButton(onClick = { onImport(model) }, modifier = Modifier.weight(1f).testTag("import-" + model.id),
                         contentPadding = PaddingValues(horizontal = 8.dp)) { Text("Import files") }
                 }
             }
