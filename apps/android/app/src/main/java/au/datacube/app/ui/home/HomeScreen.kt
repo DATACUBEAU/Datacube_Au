@@ -22,6 +22,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.zIndex
 import au.datacube.app.ui.common.WorkspaceTopBar
+import au.datacube.app.ui.common.auTourTarget
+import au.datacube.app.ui.common.TourTarget
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -105,7 +107,7 @@ fun HomeScreen(
                             }
                             OutlinedButton(
                                 onClick = onNavigateToGist,
-                                modifier = Modifier.weight(1f).heightIn(min = 48.dp).scale(studyScale),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp).scale(studyScale).auTourTarget(TourTarget.GIST),
                                 interactionSource = studyPress,
                                 contentPadding = PaddingValues(horizontal = 8.dp),
                                 border = BorderStroke(1.dp, Color(0xFF81ACDA)),

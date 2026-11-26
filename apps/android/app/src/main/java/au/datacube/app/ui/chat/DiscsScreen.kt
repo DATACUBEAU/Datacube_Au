@@ -45,6 +45,8 @@ import au.datacube.app.data.rag.LocalGenerativeEngine
 import au.datacube.app.data.rag.ModelOutputCleaner
 import au.datacube.app.ui.common.DataCubeDialog
 import au.datacube.app.ui.common.AuComposer
+import au.datacube.app.ui.common.auTourTarget
+import au.datacube.app.ui.common.TourTarget
 import au.datacube.app.ui.common.AuActivityTimeline
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
@@ -696,6 +698,7 @@ fun DiscsScreen(
         attachmentError?.let { Text(it, Modifier.padding(horizontal = 16.dp),
             color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
         AuComposer(
+            modifier = if(collectionId==null) Modifier.auTourTarget(TourTarget.GIST_INPUT) else Modifier,
             value = prompt,
             onValueChange = { prompt = it.take(700) },
             onSend = { if (attachment != null) sendAttachment() else send() },

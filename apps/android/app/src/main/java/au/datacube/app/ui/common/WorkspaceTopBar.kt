@@ -49,11 +49,12 @@ fun WorkspaceTopBar(
                 NavPill("AU", Icons.Outlined.Home, !documentSelected,
                     onHome, Modifier.weight(1f))
                 NavPill("Documents", Icons.Outlined.Description, documentSelected,
-                    onDocuments, Modifier.weight(1.5f))
+                    onDocuments, Modifier.weight(1.5f).then(if(!documentSelected) Modifier.auTourTarget(TourTarget.DOCUMENTS) else Modifier))
             }
         }
         Surface(
             onClick = onSettings,
+            modifier = if(!documentSelected) Modifier.auTourTarget(TourTarget.SETTINGS) else Modifier,
             shape = RoundedCornerShape(50),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 5.dp,

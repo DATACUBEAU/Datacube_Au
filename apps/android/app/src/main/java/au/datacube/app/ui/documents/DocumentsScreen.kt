@@ -1,5 +1,8 @@
 package au.datacube.app.ui.documents
 
+import au.datacube.app.ui.common.auTourTarget
+import au.datacube.app.ui.common.TourTarget
+
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -124,7 +127,7 @@ fun DocumentsScreen(
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = onImport, modifier = Modifier.weight(1f).heightIn(min = 76.dp), shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(10.dp)) {
+                Button(onClick = onImport, modifier = Modifier.weight(1f).heightIn(min = 76.dp).auTourTarget(TourTarget.UPLOAD), shape = RoundedCornerShape(16.dp), contentPadding = PaddingValues(10.dp)) {
                     Icon(Icons.Outlined.AddCircle, null)
                     Spacer(Modifier.width(7.dp))
                     Column { Text("Upload Documents", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis); Text("Add one or more files", style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis) }

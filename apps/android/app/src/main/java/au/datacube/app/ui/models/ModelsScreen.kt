@@ -4,6 +4,10 @@ import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import au.datacube.app.ui.common.LocalAuSpotlight
+import au.datacube.app.ui.common.TourTarget
+import au.datacube.app.ui.common.auTourTarget
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -34,6 +38,15 @@ fun ModelsScreen(
     runtimeSdk: Int = android.os.Build.VERSION.SDK_INT
 ) {
     val context = LocalContext.current
+    val listState=rememberLazyListState()
+    val tourTarget=LocalAuSpotlight.current?.activeTarget
+    LaunchedEffect(tourTarget) {
+        when(tourTarget) {
+            TourTarget.RECOMMEND -> listState.scrollToItem(0)
+            TourTarget.FOLDER -> listState.scrollToItem(1)
+            else -> Unit
+        }
+    }
     var device by remember(context) { mutableStateOf(scanDevice(context)) }
     val hasFolder = remember(context, folderRevision) { ModelVaultStore(context).folder() != null }
     var advanced by remember { mutableStateOf(false) }
@@ -57,6 +70,7 @@ fun ModelsScreen(
     }) { padding ->
         LazyColumn(
             Modifier.fillMaxSize().padding(padding).testTag("model-list"),
+            state=listState,
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
@@ -75,7 +89,7 @@ fun ModelsScreen(
                             Text("$availableCount of $recommendedCount suggested models installed",
                                 style=MaterialTheme.typography.labelSmall)
                         }
-                        Button(onClick=refreshRecommendations,modifier=Modifier.fillMaxWidth()){
+                        Button(onClick=refreshRecommendations,modifier=Modifier.fillMaxWidth().auTourTarget(TourTarget.RECOMMEND)){
                             Text(ModelSetupGuide.FIND_MODELS)
                         }
                         Text("Suggestions use available memory and space for downloads and backups. Actual performance can vary.",
@@ -86,7 +100,7 @@ fun ModelsScreen(
             }
             item {
                 Text("Model folder", style = MaterialTheme.typography.titleMedium)
-                OutlinedButton(onClick = onChooseFolder, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = onChooseFolder, modifier = Modifier.fillMaxWidth().auTourTarget(TourTarget.FOLDER)) {
                     Icon(Icons.Outlined.FolderOpen, null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (hasFolder) "Change model folder" else "Choose folder before download")

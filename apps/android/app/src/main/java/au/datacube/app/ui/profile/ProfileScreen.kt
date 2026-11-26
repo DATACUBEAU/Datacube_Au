@@ -4,6 +4,10 @@ import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
+import au.datacube.app.ui.common.LocalAuSpotlight
+import au.datacube.app.ui.common.TourTarget
+import au.datacube.app.ui.common.auTourTarget
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -40,6 +44,9 @@ fun ProfileScreen(
     onOpenCommunity: () -> Unit = {}
 ) {
     val email = user?.email ?: "—"
+    val listState=rememberLazyListState()
+    val tourTarget=LocalAuSpotlight.current?.activeTarget
+    LaunchedEffect(tourTarget) { if(tourTarget==TourTarget.MODELS) listState.scrollToItem(6) }
     var showProfile by remember { mutableStateOf(false) }
     var showBackups by remember { mutableStateOf(false) }
     var showPersonalization by remember(user?.id) { mutableStateOf(false) }
@@ -139,6 +146,7 @@ fun ProfileScreen(
         }
     ) { padding ->
         LazyColumn(
+            state=listState,
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -197,9 +205,9 @@ fun ProfileScreen(
             }
             item { SettingsSection("On-device") }
             item {
-                SettingsEntry(Icons.Outlined.Memory, "Models", "Download or import models", onOpenModels)
+                SettingsEntry(Icons.Outlined.Memory, "Models", "Download or import models", onOpenModels, modifier=Modifier.auTourTarget(TourTarget.MODELS))
             }
-            item { SettingsEntry(Icons.Outlined.Info, "Getting started", "See how to set up AU", onShowSetupGuide) }
+            item { SettingsEntry(Icons.Outlined.Info, "Getting started", "Replay the quick tutorial", onShowSetupGuide) }
             item { SettingsEntry(Icons.Outlined.ChatBubbleOutline, "Community", "WhatsApp · Help and updates", onOpenCommunity, communityIcon=true) }
             item {
                 SettingsEntry(Icons.Outlined.Backup, "Backups", "Export or restore models", { showBackups = true })
@@ -251,10 +259,12 @@ private fun SettingsEntry(
     title: String,
     subtitle: String,
     onClick: () -> Unit,
-    communityIcon: Boolean = false
+    communityIcon: Boolean = false,
+    modifier: Modifier=Modifier
 ) {
     Surface(
         onClick = onClick,
+        modifier=modifier,
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
