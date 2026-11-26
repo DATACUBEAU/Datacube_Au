@@ -7,6 +7,7 @@ import {
 } from '@/lib/server/billing-request-guard';
 import { verifyFlutterwaveWebhookSignature } from '@/lib/payments/flutterwave';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
+import { readBoundedWebhookBody } from '@/lib/server/webhook-body';
 
 export const runtime = 'nodejs';
 
@@ -22,28 +23,15 @@ function isValidFlutterwavePayload(payload: any): boolean {
 export async function POST(req: NextRequest) {
   const traceId = randomUUID();
   try {
-    const rateLimit = consumeBillingRateLimit({
-      scope: 'flutterwave-webhook',
-      key: resolveBillingRequestIp(req),
-      maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
-      windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
-    });
-    if (rateLimit.limited) {
-      return NextResponse.json(
-        { error: 'rate_limited', traceId },
-        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
-      );
-    }
-
     const signature = req.headers.get('verif-hash') || req.headers.get('x-flutterwave-signature');
     let signatureValid = false;
     try {
       signatureValid = verifyFlutterwaveWebhookSignature(signature);
-    } catch (error: any) {
+    } catch {
       return NextResponse.json(
         {
           error: 'webhook_not_configured',
-          message: String(error?.message || 'Flutterwave webhook is not configured.'),
+          message: 'Flutterwave webhook is not configured.',
           traceId,
         },
         { status: 500 }
@@ -51,14 +39,26 @@ export async function POST(req: NextRequest) {
     }
 
     if (!signatureValid) {
+      const rateLimit = consumeBillingRateLimit({
+        scope: 'flutterwave-webhook-invalid-signature',
+        key: resolveBillingRequestIp(req),
+        maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
+        windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+      });
+      if (rateLimit.limited) {
+        return NextResponse.json(
+          { error: 'rate_limited', traceId },
+          { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
+        );
+      }
       return NextResponse.json(
         { error: 'invalid_signature', traceId },
         { status: 401 }
       );
     }
 
-    const rawBody = await req.text();
-    if (Buffer.byteLength(rawBody, 'utf8') > WEBHOOK_MAX_BODY_BYTES) {
+    const rawBody = await readBoundedWebhookBody(req, WEBHOOK_MAX_BODY_BYTES);
+    if (rawBody === null) {
       return NextResponse.json({ error: 'payload_too_large', traceId }, { status: 413 });
     }
     let payload: any;
@@ -87,11 +87,11 @@ export async function POST(req: NextRequest) {
       },
       { status: 200 }
     );
-  } catch (error: any) {
+  } catch {
     return NextResponse.json(
       {
         error: 'webhook_processing_failed',
-        message: String(error?.message || 'Webhook processing failed.'),
+        message: 'Webhook processing failed.',
         traceId,
       },
       { status: 500 }

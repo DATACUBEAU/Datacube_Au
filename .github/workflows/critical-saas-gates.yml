@@ -38,6 +38,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: P0 hardening regressions (no external credentials)
+        run: node --experimental-strip-types --test tests/p0-hardening.unit.test.mjs
+
       - name: Typecheck
         run: pnpm typecheck
 
