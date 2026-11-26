@@ -248,3 +248,13 @@ test('Conex challenge requires both stages and keeps device reports optional', (
   assert.match(device, /auth\.source !== 'header'/);
   assert.match(device, /device_info: null/);
 });
+
+test('same-repository Strix runs cannot report success when the scan credential is missing', () => {
+  const workflow = readRepoFile('.github', 'workflows', 'strix-security-scan.yml');
+  assert.match(workflow, /IS_FORK_PR:/);
+  assert.match(workflow, /Fork pull requests cannot receive repository secrets/);
+  assert.match(workflow, /same-repository pull requests and manual runs; refusing a false-green security result/);
+  assert.doesNotMatch(workflow, /Pull-request scan is non-blocking while Strix is unconfigured/);
+  const missingCredentialBlock = workflow.match(/if \[ -z "\$\{LLM_API_KEY:-\}" \]; then[\s\S]+?echo "configured=true"/)?.[0] || '';
+  assert.match(missingCredentialBlock, /exit 1/);
+});

@@ -34,7 +34,7 @@ jobs:
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-          EVENT_NAME: ${{ github.event_name }}
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -euo pipefail
           if [ -z "${LLM_API_KEY:-}" ]; then
@@ -42,18 +42,18 @@ jobs:
             {
               echo "## Strix security scan"
               echo
-              echo "⚠️ **Scan not executed:** repository secret \`LLM_API_KEY\` is not configured."
+              echo "⚠️ **Scan not executed:** repository secret \`LLM_API_KEY\` is not available."
               echo
               echo "No Strix vulnerability result exists for this run. Configure \`LLM_API_KEY\` (and optionally \`STRIX_LLM\`) to enable the scan."
             } >> "$GITHUB_STEP_SUMMARY"
 
-            if [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
-              echo "A manually requested Strix scan must not report success without running."
-              exit 1
+            if [ "${IS_FORK_PR:-false}" = "true" ]; then
+              echo "Fork pull requests cannot receive repository secrets; leaving Strix non-blocking and explicitly unassessed."
+              exit 0
             fi
 
-            echo "Pull-request scan is non-blocking while Strix is unconfigured; the job summary records that no assessment occurred."
-            exit 0
+            echo "Strix is required for same-repository pull requests and manual runs; refusing a false-green security result."
+            exit 1
           fi
 
           echo "configured=true" >> "$GITHUB_OUTPUT"
