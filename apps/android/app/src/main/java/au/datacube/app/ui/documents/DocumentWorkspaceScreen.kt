@@ -1,6 +1,15 @@
 package au.datacube.app.ui.documents
 
 import au.datacube.app.ui.common.DataCubeDialog
+import au.datacube.app.ui.common.AuSpotlightState
+import au.datacube.app.ui.common.AuSpotlightOverlay
+import au.datacube.app.ui.common.LocalAuSpotlight
+import au.datacube.app.ui.common.TourTarget
+import au.datacube.app.ui.common.auTourTarget
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import au.datacube.app.schedule.AuScheduleDialog
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
@@ -56,6 +65,31 @@ fun DocumentWorkspaceScreen(
     var showDetails by remember(document.id) { mutableStateOf(false) }
     var schedulesOpen by remember(document.id) { mutableStateOf(false) }
     var scheduleTitle by remember(document.id) { mutableStateOf("Review " + document.name) }
+    val context=LocalContext.current
+    val guidePrefs=remember(context) { context.getSharedPreferences("au_document_guide",android.content.Context.MODE_PRIVATE) }
+    var offerTools by rememberSaveable(accountId,document.id) { mutableStateOf(false) }
+    var guideTools by rememberSaveable(accountId,document.id) { mutableStateOf(false) }
+    val toolsSpotlight=remember(document.id) { AuSpotlightState() }
+    LaunchedEffect(accountId,previewLoading,textPreview.isNullOrBlank(),initialPrompt) {
+        if(accountId!=null && !previewLoading && !textPreview.isNullOrBlank() &&
+            initialPrompt.isNullOrBlank() && !guidePrefs.getBoolean(accountId,false)) {
+            offerTools=true
+        }
+    }
+    fun closeToolsOffer(start:Boolean) {
+        accountId?.let { guidePrefs.edit().putBoolean(it,true).apply() }
+        offerTools=false
+        guideTools=start
+        menuExpanded=false
+    }
+    if(offerTools) DataCubeDialog(
+        onDismissRequest={closeToolsOffer(false)},
+        title={Text("Explore document tools?")},
+        text={Text("See where AU Chat, Smart Note, Prediction, Practice and Podcast are located.")},
+        confirmButton={Button(onClick={closeToolsOffer(true)}){Text("Show me")}},
+        dismissButton={TextButton(onClick={closeToolsOffer(false)}){Text("Not now")}}
+    )
+    BackHandler(enabled=guideTools) { guideTools=false }
     if (schedulesOpen && accountId != null) {
         AuScheduleDialog(accountId, "document:${document.id}", scheduleTitle,
             onDismiss = { schedulesOpen = false })
@@ -77,7 +111,10 @@ fun DocumentWorkspaceScreen(
         )
     }
 
-    Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
+    val parentSpotlight=LocalAuSpotlight.current
+    CompositionLocalProvider(LocalAuSpotlight provides if(guideTools) toolsSpotlight else parentSpotlight) {
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().dataCubeBackdrop().then(if(guideTools) Modifier.clearAndSetSemantics {} else Modifier)) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -107,7 +144,7 @@ fun DocumentWorkspaceScreen(
                 )
             }
             Box {
-                IconButton(onClick = { menuExpanded = true }) {
+                IconButton(onClick = { menuExpanded = true },modifier=Modifier.auTourTarget(TourTarget.DOCUMENT_TOOLS)) {
                     Icon(Icons.Outlined.MoreVert, contentDescription = "Document options and tools")
                 }
                 DropdownMenu(
@@ -146,6 +183,11 @@ fun DocumentWorkspaceScreen(
                         )
                     }
                     HorizontalDivider()
+                    DropdownMenuItem(
+                        text={Text("Guide to document tools")},
+                        leadingIcon={Icon(Icons.Outlined.Info,null)},
+                        onClick={menuExpanded=false;guideTools=true}
+                    )
                     if (accountId != null) {
                         DropdownMenuItem(
                             text = { Text("Schedules") },
@@ -209,6 +251,13 @@ fun DocumentWorkspaceScreen(
             3 -> PracticeWorkspace(document.name, textPreview, previewLoading, document.id, onOpenModels)
             else -> PodcastWorkspace(document.id, document.name, textPreview, previewLoading)
         }
+    }
+    if(guideTools) {
+        AuSpotlightOverlay(toolsSpotlight,TourTarget.DOCUMENT_TOOLS,"Study your way",
+            "AU Chat answers questions. Smart Note creates notes. Prediction suggests revision priorities. Practice tests your understanding. Podcast turns the document into a discussion.",
+            "Open tools",0,1,onNext={guideTools=false;menuExpanded=true},onSkip={guideTools=false})
+    }
+    }
     }
 }
 

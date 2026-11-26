@@ -30,7 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 internal enum class TourPage { HOME, DOCUMENTS, GIST, SETTINGS, MODELS }
-internal enum class TourTarget { DOCUMENTS, UPLOAD, GIST, GIST_INPUT, SETTINGS, MODELS, RECOMMEND, FOLDER }
+internal enum class TourTarget { DOCUMENTS, UPLOAD, GIST, GIST_INPUT, SETTINGS, MODELS, RECOMMEND, FOLDER, DOCUMENT_TOOLS }
 internal enum class AuTourStep(val page:TourPage,val target:TourTarget,val title:String,val detail:String,val action:String) {
     DOCUMENTS(TourPage.HOME,TourTarget.DOCUMENTS,"Your library","Keep textbooks and related files together.","Open Documents"),
     UPLOAD(TourPage.DOCUMENTS,TourTarget.UPLOAD,"Add a document","Use Upload Documents to choose PDFs or text files. You can do this later.","Continue"),
@@ -74,14 +74,20 @@ internal fun Modifier.auTourTarget(target:TourTarget):Modifier = composed {
  * readable instructions and a working Continue/Skip. */
 @Composable
 internal fun AuSpotlightOverlay(state:AuSpotlightState,step:AuTourStep,index:Int,onNext:()->Unit,onSkip:()->Unit) {
+    AuSpotlightOverlay(state,step.target,step.title,step.detail,step.action,index,AuTourStep.entries.size,onNext,onSkip)
+}
+
+@Composable
+internal fun AuSpotlightOverlay(state:AuSpotlightState,targetId:TourTarget,title:String,detail:String,action:String,
+                               index:Int,count:Int,onNext:()->Unit,onSkip:()->Unit) {
     var origin by remember { mutableStateOf(Offset.Zero) }
-    val target=state.bounds(step.target)
+    val target=state.bounds(targetId)
     val latestNext by rememberUpdatedState(onNext)
     val latestTarget by rememberUpdatedState(target)
     val latestOrigin by rememberUpdatedState(origin)
     BoxWithConstraints(Modifier.fillMaxSize().testTag("au-spotlight-overlay")
         .onGloballyPositioned { origin=it.positionInRoot() }
-        .pointerInput(step) {
+        .pointerInput(targetId) {
             detectTapGestures { touch ->
                 val bounds=latestTarget
                 if(bounds!=null && bounds.width>1f && bounds.height>1f &&
@@ -119,13 +125,13 @@ internal fun AuSpotlightOverlay(state:AuSpotlightState,step:AuTourStep,index:Int
             Column(Modifier.heightIn(max=(height-24.dp).coerceAtLeast(80.dp))
                 .verticalScroll(rememberScrollState()).padding(16.dp),
                 verticalArrangement=Arrangement.spacedBy(10.dp)) {
-                AuStepProgress(index,AuTourStep.entries.size)
-                Text(step.title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold,
+                if(count>1) AuStepProgress(index,count)
+                Text(title,style=MaterialTheme.typography.titleLarge,fontWeight=FontWeight.SemiBold,
                     modifier=Modifier.semantics { heading() })
-                Text(step.detail,style=MaterialTheme.typography.bodyMedium)
+                Text(detail,style=MaterialTheme.typography.bodyMedium)
                 Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick=onSkip,modifier=Modifier.weight(1f)){Text("Skip")}
-                    Button(onClick=onNext,modifier=Modifier.weight(2f)){Text(step.action)}
+                    Button(onClick=onNext,modifier=Modifier.weight(2f)){Text(action)}
                 }
             }
         }
