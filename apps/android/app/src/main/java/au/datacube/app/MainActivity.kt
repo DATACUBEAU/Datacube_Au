@@ -1,6 +1,14 @@
 package au.datacube.app
 
 import au.datacube.app.ui.common.DataCubeDialog
+import au.datacube.app.ui.common.AuSpotlightState
+import au.datacube.app.ui.common.AuSpotlightOverlay
+import au.datacube.app.ui.common.AuTourStep
+import au.datacube.app.ui.common.TourPage
+import au.datacube.app.ui.common.LocalAuSpotlight
+import au.datacube.app.ui.common.AuTutorialOffer
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -243,14 +251,74 @@ private fun AuthenticatedWorkspace(
     val context = LocalContext.current
     LaunchedEffect(authState.error) { authState.error?.let { snackbar.showSnackbar(it) } }
     LaunchedEffect(authState.user?.id) { authState.user?.id?.let { au.datacube.app.ui.common.ResponseFeedbackStore.schedule(context,it) } }
-    var showCommunity by remember { mutableStateOf(false) }
-    if (showCommunity) {
+    val accountId = requireNotNull(authState.user).id
+    val setupPrefs = remember(context) {
+        context.getSharedPreferences("datacube_model_setup", android.content.Context.MODE_PRIVATE)
+    }
+    val userSetupKey = "offered_" + accountId
+    val communityKey = "community_offered_" + accountId
+    val firstRun = remember(accountId) { !setupPrefs.getBoolean(userSetupKey,false) }
+    val communityAlreadyOffered = remember(accountId) {
+        setupPrefs.getBoolean(communityKey,false) ||
+            context.getSharedPreferences("au_community_prompt_v1",android.content.Context.MODE_PRIVATE)
+                .getBoolean(accountId,false)
+    }
+    var initialCommunity by rememberSaveable(accountId) { mutableStateOf(firstRun && !communityAlreadyOffered) }
+    var manualCommunity by rememberSaveable(accountId) { mutableStateOf(false) }
+    var tutorialOffer by rememberSaveable(accountId) { mutableStateOf(firstRun && communityAlreadyOffered) }
+    var waitingForCommunity by rememberSaveable(accountId) { mutableStateOf(false) }
+    var tourIndex by rememberSaveable(accountId) { mutableIntStateOf(-1) }
+    val tour = remember(accountId) { AuSpotlightState() }
+    val tourStep = AuTourStep.entries.getOrNull(tourIndex)
+    SideEffect { tour.activeTarget=tourStep?.target }
+    fun finishCommunityOffer() {
+        initialCommunity=false
+        setupPrefs.edit().putBoolean(communityKey,true).apply()
+        tutorialOffer=true
+    }
+    val communityLauncher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if(waitingForCommunity) {
+            waitingForCommunity=false
+            tutorialOffer=true
+        }
+    }
+    if(initialCommunity || manualCommunity) {
         au.datacube.app.ui.models.CommunityInviteDialog(
-            onDismiss={showCommunity=false},
+            onDismiss={
+                if(initialCommunity) finishCommunityOffer()
+                manualCommunity=false
+            },
             onJoin={
-                showCommunity=false
-                if (!au.datacube.app.ui.models.ModelSetupGuide.openCommunity(context))
-                    scope.launch { snackbar.showSnackbar("Community link could not be opened.") }
+                if(initialCommunity) {
+                    initialCommunity=false
+                    setupPrefs.edit().putBoolean(communityKey,true).apply()
+                    waitingForCommunity=true
+                    runCatching {
+                        communityLauncher.launch(Intent(Intent.ACTION_VIEW,
+                            Uri.parse(au.datacube.app.ui.models.ModelSetupGuide.COMMUNITY_URL)))
+                    }.onFailure {
+                        waitingForCommunity=false
+                        tutorialOffer=true
+                        scope.launch { snackbar.showSnackbar("Community link could not be opened.") }
+                    }
+                } else {
+                    manualCommunity=false
+                    if(!au.datacube.app.ui.models.ModelSetupGuide.openCommunity(context))
+                        scope.launch { snackbar.showSnackbar("Community link could not be opened.") }
+                }
+            }
+        )
+    }
+    if(tutorialOffer && !waitingForCommunity && !initialCommunity && !manualCommunity) {
+        AuTutorialOffer(
+            onStart={
+                setupPrefs.edit().putBoolean(userSetupKey,true).apply()
+                tutorialOffer=false
+                tourIndex=0
+            },
+            onDecline={
+                setupPrefs.edit().putBoolean(userSetupKey,true).apply()
+                tutorialOffer=false
             }
         )
     }
@@ -357,30 +425,6 @@ private fun AuthenticatedWorkspace(
     ) { granted ->
         scope.launch { snackbar.showSnackbar(if (granted) "Task notifications enabled." else "Notifications remain off.") }
     }
-    val setupPrefs = remember(context) {
-        context.getSharedPreferences("datacube_model_setup", android.content.Context.MODE_PRIVATE)
-    }
-    val userSetupKey = "offered_" + authState.user?.id.orEmpty()
-    var showSetupGuide by remember(userSetupKey) {
-        mutableStateOf(!setupPrefs.getBoolean(userSetupKey, false))
-    }
-    fun closeSetupGuide() {
-        val firstTime = !setupPrefs.getBoolean(userSetupKey,false)
-        val offeredKey = "community_offered_" + authState.user?.id.orEmpty()
-        val offer = firstTime && authState.user != null && !setupPrefs.getBoolean(offeredKey,false)
-        setupPrefs.edit().putBoolean(userSetupKey,true).apply {
-            if(offer) putBoolean(offeredKey,true)
-        }.apply()
-        showSetupGuide = false
-        if(offer) showCommunity = true
-    }
-    if (showSetupGuide) {
-        au.datacube.app.ui.models.ModelSetupTour(
-            onDismiss = ::closeSetupGuide,
-            onOpenModels = { closeSetupGuide(); navController.navigate(Screen.Models.route) }
-        )
-    }
-
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
     val mimeTypes = arrayOf(
         "application/pdf",
@@ -490,16 +534,38 @@ private fun AuthenticatedWorkspace(
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
     val isWorkspaceRoute = currentRoute == Screen.Collection.route || currentRoute == Screen.Document.route
+    val tourRoute=when(tourStep?.page) {
+        TourPage.HOME -> Screen.Home.route
+        TourPage.DOCUMENTS -> Screen.Documents.route
+        TourPage.GIST -> Screen.Discs.route
+        TourPage.SETTINGS -> Screen.Settings.route
+        TourPage.MODELS -> Screen.Models.route
+        null -> null
+    }
+    LaunchedEffect(tourRoute,currentRoute) {
+        if(tourRoute!=null && currentRoute!=null && currentRoute!=tourRoute) {
+            if(tourRoute==Screen.Home.route) {
+                if(!navController.popBackStack(Screen.Home.route,false))
+                    navController.navigate(Screen.Home.route) { launchSingleTop=true }
+            } else navController.navigate(tourRoute) {
+                popUpTo(Screen.Home.route) { inclusive=false }
+                launchSingleTop=true
+            }
+        }
+    }
+    BackHandler(enabled=tourStep!=null) { tourIndex=-1 }
 
     // Nested workspaces consume system back and return to their parent instead of closing the app.
-    BackHandler(enabled = isWorkspaceRoute && navController.previousBackStackEntry != null) {
+    BackHandler(enabled = tourStep==null && isWorkspaceRoute && navController.previousBackStackEntry != null) {
         navController.popBackStack()
     }
 
     // Keep the top notice OUTSIDE Scaffold's snackbar slot. A fillMaxSize()
     // snackbar there is measured as an entire screen and steals all nav space.
     // A normal-height host above Scaffold reserves only its actual banner height.
-    Column(Modifier.fillMaxSize()) {
+    CompositionLocalProvider(LocalAuSpotlight provides if(tourStep!=null) tour else null) {
+    Box(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().then(if(tourStep!=null) Modifier.clearAndSetSemantics {} else Modifier)) {
         SnackbarHost(
             hostState = snackbar,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
@@ -509,10 +575,10 @@ private fun AuthenticatedWorkspace(
             navController = navController,
             startDestination = Screen.Home.route,
             modifier = Modifier.padding(padding),
-            enterTransition = { fadeIn(tween(170)) + slideInHorizontally(tween(170)) { it / 18 } },
-            exitTransition = { fadeOut(tween(130)) + slideOutHorizontally(tween(130)) { -it / 24 } },
+            enterTransition = { if(tourStep!=null) fadeIn(tween(100)) else fadeIn(tween(170)) + slideInHorizontally(tween(170)) { it / 18 } },
+            exitTransition = { if(tourStep!=null) fadeOut(tween(100)) else fadeOut(tween(130)) + slideOutHorizontally(tween(130)) { -it / 24 } },
             popEnterTransition = { fadeIn(tween(170)) + slideInHorizontally(tween(170)) { -it / 24 } },
-            popExitTransition = { fadeOut(tween(130)) + slideOutHorizontally(tween(130)) { it / 24 } }
+            popExitTransition = { if(tourStep!=null) fadeOut(tween(100)) else fadeOut(tween(130)) + slideOutHorizontally(tween(130)) { it / 24 } }
         ) {
             composable(Screen.Home.route) {
                 HomeScreen(
@@ -708,8 +774,8 @@ private fun AuthenticatedWorkspace(
                     onThemeChange = onThemeChange,
                     onOpenModels = { navController.navigate(Screen.Models.route) },
                     onOpenVault = { navController.navigate(Screen.ModelVault.route) },
-                    onShowSetupGuide = { showSetupGuide = true },
-                    onOpenCommunity = { showCommunity = true },
+                    onShowSetupGuide = { tutorialOffer=true },
+                    onOpenCommunity = { manualCommunity=true },
                     onOpenSubscription = {
                         val url = BuildConfig.AUTH_WEBSITE_URL.trimEnd('/') + "/dashboard/settings/usage"
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -754,5 +820,12 @@ private fun AuthenticatedWorkspace(
             }
         }
         }
+    }
+    if(tourStep!=null) {
+        AuSpotlightOverlay(tour,tourStep,tourIndex,
+            onNext={ if(currentRoute==tourRoute) tourIndex=if(tourIndex==AuTourStep.entries.lastIndex) -1 else tourIndex+1 },
+            onSkip={tourIndex=-1})
+    }
+    }
     }
 }
