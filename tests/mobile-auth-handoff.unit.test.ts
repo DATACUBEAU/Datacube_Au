@@ -7,7 +7,7 @@ function read(...parts: string[]): string {
 }
 
 const route = read('src', 'app', 'api', 'auth', 'mobile-handoff', 'route.ts');
-const migration = read('supabase', 'migrations', '20261118090000_mobile_auth_handoffs.sql');
+const migration = read('supabase', 'migrations', '20261118173850_mobile_auth_handoffs.sql');
 const completion = read('src', 'app', 'mobile-auth', 'complete', 'page.tsx');
 const fallback = read('src', 'app', 'mobile-auth', 'install', 'page.tsx');
 const androidAuthScreen = read('apps', 'android', 'app', 'src', 'main', 'java', 'au', 'datacube', 'app', 'ui', 'auth', 'AuthScreen.kt');

@@ -102,6 +102,9 @@ jobs:
       - name: Lint migrated public schema
         run: supabase db lint --local --schema public --level error --fail-on error
 
+      - name: Verify P0 database security boundaries after migration replay
+        run: psql -X -v ON_ERROR_STOP=1 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' -f supabase/tests/p0_security_boundaries.sql
+
       - name: Install web dependencies for the mobile auth integration test
         run: pnpm install --frozen-lockfile
 
