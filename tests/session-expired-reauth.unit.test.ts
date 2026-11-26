@@ -6,6 +6,7 @@ import {
   buildSessionExpiredPath,
   isMobileAuthorizationDestination,
   isPublicAuthPath,
+  isPublicDistributionPath,
   sanitizeLocalRedirectPath,
   sanitizeRedirectTarget,
 } from '../src/lib/auth/redirects.js';
@@ -81,6 +82,16 @@ async function main() {
     assert.equal(isPublicAuthPath('/auth/callback'), true);
     assert.equal(isPublicAuthPath('/session-expired'), true);
     assert.equal(isPublicAuthPath('/dashboard'), false);
+  });
+
+  await run('public distribution is independent of protected-session redirects', () => {
+    for (const path of ['/', '/download', '/features', '/about', '/pricing', '/policy', '/mobile-app-required', '/mobile-auth/install']) {
+      assert.equal(isPublicDistributionPath(path), true);
+    }
+    assert.equal(isPublicDistributionPath('/dashboard/settings'), false);
+    assert.equal(isPublicDistributionPath('/conex'), false);
+    assert.equal(isPublicDistributionPath('/api/android-update'), false);
+    assert.match(readRepoFile('src', 'components', 'auth-lock-overlay.tsx'), /!isPublicDistributionPath\(pathname\)/);
   });
 
   await run('auth lock redirects to session-expired once and does not inert the app shell', () => {
