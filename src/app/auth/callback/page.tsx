@@ -175,9 +175,15 @@ export default function AuthCallbackPage() {
           // messages, authorization codes, verifiers or session credentials.
           const name = error instanceof Error ? error.name : '';
           const verifierMissing = name === 'AuthPKCECodeVerifierMissingError';
+          const lockFailure = name === 'NavigatorLockAcquireTimeoutError' || name === 'LockAcquireTimeoutError';
+          const networkFailure = name === 'AuthRetryableFetchError' || name === 'TimeoutError' || name === 'AbortError';
           setMessage(verifierMissing
             ? 'Sign-in verification was lost. Return to the app and start a fresh sign-in in the same browser. (PKCE verifier missing)'
-            : 'The sign-in session could not be established. Return to the app and start a fresh sign-in. (Code exchange failed)');
+            : lockFailure
+              ? 'The browser authentication session is busy. Close other DataCube AU tabs and start a fresh sign-in. (Browser lock timeout)'
+              : networkFailure
+                ? 'The connection to the sign-in server did not complete. Check your connection and start a fresh sign-in. (Session transport interrupted)'
+                : 'The sign-in session could not be established. Return to the app and start a fresh sign-in. (Code exchange failed)');
           if (isMobileDestination) setNeedsAppRestart(true);
           else router.replace(safeLoginRedirect(nextPath, 'auth_error'));
         }

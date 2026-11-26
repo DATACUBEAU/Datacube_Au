@@ -2,7 +2,7 @@ name: Production Mobile Authorization Smoke
 
 on:
   push:
-    branches: [fix/android-hybrid-auth, fix/auth-exchange-transport]
+    branches: [fix/android-hybrid-auth]
   workflow_dispatch:
 
 permissions:
@@ -48,36 +48,5 @@ jobs:
             assert.equal(cancelled.status, 'cancelled');
           } finally {
             console.log('Smoke test finished; no Supabase user session was created.');
-          }
-          NODE
-
-  browser-auth-transport:
-    runs-on: ubuntu-latest
-    timeout-minutes: 3
-    steps:
-      - name: Verify live Supabase CORS with existing SDK headers
-        shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          const url = 'https://dhmukdeljiwvvwjdcxgn.supabase.co/auth/v1/token?grant_type=pkce';
-          const origin = 'https://datacube.fabianodev.xyz';
-          const standard = ['apikey','authorization','content-type','x-client-info','x-supabase-api-version'];
-          for (const headers of [standard, [...standard,'x-device-id'], [...standard,'x-device-id','x-supabase-client-platform','x-supabase-client-platform-version','x-supabase-client-runtime','x-supabase-client-runtime-version']]) {
-            const res = await fetch(url, {method:'OPTIONS', headers:{Origin:origin,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':headers.join(',')}, redirect:'manual', signal:AbortSignal.timeout(12000)});
-            const allowed = (res.headers.get('access-control-allow-headers') || '').toLowerCase().split(',').map(v=>v.trim());
-            const missing = headers.filter(h=>!allowed.includes(h) && !(allowed.includes('*') && h!=='authorization'));
-            console.log(JSON.stringify({variant:headers.includes('x-supabase-client-platform')?'sdk-2.93.1':headers.includes('x-device-id')?'custom':'standard',status:res.status,origin:res.headers.get('access-control-allow-origin'),missing,allowMethods:res.headers.get('access-control-allow-methods')}));
-          }
-          NODE
-
-      - name: Inspect published SDK patch metadata
-        shell: bash
-        run: |
-          node --input-type=module <<'NODE'
-          for (const name of ['supabase-js','auth-js','functions-js','postgrest-js','realtime-js','storage-js']) {
-            const res=await fetch('https://registry.npmjs.org/@supabase%2f'+name+'/2.98.0');
-            if(!res.ok) throw new Error('Metadata unavailable: '+name+' '+res.status);
-            const p=await res.json();
-            console.log(JSON.stringify({name:p.name,version:p.version,integrity:p.dist.integrity,engines:p.engines,dependencies:p.dependencies,peerDependencies:p.peerDependencies}));
           }
           NODE
