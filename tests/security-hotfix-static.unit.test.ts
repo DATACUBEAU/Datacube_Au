@@ -248,3 +248,16 @@ test('Conex challenge requires both stages and keeps device reports optional', (
   assert.match(device, /auth\.source !== 'header'/);
   assert.match(device, /device_info: null/);
 });
+
+test('valid signed Flutterwave webhooks are authenticated before abuse throttling', () => {
+  const route = readRepoFile('src', 'app', 'api', 'webhooks', 'flutterwave', 'route.ts');
+  const signatureCheck = route.indexOf('if (!signatureValid)');
+  const rateLimitCall = route.indexOf('consumeBillingRateLimit({');
+
+  assert.ok(signatureCheck >= 0, 'Flutterwave webhook signature verification must remain present');
+  assert.ok(rateLimitCall > signatureCheck, 'valid signed webhooks must not be throttled before verification');
+  assert.ok(
+    route.includes("scope: 'flutterwave-webhook-invalid-signature'"),
+    'the abuse throttle must remain scoped to invalid-signature traffic',
+  );
+});
