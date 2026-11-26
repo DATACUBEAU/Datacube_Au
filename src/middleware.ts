@@ -4,7 +4,7 @@ import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 import { verifyConexProof } from '@/lib/server/conex-proof';
 import { hasConexAccess } from '@/lib/conex-rbac';
-import { isMobileAuthorizationPage } from '@/lib/auth/redirects';
+import { CANONICAL_WEBSITE_ORIGIN, isMobileAuthorizationPage } from '@/lib/auth/redirects';
 import {
   ACCESS_NO_STORE_HEADERS,
   evaluateAccess,
@@ -246,6 +246,27 @@ function isRetiredWebProductPath(pathname: string): boolean {
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  const hostname = req.nextUrl.hostname.toLowerCase();
+  const pageNavigation = (req.method === 'GET' || req.method === 'HEAD') && !isApiLikeRoute(pathname);
+  if (pageNavigation && (hostname === 'datacube-au.vercel.app'
+    || (process.env.VERCEL_ENV === 'production' && hostname.endsWith('.vercel.app')))) {
+    const destination = new URL(CANONICAL_WEBSITE_ORIGIN);
+    destination.pathname = pathname;
+    destination.search = req.nextUrl.search;
+    const response = applyProtectedHeaders(NextResponse.redirect(destination, 307));
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
+  }
+  // Supabase may send an OAuth code to its configured Site URL when redirect_to
+  // is not allow-listed. Route the code through the same-origin PKCE callback.
+  if (pageNavigation && pathname === '/' && (req.nextUrl.searchParams.has('code')
+    || req.nextUrl.searchParams.has('error_code'))) {
+    const callback = req.nextUrl.clone();
+    callback.pathname = '/auth/callback';
+    const response = applyProtectedHeaders(NextResponse.redirect(callback, 303));
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
+  }
   if (isMobileAuthorizationPage(pathname) || pathname === '/login' || pathname === '/auth/callback') {
     const response = applyProtectedHeaders(NextResponse.next());
     response.headers.set('Referrer-Policy', 'no-referrer');

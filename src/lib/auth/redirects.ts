@@ -97,3 +97,32 @@ export function sanitizeRedirectTarget(
     return fallback;
   }
 }
+
+export const CANONICAL_WEBSITE_ORIGIN = 'https://datacube.fabianodev.xyz';
+export const MOBILE_OAUTH_DESTINATION_KEY = 'dcau:pending-mobile-oauth';
+const MOBILE_OAUTH_DESTINATION_TTL = 15 * 60 * 1000;
+
+export function saveMobileOAuthDestination(storage: Pick<Storage, 'setItem' | 'removeItem'>, path: string, now = Date.now()): void {
+  if (!isMobileAuthorizationDestination(path)) {
+    storage.removeItem(MOBILE_OAUTH_DESTINATION_KEY);
+    return;
+  }
+  storage.setItem(MOBILE_OAUTH_DESTINATION_KEY, JSON.stringify({ path, createdAt: now }));
+}
+
+export function readMobileOAuthDestination(storage: Pick<Storage, 'getItem' | 'removeItem'>, now = Date.now()): string | null {
+  try {
+    const raw = storage.getItem(MOBILE_OAUTH_DESTINATION_KEY);
+    if (!raw) return null;
+    const pending = JSON.parse(raw);
+    if (typeof pending?.path === 'string' && isMobileAuthorizationDestination(pending.path)
+      && typeof pending.createdAt === 'number' && Number.isFinite(pending.createdAt)
+      && pending.createdAt <= now && now - pending.createdAt <= MOBILE_OAUTH_DESTINATION_TTL) {
+      return pending.path;
+    }
+    storage.removeItem(MOBILE_OAUTH_DESTINATION_KEY);
+  } catch {
+    // Unavailable storage must never turn an unvalidated URL into a destination.
+  }
+  return null;
+}

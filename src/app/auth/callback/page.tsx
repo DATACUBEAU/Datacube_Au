@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-client/client';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { markAuthSessionRestored, markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
-import { isMobileAuthorizationDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { isMobileAuthorizationDestination, readMobileOAuthDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
 // A callback can be mounted more than once (for example during React remounts).
 // PKCE authorization codes are single-use, so share one exchange promise per code.
@@ -37,11 +37,19 @@ export default function AuthCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [message, setMessage] = useState('Completing sign in...');
-  const nextPath = useMemo(() => sanitizeLocalRedirectPath(searchParams.get('next'), '/'), [searchParams]);
-  const isMobileDestination = isMobileAuthorizationDestination(nextPath);
+  const [needsAppRestart, setNeedsAppRestart] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    const explicitNext = searchParams.get('next');
+    let pendingMobile: string | null = null;
+    try { pendingMobile = readMobileOAuthDestination(window.sessionStorage); } catch {}
+    // Legacy callbacks retain their validated explicit destination. Stable mobile
+    // callbacks recover it from the initiating tab, including Site URL fallback.
+    const nextPath = explicitNext
+      ? sanitizeLocalRedirectPath(searchParams.get('next'), '/')
+      : pendingMobile || '/';
+    const isMobileDestination = isMobileAuthorizationDestination(nextPath);
     const debugPath = isMobileDestination ? '/mobile-auth' : nextPath;
 
     async function completeAuth() {
@@ -53,6 +61,16 @@ export default function AuthCallbackPage() {
         hasError: Boolean(authError),
         nextPath: debugPath,
       });
+
+      if (!explicitNext && !pendingMobile) {
+        // Never silently drop an app-originated callback onto the download page.
+        // No transaction context means the user must initiate a new sign-in.
+        if (!cancelled) {
+          setNeedsAppRestart(true);
+          setMessage('This sign-in request could not be restored. Return to the DataCube AU app and start sign-in again.');
+        }
+        return;
+      }
 
       if (authError) {
         markAuthUnauthenticated('auth-callback', 'provider_error');
@@ -160,12 +178,12 @@ export default function AuthCallbackPage() {
     return () => {
       cancelled = true;
     };
-  }, [isMobileDestination, nextPath, router, searchParams]);
+  }, [router, searchParams]);
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
-      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      <p className="text-sm text-muted-foreground">{message}</p>
+      {!needsAppRestart && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
+      <p role="status" className="text-sm text-muted-foreground">{message}</p>
     </main>
   );
 }
