@@ -5,7 +5,7 @@ const approvalPath = `/mobile-auth/approve?request=${requestId}`;
 const returnPath = `/mobile-auth/return?request=${requestId}`;
 const pairingCode = 'ABCD2345';
 
-async function mockBrowserOAuth(page: Page, role: 'member' | 'admin') {
+async function mockBrowserOAuth(page: Page, role: 'member' | 'admin', fallback = false) {
   test.slow();
   const projectUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ci-build.invalid';
   const projectRef = new URL(projectUrl).hostname.split('.')[0];
@@ -27,7 +27,10 @@ async function mockBrowserOAuth(page: Page, role: 'member' | 'admin') {
     expires_in: 3600,
     user,
   };
-  await page.addInitScript((key) => localStorage.setItem(key, 'test-pkce-verifier'), verifierKey);
+  await page.addInitScript(({ key, path }) => {
+    localStorage.setItem(key, 'test-pkce-verifier');
+    sessionStorage.setItem('dcau:pending-mobile-oauth', JSON.stringify({ path, createdAt: Date.now() }));
+  }, { key: verifierKey, path: approvalPath });
   await page.route('**/auth/v1/token?grant_type=pkce', (route) => route.fulfill({ json: session }));
   await page.route('**/auth/v1/user', (route) => route.fulfill({ json: user }));
   await page.route('**/rest/v1/**', (route) => route.fulfill({ json: [] }));
@@ -39,7 +42,7 @@ async function mockBrowserOAuth(page: Page, role: 'member' | 'admin') {
     return route.fulfill({ status: role === 'admin' ? 200 : 403, json: {} });
   });
 
-  await page.goto(`/auth/callback?code=mock-oauth-code&next=${encodeURIComponent(approvalPath)}`);
+  await page.goto(fallback ? '/?code=mock-oauth-code' : '/auth/callback?code=mock-oauth-code');
   await expect(page).toHaveURL(new RegExp(`/mobile-auth/approve\\?request=${requestId}$`), { timeout: 30_000 });
   await expect(page.getByText(`Signed in as ${user.email}`)).toBeVisible();
   expect(conexCalls).toHaveLength(0);
@@ -53,13 +56,15 @@ test('signed-out sign-in retains a validated app request through the Google OAut
   expect(new URL(page.url()).searchParams.get('redirectTo')).toBe(approvalPath);
 
   await page.route('**/auth/v1/authorize?**', (route) => route.fulfill({ body: 'Google sign-in fixture' }));
+  const loginOrigin = new URL(page.url()).origin;
   const authorization = page.waitForRequest('**/auth/v1/authorize?**');
   await signIn.click();
   const oauth = new URL((await authorization).url());
   const callback = new URL(oauth.searchParams.get('redirect_to') ?? '');
   expect(oauth.searchParams.get('provider')).toBe('google');
   expect(callback.pathname).toBe('/auth/callback');
-  expect(callback.searchParams.get('next')).toBe(approvalPath);
+  expect(callback.origin).toBe(loginOrigin);
+  expect(callback.search).toBe('');
 });
 
 test('regular account pairs and approves explicitly before showing the return link', async ({ page }) => {
@@ -128,4 +133,16 @@ test('malformed approval link is recoverable and its page is not cached', async 
   expect(response?.headers()['referrer-policy']).toBe('no-referrer');
   await expect(page.getByRole('heading', { name: 'Open DataCube AU to sign in' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Approve sign-in' })).toHaveCount(0);
+});
+
+test('Site URL fallback recovers the pending mobile request instead of showing the download page', async ({ page }) => {
+  await mockBrowserOAuth(page, 'member', true);
+  await expect(page.getByRole('heading', { name: 'Approve app sign-in' })).toBeVisible();
+  await expect(page.getByText('Download AU. See what it can do.')).toHaveCount(0);
+});
+
+test('callback without a pending request offers a restart instead of redirecting home', async ({ page }) => {
+  await page.goto('/auth/callback?code=orphaned-code');
+  await expect(page.getByRole('status')).toContainText('Return to the DataCube AU app');
+  expect(new URL(page.url()).pathname).toBe('/auth/callback');
 });

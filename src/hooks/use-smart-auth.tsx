@@ -6,7 +6,7 @@ import { Session } from '@supabase/supabase-js';
 import { normalizeUsableSupabaseSession } from '@/lib/auth/browser-session';
 import { clearClientAuthStorageArtifacts, clearUserScopedClientCaches, readPersistedSupabaseSession } from '@/lib/auth/session-storage';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { CANONICAL_WEBSITE_ORIGIN, isMobileAuthorizationDestination, sanitizeLocalRedirectPath, saveMobileOAuthDestination } from '@/lib/auth/redirects';
 import { clearServerAuthSessionCookie, hasServerAuthSessionCookie, syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import {
   AUTH_STATE_CHANGED_EVENT,
@@ -175,6 +175,13 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // Supabase can emit INITIAL_SESSION(null) while the callback is exchanging
+    // its single-use code. Do not erase the PKCE verifier during that exchange.
+    if (typeof window !== 'undefined' && window.location.pathname === '/auth/callback'
+      && new URLSearchParams(window.location.search).has('code')) {
+      markAuthRestoring(`${source}:oauth_callback`);
+      return;
+    }
     if (!staleAuthCleanupRef.current) {
       staleAuthCleanupRef.current = true;
       await clearUserScopedClientCaches(user?.id ?? null);
@@ -316,12 +323,30 @@ export function SmartAuthProvider({ children }: { children: React.ReactNode }) {
     authStateRef.current = 'loading';
     setAuthState('loading');
     const safePath = sanitizeLocalRedirectPath(redirectPath, '/');
-    const redirectTo =
-      typeof window !== 'undefined'
-        ? `${window.location.origin}/auth/callback?next=${encodeURIComponent(safePath)}`
-        : undefined;
-
+    let redirectTo: string | undefined;
     try {
+      if (typeof window !== 'undefined') {
+        const mobile = isMobileAuthorizationDestination(safePath);
+        // Move before creating a PKCE verifier: storage is scoped to the origin.
+        if (window.location.hostname === 'datacube-au.vercel.app') {
+          const canonicalLogin = new URL('/login', CANONICAL_WEBSITE_ORIGIN);
+          canonicalLogin.searchParams.set('redirectTo', safePath);
+          if (mobile) canonicalLogin.searchParams.set('forceReauth', '1');
+          window.location.assign(canonicalLogin.toString());
+          return;
+        }
+        // The mobile destination stays in the initiating browser tab. A fixed
+        // callback can be allow-listed exactly, without per-request query values.
+        // If storage fails, do not start a mobile OAuth transaction we cannot resume.
+        try {
+          saveMobileOAuthDestination(window.sessionStorage, safePath);
+        } catch (error) {
+          if (mobile) throw error;
+        }
+        redirectTo = mobile
+          ? `${window.location.origin}/auth/callback`
+          : `${window.location.origin}/auth/callback?next=${encodeURIComponent(safePath)}`;
+      }
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: { redirectTo, queryParams: { prompt: 'select_account' } },
