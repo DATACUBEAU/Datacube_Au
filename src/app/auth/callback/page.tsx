@@ -56,7 +56,7 @@ export default function AuthCallbackPage() {
 
     async function completeAuth() {
       const code = searchParams.get('code');
-      const authError = searchParams.get('error') || searchParams.get('error_description');
+      const authError = searchParams.get('error') || searchParams.get('error_description') || searchParams.get('error_code');
 
       debugAuthCallback('start', {
         hasCode: Boolean(code),
@@ -77,8 +77,9 @@ export default function AuthCallbackPage() {
       if (authError) {
         markAuthUnauthenticated('auth-callback', 'provider_error');
         if (!cancelled) {
-          setMessage('Authentication could not be completed.');
-          router.replace(safeLoginRedirect(nextPath, 'auth_error'));
+          setMessage('Google sign-in could not be completed. Return to the app and start a fresh sign-in. (Provider error)');
+          if (isMobileDestination) setNeedsAppRestart(true);
+          else router.replace(safeLoginRedirect(nextPath, 'auth_error'));
         }
         return;
       }
@@ -90,8 +91,9 @@ export default function AuthCallbackPage() {
           nextPath: debugPath,
         });
         if (!cancelled) {
-          setMessage('Sign-in did not finish. Please try again.');
-          router.replace(safeLoginRedirect(nextPath, 'session_expired'));
+          setMessage('Google did not return an authorization code. Return to the app and start a fresh sign-in.');
+          if (isMobileDestination) setNeedsAppRestart(true);
+          else router.replace(safeLoginRedirect(nextPath, 'session_expired'));
         }
         return;
       }
@@ -162,15 +164,22 @@ export default function AuthCallbackPage() {
           setMessage('Taking you to DataCube AU...');
           router.replace(nextPath);
         }
-      } catch {
+      } catch (error: unknown) {
         markAuthUnauthenticated('auth-callback', 'exchange_failed');
         debugAuthCallback('failed', {
           hasSession: false,
           nextPath: debugPath,
         });
         if (!cancelled) {
-          setMessage('Authentication could not be completed.');
-          router.replace(safeLoginRedirect(nextPath, 'auth_error'));
+          // Report only fixed diagnostic categories; never render provider
+          // messages, authorization codes, verifiers or session credentials.
+          const name = error instanceof Error ? error.name : '';
+          const verifierMissing = name === 'AuthPKCECodeVerifierMissingError';
+          setMessage(verifierMissing
+            ? 'Sign-in verification was lost. Return to the app and start a fresh sign-in in the same browser. (PKCE verifier missing)'
+            : 'The sign-in session could not be established. Return to the app and start a fresh sign-in. (Code exchange failed)');
+          if (isMobileDestination) setNeedsAppRestart(true);
+          else router.replace(safeLoginRedirect(nextPath, 'auth_error'));
         }
       }
     }
