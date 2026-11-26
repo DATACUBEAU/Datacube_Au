@@ -323,7 +323,7 @@ const withPWA = withPWAInit({
   cacheOnFrontEndNav: false,
   aggressiveFrontEndNavCaching: false,
   // Avoid caching the OAuth Site URL as a redirected PWA start URL.
-  dynamicStartUrl: false,
+  cacheStartUrl: false,
   fallbacks: {
     document: '/~offline',
   },
