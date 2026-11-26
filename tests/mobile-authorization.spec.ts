@@ -5,7 +5,7 @@ const approvalPath = `/mobile-auth/approve?request=${requestId}`;
 const returnPath = `/mobile-auth/return?request=${requestId}`;
 const pairingCode = 'ABCD2345';
 
-async function mockBrowserOAuth(page: Page, role: 'member' | 'admin', fallback = false) {
+async function mockBrowserOAuth(page: Page, role: 'member' | 'admin', fallback = false, cookieOnly = false) {
   test.slow();
   const projectUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ci-build.invalid';
   const projectRef = new URL(projectUrl).hostname.split('.')[0];
@@ -27,10 +27,16 @@ async function mockBrowserOAuth(page: Page, role: 'member' | 'admin', fallback =
     expires_in: 3600,
     user,
   };
-  await page.addInitScript(({ key, path }) => {
+  if (cookieOnly) {
+    await page.goto(`/login?redirectTo=${encodeURIComponent(approvalPath)}&forceReauth=1`);
+    await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeEnabled();
+    expect((await page.context().cookies()).find((c) => c.name === 'dcau-mobile-pairing-request')?.httpOnly).toBe(true);
+  }
+  await page.addInitScript(({ key, path, cookieOnly }) => {
     localStorage.setItem(key, 'test-pkce-verifier');
-    sessionStorage.setItem('dcau:pending-mobile-oauth', JSON.stringify({ path, createdAt: Date.now() }));
-  }, { key: verifierKey, path: approvalPath });
+    if (!cookieOnly) sessionStorage.setItem('dcau:pending-mobile-oauth', JSON.stringify({ path, createdAt: Date.now() }));
+    else sessionStorage.removeItem('dcau:pending-mobile-oauth');
+  }, { key: verifierKey, path: approvalPath, cookieOnly });
   await page.route('**/auth/v1/token?grant_type=pkce', (route) => route.fulfill({ json: session }));
   await page.route('**/auth/v1/user', (route) => route.fulfill({ json: user }));
   await page.route('**/rest/v1/**', (route) => route.fulfill({ json: [] }));
@@ -145,4 +151,23 @@ test('callback without a pending request offers a restart instead of redirecting
   await page.goto('/auth/callback?code=orphaned-code');
   await expect(page.getByRole('status')).toContainText('Return to the DataCube AU app');
   expect(new URL(page.url()).pathname).toBe('/auth/callback');
+});
+
+test('server pairing context survives missing browser tab storage and Site URL fallback', async ({ page }) => {
+  await mockBrowserOAuth(page, 'member', true, true);
+  await expect(page.getByRole('textbox', { name: 'Pairing code' })).toBeVisible();
+});
+
+test('server pairing context intercepts the download page during an active sign-in', async ({ page }) => {
+  await page.goto(`/login?redirectTo=${encodeURIComponent(approvalPath)}&forceReauth=1`);
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeEnabled();
+  await page.goto('/mobile-app-required');
+  await expect(page).toHaveURL(/\/login\?redirectTo=/, { timeout: 30000 });
+  expect(new URL(page.url()).searchParams.get('redirectTo')).toBe(approvalPath);
+});
+
+test('malformed mobile login must not fall back to the website', async ({ page }) => {
+  await page.goto('/login?redirectTo=%2Fmobile-auth%2Fapprove%3Frequest%3Dinvalid');
+  await expect(page.getByRole('heading', { name: 'Return to DataCube AU' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toHaveCount(0);
 });

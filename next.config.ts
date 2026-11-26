@@ -322,7 +322,8 @@ const withPWA = withPWAInit({
   register: false,
   cacheOnFrontEndNav: false,
   aggressiveFrontEndNavCaching: false,
-  dynamicStartUrlRedirect: '/',
+  // Avoid caching the OAuth Site URL as a redirected PWA start URL.
+  dynamicStartUrl: false,
   fallbacks: {
     document: '/~offline',
   },
@@ -348,6 +349,16 @@ const withPWA = withPWAInit({
       },
     ],
     runtimeCaching: [
+      {
+        // Authentication navigations and the OAuth Site URL fallback are network-only.
+        urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
+          if (request.method !== 'GET' || !sameOrigin) return false;
+          const p = url.pathname;
+          return p === '/' || p === '/download' || p === '/mobile-app-required'
+            || p === '/login' || p === '/auth/callback' || p.startsWith('/mobile-auth/');
+        },
+        handler: 'NetworkOnly',
+      },
       {
         urlPattern: ({ request, url, sameOrigin }: WorkboxRouteContext) => {
           const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';

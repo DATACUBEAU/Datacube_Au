@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, randomInt } from 'node:crypto';
 import { isIP } from 'node:net';
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import { type NextRequest, NextResponse } from 'next/server';
+import { MOBILE_OAUTH_REQUEST_COOKIE } from '@/lib/auth/redirects';
 import {
   createSupabaseAdminClient,
   getSupabaseAnonKey,
@@ -160,7 +161,13 @@ async function decideAuthorization(admin: SupabaseClient, request: NextRequest, 
   }).abortSignal(AbortSignal.timeout(5_000));
   if (decisionError) return problem('TEMPORARILY_UNAVAILABLE', 503);
   if (status !== decision) return problem('REQUEST_UNAVAILABLE', 409);
-  return json({ ok: true, status });
+  const response = json({ ok: true, status });
+  if (request.cookies.get(MOBILE_OAUTH_REQUEST_COOKIE)?.value === requestId) {
+    response.cookies.set(MOBILE_OAUTH_REQUEST_COOKIE, '', {
+      path: '/', maxAge: 0, httpOnly: true, sameSite: 'lax', secure: request.nextUrl.protocol === 'https:',
+    });
+  }
+  return response;
 }
 
 async function handleDeviceProof(admin: SupabaseClient, action: 'status' | 'consume' | 'cancel',

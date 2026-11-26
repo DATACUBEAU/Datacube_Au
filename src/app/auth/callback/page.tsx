@@ -6,7 +6,7 @@ import { Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabase-client/client';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { markAuthSessionRestored, markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
-import { isMobileAuthorizationDestination, readMobileOAuthDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { isMobileAuthorizationDestination, isDownloadDestination, looksLikeMobileAuthDestination, readMobileOAuthDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
 // A callback can be mounted more than once (for example during React remounts).
 // PKCE authorization codes are single-use, so share one exchange promise per code.
@@ -46,9 +46,11 @@ export default function AuthCallbackPage() {
     try { pendingMobile = readMobileOAuthDestination(window.sessionStorage); } catch {}
     // Legacy callbacks retain their validated explicit destination. Stable mobile
     // callbacks recover it from the initiating tab, including Site URL fallback.
-    const nextPath = explicitNext
-      ? sanitizeLocalRedirectPath(searchParams.get('next'), '/')
-      : pendingMobile || '/';
+    const sanitizedNext = sanitizeLocalRedirectPath(searchParams.get('next'), '/');
+    const nextPath = pendingMobile && (!explicitNext || isDownloadDestination(sanitizedNext))
+      ? pendingMobile : sanitizedNext;
+    const lostMobileRequest = looksLikeMobileAuthDestination(explicitNext)
+      && !isMobileAuthorizationDestination(nextPath);
     const isMobileDestination = isMobileAuthorizationDestination(nextPath);
     const debugPath = isMobileDestination ? '/mobile-auth' : nextPath;
 
@@ -62,7 +64,7 @@ export default function AuthCallbackPage() {
         nextPath: debugPath,
       });
 
-      if (!explicitNext && !pendingMobile) {
+      if ((!explicitNext && !pendingMobile) || lostMobileRequest) {
         // Never silently drop an app-originated callback onto the download page.
         // No transaction context means the user must initiate a new sign-in.
         if (!cancelled) {

@@ -126,3 +126,29 @@ export function readMobileOAuthDestination(storage: Pick<Storage, 'getItem' | 'r
   }
   return null;
 }
+
+export const MOBILE_OAUTH_REQUEST_COOKIE = 'dcau-mobile-pairing-request';
+export const MOBILE_OAUTH_REQUEST_MAX_AGE = 5 * 60;
+
+export function mobileApprovalRequestId(path: string | null | undefined): string | null {
+  const prefix = MOBILE_AUTH_APPROVAL_PATH + '?request=';
+  if (typeof path !== 'string' || !path.startsWith(prefix)) return null;
+  const id = path.slice(prefix.length);
+  return MOBILE_AUTH_REQUEST_ID.test(id) ? id : null;
+}
+
+export function mobileApprovalPath(requestId: string | null | undefined): string | null {
+  return typeof requestId === 'string' && MOBILE_AUTH_REQUEST_ID.test(requestId)
+    ? `${MOBILE_AUTH_APPROVAL_PATH}?request=${requestId}` : null;
+}
+
+export function isDownloadDestination(path: string): boolean {
+  const pathname = path.split(/[?#]/, 1)[0].replace(/\/$/, '') || '/';
+  return pathname === '/' || pathname === '/download' || pathname === '/mobile-app-required'
+    || pathname === '/dashboard' || (pathname.startsWith('/dashboard/') && !pathname.startsWith('/dashboard/settings'))
+    || pathname === '/mobile-auth/install';
+}
+
+export function looksLikeMobileAuthDestination(value: string | null | undefined): boolean {
+  return typeof value === 'string' && /(?:^|\/)mobile-auth(?:\/|\?|$)/.test(value);
+}
