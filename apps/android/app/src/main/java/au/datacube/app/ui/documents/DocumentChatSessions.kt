@@ -107,7 +107,7 @@ internal class DocumentChatSession(private val historyKey: String) {
                 searchingStage = ""
                 activeRequest = null
                 onTranscribed(words, label, note.file.absolutePath)
-                handedOff = activeRequest != null
+                handedOff = searching || messages.size > firstIndex
                 if (!handedOff) {
                     messages.add(ChatMessage(label, emptyList(), false,
                         generationError = "Chat could not start the voice reply. Try again."))
@@ -144,6 +144,13 @@ internal class DocumentChatSession(private val historyKey: String) {
             withContext(Dispatchers.Main.immediate) { publishAnswer(index, visible) }
         }
     var activeRequest: Job? = null
+
+    /** Assign before running: even an immediate local reply must clear the correct job. */
+    fun launchRequest(block: suspend CoroutineScope.() -> Unit) {
+        val job = scope.launch(start = CoroutineStart.LAZY, block = block)
+        activeRequest = job
+        job.start()
+    }
     var historyReady by mutableStateOf(false)
         private set
     private var initialized = false
