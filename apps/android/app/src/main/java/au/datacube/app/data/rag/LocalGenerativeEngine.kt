@@ -33,7 +33,7 @@ import kotlinx.coroutines.withContext
 object LocalGenerativeEngine {
     const val MODEL_ID = "qwen3-0.6b-litert"
     private val executor = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "datacube-local-llm").apply { isDaemon = true }
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); task.run() }, "datacube-local-llm").apply { isDaemon = true }
     }
     private val dispatcher = executor.asCoroutineDispatcher()
     private val mutex = Mutex()
@@ -162,6 +162,11 @@ object LocalGenerativeEngine {
             check(file.isFile) { "Selected chat model is missing. Open Models to restore it." }
             require(image == null || (modelId in setOf("gemma-4-e2b", "gemma-4-e4b") &&
                 image.size in 1..2_000_000)) { "Select a compatible Gemma 4 model for image understanding." }
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            val memory = ActivityManager.MemoryInfo().also { manager?.getMemoryInfo(it) }
+            val lowRam = manager?.isLowRamDevice == true || (memory.totalMem in 1L..(6L * 1024 * 1024 * 1024)) ||
+                (memory.availMem in 1L..(1024L * 1024 * 1024))
+            check(!memory.lowMemory) { "Device memory is critically low. Close other apps or select a smaller local model before retrying." }
             val coldLoad = loadedPath != file.absolutePath || engine == null || (image != null && !loadedWithVision)
             if (coldLoad) {
                 engine?.close()
@@ -187,10 +192,6 @@ object LocalGenerativeEngine {
             }
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
-            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            val memory = ActivityManager.MemoryInfo().also { manager?.getMemoryInfo(it) }
-            val lowRam = manager?.isLowRamDevice == true || (memory.totalMem in 1L..(6L * 1024 * 1024 * 1024)) ||
-                (memory.availMem in 1L..(1024L * 1024 * 1024))
             val thinkingBudget = if (studyTask) null else if (effort == AuEffort.BALANCED && lowRam)
                 AuEffort.FAST.thinkingBudget(modelId, true) else effort.thinkingBudget(modelId, lowRam)
             val conversation = checkNotNull(engine).createConversation(
@@ -243,7 +244,7 @@ object LocalGenerativeEngine {
                             (if (!studyTask) " " + effort.instruction else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
-                    maxOutputToken = if (studyTask) null else if (lowRam) minOf(effort.outputTokens, 1536) else effort.outputTokens,
+                    maxOutputToken = if (studyTask) (if (lowRam) 1536 else 3072) else if (lowRam) minOf(effort.outputTokens, 1024) else effort.outputTokens,
                     thinkingConfig = thinkingBudget?.let { ThinkingConfig(enableThinking = it > 0, thinkingTokenBudget = it) }
                 )
             )
