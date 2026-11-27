@@ -70,6 +70,7 @@ object LocalGenerativeEngine {
                 canonical.isFile && canonical.length() in 16044L..1_500_000L
             ) { "Voice note is missing or not a supported private WAV recording." }
             mutex.withLock {
+                LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
                 val selectedId = requireNotNull(ActiveLocalChatModel(context).selected()) {
                     "Select a Gemma 4 model to understand a voice note."
                 }
@@ -156,6 +157,7 @@ object LocalGenerativeEngine {
             "The document context is empty or too long."
         }
         mutex.withLock {
+            LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
             val acquiredAt = android.os.SystemClock.elapsedRealtime()
             val modelId = requireNotNull(ActiveLocalChatModel(context).selected()) {
                 "Download and select a compatible chat model in Models."
@@ -301,12 +303,14 @@ object LocalGenerativeEngine {
     }
 
     suspend fun release() = withContext(dispatcher) {
-        mutex.withLock {
-            engine?.close()
-            engine = null
-            loadedPath = null
-            loadedWithAudio = false
-            loadedWithVision = false
-        }
+        mutex.withLock { releaseAdmitted() }
+    }
+
+    internal suspend fun releaseAdmitted() = withContext(dispatcher) {
+        engine?.close()
+        engine = null
+        loadedPath = null
+        loadedWithAudio = false
+        loadedWithVision = false
     }
 }
