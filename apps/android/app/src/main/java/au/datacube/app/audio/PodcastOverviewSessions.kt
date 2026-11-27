@@ -44,6 +44,10 @@ class PodcastOverviewSession(private val documentId: String) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var job: Job? = null
     private var playbackJob: Job? = null
+    var paused by mutableStateOf(false)
+        private set
+    @Volatile private var pauseRequested = false
+    private var neuralPlayback = false
     var listening by mutableStateOf(false)
         private set
     var activeSpeakerIndex by mutableStateOf(-1)
@@ -61,6 +65,9 @@ class PodcastOverviewSession(private val documentId: String) {
         val offset = resumeTurn.coerceIn(0, turns.lastIndex)
         val dialogue = turns.drop(offset)
         playbackError = null
+        paused = false
+        pauseRequested = false
+        neuralPlayback = !mobileVoice
         listening = true
         playbackStage = "Preparing the voices"
         playbackJob = AuAudioPlayback.launch(app, "Preparing or playing podcast", onFinished = {
@@ -84,7 +91,9 @@ class PodcastOverviewSession(private val documentId: String) {
                     SmoothOfflineNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage,
                         distinguishSpeakers = true)
                 } else {
-                    NeuralNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage)
+                    NeuralNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage,
+                        cacheDirectory = File(app.filesDir, "podcast-audio/$documentId"),
+                        isPaused = { pauseRequested })
                 }
                 resumeTurn = 0
             } catch (cancelled: CancellationException) {
@@ -93,6 +102,8 @@ class PodcastOverviewSession(private val documentId: String) {
                 playbackError = failure.message ?: "Audio playback failed."
             } finally {
                 listening = false
+                paused = false
+                pauseRequested = false
                 activeSpeakerIndex = -1
                 playbackStage = ""
                 playbackJob = null
@@ -100,8 +111,18 @@ class PodcastOverviewSession(private val documentId: String) {
         }
     }
 
+    fun togglePlaybackPause() {
+        if (!listening) return
+        if (!neuralPlayback) { stopPlayback(); return }
+        pauseRequested = !pauseRequested
+        paused = pauseRequested
+        playbackStage = if (paused) "Paused" else "Continuing neural audio"
+    }
+
     fun stopPlayback() {
         playbackJob?.cancel()
+        paused = false
+        pauseRequested = false
     }
     fun restartPlayback() {
         if (!listening) resumeTurn = 0
@@ -198,7 +219,10 @@ class PodcastOverviewSession(private val documentId: String) {
                 stage = "Checking the two-speaker transcript"
                 val text = ModelOutputCleaner.visible(raw.toString(), evidence.size)
                 val parsed = PodcastDialogue.parse(text)
-                withContext(Dispatchers.IO) { saveFile(app.filesDir, parsed) }
+                withContext(Dispatchers.IO) {
+                    saveFile(app.filesDir, parsed)
+                    File(app.filesDir, "podcast-audio/$documentId").deleteRecursively()
+                }
                 resumeTurn = 0
                 turns.clear()
                 turns.addAll(parsed)
@@ -269,6 +293,8 @@ class PodcastOverviewSession(private val documentId: String) {
     }
 
     fun clearLocal(context: Context) {
+        stop()
+        File(context.filesDir, "podcast-audio/$documentId").deleteRecursively()
         resumeTurn = 0
         turns.clear()
         AtomicFile(fileFor(context.filesDir)).delete()
@@ -287,6 +313,8 @@ class PodcastOverviewSession(private val documentId: String) {
         fun delete(documentId: String, filesDir: File) {
             sessions.remove(documentId)?.stop()
             AtomicFile(File(filesDir, "podcast-dialogues/$documentId.json")).delete()
+            require(documentId.matches(Regex("[A-Za-z0-9_-]{1,80}")))
+            File(filesDir, "podcast-audio/$documentId").deleteRecursively()
         }
 
         fun stopAll() {
