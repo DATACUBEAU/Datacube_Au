@@ -60,7 +60,7 @@ object GistPrompt {
         require(question.isNotBlank())
         val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) minOf(3, effort.historyLimit) else effort.historyLimit)
         return buildString {
-            appendLine("Answer the current message directly using general knowledge. No document or internet access. Interpret obvious typos.")
+            appendLine("Answer directly using general knowledge, without searching imported documents. No internet access. Interpret obvious typos.")
             appendLine(AuTeachingPolicy.plan(question).instruction())
             appendLine("Do not invent facts, citations or access to files.")
             if (history.isNotEmpty()) {

@@ -163,7 +163,7 @@ internal object AuResponseParser {
                 if (end != null) {
                     val title = line.removePrefix("[WORKFLOW] ").trim()
                     val stages = lines.subList(i + 1, end).filter { it.isNotBlank() }.map { row ->
-                        row.trim().trim('|').split('|').map { cell ->
+                        row.split('|').map { cell ->
                             val parts = cell.split("::", limit = 2)
                             AuResponseBlock.WorkflowNode(parts.first().trim(), parts.getOrNull(1)?.trim().orEmpty())
                         }
