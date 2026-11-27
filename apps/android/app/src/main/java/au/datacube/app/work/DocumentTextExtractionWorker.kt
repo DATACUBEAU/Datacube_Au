@@ -152,7 +152,8 @@ class DocumentTextExtractionWorker(
             try { LexicalIndexWorker.schedule(applicationContext, id) }
             catch (_: Exception) { notifications.showDocumentFailed(id) }
         }
-        if (outcome is Result.Failure) trackedDocumentId?.let { id ->
+        // Use the persisted task outcome, not WorkManager's restricted Result implementation.
+        if (database.jobs().find(jobId)?.status == LocalJobStatus.FAILED) trackedDocumentId?.let { id ->
             if (database.documents().find(id) != null) notifications.showDocumentFailed(id)
         }
         return outcome
