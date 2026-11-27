@@ -27,7 +27,6 @@ import au.datacube.app.audio.AuAudioPlayback
 import au.datacube.app.audio.NeuralNarration
 import au.datacube.app.audio.OfflineNarrationPreferences
 import au.datacube.app.audio.SmoothOfflineNarration
-import au.datacube.app.data.rag.LocalGenerativeEngine
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.*
@@ -61,12 +60,16 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     private var directory: File? = null
     private var parts = emptyList<PreparedSpeechPart>()
     private var cacheKey = ""
+    var streaming by mutableStateOf(false)
+        private set
+    @Volatile private var streamPaused = false
+    private var playbackSpeed = 1f
     private var directTurns = emptyList<au.datacube.app.audio.PodcastTurn>()
     var directIndex by mutableIntStateOf(0)
         private set
     val directCount: Int get() = directTurns.size
     val directMode: Boolean get() = directTurns.isNotEmpty()
-    val canToggle: Boolean get() = !preparing && (directMode || parts.isNotEmpty())
+    val canToggle: Boolean get() = streaming || (!preparing && (directMode || parts.isNotEmpty()))
 
     val neuralAvailable: Boolean get() = NeuralNarration.installed(context)
 
@@ -87,6 +90,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         error = null
         preparing = false
         playing = false
+        streaming = false
+        streamPaused = false
         positionMs = 0
         durationMs = 0
         if (oldDirectory != null) scope.launch(Dispatchers.IO) {
@@ -118,6 +123,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         stop()
         active = id
         cacheKey = key
+        playbackSpeed = preference.speed
         voiceLabel = if (system) "Offline Android voice" else NeuralNarration.presetVoices[neuralVoice] ?: "Kokoro"
         if (!system && !neuralAvailable) {
             error = "Install Kokoro in Models or choose Android voice in Settings."
@@ -125,7 +131,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
             return
         }
         if (system) {
-            directTurns = au.datacube.app.audio.NeuralTextSegmenter.split(plain, maxChunk = 240, maxText = 12_000)
+            directTurns = au.datacube.app.audio.NeuralTextSegmenter.split(plain, maxChunk = 1000, maxText = 12_000)
                 .map { au.datacube.app.audio.PodcastTurn(au.datacube.app.audio.PodcastSpeaker.GUIDE, it) }
             startDirect()
             return
@@ -149,9 +155,15 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                     withContext(Dispatchers.Main) { if (token == revision) stage = value }
                 }
                 report("Preparing selected neural voice")
-                LocalGenerativeEngine.release()
                 val output = File(target, "response.wav")
-                NeuralNarration.prepareReadAloud(context, plain, neuralVoice, output, report)
+                NeuralNarration.playAndCacheReadAloud(context, plain, neuralVoice, playbackSpeed, output, report,
+                    onProgress = { position, duration -> withContext(Dispatchers.Main.immediate) {
+                        if (token == revision) { positionMs = position; durationMs = duration }
+                    } },
+                    onStarted = { withContext(Dispatchers.Main.immediate) {
+                        if (token == revision) { streaming = true; preparing = false; playing = true }
+                    } },
+                    isPaused = { streamPaused })
                 val files = listOf(output)
                 val ready = withContext(Dispatchers.IO) {
                     check(files.isNotEmpty() && files.sumOf { it.length() } <= 128L * 1024 * 1024)
@@ -176,7 +188,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 preparing = false
                 if (!system) runCatching { au.datacube.app.notifications.LocalNotificationService(context)
                     .showAiReady("voice-" + target.name, "Kokoro audio is ready") }
-                playCached(token)
+                positionMs = durationMs
+                streaming = false
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -215,6 +228,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         if (token != revision) return
         playing = false
         preparing = false
+        streaming = false
+        streamPaused = false
         stage = if (error != null) "Audio unavailable" else if (parts.isEmpty()) "Preparation interrupted"
             else if (positionMs >= durationMs) "Completed" else "Paused"
         if (parts.isEmpty()) {
@@ -257,6 +272,9 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 }
                 currentCoroutineContext().ensureActive()
                 if (token != revision) return
+                if (playbackSpeed != 1f) runCatching {
+                    player.playbackParams = android.media.PlaybackParams().setSpeed(playbackSpeed).setPitch(1f)
+                }
                 player.start()
                 playing = true
                 stage = "Playing"
@@ -274,6 +292,12 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     }
 
     fun toggle() {
+        if (streaming) {
+            streamPaused = !streamPaused
+            playing = !streamPaused
+            stage = if (streamPaused) "Paused" else "Playing"
+            return
+        }
         if (directMode) {
             if (playing || job?.isActive == true) {
                 revision++
@@ -309,7 +333,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     }
 
     fun seekTo(targetMs: Long) {
-        if (preparing || parts.isEmpty()) return
+        if (streaming || preparing || parts.isEmpty()) return
         val resume = playing || job?.isActive == true
         revision++
         job?.cancel()
@@ -406,6 +430,8 @@ internal fun AuReadAloudBar(speech: AuReadAloudState) {
                             LinearProgressIndicator(progress = {
                                 speech.directIndex.toFloat() / speech.directCount.coerceAtLeast(1)
                             }, modifier = Modifier.fillMaxWidth())
+                        } else if (speech.streaming) {
+                            Text(speech.stage, style = MaterialTheme.typography.labelSmall)
                         } else if (speech.preparing) {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                         } else if (speech.durationMs > 0) {
