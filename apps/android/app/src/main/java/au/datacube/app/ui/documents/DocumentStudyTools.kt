@@ -23,6 +23,7 @@ import android.speech.tts.UtteranceProgressListener
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -311,8 +312,17 @@ fun DocumentChatWorkspace(
     val historyReady = session.historyReady
     val userTurns = messages.count { it.isUser }
     val chatListState = key(chatOwner, threadId) { rememberLazyListState() }
+    var followLatest by remember(chatOwner, threadId) { mutableStateOf(true) }
+    val dragging by chatListState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(dragging) {
+        if (dragging) followLatest = false
+    }
     LaunchedEffect(historyReady, threadId, userTurns) {
+        followLatest = true
         if (historyReady && messages.isNotEmpty()) chatListState.scrollToItem(0)
+    }
+    LaunchedEffect(historyReady, threadId, messages.size) {
+        if (historyReady && followLatest && messages.isNotEmpty()) chatListState.scrollToItem(0)
     }
     fun startNewChat() {
         scope.launch {
@@ -503,7 +513,7 @@ fun DocumentChatWorkspace(
                         if (llmInstalled && cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
                             val requestEffort = effort.forDevice(context)
                             if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
-                            if (audioPath == null) prompt = ""
+                            if (audioPath == null && !alreadyAdded) prompt = ""
                             session.searching = true
                             session.activitySteps.clear()
                             // The response belongs to the document/thread session, not
@@ -1005,12 +1015,27 @@ fun DocumentChatWorkspace(
                                     style = MaterialTheme.typography.bodySmall)
                                 Spacer(Modifier.height(8.dp))
                             }
+                            val retryQuestion = session.regenerationQuestion(messageIndex)
+                            if (retryQuestion != null && (llmInstalled && threadIndex != null && !textPreview.isNullOrBlank() && !preparingAttachment)) {
+                                TextButton(onClick = {
+                                    val question = session.regenerationQuestion(messageIndex) ?: return@TextButton
+                                    speech.stop()
+                                    expandedSources = expandedSources - messageIndex
+                                    messages.removeAt(messageIndex)
+                                    followLatest = true
+                                    submitQuestion(question, alreadyAdded = true)
+                                }) {
+                                    Icon(Icons.Outlined.Refresh, null, Modifier.size(17.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(if (message.generationError != null) "Retry response" else "Regenerate")
+                                }
+                            }
                             if (message.matches.isEmpty() && message.answer.isBlank() &&
                                 !message.generating && message.generationError == null) {
                                 Text("I could not verify that in the available document passages. Try another term or select a relevant chapter.",
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            if (message.matches.isNotEmpty()) {
+                            if (!message.generating && message.matches.isNotEmpty()) {
                                 val turnIndex = messageIndex
                                 if (turnIndex !in expandedSources) {
                                     Row(Modifier.horizontalScroll(rememberScrollState()),
@@ -1094,7 +1119,7 @@ fun DocumentChatWorkspace(
         }
         if (messages.isNotEmpty() && chatListState.canScrollBackward) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                FilledTonalIconButton(onClick = { scope.launch { chatListState.scrollToItem(0) } }) {
+                FilledTonalIconButton(onClick = { followLatest = true; scope.launch { chatListState.scrollToItem(0) } }) {
                     Icon(Icons.Outlined.ArrowDownward, "Jump to latest message")
                 }
             }
