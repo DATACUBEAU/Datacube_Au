@@ -1246,11 +1246,14 @@ fun SmartNoteWorkspace(
         GeneratedStudySessions.get(documentId, GeneratedStudyMode.NOTES)
     }
     var conceptTree by remember(documentId) { mutableStateOf(false) }
-    var openTopics by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
     val ready = LocalGenerativeEngine.installed(context)
-    val sections = remember(session.response) {
-        GeneratedStudySectionParser.parse(session.response)
+    val conceptBlock = remember(session.response) {
+        Regex("""(?s)\[WORKFLOW] [^\n]+\n.*?\[/WORKFLOW]""").find(session.response)?.value
     }
+    val notesText = remember(session.response, conceptBlock) {
+        conceptBlock?.let { session.response.replace(it, "").trim() } ?: session.response
+    }
+    val sections = remember(notesText) { GeneratedStudySectionParser.parse(notesText) }
     val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
     LaunchedEffect(documentId, textPreview) { if (!textPreview.isNullOrBlank()) session.restoreNotes(context,documentId) }
 
@@ -1291,7 +1294,7 @@ fun SmartNoteWorkspace(
                 }
             }
             if (session.response.isNotBlank()) {
-                if (!session.working) AuReadAloudAction(notesSpeech, 0, session.response)
+                if (!session.working) AuReadAloudAction(notesSpeech, 0, notesText)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FilterChip(
                         modifier = Modifier.weight(1f),
@@ -1309,67 +1312,9 @@ fun SmartNoteWorkspace(
                 Text("Based on selected source passages. Check the original document for complete coverage.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (conceptTree) {
-                    Surface(
-                        Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(20.dp)
-                    ) {
-                        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.AccountTree, null)
-                            Spacer(Modifier.width(10.dp))
-                            Text(documentName, Modifier.weight(1f), maxLines = 2,
-                                style = MaterialTheme.typography.titleMedium)
-                        }
-                    }
-                    sections.forEachIndexed { index, section ->
-                        Canvas(Modifier.fillMaxWidth().height(32.dp)) {
-                            val x = size.width * 0.08f
-                            drawLine(color = Color(0xFF66A7FF), start = Offset(x, 0f),
-                                end = Offset(x, size.height), strokeWidth = 2.dp.toPx())
-                        }
-                        val open = index in openTopics
-                        Surface(
-                            onClick = {
-                                openTopics = if (open) openTopics - index else openTopics + index
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
-                            Column(Modifier.padding(22.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = RoundedCornerShape(50)
-                                    ) {
-                                        Text("${index + 1}", Modifier.padding(
-                                            horizontal = 10.dp, vertical = 6.dp),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(section.topic, Modifier.weight(1f),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold)
-                                    Icon(
-                                        if (open) Icons.Outlined.ExpandLess
-                                            else Icons.Outlined.ExpandMore,
-                                        contentDescription = if (open) "Collapse topic" else "Expand topic"
-                                    )
-                                }
-                                if (!open && section.details.isNotBlank()) {
-                                    Text(section.details, maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                if (open) {
-                                    AuRichResponse(section.details.ifBlank { "No additional detail was generated." })
-                                }
-                            }
-                        }
-                    }
+                    if (conceptBlock != null) AuRichResponse(conceptBlock)
+                    else Text(if (session.working) "Preparing concept map…" else "No separate concept map was generated. Regenerate notes to try again.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     sections.forEach { section ->
                         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp),
