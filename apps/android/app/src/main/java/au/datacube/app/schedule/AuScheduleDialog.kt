@@ -57,7 +57,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
                     modifier = Modifier.fillMaxWidth(), maxLines = 3)
                 OutlinedTextField(timeText, { timeText = it.take(240) },
                     label = { Text("When?") }, placeholder = { Text("Tomorrow at 7 PM") },
-                    supportingText = { Text("Try next five hours, 18:30, or 2026-12-03 09:00.") },
+                    supportingText = { Text("Try next five hours, 18:30, or YYYY-MM-DD 09:00.") },
                     modifier = Modifier.fillMaxWidth(), maxLines = 2, enabled = !busy)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("In 1 hour", "In 5 hours", "Tomorrow at 9 AM").forEachIndexed { n, value ->

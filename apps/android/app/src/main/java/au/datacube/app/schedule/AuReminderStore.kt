@@ -139,7 +139,11 @@ object AuScheduleIntent {
             "nine" to 9L, "ten" to 10L, "eleven" to 11L, "twelve" to 12L)
         val relative = Regex("""\b(?:in\s+|next\s+|after\s+)?(\d{1,4}|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(minutes?|hours?|days?)\b""")
             .findAll(text).toList()
-        if (matches(text) && relative.any { !it.value.startsWith("in ") && !it.value.startsWith("next ") && !it.value.startsWith("after ") }) return null
+        if (relative.any { match ->
+                val value = match.value
+                val explicit = value.startsWith("in ") || value.startsWith("next ") || value.startsWith("after ")
+                !explicit && value != text
+            }) return null
         val bareNext = Regex("""\bnext\s+(minute|hour|day)\b""").findAll(text).toList()
         val dateTime = Regex("""\b(\d{4}-\d{2}-\d{2}|today|tomorrow)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b""").findAll(text).toList()
         val clock = Regex("""^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$""").matchEntire(text)

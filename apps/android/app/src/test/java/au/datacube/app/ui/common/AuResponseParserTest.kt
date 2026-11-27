@@ -95,4 +95,15 @@ class AuResponseParserTest {
         val raw="[STEPS] Outer\n[STEP] A\n[STEPS] Inner\n[STEP] X\nOne\n[STEP] Y\nTwo\n[/STEPS]\n[STEP] B\nThree\n[/STEPS]"
         assertFalse(AuResponseParser.parse(raw).any { it is AuResponseBlock.Steps && it.title=="Outer" })
     }
+
+    @Test fun parallelLinesPreserveDirectionAndSpokenDescription() {
+        val raw = "[SKETCH] Parallel lines\nALT | Two distinct lines have the same direction and never meet.\nLINE | 12 | 70 | 72 | 30\nLINE | 24 | 88 | 84 | 48\n[/SKETCH]"
+        val scene = (AuResponseParser.parse(raw).single() as AuResponseBlock.Sketch).scene
+        val lines = scene.commands.filter { it.kind == "LINE" }.map { it.coordinates }
+        assertEquals(2, lines.size)
+        assertEquals(lines[0][2] - lines[0][0], lines[1][2] - lines[1][0])
+        assertEquals(lines[0][3] - lines[0][1], lines[1][3] - lines[1][1])
+        assertTrue(lines[0][0] != lines[1][0])
+        assertTrue(AuSpokenResponse.format(raw).contains("never meet"))
+    }
 }

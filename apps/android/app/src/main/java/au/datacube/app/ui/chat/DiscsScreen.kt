@@ -105,11 +105,11 @@ fun DiscsScreen(
     val uiScope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     val threads = remember(context) { LocalConversationThreads(context) }
-    var index by remember { mutableStateOf<ConversationThreadIndex?>(null) }
+    var index by remember(ownerId) { mutableStateOf<ConversationThreadIndex?>(null) }
     LaunchedEffect(ownerId) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
-    val speech = rememberAuReadAloud("chat:$ownerId:$threadId")
     var historyRevision by remember(ownerId) { mutableIntStateOf(0) }
+    val speech = key(historyRevision) { rememberAuReadAloud("chat:$ownerId:$threadId") }
     val session = remember(ownerId, threadId, historyRevision) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
@@ -498,7 +498,7 @@ fun DiscsScreen(
                 IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") }
                 Column(Modifier.weight(1f)) {
                     Text(if (collectionId == null) "Gist" else collectionName ?: "Collection AU",
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleLarge)
                     Text(if (!modelReady) "Install an AU model to chat"
                         else if (collectionId != null) "${library.size} source documents · Collection AU"
