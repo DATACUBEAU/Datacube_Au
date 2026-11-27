@@ -127,7 +127,11 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
         recordingJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(capacity)
             try {
-            FileOutputStream(file).use { output ->
+            val stream = synchronized(captureLock) {
+                if (!running || partial != file) return@launch
+                FileOutputStream(file)
+            }
+            stream.use { output ->
                 while (running && capturedBytes < WavePcm.MAX_AUDIO_BYTES) {
                     currentCoroutineContext().ensureActive()
                     val read = synchronized(captureLock) {
@@ -159,7 +163,7 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
     fun pause() {
         synchronized(captureLock) {
             if (!running || paused) return
-            track?.stop()
+            if (track?.recordingState == AudioRecord.RECORDSTATE_RECORDING) track?.stop()
             paused = true
             amplitude = 0f
         }
@@ -174,69 +178,84 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
         }
     }
 
-    /** A private, disposable WAV snapshot; never sends or modifies the active recording. */
-    suspend fun pausedPreview(): RecordedVoiceNote? = withContext(Dispatchers.IO) {
-        synchronized(captureLock) {
-            val source = partial ?: return@synchronized null
-            if (!paused || capturedBytes < WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE / 2)
-                return@synchronized null
-            val bytes = capturedBytes
-            val output = File(root, UUID.randomUUID().toString() + "-preview.wav")
-            try {
-                FileOutputStream(output).use { target ->
-                    target.write(WavePcm.header(bytes))
-                    FileInputStream(source).use { it.copyTo(target) }
+    /** A private, disposable WAV snapshot; never sends or modifies the recording.
+     * Keep ownership across dispatcher cancellation so a dropped result cannot
+     * leave a preview WAV behind. */
+    suspend fun pausedPreview(): RecordedVoiceNote? {
+        var created: File? = null
+        try {
+            return withContext(Dispatchers.IO) {
+                synchronized(captureLock) {
+                    val source = partial ?: return@synchronized null
+                    if (!paused || capturedBytes < WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE)
+                        return@synchronized null
+                    val bytes = capturedBytes
+                    val output = File(root, UUID.randomUUID().toString() + "-preview.wav")
+                    created = output
+                    writeWave(source, output, bytes)
+                    RecordedVoiceNote(output, (durationMillis / 1000).coerceAtLeast(1))
                 }
-                require(output.length() == bytes + 44L)
-                RecordedVoiceNote(output, (durationMillis / 1000).coerceAtLeast(1))
-            } catch (error: Exception) {
-                output.delete()
-                throw error
             }
+        } catch (failure: Throwable) {
+            created?.delete()
+            throw failure
         }
     }
 
-    suspend fun finish(): RecordedVoiceNote? = withContext(Dispatchers.IO) {
-        val source = partial ?: return@withContext null
-        synchronized(captureLock) { running = false; runCatching { track?.stop() } }
-        recordingJob?.join()
-        track?.release()
-        track = null
-        recordingJob = null
-        partial = null
-        val bytes = source.length().toInt()
-        if (bytes < WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE ||
-            bytes > WavePcm.MAX_AUDIO_BYTES) {
-            source.delete()
-            return@withContext null
-        }
-        val output = File(root, source.nameWithoutExtension + ".wav")
+    suspend fun finish(): RecordedVoiceNote? {
+        var output: File? = null
+        var claimed: File? = null
         try {
-            FileOutputStream(output).use { target ->
-                target.write(WavePcm.header(bytes))
-                FileInputStream(source).use { it.copyTo(target) }
+            return withContext(Dispatchers.IO) {
+                val job = synchronized(captureLock) {
+                    if (partial == null) return@withContext null
+                    running = false
+                    runCatching { track?.stop() }
+                    recordingJob
+                }
+                job?.join()
+                val source = synchronized(captureLock) {
+                    val file = partial ?: return@withContext null
+                    track?.release()
+                    track = null
+                    recordingJob = null
+                    partial = null
+                    claimed = file
+                    file
+                }
+                val bytes = source.length().toInt()
+                if (bytes !in (WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE)..WavePcm.MAX_AUDIO_BYTES ||
+                    bytes % WavePcm.BYTES_PER_SAMPLE != 0) return@withContext null
+                val destination = File(root, source.nameWithoutExtension + ".wav")
+                output = destination
+                writeWave(source, destination, bytes)
+                RecordedVoiceNote(destination, bytes / (WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE))
             }
-            require(output.length() == bytes + 44L) { "Voice note could not be finalized." }
-            RecordedVoiceNote(
-                file = output,
-                durationSeconds = (bytes / (WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE))
-                    .coerceAtLeast(1)
-            )
-        } catch (error: Exception) {
-            output.delete()
-            throw error
-        } finally {
-            source.delete()
+        } catch (failure: Throwable) {
+            output?.delete()
+            throw failure
+        } finally { claimed?.delete() }
+    }
+
+    private fun writeWave(source: File, destination: File, bytes: Int) {
+        FileOutputStream(destination).use { target ->
+            target.write(WavePcm.header(bytes))
+            FileInputStream(source).use { it.copyTo(target) }
         }
+        require(destination.length() == bytes + 44L) { "Voice note could not be finalized." }
     }
 
     fun cancel() {
-        synchronized(captureLock) { running = false; runCatching { track?.stop() }; runCatching { track?.release() } }
-        recordingJob?.cancel()
-        track = null
-        recordingJob = null
-        partial?.delete()
-        partial = null
+        synchronized(captureLock) {
+            running = false
+            runCatching { track?.stop() }
+            runCatching { track?.release() }
+            recordingJob?.cancel()
+            track = null
+            recordingJob = null
+            partial?.delete()
+            partial = null
+        }
     }
 
     companion object {
