@@ -380,12 +380,15 @@ fun DiscsScreen(
                                 .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                                 .takeLast(20).map { it.question to it.answer }
                             GistPrompt.build(followUp.query, contextPairs,
-                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()), effort = requestEffort)
+                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
+                                effort = au.datacube.app.data.rag.AuInteractiveLatency.generalEffort(followUp.query, requestEffort))
                         }
+                        val generationEffort = if (searchDocuments) requestEffort else
+                            au.datacube.app.data.rag.AuInteractiveLatency.generalEffort(followUp.query, requestEffort)
                         val raw = session.streamingAnswer(answerIndex, matches.size)
                         try {
                             LocalGenerativeEngine.generate(context, input + personalization.contextFor(question, requestEffort), allowGeneral = !searchDocuments,
-                                generalOnly = !searchDocuments, effort = requestEffort,
+                                generalOnly = !searchDocuments, effort = generationEffort,
                                 visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { text ->
                                 raw.append(text)
                             }
