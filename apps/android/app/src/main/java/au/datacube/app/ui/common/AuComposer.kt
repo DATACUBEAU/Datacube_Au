@@ -1,6 +1,8 @@
 package au.datacube.app.ui.common
 
 import androidx.compose.foundation.BorderStroke
+import au.datacube.app.ui.voice.VoiceNoteConfig
+import au.datacube.app.ui.voice.VoiceNoteComposer
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,7 +54,8 @@ fun AuComposer(
     onEffortChange: ((AuEffort) -> Unit)? = null,
     leadingActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
-    attachmentContent: @Composable ColumnScope.() -> Unit = {}
+    attachmentContent: @Composable ColumnScope.() -> Unit = {},
+    voiceNote: VoiceNoteConfig? = null
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var inputWidth by remember { mutableIntStateOf(0) }
@@ -75,6 +78,7 @@ fun AuComposer(
         tonalElevation = 3.dp,
         shadowElevation = 2.dp
     ) {
+        val normalContent: @Composable (@Composable () -> Unit) -> Unit = { recordButton ->
         Column(
             modifier = Modifier.padding(start = 15.dp, top = 12.dp, end = 9.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
@@ -116,6 +120,7 @@ fun AuComposer(
                     IconButton(onClick = { tuning = true }, enabled = enabled, modifier = Modifier.size(48.dp)) { EffortGauge(effort) }
                 }
                 actions()
+                recordButton()
                 Spacer(Modifier.width(4.dp))
                 FilledIconButton(
                     onClick = onStop ?: onSend,
@@ -130,6 +135,9 @@ fun AuComposer(
                 }
             }
         }
+        }
+        if (voiceNote == null) normalContent({})
+        else key(voiceNote.ownerId, voiceNote.sessionId) { VoiceNoteComposer(voiceNote, normalContent) }
     }
     if (expanded) {
         DataCubeDialog(onDismissRequest = { expanded = false },
