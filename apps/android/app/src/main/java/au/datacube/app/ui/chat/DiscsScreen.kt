@@ -490,7 +490,7 @@ fun DiscsScreen(
         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response") }
     }
 
-    Column(Modifier.fillMaxSize().dataCubeBackdrop()) {
+    Column(Modifier.fillMaxSize().dataCubeBackdrop().imePadding().navigationBarsPadding()) {
         Surface(shape = RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
             color = MaterialTheme.colorScheme.surface, tonalElevation = 3.dp) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),

@@ -893,7 +893,7 @@ fun DocumentChatWorkspace(
         )
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
         AuReadAloudBar(speech)
         Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -920,30 +920,15 @@ fun DocumentChatWorkspace(
                 style = MaterialTheme.typography.labelSmall
             )
         }
-        if (!llmInstalled) {
-            Surface(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Select an AU model to chat", fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Document chat needs an installed and selected local language model. " +
-                            "Your PDF can still be prepared and searched offline.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(onClick = onOpenModels) { Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS) }
-                }
-            }
-        }
-        if (textPreview.isNullOrBlank()) {
-            Box(Modifier.weight(1f).fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
-                SourceUnavailableCard(previewLoading, previewError, extractionStatus, extractionProgress, extractionError)
-            }
-        } else if (messages.isEmpty()) {
-            Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+        if (textPreview.isNullOrBlank() || messages.isEmpty()) {
+            Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState())) {
+                DocumentChatModelNotice(llmInstalled, onOpenModels)
+                if (textPreview.isNullOrBlank()) {
+                    Box(Modifier.fillMaxWidth().padding(12.dp), contentAlignment = Alignment.Center) {
+                        SourceUnavailableCard(previewLoading, previewError, extractionStatus, extractionProgress, extractionError)
+                    }
+                } else {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Column(Modifier.padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(9.dp)) {
                     Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(42.dp))
                     Text("Ask about this document", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
@@ -959,12 +944,15 @@ fun DocumentChatWorkspace(
                     }
                 }
             }
+                }
+            }
         } else {
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                item { DocumentChatModelNotice(llmInstalled, onOpenModels) }
                 itemsIndexed(messages) { messageIndex, message ->
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -1297,7 +1285,7 @@ fun SmartNoteWorkspace(
                     enabled = ready && !session.working && !session.restoring,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 50.dp)
                 ) {
-                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                    Icon(Icons.Outlined.Notes, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (session.response.isBlank()) "Generate Smart Note" else "Regenerate notes")
                 }
@@ -1471,7 +1459,7 @@ fun PredictionWorkspace(
                     enabled = ready && !session.working && !session.attaching,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
                 ) {
-                    Icon(Icons.Outlined.AutoAwesome, null)
+                    Icon(Icons.Outlined.BarChart, null)
                     Spacer(Modifier.width(8.dp))
                     Text(if (session.response.isBlank()) "Generate revision forecast"
                         else "Regenerate forecast")
@@ -1688,4 +1676,26 @@ private fun StudyModelSetup(onOpenModels:()->Unit) {
     OutlinedButton(onClick=onOpenModels,modifier=Modifier.fillMaxWidth()) {
         Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS)
     }
+}
+
+@Composable
+private fun DocumentChatModelNotice(llmInstalled: Boolean, onOpenModels: () -> Unit) {
+        if (!llmInstalled) {
+            Surface(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Select an AU model to chat", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Document chat needs an installed and selected local language model. " +
+                            "Your PDF can still be prepared and searched offline.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(onClick = onOpenModels) { Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS) }
+                }
+            }
+        }
 }

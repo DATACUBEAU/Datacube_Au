@@ -97,15 +97,16 @@ fun CollectionWorkspaceScreen(
                             }
                         }
                         Spacer(Modifier.height(16.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             OutlinedButton(onClick = onAddDocuments, modifier = Modifier.weight(1f)) {
                                 Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(6.dp)); Text("Add documents")
                             }
-                            Surface(shape = RoundedCornerShape(12.dp), color = DataCubeColors.BluePale) {
+                            Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer) {
                                 Row(Modifier.padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.Description, null, tint = DataCubeColors.Blue, modifier = Modifier.size(17.dp))
+                                    Icon(Icons.Outlined.Description, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(17.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("${documents.size}", color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
+                                    Text("${documents.size}", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }

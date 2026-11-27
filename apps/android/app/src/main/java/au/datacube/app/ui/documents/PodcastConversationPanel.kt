@@ -145,7 +145,7 @@ fun PodcastConversationPanel(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Outlined.AutoAwesome, contentDescription = null)
+                    Icon(Icons.Outlined.Headphones, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Create podcast")
                 }

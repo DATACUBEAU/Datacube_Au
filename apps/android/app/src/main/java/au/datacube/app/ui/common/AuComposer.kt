@@ -58,7 +58,7 @@ fun AuComposer(
     val measurer = rememberTextMeasurer()
     val style = MaterialTheme.typography.bodyLarge
     val canExpand = remember(value, inputWidth, style, measurer) {
-        inputWidth > 0 && value.isNotBlank() && measurer.measure(value, style = style, maxLines = 5,
+        inputWidth > 0 && value.isNotBlank() && measurer.measure(value, style = style, maxLines = 4,
             constraints = Constraints(maxWidth = inputWidth)).hasVisualOverflow
     }
     LaunchedEffect(canExpand) { if (!canExpand) expanded = false }
@@ -82,12 +82,12 @@ fun AuComposer(
                 value = value,
                 onValueChange = onValueChange,
                 enabled = enabled,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 31.dp).onSizeChanged { inputWidth = it.width }.testTag("au-composer-input"),
+                modifier = Modifier.weight(1f, fill = false).fillMaxWidth().heightIn(min = 24.dp, max = 120.dp).onSizeChanged { inputWidth = it.width }.testTag("au-composer-input"),
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                maxLines = 5,
+                maxLines = 4,
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty()) {
@@ -102,16 +102,16 @@ fun AuComposer(
                 }
             )
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().height(48.dp).testTag("au-composer-actions"),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 leadingActions()
                 Spacer(Modifier.weight(1f))
-                if (canExpand) IconButton(onClick = { expanded = true }, enabled = enabled) {
+                if (canExpand) IconButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.Outlined.OpenInFull, contentDescription = "Expand composer")
                 }
                 if (onEffortChange != null) {
-                    IconButton(onClick = { tuning = true }, enabled = enabled) { EffortGauge(effort) }
+                    IconButton(onClick = { tuning = true }, enabled = enabled, modifier = Modifier.size(48.dp)) { EffortGauge(effort) }
                 }
                 actions()
                 Spacer(Modifier.width(4.dp))
@@ -140,7 +140,7 @@ fun AuComposer(
                 }
             }, text = {
                 BasicTextField(value, onValueChange,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 320.dp).testTag("au-expanded-input"),
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 280.dp).testTag("au-expanded-input"),
                     enabled = enabled, textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary))
             }, confirmButton = { TextButton(onClick = { expanded = false }) { Text("Done") } })
