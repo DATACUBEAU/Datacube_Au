@@ -8,7 +8,7 @@ internal object AuSpokenResponse {
     private val url = Regex("(?i)(?:https?://|www\\.)[^\\s<>]+")
     private val inlineCode = Regex("""\x60[^\x60\n]+\x60""")
     private val decorations = Regex("""[*#_~|<>\[\]{}]+""")
-    private val punctuationRun = Regex("""[.!,;:?\u2026]{2,}""")
+    private val punctuationRun = Regex("""([!?])\1{2,}""")
     private val isolatedSymbols = Regex("""(?<![\p{L}\p{N}])[\p{P}\p{S}&&[^.?!,;:]]+(?![\p{L}\p{N}])""")
     private fun plain(text: String): String =
         text.replace(inlineCode, "See the code in the response. ")
@@ -17,7 +17,7 @@ internal object AuSpokenResponse {
             .replace(Regex("\\[(?:\\d{1,3})]"), "")
             .replace(decorations, " ")
             .replace(Regex("\\x60+"), "")
-            .replace(punctuationRun, ". ")
+            .replace(punctuationRun) { it.groupValues[1] }
             .replace(isolatedSymbols, " ")
             .replace(Regex("\\s+"), " ").trim()
 
@@ -100,6 +100,6 @@ internal object AuSpokenResponse {
                     }
                 }
             }
-        }.joinToString("\n").take(12_000)
+        }.joinToString("\n")
     }
 }
