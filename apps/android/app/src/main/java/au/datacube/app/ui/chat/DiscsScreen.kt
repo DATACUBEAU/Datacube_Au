@@ -382,8 +382,9 @@ fun DiscsScreen(
                             events += if (searchDocuments)
                                 "AU generated a document-grounded response"
                             else "AU generated a general-knowledge response"
+                            val completedAnswer = raw.finish()
                             turns[answerIndex] = turns[answerIndex].copy(
-                                answer = raw.finish(),
+                                answer = completedAnswer,
                                 generating = false,
                                 steps = events.toList()
                             )
@@ -467,8 +468,9 @@ fun DiscsScreen(
                     visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
                 }
+                val completedAnswer = raw.finish()
                 turns[answerIndex] = turns[answerIndex].copy(
-                    answer = raw.finish(), generating = false)
+                    answer = completedAnswer, generating = false)
             } catch (cancelled: CancellationException) {
                 turns[answerIndex] = turns[answerIndex].copy(
                     answer = raw.partial(),
@@ -555,12 +557,13 @@ fun DiscsScreen(
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = chatListState, reverseLayout = true,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                itemsIndexed(turns.asReversed()) { reversedIndex, message ->
+                itemsIndexed(turns.asReversed(), key = { i, _ -> turns.lastIndex - i }) { reversedIndex, message ->
                     val messageIndex = turns.lastIndex - reversedIndex
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(20.dp, 20.dp, 5.dp, 20.dp)) {
+                                shape = RoundedCornerShape(20.dp, 20.dp, 5.dp, 20.dp),
+                                modifier = Modifier.widthIn(max = 340.dp)) {
                                 if (message.audioPath != null) {
                                     VoiceNotePlayback(message.audioPath, message.question)
                                 } else {
@@ -577,7 +580,7 @@ fun DiscsScreen(
                                     AuWorkingStatus(session.searchingStage, { session.activeRequest?.cancel() },
                                         steps = session.activitySteps.toList(), startedAt = session.requestStartedAt, firstVisibleMs = message.firstVisibleMs, hasAnswer = message.answer.isNotBlank())
                                 } else AuCompletedActivity(message.steps, message.workDurationMs, message.firstVisibleMs, message.generationError != null)
-                                if (message.answer.isNotBlank()) AuRichResponse(message.answer)
+                                if (message.answer.isNotBlank()) AuRichResponse(message.answer, streaming = message.generating)
                                 if (!message.generating && message.answer.isNotBlank() && message.generationError == null) {
                                     AuMessageActions(message.answer, speech, messageIndex) {
                                         AuResponseFeedback(accountId, "$ownerId:$threadId", messageIndex, message.createdAtEpochMs, "android_gist")
