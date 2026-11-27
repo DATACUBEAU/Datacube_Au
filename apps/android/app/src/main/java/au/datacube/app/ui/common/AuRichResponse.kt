@@ -230,6 +230,19 @@ internal object AuResponseParser {
                 .matchEntire(line)?.groupValues?.get(1)
             if (invalidVisual != null) {
                 val close = (i + 1 until lines.size).firstOrNull { lines[it].trim() == "[/" + invalidVisual + "]" }
+                // A callout contains prose, not drawing instructions. On a
+                // finished or restored answer keep its readable body even if
+                // the model omitted the closing marker.
+                if (invalidVisual == "BOX" && close == null) {
+                    val title = line.substringAfter(']').trim().take(120)
+                    if (title.isNotBlank()) result += AuResponseBlock.Prose(title, heading = 3)
+                    for (bodyLine in lines.drop(i + 1)) {
+                        val body = bodyLine.trim()
+                        if (body.startsWith("[") || body.contains('|') || body.startsWith("```")) break
+                        if (body.isNotBlank()) result += AuResponseBlock.Prose(body)
+                    }
+                    break
+                }
                 if (close == null) break
                 val title = line.substringAfter(']').trim().substringBefore('|').take(100)
                 result += AuResponseBlock.Prose(if (title.isBlank()) "Visual could not be rendered." else "$title — visual could not be rendered.")
