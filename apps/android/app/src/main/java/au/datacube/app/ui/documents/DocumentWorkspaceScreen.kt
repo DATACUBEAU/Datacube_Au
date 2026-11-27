@@ -13,6 +13,10 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import au.datacube.app.schedule.AuScheduleDialog
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -149,7 +153,13 @@ fun DocumentWorkspaceScreen(
                 }
                 DropdownMenu(
                     expanded = menuExpanded,
-                    onDismissRequest = { menuExpanded = false }
+                    onDismissRequest = { menuExpanded = false },
+                    shape = RoundedCornerShape(22.dp),
+                    containerColor = lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, .48f).copy(alpha = .94f),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 12.dp,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = .28f)),
+                    modifier = Modifier.widthIn(min = 220.dp, max = 280.dp)
                 ) {
                     Text(
                         "Document tools",
@@ -165,7 +175,11 @@ fun DocumentWorkspaceScreen(
                             3 -> Icons.Outlined.Layers
                             else -> Icons.Outlined.Headphones
                         }
+                        val highlight by animateColorAsState(
+                            if (selectedTab == index) MaterialTheme.colorScheme.primary.copy(alpha = .16f) else Color.Transparent,
+                            animationSpec = tween(180), label = "tool selection")
                         DropdownMenuItem(
+                            modifier = Modifier.padding(horizontal = 6.dp).clip(RoundedCornerShape(14.dp)).background(highlight),
                             text = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(tab)

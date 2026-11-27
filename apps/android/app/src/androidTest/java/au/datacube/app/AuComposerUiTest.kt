@@ -11,6 +11,8 @@ import au.datacube.app.data.rag.AuEffort
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.semantics.SemanticsActions
 import au.datacube.app.ui.common.AuComposer
 import au.datacube.app.ui.theme.DataCubeTheme
 import org.junit.Assert.assertEquals
@@ -66,16 +68,20 @@ class AuComposerUiTest {
         var selected = AuEffort.BALANCED
         rule.setContent {
             var effort by remember { mutableStateOf(AuEffort.BALANCED) }
+            var text by remember { mutableStateOf("") }
             DataCubeTheme {
-                AuComposer(value = "", onValueChange = {}, onSend = {},
+                AuComposer(value = text, onValueChange = { text = it }, onSend = {},
                     placeholder = "Ask AU", enabled = true, sendEnabled = false,
                     effort = effort, onEffortChange = { effort = it; selected = it })
             }
         }
+        rule.onNodeWithContentDescription("Expand composer").assertDoesNotExist()
+        rule.onNodeWithTag("au-composer-input").performTextInput((1..10).joinToString("\n") { "Line $it" })
         rule.onNodeWithContentDescription("Expand composer").performClick()
-        rule.onNodeWithContentDescription("Collapse composer").assertExists()
+        rule.onNodeWithContentDescription("Collapse composer").performClick()
         rule.onNodeWithContentDescription("Response effort: Balanced").performClick()
-        rule.onNodeWithText("Deep").performClick()
+        rule.onNodeWithTag("au-effort-slider").performSemanticsAction(SemanticsActions.SetProgress) { it(2f) }
+        rule.onNodeWithText("Done").performClick()
         rule.runOnIdle { assertEquals(AuEffort.DEEP, selected) }
         rule.onNodeWithContentDescription("Response effort: Deep").assertExists()
     }
