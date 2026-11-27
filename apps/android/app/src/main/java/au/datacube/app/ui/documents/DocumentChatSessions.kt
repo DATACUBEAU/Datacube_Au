@@ -85,7 +85,7 @@ internal class DocumentChatSession(private val historyKey: String) {
     /** Only the latest ordinary text exchange can be regenerated without
      * replaying a voice note, memory command, scheduling action or attachment. */
     fun regenerationQuestion(index: Int): String? {
-        if (searching || index != messages.lastIndex || index < 1) return null
+        if (!historyReady || searching || index != messages.lastIndex || index < 1) return null
         val answer = messages[index]
         val user = messages[index - 1]
         if (answer.isUser || answer.generating || !user.isUser || user.audioPath != null ||
