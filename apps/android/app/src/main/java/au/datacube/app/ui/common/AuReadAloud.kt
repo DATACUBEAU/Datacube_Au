@@ -164,6 +164,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 waveform = levels
                 durationMs = ready.sumOf { it.durationMs }
                 preparing = false
+                if (!system) runCatching { au.datacube.app.notifications.LocalNotificationService(context)
+                    .showAiReady("voice-" + target.name, "Kokoro audio is ready") }
                 playCached(token)
             } catch (cancelled: CancellationException) {
                 throw cancelled

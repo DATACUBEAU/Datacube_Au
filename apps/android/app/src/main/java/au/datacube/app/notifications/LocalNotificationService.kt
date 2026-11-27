@@ -181,6 +181,26 @@ class LocalNotificationService(private val context: Context) {
         .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
+    /** Update progress reflects transferred bytes; never imply verification before it finishes. */
+    fun showUpdateDownloadProgress(versionCode: Int, percent: Int) {
+        val manager = manager() ?: return
+        val progress = percent.coerceIn(0, 100)
+        runCatching {
+            manager.notify("au-update-download-$versionCode", PROGRESS_ID, Notification.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification_datacube)
+                .setContentTitle("DataCube AU · App update")
+                .setContentText(if (progress == 100) "Verifying downloaded APK" else "Downloading update · $progress%")
+                .setContentIntent(openApp())
+                .setProgress(100, progress, progress == 100)
+                .setOnlyAlertOnce(true).setOngoing(true)
+                .setVisibility(Notification.VISIBILITY_PRIVATE).build())
+        }
+    }
+
+    fun clearUpdateDownloadProgress(versionCode: Int) {
+        context.getSystemService(NotificationManager::class.java)?.cancel("au-update-download-$versionCode", PROGRESS_ID)
+    }
+
     /** Completion alerts are separate from silent ongoing progress. No private text. */
     fun showAiReady(key: String, message: String) {
         val manager = manager() ?: return

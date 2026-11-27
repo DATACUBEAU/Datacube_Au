@@ -127,6 +127,7 @@ object AndroidUpdateManager {
             releaseUrl.matches(release.apkUrl) &&
             release.sizeBytes in 1_000_000L..MAX_APK_BYTES &&
             checksumFormat.matches(release.sha256)) { "Invalid update request." }
+        val notifications = au.datacube.app.notifications.LocalNotificationService(context.applicationContext)
         val destination = updateFile(context, release)
         if (destination.isFile && destination.length() == release.sizeBytes) {
             if (hashFile(destination) == release.sha256) {
@@ -153,6 +154,7 @@ object AndroidUpdateManager {
             setRequestProperty("Accept-Encoding", "identity")
         }
         try {
+            notifications.showUpdateDownloadProgress(release.versionCode, 0)
             check(connection.responseCode == 200) {
                 "Could not download the verified update (HTTP ${connection.responseCode})."
             }
@@ -172,7 +174,9 @@ object AndroidUpdateManager {
                         digest.update(data, 0, n)
                         out.write(data, 0, n)
                         if (received - lastNotified >= 1024L * 1024 || received == release.sizeBytes) {
-                            onProgress((100L * received / release.sizeBytes).toInt().coerceIn(0, 100))
+                            val percent = (100L * received / release.sizeBytes).toInt().coerceIn(0, 100)
+                            notifications.showUpdateDownloadProgress(release.versionCode, percent)
+                            onProgress(percent)
                             lastNotified = received
                         }
                     }
@@ -185,10 +189,15 @@ object AndroidUpdateManager {
             check(partial.renameTo(destination)) { "Could not finalize the verified APK." }
             try { verifyPackage(context, destination, release.versionCode) }
             catch (failure: Exception) { destination.delete(); throw failure }
+            runCatching { notifications.showAiReady("apk-${release.versionCode}", "Verified update is ready. Approve installation in Android.") }
             destination
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (failure: Exception) {
+            runCatching { notifications.showAiReady("apk-${release.versionCode}", "Update download needs attention. Open App updates to retry.") }
+            throw failure
         } finally {
+            notifications.clearUpdateDownloadProgress(release.versionCode)
             partial.delete()
             connection.disconnect()
         }
