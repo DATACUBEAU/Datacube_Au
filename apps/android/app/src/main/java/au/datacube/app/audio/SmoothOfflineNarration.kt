@@ -91,6 +91,13 @@ object SmoothOfflineNarration {
     ) = mutex.withLock {
         require(turns.isNotEmpty()) { "Create an audio conversation first." }
         val app = context.applicationContext
+        // Both direct narration and podcasts use the same word-safe planner.
+        // Keep each utterance tied to the original UI speaker/turn index.
+        val spoken = turns.flatMapIndexed { index, turn ->
+            NeuralTextSegmenter.plan(turn.text, maxChunk = 1000, maxText = 12000)
+                .map { index to turn.copy(text = it.text) }
+        }
+        require(spoken.isNotEmpty()) { "No readable speech was found." }
         val tts = engine(app, enginePackage)
         active = tts
         val pending = ConcurrentHashMap<String, Pending>()
@@ -134,7 +141,7 @@ object SmoothOfflineNarration {
                     fail(utteranceId, CancellationException("Speech stopped"))
             })
             fun queue(index: Int) {
-                val turn = turns[index]
+                val turn = spoken[index].second
                 val text = turn.text.trim()
                 require(text.length in 1..minOf(2000, TextToSpeech.getMaxSpeechInputLength()))
                 val chosen = if (distinguishSpeakers && turn.speaker == PodcastSpeaker.GUIDE) secondVoice else voice
@@ -149,15 +156,16 @@ object SmoothOfflineNarration {
             }
             // Only one upcoming utterance queued: bounded lookahead, no full audio render.
             queue(0)
-            turns.forEachIndexed { index, turn ->
+            spoken.forEachIndexed { index, entry ->
+                val turn = entry.second
                 currentCoroutineContext().ensureActive()
                 val item = checkNotNull(pending[id(index)])
-                if (renderDirectory == null && index + 1 < turns.size) queue(index + 1)
+                if (renderDirectory == null && index + 1 < spoken.size) queue(index + 1)
                 val timeout = (30_000L + turn.text.length * 150L).coerceAtMost(360_000L)
                 withTimeout(timeout) {
                     item.started.await()
-                    onSpeaker(index)
-                    onStage((if (renderDirectory == null) "Playing " else "Preparing audio ") + "${index + 1} of ${turns.size}")
+                    onSpeaker(entry.first)
+                    onStage((if (renderDirectory == null) "Playing " else "Preparing audio ") + "${index + 1} of ${spoken.size}")
                     item.done.await()
                 }
                 pending.remove(id(index))
@@ -167,7 +175,7 @@ object SmoothOfflineNarration {
                         check(destination.length() > 44L) { "Android voice did not produce playable audio." }
                         check(renderDirectory.listFiles().orEmpty().sumOf { it.length() } <= 128L * 1024 * 1024)
                     }
-                    if (index + 1 < turns.size) queue(index + 1)
+                    if (index + 1 < spoken.size) queue(index + 1)
                 }
             }
         } catch (timeout: TimeoutCancellationException) {
@@ -194,7 +202,8 @@ object SmoothOfflineNarration {
             .map { PodcastTurn(PodcastSpeaker.GUIDE, it) }
         speakDialogue(context, turns, OfflineNarrationPreferences(context).speed, {}, onStage,
             renderDirectory = directory)
-        return turns.indices.map { java.io.File(directory, "part-$it.wav") }
+        return directory.listFiles().orEmpty().filter { it.name.matches(Regex("part-[0-9]+\\.wav")) }
+            .sortedBy { it.name.removePrefix("part-").removeSuffix(".wav").toInt() }
     }
 
     fun stop() {
