@@ -1,0 +1,5 @@
+# Mobile OAuth canonical-domain hotfix
+
+Production origin: https://datacube.fabianodev.xyz. Mobile sign-in now uses the exact same-origin /auth/callback URL and stores only a validated, short-lived approval destination in tab-scoped storage. The root route forwards OAuth codes to the callback to recover a provider Site URL fallback. Missing context is a recoverable restart, not a download-page redirect. Existing pairing and native proof validation remain unchanged.
+
+Supabase Auth URL Configuration must set the Site URL to https://datacube.fabianodev.xyz and allow the exact https://datacube.fabianodev.xyz/auth/callback (plus the existing callback query pattern if other web flows still require it). Remove obsolete Vercel-host redirect entries after confirming no other supported clients use them. The Google provider callback remains the Supabase Auth callback, not the application callback. This repository change does not modify hosted Supabase Auth settings. Verify with a real Google sign-in on an installed Android app before declaring the incident resolved.

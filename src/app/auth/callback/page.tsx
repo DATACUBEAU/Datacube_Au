@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, getLastPkceTransportDiagnostic } from '@/lib/supabase-client/client';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { markAuthSessionRestored, markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
-import { isMobileAuthorizationDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { isMobileAuthorizationDestination, isDownloadDestination, looksLikeMobileAuthDestination, readMobileOAuthDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
 // A callback can be mounted more than once (for example during React remounts).
 // PKCE authorization codes are single-use, so share one exchange promise per code.
@@ -37,16 +37,26 @@ export default function AuthCallbackPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [message, setMessage] = useState('Completing sign in...');
-  const nextPath = useMemo(() => sanitizeLocalRedirectPath(searchParams.get('next'), '/'), [searchParams]);
-  const isMobileDestination = isMobileAuthorizationDestination(nextPath);
+  const [needsAppRestart, setNeedsAppRestart] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    const explicitNext = searchParams.get('next');
+    let pendingMobile: string | null = null;
+    try { pendingMobile = readMobileOAuthDestination(window.sessionStorage); } catch {}
+    // Legacy callbacks retain their validated explicit destination. Stable mobile
+    // callbacks recover it from the initiating tab, including Site URL fallback.
+    const sanitizedNext = sanitizeLocalRedirectPath(searchParams.get('next'), '/');
+    const nextPath = pendingMobile && (!explicitNext || isDownloadDestination(sanitizedNext))
+      ? pendingMobile : sanitizedNext;
+    const lostMobileRequest = looksLikeMobileAuthDestination(explicitNext)
+      && !isMobileAuthorizationDestination(nextPath);
+    const isMobileDestination = isMobileAuthorizationDestination(nextPath);
     const debugPath = isMobileDestination ? '/mobile-auth' : nextPath;
 
     async function completeAuth() {
       const code = searchParams.get('code');
-      const authError = searchParams.get('error') || searchParams.get('error_description');
+      const authError = searchParams.get('error') || searchParams.get('error_description') || searchParams.get('error_code');
 
       debugAuthCallback('start', {
         hasCode: Boolean(code),
@@ -54,11 +64,22 @@ export default function AuthCallbackPage() {
         nextPath: debugPath,
       });
 
+      if ((!explicitNext && !pendingMobile) || lostMobileRequest) {
+        // Never silently drop an app-originated callback onto the download page.
+        // No transaction context means the user must initiate a new sign-in.
+        if (!cancelled) {
+          setNeedsAppRestart(true);
+          setMessage('This sign-in request could not be restored. Return to the DataCube AU app and start sign-in again.');
+        }
+        return;
+      }
+
       if (authError) {
         markAuthUnauthenticated('auth-callback', 'provider_error');
         if (!cancelled) {
-          setMessage('Authentication could not be completed.');
-          router.replace(safeLoginRedirect(nextPath, 'auth_error'));
+          setMessage('Google sign-in could not be completed. Return to the app and start a fresh sign-in. (Provider error)');
+          if (isMobileDestination) setNeedsAppRestart(true);
+          else router.replace(safeLoginRedirect(nextPath, 'auth_error'));
         }
         return;
       }
@@ -70,8 +91,9 @@ export default function AuthCallbackPage() {
           nextPath: debugPath,
         });
         if (!cancelled) {
-          setMessage('Sign-in did not finish. Please try again.');
-          router.replace(safeLoginRedirect(nextPath, 'session_expired'));
+          setMessage('Google did not return an authorization code. Return to the app and start a fresh sign-in.');
+          if (isMobileDestination) setNeedsAppRestart(true);
+          else router.replace(safeLoginRedirect(nextPath, 'session_expired'));
         }
         return;
       }
@@ -142,15 +164,32 @@ export default function AuthCallbackPage() {
           setMessage('Taking you to DataCube AU...');
           router.replace(nextPath);
         }
-      } catch {
+      } catch (error: unknown) {
         markAuthUnauthenticated('auth-callback', 'exchange_failed');
         debugAuthCallback('failed', {
           hasSession: false,
           nextPath: debugPath,
         });
         if (!cancelled) {
-          setMessage('Authentication could not be completed.');
-          router.replace(safeLoginRedirect(nextPath, 'auth_error'));
+          // Report only fixed diagnostic categories; never render provider
+          // messages, authorization codes, verifiers or session credentials.
+          const name = error instanceof Error ? error.name : '';
+          const verifierMissing = name === 'AuthPKCECodeVerifierMissingError';
+          const lockFailure = name === 'NavigatorLockAcquireTimeoutError' || name === 'LockAcquireTimeoutError';
+          const networkFailure = name === 'AuthRetryableFetchError' || name === 'TimeoutError' || name === 'AbortError';
+          setMessage(verifierMissing
+            ? 'Sign-in verification was lost. Return to the app and start a fresh sign-in in the same browser. (PKCE verifier missing)'
+            : lockFailure
+              ? 'The browser authentication session is busy. Close other DataCube AU tabs and start a fresh sign-in. (Browser lock timeout)'
+              : networkFailure
+                ? 'The connection to the sign-in server did not complete. Check your connection and start a fresh sign-in. (Session transport interrupted)'
+                : 'The sign-in session could not be established. Return to the app and start a fresh sign-in. (Code exchange failed)');
+          const diagnostic = getLastPkceTransportDiagnostic();
+          if (diagnostic) {
+            setMessage(previous => `${previous} [${diagnostic.stage}${diagnostic.status ? ` HTTP ${diagnostic.status}` : ''}${diagnostic.requestId ? ` · ${diagnostic.requestId}` : ''}]`);
+          }
+          if (isMobileDestination) setNeedsAppRestart(true);
+          else router.replace(safeLoginRedirect(nextPath, 'auth_error'));
         }
       }
     }
@@ -160,12 +199,12 @@ export default function AuthCallbackPage() {
     return () => {
       cancelled = true;
     };
-  }, [isMobileDestination, nextPath, router, searchParams]);
+  }, [router, searchParams]);
 
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
-      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      <p className="text-sm text-muted-foreground">{message}</p>
+      {!needsAppRestart && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
+      <p role="status" className="text-sm text-muted-foreground">{message}</p>
     </main>
   );
 }

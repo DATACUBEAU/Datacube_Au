@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { claimReauthRedirect, releaseReauthRedirect } from '@/lib/auth/session-expiry-events';
-import { buildSessionExpiredPath, isPublicAuthPath, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
+import { buildSessionExpiredPath, isPublicAuthPath, isPublicDistributionPath, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
 
 export function AuthLockOverlay() {
   const router = useRouter();
@@ -12,7 +12,7 @@ export function AuthLockOverlay() {
   const { isAuthLocked, runtimeAuthState, startReauth } = useSmartAuth();
   const hasHandledRef = useRef(false);
 
-  const shouldRedirect = isAuthLocked && !isPublicAuthPath(pathname);
+  const shouldRedirect = isAuthLocked && !isPublicAuthPath(pathname) && !isPublicDistributionPath(pathname);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;

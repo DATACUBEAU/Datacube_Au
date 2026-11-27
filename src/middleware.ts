@@ -4,7 +4,11 @@ import { requireUserFromRequest } from '@/app/api/proxy/_supabase-auth';
 import { normalizeAdminOverridePlan } from '@/lib/admin/protected-owner';
 import { verifyConexProof } from '@/lib/server/conex-proof';
 import { hasConexAccess } from '@/lib/conex-rbac';
-import { isMobileAuthorizationPage } from '@/lib/auth/redirects';
+import {
+  CANONICAL_WEBSITE_ORIGIN, MOBILE_OAUTH_REQUEST_COOKIE, MOBILE_OAUTH_REQUEST_MAX_AGE,
+  isMobileAuthorizationPage, isMobileAuthorizationDestination, isDownloadDestination,
+  mobileApprovalPath, mobileApprovalRequestId, sanitizeRedirectTarget,
+} from '@/lib/auth/redirects';
 import {
   ACCESS_NO_STORE_HEADERS,
   evaluateAccess,
@@ -246,9 +250,69 @@ function isRetiredWebProductPath(pathname: string): boolean {
 
 export async function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
+  const hostname = req.nextUrl.hostname.toLowerCase();
+  const pageNavigation = (req.method === 'GET' || req.method === 'HEAD') && !isApiLikeRoute(pathname);
+  if (pageNavigation && (hostname === 'datacube-au.vercel.app'
+    || (process.env.VERCEL_ENV === 'production' && hostname.endsWith('.vercel.app')))) {
+    const destination = new URL(CANONICAL_WEBSITE_ORIGIN);
+    destination.pathname = pathname;
+    destination.search = req.nextUrl.search;
+    const response = applyProtectedHeaders(NextResponse.redirect(destination, 307));
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
+  }
+  // Opaque request identifier only; this cookie is routing context, never proof.
+  const pendingApproval = mobileApprovalPath(req.cookies.get(MOBILE_OAUTH_REQUEST_COOKIE)?.value);
+  const hasOAuthResult = ['code', 'error', 'error_code', 'error_description'].some(
+    (key) => req.nextUrl.searchParams.has(key),
+  );
+  // Only actual OAuth results can recover a misplaced callback. Ordinary public
+  // navigation (especially the APK download) must never be intercepted.
+  const fallbackPage = ['/', '/dashboard'].includes(pathname);
+  const next = req.nextUrl.searchParams.get('next');
+  const safeNext = sanitizeRedirectTarget(next, req.nextUrl.origin, '');
+  const protectedRedirect = (destination: URL) => {
+    const response = applyProtectedHeaders(NextResponse.redirect(destination, 303));
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    return response;
+  };
+  if (pageNavigation && fallbackPage && hasOAuthResult) {
+    const callback = new URL('/auth/callback', req.nextUrl.origin);
+    callback.search = req.nextUrl.search;
+    if (pendingApproval && !isMobileAuthorizationDestination(safeNext)) callback.searchParams.set('next', pendingApproval);
+    return protectedRedirect(callback);
+  }
+  if (pageNavigation && pathname === '/auth/callback' && pendingApproval
+    && (!next || !safeNext || isDownloadDestination(safeNext))) {
+    const callback = new URL(req.nextUrl.href);
+    callback.searchParams.set('next', pendingApproval);
+    return protectedRedirect(callback);
+  }
+  if (pageNavigation && pathname === '/login' && pendingApproval) {
+    const target = req.nextUrl.searchParams.get('redirectTo');
+    const safeTarget = sanitizeRedirectTarget(target, req.nextUrl.origin, '');
+    if (!target || !safeTarget || isDownloadDestination(safeTarget)) {
+      const login = new URL(req.nextUrl.href);
+      login.searchParams.set('redirectTo', pendingApproval);
+      return protectedRedirect(login);
+    }
+  }
   if (isMobileAuthorizationPage(pathname) || pathname === '/login' || pathname === '/auth/callback') {
     const response = applyProtectedHeaders(NextResponse.next());
     response.headers.set('Referrer-Policy', 'no-referrer');
+    if (pageNavigation && !req.headers.has('next-router-prefetch')) {
+      const target = pathname === '/login'
+        ? sanitizeRedirectTarget(req.nextUrl.searchParams.get('redirectTo'), req.nextUrl.origin, '')
+        : pathname === '/mobile-auth/approve' ? `${pathname}${req.nextUrl.search}` : null;
+      const id = mobileApprovalRequestId(target);
+      if (id) response.cookies.set(MOBILE_OAUTH_REQUEST_COOKIE, id, {
+        httpOnly: true, sameSite: 'lax', secure: req.nextUrl.protocol === 'https:',
+        path: '/', maxAge: MOBILE_OAUTH_REQUEST_MAX_AGE,
+      });
+      else if (pathname === '/login' && target && !isMobileAuthorizationDestination(target)) {
+        response.cookies.delete(MOBILE_OAUTH_REQUEST_COOKIE);
+      }
+    }
     return response;
   }
   if (pathname === '/403' || pathname === '/codex' || pathname.startsWith('/codex/')) {

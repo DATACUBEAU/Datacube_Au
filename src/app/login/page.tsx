@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
@@ -22,13 +22,14 @@ import {
 } from '@/lib/auth/session-cookie';
 import { useSmartAuth } from '@/hooks/use-smart-auth';
 import { explicitSignOut } from '@/lib/auth/explicit-signout';
-import { isMobileAuthorizationDestination, sanitizeRedirectTarget } from '@/lib/auth/redirects';
+import { isMobileAuthorizationDestination, isDownloadDestination, looksLikeMobileAuthDestination, readMobileOAuthDestination, sanitizeRedirectTarget } from '@/lib/auth/redirects';
 
 export default function LoginPage() {
   const { signInWithGoogle } = useSmartAuth();
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(false);
   const [isResolvingRedirect, setIsResolvingRedirect] = useState(false);
   const [forceReauthReady, setForceReauthReady] = useState(false);
+  const forceReauthTaskRef = useRef<{ path: string; task: Promise<void> } | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
 
   const [user, , isUserLoading] = useSupabaseUser();
@@ -41,24 +42,35 @@ export default function LoginPage() {
   const sessionReasonParam = searchParams.get('reason');
   const wasSessionExpired = sessionReasonParam === 'session_expired';
   const hadAuthError = sessionReasonParam === 'auth_error';
-  const safeRedirectPath = sanitizeRedirectTarget(
+  const requestedRedirectPath = sanitizeRedirectTarget(
     redirectToParam,
     typeof window === 'undefined' ? null : window.location.origin,
     '/',
   );
+  let pendingMobile: string | null = null;
+  if (typeof window !== 'undefined') {
+    try { pendingMobile = readMobileOAuthDestination(window.sessionStorage); } catch {}
+  }
+  const safeRedirectPath = pendingMobile && isDownloadDestination(requestedRedirectPath)
+    ? pendingMobile : requestedRedirectPath;
   const isMobileDestination = isMobileAuthorizationDestination(safeRedirectPath);
+  const lostMobileRequest = looksLikeMobileAuthDestination(redirectToParam) && !isMobileDestination;
   const isConexDestination = safeRedirectPath === '/conex' || safeRedirectPath.startsWith('/conex/');
 
   useEffect(() => {
-    if (isUserLoading) return;
+    if (isUserLoading || lostMobileRequest) return;
 
     let cancelled = false;
 
     if (forceReauth) {
       setForceReauthReady(false);
       setIsResolvingRedirect(true);
-      // Clear stale website storage/cookies even if no in-memory user is restored.
-      void explicitSignOut(user?.id ?? null).then(() => {
+      // SIGNED_OUT can re-run this effect as user changes. Reuse the same
+      // cleanup promise instead of starting another destructive sign-out.
+      if (forceReauthTaskRef.current?.path !== safeRedirectPath) {
+        forceReauthTaskRef.current = { path: safeRedirectPath, task: explicitSignOut(user?.id ?? null) };
+      }
+      void forceReauthTaskRef.current.task.then(() => {
         if (!cancelled) setForceReauthReady(true);
       }).catch(() => {
         if (!cancelled) setAuthError('Could not clear the previous website session. Reload this page and try again.');
@@ -170,10 +182,10 @@ export default function LoginPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, isUserLoading, router, safeRedirectPath, isMobileDestination, isConexDestination, forceReauth]);
+  }, [user, isUserLoading, router, safeRedirectPath, isMobileDestination, isConexDestination, forceReauth, lostMobileRequest]);
 
   const handleGoogleSignIn = async () => {
-    if (isLoadingGoogle || isUserLoading || (forceReauth && !forceReauthReady)) return;
+    if (lostMobileRequest || isLoadingGoogle || isUserLoading || (forceReauth && !forceReauthReady)) return;
     setIsLoadingGoogle(true);
     setAuthError(null);
 
@@ -192,6 +204,15 @@ export default function LoginPage() {
       setIsLoadingGoogle(false);
     }
   };
+
+  if (lostMobileRequest) {
+    return <main className="flex min-h-dvh items-center justify-center px-6 text-center">
+      <div className="max-w-sm space-y-3">
+        <h1 className="text-xl font-semibold">Return to DataCube AU</h1>
+        <p role="alert" className="text-sm text-muted-foreground">Your app sign-in request is missing or invalid. Reopen your installed app and start authentication again.</p>
+      </div>
+    </main>;
+  }
 
   if (isResolvingRedirect || (isUserLoading && Boolean(user))) {
     return (

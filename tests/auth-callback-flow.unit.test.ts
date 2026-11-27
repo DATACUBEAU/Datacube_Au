@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { exchangePkceTransport } from '../src/lib/server/pkce-exchange.js';
 
 let failed = 0;
 
@@ -87,6 +88,55 @@ async function main() {
     assert.match(stateTest, /UNAUTHENTICATED/);
     assert.match(login, /Continue with Google/);
     assert.doesNotMatch(login, /signInWithPassword|signUp\(/);
+  });
+
+  await run('same-origin transport forwards only one bounded PKCE exchange and preserves the SDK response', async () => {
+    const origin = 'https://datacube.example';
+    const endpoint = origin + '/api/auth/session?grant_type=pkce';
+    const input = { auth_code: 'fixture-code', code_verifier: 'v'.repeat(43) };
+    const session = { access_token: 'fixture-access', refresh_token: 'fixture-refresh', expires_in: 3600, user: { id: 'fixture-user' } };
+    let calls = 0;
+    const deps = {
+      origin, requestId: 'fixture-id', allow: () => true,
+      config: () => ({ url: 'https://project.example', anonKey: 'fixture-public-key' }),
+      upstreamFetch: (async (url, init) => {
+        calls++;
+        assert.equal(String(url), 'https://project.example/auth/v1/token?grant_type=pkce');
+        assert.equal(init?.redirect, 'error');
+        assert.equal(init?.cache, 'no-store');
+        assert.deepEqual(JSON.parse(String(init?.body)), input);
+        assert.equal(new Headers(init?.headers).get('apikey'), 'fixture-public-key');
+        assert.equal(new Headers(init?.headers).get('cookie'), null);
+        return Response.json(session);
+      }) as typeof fetch,
+      record: () => {},
+    };
+    const make = (value: unknown, requestOrigin = origin, url = endpoint) => new Request(url, {
+      method: 'POST', headers: { Origin: requestOrigin, 'Content-Type': 'application/json' }, body: JSON.stringify(value),
+    });
+    const success = await exchangePkceTransport(make(input), deps);
+    assert.equal(success.status, 200);
+    assert.equal(success.headers.get('x-dcau-pkce-stage'), 'upstream_ok');
+    assert.match(success.headers.get('cache-control') ?? '', /no-store/);
+    assert.deepEqual(await success.json(), session);
+    assert.equal(calls, 1);
+    assert.equal((await exchangePkceTransport(make(input, 'https://foreign.example'), deps)).status, 403);
+    assert.equal((await exchangePkceTransport(make({ ...input, code_verifier: 'x' }), deps)).status, 400);
+    assert.equal((await exchangePkceTransport(make({ ...input, auth_code: 'x'.repeat(3000) }), deps)).status, 400);
+    assert.equal((await exchangePkceTransport(make(input, origin, origin + '/api/auth/session?grant_type=refresh_token'), deps)).status, 400);
+    assert.equal((await exchangePkceTransport(make(input), { ...deps, allow: () => false })).status, 429);
+    assert.equal(calls, 1);
+    const rejected = await exchangePkceTransport(make(input), { ...deps, upstreamFetch: (async () =>
+      Response.json({ code: 'flow_state_expired', message: 'private detail' }, { status: 400 })) as typeof fetch });
+    assert.equal(rejected.status, 400);
+    assert.equal((await rejected.json()).code, 'flow_state_expired');
+    let failedCalls = 0;
+    const unavailable = await exchangePkceTransport(make(input), { ...deps, upstreamFetch: (async () => {
+      failedCalls++; throw new TypeError('network');
+    }) as typeof fetch });
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.headers.get('x-dcau-pkce-stage'), 'upstream_unreachable');
+    assert.equal(failedCalls, 1);
   });
 
   if (failed > 0) {
