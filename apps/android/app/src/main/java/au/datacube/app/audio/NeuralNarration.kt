@@ -226,8 +226,8 @@ object NeuralNarration {
                         }
                     }
                     val finished = published.get()
-                    if (destination != null) writeWaveFile(pcm, destination, finished.rate, finished.samples)
                     published.set(finished.copy(complete = true))
+                    if (destination != null) writeWaveFile(pcm, destination, finished.rate, finished.samples)
                     if (cacheDirectory != null && key != null) {
                         try { saveCache(cacheDirectory, key, pcm, finished) }
                         catch (cancelled: CancellationException) { throw cancelled }
@@ -396,6 +396,7 @@ object NeuralNarration {
                 submitted = primed / 2L
                 input.seek(submitted * 2)
                 while (isPaused()) { currentCoroutineContext().ensureActive(); stage("Paused"); delay(50) }
+                lastMovement = SystemClock.elapsedRealtime()
                 track.play()
                 onStarted()
                 stage("Playing neural audio")
