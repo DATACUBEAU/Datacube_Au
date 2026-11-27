@@ -82,30 +82,33 @@ object SmoothOfflineNarration {
                 val text = turn.text.trim()
                 require(text.length in 1..2_000) { "Podcast turn is too long to speak smoothly." }
                 val done = CompletableDeferred<Unit>()
+                val utteranceId = "datacube-audio-${index}"
                 tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {}
-                    override fun onDone(utteranceId: String?) { done.complete(Unit) }
+                    override fun onDone(id: String?) { if (id == utteranceId) done.complete(Unit) }
                     @Deprecated("Overload required for older Android engines")
-                    override fun onError(utteranceId: String?) {
+                    override fun onError(id: String?) {
+                        if (id != utteranceId) return
                         done.completeExceptionally(IllegalStateException("Android offline speech failed."))
                     }
-                    override fun onError(utteranceId: String?, errorCode: Int) {
+                    override fun onError(id: String?, errorCode: Int) {
+                        if (id != utteranceId) return
                         done.completeExceptionally(
                             IllegalStateException("Android offline speech failed ($errorCode).")
                         )
                     }
-                    override fun onStop(utteranceId: String?, interrupted: Boolean) {
+                    override fun onStop(id: String?, interrupted: Boolean) {
+                        if (id != utteranceId) return
                         done.completeExceptionally(CancellationException("Speech stopped"))
                     }
                 })
-                val utteranceId = "datacube-audio-${index}"
                 val destination = renderDirectory?.let { java.io.File(it, "part-${index}.wav") }
-                val result = if (destination == null) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                val result = if (destination == null) tts.speak(text, TextToSpeech.QUEUE_ADD, null, utteranceId)
                     else tts.synthesizeToFile(text, android.os.Bundle(), destination, utteranceId)
                 check(result != TextToSpeech.ERROR) { "Android offline voice refused the audio request." }
                 // Do not stall for a minute between sentences. The app offers
                 // the error to the user if a device voice engine hangs.
-                withTimeout(30_000) { done.await() }
+                withTimeout((30_000L + text.length * 150L).coerceAtMost(360_000L)) { done.await() }
                 if (destination != null) withContext(Dispatchers.IO) {
                     check(destination.length() > 44L) { "Android voice did not produce playable audio." }
                     check(renderDirectory?.listFiles().orEmpty().sumOf { it.length() } <= 128L * 1024 * 1024) { "Audio is too long to prepare." }
