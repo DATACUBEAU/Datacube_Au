@@ -69,7 +69,7 @@ object LocalGenerativeEngine {
                 canonical.extension == "wav" &&
                 canonical.isFile && canonical.length() in 16044L..1_500_000L
             ) { "Voice note is missing or not a supported private WAV recording." }
-            mutex.withLock {
+            LocalComputeGate.admit(interactive = true) {
                 LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
                 val selectedId = requireNotNull(ActiveLocalChatModel(context).selected()) {
                     "Select a Gemma 4 model to understand a voice note."
@@ -112,7 +112,9 @@ object LocalGenerativeEngine {
                             "Interpret the incoming audio speech. Transcribe the spoken question " +
                                 "in its original language. Output only the spoken words, without any " +
                                 "explanation, citations or formatting. If unintelligible, output EMPTY."
-                        )
+                        ),
+                        maxOutputToken = 512,
+                        thinkingConfig = ThinkingConfig(enableThinking = false, thinkingTokenBudget = 0)
                     )
                 )
                 try {
@@ -157,7 +159,7 @@ object LocalGenerativeEngine {
         require(groundedPrompt.isNotBlank() && groundedPrompt.length <= 18_000) {
             "The document context is empty or too long."
         }
-        mutex.withLock {
+        LocalComputeGate.admit(interactive = !studyTask) {
             LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
             val acquiredAt = android.os.SystemClock.elapsedRealtime()
             val modelId = requireNotNull(ActiveLocalChatModel(context).selected()) {
