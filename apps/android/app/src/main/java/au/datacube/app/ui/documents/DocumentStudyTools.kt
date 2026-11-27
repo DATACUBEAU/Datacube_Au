@@ -659,7 +659,11 @@ fun DocumentChatWorkspace(
                                         events += if (indexedMatches != null)
                                             "Searched and ranked full-document passages"
                                         else "Ranked available preview excerpts using BM25"
-                                        val vectorMatches = if (semanticSupported && !indexing) {
+                                        val lexicalFastPath = indexedMatches != null &&
+                                            au.datacube.app.data.rag.AuInteractiveLatency.canUseLexicalOnly(
+                                                plan.retrievalQuery, requestEffort, keywordMatches.firstOrNull()?.text)
+                                        if (lexicalFastPath) events += "Used exact-term keyword retrieval in Fast mode"
+                                        val vectorMatches = if (semanticSupported && !indexing && !lexicalFastPath) {
                                             session.searchingStage = "Checking semantic matches"
                                             events += "Queried the on-device vector index"
                                             try {
