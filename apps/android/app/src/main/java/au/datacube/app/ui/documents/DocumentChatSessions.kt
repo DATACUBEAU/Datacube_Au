@@ -173,6 +173,32 @@ internal class DocumentChatSession(private val historyKey: String) {
         }
     }
 
+    /** One cleanup path for text, attachment and grounded requests. Notifications
+     * are best effort; a notification failure must never lock the composer. */
+    fun finishRequest(firstIndex: Int, startedAt: Long, successful: Boolean, notify: () -> Unit) {
+        try {
+            for (index in firstIndex.coerceAtLeast(0) until messages.size) {
+                val turn = messages[index]
+                if (!turn.isUser && turn.generating) messages[index] = turn.copy(
+                    generating = false, generationError = if (successful) "Response could not finish." else "Reply stopped.")
+            }
+            recordWorkDuration(firstIndex, startedAt)
+            if (successful && messages.drop(firstIndex).any {
+                !it.isUser && !it.generating && it.generationError == null &&
+                    "Answered a simple greeting locally" !in it.steps &&
+                    (it.answer.isNotBlank() || it.matches.isNotEmpty())
+            }) runCatching { notify() }.onFailure {
+                android.util.Log.w("AuChat", "Response notification could not be delivered", it)
+            }
+        } finally {
+            searching = false
+            searchingStage = ""
+            activitySteps.clear()
+            activeRequest = null
+            requestStartedAt = 0L
+        }
+    }
+
     fun recordWorkDuration(firstIndex: Int, startedAt: Long) {
         val duration = (android.os.SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
         for (index in firstIndex.coerceAtLeast(0) until messages.size) {
