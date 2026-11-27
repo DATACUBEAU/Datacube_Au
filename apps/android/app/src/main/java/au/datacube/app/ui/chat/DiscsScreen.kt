@@ -424,14 +424,9 @@ fun DiscsScreen(
                 turns.add(ChatMessage(question, emptyList(), false,
                     generationError = "AU could not finish this request."))
             } finally {
-                session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                session.finishRequest(firstResponseIndex, workStartedAt, kotlinx.coroutines.currentCoroutineContext().isActive) {
                     au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
-                session.searching = false
-                session.searchingStage = ""
-                session.activitySteps.clear()
-                session.activeRequest = null
             }
         }
         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
@@ -490,14 +485,9 @@ fun DiscsScreen(
                 turns[answerIndex] = turns[answerIndex].copy(generating = false,
                     generationError = "AU could not understand this attachment.")
             } finally {
-                session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                session.finishRequest(firstResponseIndex, workStartedAt, kotlinx.coroutines.currentCoroutineContext().isActive) {
                     au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
-                session.searching = false
-                session.searchingStage = ""
-                session.activeRequest = null
-                session.activitySteps.clear()
             }
         }
         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
