@@ -47,6 +47,8 @@ fun ProfileScreen(
     val listState=rememberLazyListState()
     val tourTarget=LocalAuSpotlight.current?.activeTarget
     LaunchedEffect(tourTarget) { if(tourTarget==TourTarget.MODELS) listState.scrollToItem(6) }
+    var showVoice by remember { mutableStateOf(false) }
+    if (showVoice) au.datacube.app.ui.common.AuVoiceSettings { showVoice = false }
     var showProfile by remember { mutableStateOf(false) }
     var showBackups by remember { mutableStateOf(false) }
     var showPersonalization by remember(user?.id) { mutableStateOf(false) }
@@ -207,6 +209,7 @@ fun ProfileScreen(
             item {
                 SettingsEntry(Icons.Outlined.Memory, "Models", "Download or import models", onOpenModels, modifier=Modifier.auTourTarget(TourTarget.MODELS))
             }
+            item { SettingsEntry(Icons.Outlined.VolumeUp, "Voice", "Read-aloud engine and voice", { showVoice = true }) }
             item { SettingsEntry(Icons.Outlined.Info, "Getting started", "Replay the quick tutorial", onShowSetupGuide) }
             item { SettingsEntry(Icons.Outlined.ChatBubbleOutline, "Community", "WhatsApp · Help and updates", onOpenCommunity, communityIcon=true) }
             item {

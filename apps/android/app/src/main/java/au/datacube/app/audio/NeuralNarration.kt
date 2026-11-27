@@ -72,6 +72,13 @@ object NeuralNarration {
         renderAndPlay(context, parts, speed, {}, onStage, onProgress)
     }
 
+    /** Render one private WAV for the reusable message player, without playing it. */
+    suspend fun prepareReadAloud(context: Context, text: String, voice: String, destination: File,
+        onStage: suspend (String) -> Unit = {}) {
+        val parts = NeuralTextSegmenter.split(text, maxText = 12_000).map { SpeechPart(it, voice, 0) }
+        renderAndPlay(context, parts, 1f, {}, onStage, destination = destination)
+    }
+
     suspend fun speakDialogue(
         context: Context, turns: List<PodcastTurn>, speed: Float,
         onSpeaker: suspend (Int) -> Unit,
@@ -95,7 +102,8 @@ object NeuralNarration {
         context: Context, parts: List<SpeechPart>, speed: Float,
         onSpeaker: suspend (Int) -> Unit,
         onStage: suspend (String) -> Unit,
-        onProgress: suspend (Long, Long) -> Unit = { _, _ -> }
+        onProgress: suspend (Long, Long) -> Unit = { _, _ -> },
+        destination: File? = null
     ) = withContext(speechDispatcher) {
         require(installed(context)) { "Install Kokoro in Models to use neural voices." }
         require(parts.isNotEmpty() && parts.all { it.voice in presetVoices })
@@ -156,6 +164,10 @@ object NeuralNarration {
                     prepareAudio()
                 }
                 Log.i("AuNeuralSpeech", "delegateRequested=$loadedDelegate synthesisMs=${SystemClock.elapsedRealtime() - began} audioMs=${totalSamples * 1000 / rate}")
+                if (destination != null) {
+                    writeWaveFile(pcm, destination, rate, totalSamples)
+                    return@withLock
+                }
                 val minimum = AudioTrack.getMinBufferSize(
                     rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
                 )
@@ -234,6 +246,31 @@ object NeuralNarration {
                 pcm.delete()
             }
         }
+    }
+
+    /** PCM stays on disk. Do not allocate the entire waveform in memory. */
+    private suspend fun writeWaveFile(pcm: File, destination: File, rate: Int, samples: Long) {
+        val bytes = samples * 2
+        require(bytes in 2..128L * 1024 * 1024)
+        val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        header.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt((36 + bytes).toInt())
+        header.put("WAVEfmt ".toByteArray(Charsets.US_ASCII)).putInt(16)
+        header.putShort(1.toShort()).putShort(1.toShort()).putInt(rate).putInt(rate * 2)
+        header.putShort(2.toShort()).putShort(16.toShort())
+        header.put("data".toByteArray(Charsets.US_ASCII)).putInt(bytes.toInt())
+        destination.outputStream().buffered().use { output ->
+            output.write(header.array())
+            pcm.inputStream().buffered().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+        check(destination.length() == bytes + 44)
     }
 
     /** Stop is immediate and never waits for the inference mutex. */
