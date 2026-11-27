@@ -43,6 +43,7 @@ data class VoiceNoteConfig(
 )
 
 /** Replaces the entire typing composer while recording or reviewing. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 internal fun VoiceNoteComposer(
     config: VoiceNoteConfig,
@@ -63,6 +64,7 @@ internal fun VoiceNoteComposer(
     var levels by remember(recorder) { mutableStateOf(emptyList<Float>()) }
     var preview by remember(recorder) { mutableStateOf<RecordedVoiceNote?>(null) }
     var error by remember(recorder) { mutableStateOf<String?>(null) }
+    var previewVersion by remember(recorder) { mutableIntStateOf(0) }
     var previewJob by remember(recorder) { mutableStateOf<Job?>(null) }
     var player by remember(recorder) { mutableStateOf<MediaPlayer?>(null) }
     var playing by remember(recorder) { mutableStateOf(false) }
@@ -70,6 +72,7 @@ internal fun VoiceNoteComposer(
     val active = recording || paused || busy || preview != null
 
     fun stopPreview() {
+        previewVersion++
         previewJob?.cancel()
         previewJob = null
         playing = false
@@ -205,6 +208,7 @@ internal fun VoiceNoteComposer(
     BackHandler(active) { discard() }
 
     if (!active) {
+        Column(Modifier.fillMaxWidth()) {
         normalContent {
             IconButton(enabled = currentConfig.enabled, modifier = Modifier.size(48.dp), onClick = {
                 if (!currentConfig.supportsAudio) error = "Select an installed Gemma 4 E2B or E4B model to record voice notes."
@@ -220,6 +224,7 @@ internal fun VoiceNoteComposer(
                 TextButton(onClick = { error = null }) { Text("Dismiss") }
             }
         }
+        }
     } else {
         Column(Modifier.fillMaxWidth().padding(12.dp).testTag("au-inline-voice-recorder"),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -231,9 +236,10 @@ internal fun VoiceNoteComposer(
                             val path = preview?.file?.absolutePath ?: return@IconButton
                             playing = true
                             position = 0
+                            val version = ++previewVersion
                             previewJob = AuAudioPlayback.launch(context, "Preview voice note",
-                                onFinished = { playing = false; player = null; position = 0 }) {
-                                try { playPrivateVoiceNote(path) { player = it } }
+                                onFinished = { if (previewVersion == version) { playing = false; player = null; position = 0 } }) {
+                                try { playPrivateVoiceNote(path) { if (previewVersion == version) player = it } }
                                 catch (cancelled: CancellationException) { throw cancelled }
                                 catch (_: Exception) { error = "Could not play the recording." }
                             }
@@ -280,7 +286,7 @@ internal fun VoiceNoteComposer(
                     Icon(Icons.Outlined.DeleteOutline, "Discard recording", tint = MaterialTheme.colorScheme.error)
                 }
                 FilledTonalButton(onClick = { if (paused) resumeRecording() else pauseRecording() },
-                    enabled = !busy && millis < WavePcm.MAX_SECONDS * 1000,
+                    enabled = !busy && !recorder.captureFailed && millis < WavePcm.MAX_SECONDS * 1000,
                     modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
                     Icon(if (paused) Icons.Outlined.Mic else Icons.Outlined.Pause, null)
                     Spacer(Modifier.width(8.dp))
