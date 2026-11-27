@@ -118,6 +118,7 @@ object NeuralNarration {
             var player: AudioTrack? = null
             var rate = 0
             var totalSamples = 0L
+            var usedDelegate: Delegate? = null
             val boundaries = mutableListOf<Pair<Long, Int>>()
             try {
                 suspend fun prepareAudio() {
@@ -169,11 +170,12 @@ object NeuralNarration {
                     } finally {
                         // Synthesis is done before playback. Release neural weights
                         // so other local engines do not contend with a silent cache.
+                        usedDelegate = loadedDelegate
                         closeEngine()
                         task = null
                     }
                 }
-                Log.i("AuNeuralSpeech", "delegateRequested=$loadedDelegate synthesisMs=${SystemClock.elapsedRealtime() - began} audioMs=${totalSamples * 1000 / rate}")
+                Log.i("AuNeuralSpeech", "delegateUsed=$usedDelegate synthesisMs=${SystemClock.elapsedRealtime() - began} audioMs=${totalSamples * 1000 / rate}")
                 if (destination != null) {
                     writeWaveFile(pcm, destination, rate, totalSamples)
                     return@withLock
@@ -197,11 +199,11 @@ object NeuralNarration {
                 check(track.state == AudioTrack.STATE_INITIALIZED)
                 if (speed != 1f) {
                     // Time stretching preserves the speaker's pitch where supported.
-                    // Fall back to sample-rate playback on devices rejecting PlaybackParams.
+                    // If unsupported, keep natural playback rather than changing pitch.
                     try {
                         track.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
                     } catch (_: IllegalArgumentException) {
-                        track.playbackRate = (rate * speed).toInt()
+                        Log.w("AuNeuralSpeech", "Pitch-preserving speed unsupported; using normal speed")
                     }
                 }
                 var speaker = -1
