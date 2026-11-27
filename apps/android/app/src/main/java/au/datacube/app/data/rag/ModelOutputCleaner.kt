@@ -62,10 +62,11 @@ object ModelOutputCleaner {
                 if (trimmed.isNotEmpty() && (visualTags.any { ("[" + it + "]").startsWith(trimmed) } ||
                     trimmed.matches(Regex("""#{1,6}\s*|[-*]\s*|\d+[.)]\s*""")))) continue
                 output += line.replace(partialCitation, "").let { text ->
-                    if (!final) text.trimEnd('*', '\u0060') else text
+                    if (!final && text.endsWith("*") && !text.endsWith("**")) text.dropLast(1) else text
                 }
             } else output += line
         }
+        if (final && stack.isNotEmpty()) output += "An incomplete visual could not be rendered. Regenerate to try again."
         return output.joinToString("\n")
     }
 
