@@ -84,7 +84,6 @@ class PodcastOverviewSession(private val documentId: String) {
                     SmoothOfflineNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage,
                         distinguishSpeakers = true)
                 } else {
-                    LocalGenerativeEngine.release()
                     NeuralNarration.speakDialogue(app, dialogue, speed, onSpeaker, onStage)
                 }
                 resumeTurn = 0
