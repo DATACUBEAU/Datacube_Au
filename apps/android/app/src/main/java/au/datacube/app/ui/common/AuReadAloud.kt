@@ -115,7 +115,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         if (plain.isBlank()) return
         val preference = OfflineNarrationPreferences(context)
         val key = "${if (system) "android" else neuralVoice}:${preference.speed}:${preference.pitch}:${preference.voiceName}:$plain"
-        if (active == id && cacheKey == key && (preparing || parts.isNotEmpty() || directMode)) {
+        if (active == id && cacheKey == key && (preparing || streaming || parts.isNotEmpty() || directMode)) {
             if (!preparing) toggle()
             return
         }
@@ -127,6 +127,11 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         voiceLabel = if (system) "Offline Android voice" else NeuralNarration.presetVoices[neuralVoice] ?: "Kokoro"
         if (!system && !neuralAvailable) {
             error = "Install Kokoro in Models or choose Android voice in Settings."
+            stage = "Voice unavailable"
+            return
+        }
+        if (plain.length > 128_000) {
+            error = "This response is too long for one audio session. Open a shorter section."
             stage = "Voice unavailable"
             return
         }
@@ -161,7 +166,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                         if (token == revision) { positionMs = position; durationMs = duration }
                     } },
                     onStarted = { withContext(Dispatchers.Main.immediate) {
-                        if (token == revision) { streaming = true; preparing = false; playing = true }
+                        if (token == revision) { streaming = true; preparing = false; playing = !streamPaused }
                     } },
                     isPaused = { streamPaused })
                 val files = listOf(output)
