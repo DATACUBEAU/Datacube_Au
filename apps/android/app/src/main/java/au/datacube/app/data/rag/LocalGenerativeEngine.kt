@@ -81,6 +81,10 @@ object LocalGenerativeEngine {
                 val source = File(context.filesDir,
                     "models/installed/$selectedId/${artifact.fileName}")
                 check(source.isFile) { "Restore the selected Gemma 4 model in Models." }
+                val memory = ActivityManager.MemoryInfo().also {
+                    (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.getMemoryInfo(it)
+                }
+                check(!memory.lowMemory) { "Device memory is critically low. Retry when memory is available." }
                 if (engine == null || loadedPath != source.absolutePath || !loadedWithAudio) {
                     engine?.close()
                     engine = null
@@ -192,8 +196,8 @@ object LocalGenerativeEngine {
             }
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
-            val thinkingBudget = if (studyTask) null else if (effort == AuEffort.BALANCED && lowRam)
-                AuEffort.FAST.thinkingBudget(modelId, true) else effort.thinkingBudget(modelId, lowRam)
+            val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam)
+            val thinkingBudget = if (studyTask) null else effectiveEffort.thinkingBudget(modelId, lowRam)
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
@@ -241,10 +245,10 @@ object LocalGenerativeEngine {
                         } + " " + AuTeachingPolicy.LANGUAGE +
                             (if (studyVisuals || (!studyTask && visualRequested))
                                 " " + AuTeachingPolicy.VISUALS else "") +
-                            (if (!studyTask) " " + effort.instruction else "")
+                            (if (!studyTask) " " + effectiveEffort.instruction else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
-                    maxOutputToken = if (studyTask) (if (lowRam) 1536 else 3072) else if (lowRam) minOf(effort.outputTokens, 1024) else effort.outputTokens,
+                    maxOutputToken = if (studyTask) null else effectiveEffort.outputTokens,
                     thinkingConfig = thinkingBudget?.let { ThinkingConfig(enableThinking = it > 0, thinkingTokenBudget = it) }
                 )
             )
