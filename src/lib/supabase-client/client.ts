@@ -87,9 +87,11 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
   const newInit = { ...init };
   const headers = new Headers(newInit.headers);
   
-  // Inject x-device-id
-  const deviceId = getDeviceId();
-  headers.set('x-device-id', deviceId);
+  // Device metadata belongs to application requests, not the OAuth exchange.
+  // Auth must not depend on access to localStorage or UUID generation here.
+  if (!isSupabaseAuthRequest) {
+    headers.set('x-device-id', getDeviceId());
+  }
 
   // If input is a Request, we need to be careful. 
   // Standard fetch behavior: if init.headers is present, it REPLACES input.headers.
@@ -137,6 +139,14 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
 
   // Use the original Request object if available to preserve body and other settings
   const fetchInput = input;
+
+  // PKCE authorization codes are single use. Avoid replaying a token POST
+  // after an ambiguous network failure, and release the SDK lock on timeout.
+  if (isSupabaseAuthRequest && new URL(url).searchParams.get('grant_type') === 'pkce') {
+    const timeout = AbortSignal.timeout(12000);
+    const signal = newInit.signal ? AbortSignal.any([newInit.signal, timeout]) : timeout;
+    return fetch(fetchInput, { ...newInit, signal });
+  }
 
   // Retry logic for network failures only.
   const MAX_RETRIES = 2;

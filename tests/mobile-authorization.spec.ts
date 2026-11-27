@@ -230,3 +230,30 @@ test('fresh Android login performs a real SDK PKCE round trip without seeded ver
   await expect(page.getByRole('textbox', { name: 'Pairing code' })).toBeVisible({ timeout: 30000 });
   expect(matched).toBe(true);
 });
+
+
+test('an orphaned browser auth lock does not prevent mobile PKCE exchange', async ({ page, context }) => {
+  test.slow();
+  const projectUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://ci-build.invalid';
+  const projectRef = new URL(projectUrl).hostname.split('.')[0];
+  const lockName = `lock:sb-${projectRef}-auth-token`;
+  // A separate tab models an older browser operation that never releases
+  // its lock. No real session, account, or provider is involved.
+  const holder = await context.newPage();
+  await holder.route('**/auth-lock-fixture', (route) => route.fulfill({ contentType: 'text/html', body: '<html><body>Lock fixture</body></html>' }));
+  await holder.goto('/auth-lock-fixture');
+  await holder.evaluate(async (name) => {
+    await new Promise<void>((resolve) => {
+      void navigator.locks.request(name, async () => {
+        resolve();
+        await new Promise<void>(() => {});
+      }).catch(() => {});
+    });
+  }, lockName);
+  try {
+    await mockBrowserOAuth(page, 'member');
+    await expect(page.getByRole('textbox', { name: 'Pairing code' })).toBeVisible();
+  } finally {
+    await holder.close();
+  }
+});
