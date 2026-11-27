@@ -104,14 +104,14 @@ fun PodcastConversationPanel(
                 )
             }
             AuPodcastStage(
-                playing = listening,
+                playing = listening && !session.paused,
                 activeSpeaker = turns.getOrNull(activeSpeakerIndex)?.speaker,
                 status = if (listening) playbackStage else "",
                 hasScript = turns.isNotEmpty(),
                 enabled = (smoothVoice || neuralReady) && !session.generating,
                 onPlayPause = {
                     if (listening) {
-                        session.stopPlayback()
+                        session.togglePlaybackPause()
                     } else startPlayback()
                 }
             )
@@ -157,7 +157,8 @@ fun PodcastConversationPanel(
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        if (listening && activeSpeakerIndex >= 0) "Speaking ${activeSpeakerIndex + 1} of ${turns.size}"
+                        if (session.paused) "Paused"
+                        else if (listening && activeSpeakerIndex >= 0) "Speaking ${activeSpeakerIndex + 1} of ${turns.size}"
                         else if (listening) playbackStage.ifBlank { "Preparing audio" }
                         else if (session.resumeTurn > 0) "Resume at part ${session.resumeTurn + 1} of ${turns.size}"
                         else "${turns.size} parts ready",
@@ -165,9 +166,10 @@ fun PodcastConversationPanel(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
-                    if (listening) CircularProgressIndicator(
+                    if (listening && !session.paused) CircularProgressIndicator(
                         Modifier.size(18.dp), strokeWidth = 2.dp)
                 }
+                if (listening) TextButton(onClick = session::stopPlayback) { Text("Stop audio") }
                 if (!listening && session.resumeTurn > 0) TextButton(onClick = session::restartPlayback) { Text("Restart") }
                 OutlinedButton(
                     onClick = {
