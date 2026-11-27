@@ -32,13 +32,13 @@ object LocalEmbeddingRuntime {
         return File(folder, artifact.fileName).isFile
     }
 
-    suspend fun embed(context: Context, text: String): FloatArray = withContext(Dispatchers.IO) {
+    suspend fun embed(context: Context, text: String, background: Boolean = false): FloatArray = withContext(Dispatchers.IO) {
         require(text.isNotBlank()) { "Cannot embed empty text." }
         require(text.length <= 6_000) { "Text must be chunked before embedding." }
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             "The selected embedding runtime requires Android 9 or newer."
         }
-        mutex.withLock {
+        LocalComputeGate.admit(interactive = !background) {
             currentCoroutineContext().ensureActive()
             LocalComputeGate.prepare(context, LocalComputeGate.Engine.EMBEDDING)
             val artifact = requireNotNull(VerifiedModelDownloads.find(MODEL_ID))
