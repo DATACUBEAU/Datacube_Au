@@ -21,7 +21,6 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -36,7 +35,7 @@ object LocalGenerativeEngine {
         Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); task.run() }, "datacube-local-llm").apply { isDaemon = true }
     }
     private val dispatcher = executor.asCoroutineDispatcher()
-    private val mutex = Mutex()
+    private val mutex = LocalComputeGate.mutex
     private var engine: Engine? = null
     private var loadedPath: String? = null
     private var loadedWithAudio = false
