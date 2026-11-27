@@ -235,6 +235,7 @@ object NeuralNarration {
                     }
                     Log.i("AuNeuralSpeech", "synthesisSeconds=${finished.synthesisSeconds} audioSeconds=${finished.samples.toDouble() / finished.rate}")
                     consumer?.await()
+                    Unit
                 }
             } finally {
                 pcm.delete()
@@ -318,7 +319,7 @@ object NeuralNarration {
             // completed caches when the aggregate storage budget is exceeded.
             val others = directory.parentFile?.listFiles().orEmpty()
                 .filter { it.isDirectory && it != directory }.sortedBy { it.lastModified() }
-            var total = (others + directory).sumOf { File(it, "audio.pcm").length() }
+            var total = (others + listOf(directory)).sumOf { File(it, "audio.pcm").length() }
             for (old in others) {
                 if (total <= 256L * 1024 * 1024) break
                 val size = File(old, "audio.pcm").length()
