@@ -592,10 +592,9 @@ fun DiscsScreen(
                                 val retryQuestion = session.regenerationQuestion(messageIndex)
                                 if (retryQuestion != null && (modelReady && !historyBusy && !preparingAttachment)) {
                                     TextButton(onClick = {
-                                        val question = session.regenerationQuestion(messageIndex) ?: return@TextButton
+                                        val question = session.beginRegeneration(messageIndex) ?: return@TextButton
                                         speech.stop()
                                         expandedSources = expandedSources - messageIndex
-                                        turns.removeAt(messageIndex)
                                         followLatest = true
                                         send(question, alreadyAdded = true)
                                     }) {
@@ -603,6 +602,13 @@ fun DiscsScreen(
                                         Spacer(Modifier.width(6.dp))
                                         Text(if (message.generationError != null) "Retry response" else "Regenerate")
                                     }
+                                }
+                                if (session.hasAlternate(messageIndex)) {
+                                    TextButton(onClick = {
+                                        speech.stop()
+                                        expandedSources = expandedSources - messageIndex
+                                        session.swapAlternate(messageIndex)
+                                    }) { Text("Switch response version") }
                                 }
                                 val i = messageIndex
                                 if (!message.generating && message.matches.isNotEmpty()) {
