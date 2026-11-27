@@ -11,7 +11,6 @@ import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -22,7 +21,7 @@ import kotlinx.coroutines.withContext
  */
 object LocalEmbeddingRuntime {
     const val MODEL_ID = "embeddinggemma-2-270m"
-    private val mutex = Mutex()
+    private val mutex = LocalComputeGate.mutex
     private var active: UniversalEmbedder? = null
     private var activePath: String? = null
 
