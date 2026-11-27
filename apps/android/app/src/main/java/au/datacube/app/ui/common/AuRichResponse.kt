@@ -361,7 +361,11 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                             verticalAlignment = Alignment.CenterVertically) {
                             stage.forEach { node ->
                                 Surface(Modifier.weight(1f), shape = RoundedCornerShape(14.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                                    color = when (index) {
+                                        0 -> MaterialTheme.colorScheme.primaryContainer
+                                        1 -> MaterialTheme.colorScheme.secondaryContainer
+                                        else -> MaterialTheme.colorScheme.tertiaryContainer
+                                    },
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                                     Column(Modifier.padding(if (stage.size > 1) 8.dp else 14.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
