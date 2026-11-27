@@ -10,6 +10,15 @@ import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
+import au.datacube.app.ui.common.DataCubeDialog
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material3.*
@@ -87,7 +96,8 @@ internal fun GistAttachmentMenu(
         IconButton(onClick = { expanded = true }, enabled = enabled && !busy) {
             Icon(Icons.Outlined.Add, contentDescription = "Add attachment")
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        if (expanded) DataCubeDialog(onDismissRequest = { expanded = false },
+            title = { Text("Add attachment") }, text = { Column {
             DropdownMenuItem(text = { Text("Attach file") }, onClick = {
                 expanded = false
                 try { document.launch(arrayOf("application/pdf", "text/plain", "text/markdown")) }
@@ -105,8 +115,42 @@ internal fun GistAttachmentMenu(
                 Text("Images require Gemma 4 E2B or E4B", style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.padding(12.dp))
             }
+        } }, confirmButton = { TextButton(onClick = { expanded = false }) { Text("Cancel") } })
+    }
+}
+
+@Composable
+internal fun GistAttachmentPreview(attachment: GistAttachment, onRemove: () -> Unit, enabled: Boolean = true) {
+    val photo = attachment as? GistAttachment.Photo
+    val bitmap = remember(photo) {
+        photo?.let {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(it.bytes, 0, it.bytes.size, bounds)
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 512) sample *= 2
+            BitmapFactory.decodeByteArray(it.bytes, 0, it.bytes.size,
+                BitmapFactory.Options().apply { inSampleSize = sample })
         }
     }
+    if (bitmap != null) {
+        Box(Modifier.size(112.dp).clip(RoundedCornerShape(16.dp))) {
+            Image(bitmap.asImageBitmap(), "Attached image preview", Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit)
+            FilledTonalIconButton(onClick = onRemove, enabled = enabled,
+                modifier = Modifier.align(Alignment.TopEnd).size(44.dp)) {
+                Icon(Icons.Outlined.Close, "Remove attachment")
+            }
+        }
+    } else {
+        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Row(Modifier.padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(attachment.label, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                IconButton(onClick = onRemove, enabled = enabled) { Icon(Icons.Outlined.Close, "Remove attachment") }
+            }
+        }
+    }
+    if ((attachment as? GistAttachment.Document)?.truncated == true)
+        Text("Excerpt only. Import into Documents for full retrieval.", style = MaterialTheme.typography.labelSmall)
 }
 
 private fun name(context: Context, uri: Uri, fallback: String): String =
