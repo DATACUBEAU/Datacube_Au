@@ -108,7 +108,7 @@ fun DocumentWorkspaceScreen(
                 selectedTab = previousTools.last()
                 previousTools = previousTools.copyOf(previousTools.size - 1)
             }
-            else -> onBack()
+            else -> Unit // System Back at the workspace root does not eject the reader.
         }
     }
     BackHandler { navigateBack() }
@@ -141,8 +141,8 @@ fun DocumentWorkspaceScreen(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = ::navigateBack) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
+            IconButton(onClick = onBack) {
+                Icon(Icons.Outlined.ArrowBack, contentDescription = "Exit workspace")
             }
             if (!immersive) {
                 Spacer(Modifier.width(5.dp))
