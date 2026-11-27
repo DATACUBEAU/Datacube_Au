@@ -161,7 +161,7 @@ class LocalNotificationService(private val context: Context) {
             .setAutoCancel(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .build()
-        manager.notify(tag(documentId), COMPLETE_ID, notification)
+        runCatching { manager.notify(tag(documentId), COMPLETE_ID, notification) }
     }
 
     fun showSemanticComplete(documentId: String) {
@@ -190,11 +190,11 @@ class LocalNotificationService(private val context: Context) {
         val open = PendingIntent.getActivity(context, 73, Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        manager.notify("au-ready-$key", 1, Notification.Builder(context, "au_ai_ready")
+        runCatching { manager.notify("au-ready-$key", 1, Notification.Builder(context, "au_ai_ready")
             .setSmallIcon(R.drawable.ic_notification_datacube)
             .setContentTitle("DataCube AU").setContentText(message)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(open).setAutoCancel(true).build())
+            .setContentIntent(open).setAutoCancel(true).build()) }
     }
 
     fun cancelDocument(documentId: String, legacyJobIds: Collection<String>) {

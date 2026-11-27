@@ -129,4 +129,39 @@ class LocalPassageIndexTest {
             file.delete()
         }
     }
+
+    @Test fun boundedPassageBatchesCoverEveryIndexedOrdinalAndResumeAtCheckpoint() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val id = "test-" + UUID.randomUUID()
+        val file = File(context.cacheDir, "$id.txt")
+        val index = LocalPassageIndex(context)
+        try {
+            file.writeText("----- Page 1 -----\n" + ("A source passage contains meaningful searchable material. ").repeat(6000) +
+                "\n----- Page 42 -----\nUnique final page marker content.")
+            val count = index.build(id, file)
+            val snapshot = requireNotNull(index.snapshot(id, file))
+            assertTrue(snapshot.count == count)
+            val first = index.batchAfter(id, 0L, 16)
+            assertTrue(first.size == 16)
+            var rowId = requireNotNull(index.rowIdForOrdinal(id, first.last().passage.ordinal))
+            var expectedOrdinal = 16
+            var lastPage: Int? = null
+            while (true) {
+                val rows = index.batchAfter(id, rowId, 32)
+                if (rows.isEmpty()) break
+                rows.forEach { row ->
+                    assertTrue(row.passage.ordinal == expectedOrdinal++)
+                    lastPage = row.passage.page
+                }
+                rowId = rows.last().rowId
+            }
+            assertTrue(expectedOrdinal == count)
+            assertTrue(lastPage == 42)
+            assertTrue(index.snapshot(id, file) == snapshot)
+        } finally {
+            index.remove(id)
+            index.close()
+            file.delete()
+        }
+    }
 }
