@@ -222,6 +222,7 @@ class GeneratedStudySession {
                 withContext(Dispatchers.Main) {
                     error = failure.message ?: "AU could not generate study content."
                 }
+                runCatching { LocalNotificationService(app).showAiReady("$documentId-${mode.name}", "Study generation needs attention. Open AU to review.") }
             }
         }
         generation = job

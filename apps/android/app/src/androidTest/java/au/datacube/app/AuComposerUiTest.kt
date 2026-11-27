@@ -10,6 +10,12 @@ import androidx.compose.ui.test.onNodeWithText
 import au.datacube.app.data.rag.AuEffort
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.getBoundsInRoot
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
@@ -84,5 +90,24 @@ class AuComposerUiTest {
         rule.onNodeWithText("Done").performClick()
         rule.runOnIdle { assertEquals(AuEffort.DEEP, selected) }
         rule.onNodeWithContentDescription("Response effort: Deep").assertExists()
+    }
+
+    @Test fun actionRowDoesNotShrinkUnderLongDraft() {
+        rule.setContent {
+            var input by remember { mutableStateOf("") }
+            DataCubeTheme {
+                Box(Modifier.fillMaxWidth().height(190.dp)) {
+                    AuComposer(input, { input = it }, {}, "Ask AU", true, true, onEffortChange = {})
+                }
+            }
+        }
+        val row = rule.onNodeWithTag("au-composer-actions", useUnmergedTree = true)
+        val initial = row.getBoundsInRoot().let { it.bottom - it.top }
+        org.junit.Assert.assertTrue(kotlin.math.abs(initial.value - 48f) <= 1f)
+        rule.onNodeWithTag("au-composer-input").performTextInput((1..15).joinToString("\n") { "A long draft line $it" })
+        org.junit.Assert.assertTrue(kotlin.math.abs((row.getBoundsInRoot().let { it.bottom - it.top }).value - initial.value) <= 0.5f)
+        rule.onNodeWithContentDescription("Expand composer").performClick()
+        rule.onNodeWithContentDescription("Collapse composer").performClick()
+        org.junit.Assert.assertTrue(kotlin.math.abs((row.getBoundsInRoot().let { it.bottom - it.top }).value - initial.value) <= 0.5f)
     }
 }

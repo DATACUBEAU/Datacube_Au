@@ -19,6 +19,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import au.datacube.app.ui.common.DataCubeDialog
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.DateFormat
 import java.util.Date
 
@@ -35,7 +38,15 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
     val at = remember(timeText, referenceNow) {
         AuScheduleIntent.parseTime(timeText, referenceNow)
     }
-    var tasks by remember { mutableStateOf(store.list(account, workspace)) }
+    var tasks by remember(account, workspace) { mutableStateOf(emptyList<AuReminder>()) }
+    var nowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(account, workspace) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            tasks = withContext(Dispatchers.IO) { store.list(account, workspace) }
+            delay(if (tasks.any { it.state == "Scheduled" && it.at - nowMs in 1L..60_000L }) 1000L else 15_000L)
+        }
+    }
     var status by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -48,7 +59,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
             (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
             manager.getNotificationChannel(AuReminderStore.CHANNEL)?.importance != NotificationManager.IMPORTANCE_NONE
     }
-    val valid = title.isNotBlank() && at != null && at > System.currentTimeMillis() && !busy
+    val valid = title.isNotBlank() && at != null && at > nowMs && !busy
     DataCubeDialog(onDismissRequest = { if (!busy) onDismiss() }, title = { Text("Schedules") },
         text = {
             Column(Modifier.heightIn(max = 500.dp).verticalScroll(rememberScrollState()),
@@ -93,7 +104,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
                         scope.launch {
                             try {
                                 store.add(account, workspace, title, selectedAt)
-                                tasks = store.list(account, workspace)
+                                tasks = withContext(Dispatchers.IO) { store.list(account, workspace) }
                                 title = ""
                                 timeText = ""
                                 status = "Reminder saved."
@@ -102,7 +113,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
                             } finally { busy = false }
                         }
                     }
-                }, modifier = Modifier.fillMaxWidth()) { Text("Schedule AU reminder") }
+                }, modifier = Modifier.fillMaxWidth()) { Text("Create schedule") }
                 OutlinedButton(enabled = valid, onClick = {
                     val selectedAt = at ?: return@OutlinedButton
                     if (selectedAt <= System.currentTimeMillis()) { status = "Choose a future time."; return@OutlinedButton }
@@ -116,7 +127,7 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
                 }, modifier = Modifier.fillMaxWidth()) { Text("Add to phone calendar") }
                 if (status.isNotBlank()) Text(status, style = MaterialTheme.typography.bodySmall)
                 HorizontalDivider()
-                Text("Your reminders", style = MaterialTheme.typography.titleMedium)
+                Text("Your schedules", style = MaterialTheme.typography.titleMedium)
                 if (tasks.isEmpty()) Text("No reminders yet.", style = MaterialTheme.typography.bodySmall)
                 tasks.forEach { task ->
                     ElevatedCard(Modifier.fillMaxWidth()) {
@@ -124,10 +135,12 @@ fun AuScheduleDialog(account: String, workspace: String? = null, initialTitle: S
                             Text(task.title, style = MaterialTheme.typography.titleSmall)
                             Text(format(task.at), style = MaterialTheme.typography.bodySmall)
                             Text(task.state, style = MaterialTheme.typography.labelSmall)
+                            if (task.state == "Scheduled") Text(AuScheduleCountdown.label(task.at, nowMs),
+                                color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.titleSmall)
                             TextButton(enabled = !busy, onClick = {
                                 busy = true
                                 scope.launch {
-                                    try { store.cancel(account, task.id); tasks = store.list(account, workspace) }
+                                    try { store.cancel(account, task.id); tasks = withContext(Dispatchers.IO) { store.list(account, workspace) } }
                                     catch (e: Exception) { status = e.message ?: "Could not remove reminder." }
                                     finally { busy = false }
                                 }

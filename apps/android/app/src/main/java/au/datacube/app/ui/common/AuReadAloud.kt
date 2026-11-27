@@ -87,6 +87,9 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         }
     }
 
+    fun playAndroid(id: Int, answer: String) = play(id, answer, true, OfflineNarrationPreferences(context).neuralVoice)
+    fun playKokoro(id: Int, answer: String) = play(id, answer, false, OfflineNarrationPreferences(context).neuralVoice)
+
     fun playPreferred(id: Int, answer: String) {
         val preference = OfflineNarrationPreferences(context)
         val system = preference.readAloudEngine == "android" ||
@@ -161,6 +164,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 waveform = levels
                 durationMs = ready.sumOf { it.durationMs }
                 preparing = false
+                if (!system) runCatching { au.datacube.app.notifications.LocalNotificationService(context)
+                    .showAiReady("voice-" + target.name, "Kokoro audio is ready") }
                 playCached(token)
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -293,10 +298,43 @@ internal fun rememberAuReadAloud(key: String): AuReadAloudState {
 
 @Composable
 internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String) {
-    IconButton(onClick = { speech.playPreferred(id, answer) }) {
+    var choosing by remember(id, answer) { mutableStateOf(false) }
+    var selected by remember(id, answer) { mutableStateOf("kokoro") }
+    IconButton(onClick = {
+        if (speech.active == id && speech.playing) speech.toggle()
+        else if (speech.neuralAvailable) { selected = "kokoro"; choosing = true }
+        else speech.playAndroid(id, answer)
+    }) {
         Icon(if (speech.active == id && speech.playing) Icons.Outlined.Pause else Icons.Outlined.VolumeUp,
             contentDescription = if (speech.active == id && speech.playing) "Pause read aloud" else "Read aloud",
             modifier = Modifier.size(20.dp))
+    }
+    if (choosing) {
+        DataCubeDialog(onDismissRequest = { choosing = false }, title = { Text("Read aloud") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf(Triple("kokoro", "Kokoro", "Natural local AI voice · prepares audio first"),
+                        Triple("android", "Android", "Quick offline voice · shorter preparation")).forEach { (engine, label, description) ->
+                        Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+                            color = if (selected == engine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = if (selected == engine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant) {
+                            Row(Modifier.fillMaxWidth().selectable(selected = selected == engine, role = Role.RadioButton,
+                                onClick = { selected = engine }).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(selected = selected == engine, onClick = null)
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(label, style = MaterialTheme.typography.titleMedium)
+                                    Text(description, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                }
+            }, confirmButton = { TextButton(onClick = {
+                choosing = false
+                if (selected == "kokoro" && speech.neuralAvailable) speech.playKokoro(id, answer)
+                else speech.playAndroid(id, answer)
+            }) { Text("Play") } }, dismissButton = { TextButton(onClick = { choosing = false }) { Text("Cancel") } })
     }
 }
 

@@ -23,6 +23,15 @@ interface SemanticChunkDao {
     @Query("DELETE FROM local_semantic_chunks WHERE documentId = :documentId")
     suspend fun clearDocument(documentId: String)
 
+    @Query("SELECT COUNT(*) FROM local_semantic_chunks WHERE documentId = :documentId AND modelId = :modelId")
+    suspend fun count(documentId: String, modelId: String): Int
+
+    @Query("UPDATE local_semantic_chunks SET modelId = :activeModel WHERE documentId = :documentId AND modelId = :stagedModel")
+    suspend fun publishStaged(documentId: String, stagedModel: String, activeModel: String): Int
+
+    @Query("SELECT * FROM local_semantic_chunks WHERE documentId = :documentId AND modelId = :modelId AND ordinal > :after ORDER BY ordinal LIMIT :pageSize")
+    suspend fun chunkPageAfter(documentId: String, modelId: String, after: Int, pageSize: Int): List<SemanticVectorChunk>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(chunks: List<SemanticVectorChunk>)
 }

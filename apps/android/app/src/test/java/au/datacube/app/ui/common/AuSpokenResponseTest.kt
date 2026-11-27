@@ -35,4 +35,19 @@ class AuSpokenResponseTest {
         assertFalse(speech.contains("val sample"))
         assertFalse(speech.contains("Not final"))
     }
+
+    @Test fun skipsDecorativePunctuationAndInlineCodeWithoutLosingMeaning() {
+        val speech = AuSpokenResponse.format("**Don't** repeat ... !!! ###. Use \u0060val x = 3\u0060. Price 3.14. Visit https://example.org/page.\n| Item | Value |\n| --- | --- |\n| RAM | 8 GB |")
+        assertTrue(speech.contains("Don't"))
+        assertTrue(speech.contains("3.14"))
+        assertTrue(speech.contains("See the code"))
+        assertTrue(speech.contains("URL in the response"))
+        assertTrue(speech.contains("table 1"))
+        assertTrue(speech.contains("Row 1. Item: RAM. Value: 8 GB."))
+        assertFalse(speech.contains("val x"))
+        assertFalse(speech.contains("https"))
+        assertFalse(speech.contains("!!!"))
+        assertFalse(speech.contains("..."))
+        assertFalse(speech.contains("#"))
+    }
 }

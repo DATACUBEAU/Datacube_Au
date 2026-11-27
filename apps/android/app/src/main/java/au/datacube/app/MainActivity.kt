@@ -420,11 +420,41 @@ private fun AuthenticatedWorkspace(
     val installedModelIds = remember(modelRevision) {
         ModelCatalog.models.filter { modelStore.installed(it.id) }.map { it.id }.toSet()
     }
+    val taskNotifications = remember(context) { au.datacube.app.notifications.LocalNotificationService(context.applicationContext) }
+    val notificationPrefs = remember(context) { context.getSharedPreferences("au_notification_onboarding_v1", android.content.Context.MODE_PRIVATE) }
+    var notificationOffer by rememberSaveable(accountId) { mutableStateOf(false) }
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
-        scope.launch { snackbar.showSnackbar(if (granted) "Task notifications enabled." else "Notifications remain off.") }
+        if (granted) taskNotifications.showPermissionExample()
+        scope.launch { snackbar.showSnackbar(if (granted) "Task notifications enabled." else "Notifications remain off. You can enable them in Settings.") }
     }
+    LaunchedEffect(initialCommunity, tutorialOffer, waitingForCommunity, tourIndex, manualCommunity) {
+        if (!initialCommunity && !tutorialOffer && !waitingForCommunity && !manualCommunity && tourIndex < 0 &&
+            !notificationPrefs.getBoolean("offered", false)) {
+            taskNotifications.ensureChannels()
+            if (taskNotifications.enabled()) {
+                notificationPrefs.edit().putBoolean("offered", true).apply()
+            } else notificationOffer = true
+        }
+    }
+    fun finishNotificationOffer(allow: Boolean) {
+        notificationPrefs.edit().putBoolean("offered", true).apply()
+        notificationOffer = false
+        if (!allow) return
+        if (android.os.Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else if (taskNotifications.enabled()) taskNotifications.showPermissionExample()
+        else runCatching { context.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)) }
+    }
+    if (notificationOffer) DataCubeDialog(
+        onDismissRequest = { finishNotificationOffer(false) },
+        title = { Text("Enable task notifications?") },
+        text = { Text("See document processing progress, study reminders and completed AU tasks even while using another app. You can change this in Settings.") },
+        confirmButton = { Button(onClick = { finishNotificationOffer(true) }) { Text("Allow notifications") } },
+        dismissButton = { TextButton(onClick = { finishNotificationOffer(false) }) { Text("Not now") } }
+    )
     // Multi-select document picker. Imports are copied sequentially and scheduled locally.
     val mimeTypes = arrayOf(
         "application/pdf",

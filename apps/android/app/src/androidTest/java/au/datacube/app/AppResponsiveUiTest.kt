@@ -319,5 +319,18 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("Create podcast").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Narration").assertDoesNotExist()
         composeRule.onNodeWithText("Play summary").assertDoesNotExist()
+        // Both the device Back button and the workspace arrow unwind tool history.
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            .sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Generate practice").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.onNodeWithText("Generate revision forecast").assertIsDisplayed()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            .sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        composeRule.waitForIdle()
+        composeRule.onNodeWithText("Generate Smart Note").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Back").performClick()
+        composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
     }
 }

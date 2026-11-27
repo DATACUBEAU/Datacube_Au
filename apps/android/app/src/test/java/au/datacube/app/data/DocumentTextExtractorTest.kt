@@ -80,7 +80,7 @@ class DocumentTextExtractorTest {
     fun rejectsFilesAboveTheOnDeviceLimitBeforeWriting() {
         val source = temporaryFolder.newFile("large.txt")
         val destination = File(temporaryFolder.root, "output.txt")
-        RandomAccessFile(source, "rw").use { it.setLength(20L * 1024L * 1024L + 1L) }
+        RandomAccessFile(source, "rw").use { it.setLength(100L * 1024L * 1024L + 1L) }
         destination.writeText("previous result", StandardCharsets.UTF_8)
 
         assertThrows(TextExtractionRejectedException::class.java) {
@@ -103,6 +103,25 @@ class DocumentTextExtractorTest {
         assertEquals(progress.sorted(), progress)
         assertTrue(progress.all { it in 0.0..0.95 })
         assertTrue(destination.isFile)
+    }
+
+    @Test
+    fun extractsLargeTextBeyondOldTwentyMiBLimitWithoutTruncation() {
+        val source = temporaryFolder.newFile("large-readable.txt")
+        val destination = File(temporaryFolder.root, "large-output.txt")
+        val block = ByteArray(1024 * 1024) { 'a'.code.toByte() }
+        source.outputStream().buffered().use { output ->
+            repeat(24) { output.write(block) }
+            output.write("\nEND OF DOCUMENT".toByteArray())
+        }
+        val result = extract(source, destination)
+        assertEquals(source.length(), result.bytesWritten)
+        RandomAccessFile(destination, "r").use { file ->
+            val tail = ByteArray(15)
+            file.seek(file.length() - tail.size)
+            file.readFully(tail)
+            assertEquals("END OF DOCUMENT", String(tail, Charsets.UTF_8))
+        }
     }
 
     private fun extract(

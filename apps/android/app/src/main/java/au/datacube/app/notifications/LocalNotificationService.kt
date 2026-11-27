@@ -11,6 +11,10 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import au.datacube.app.R
+import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
+import android.content.pm.ServiceInfo
+import kotlinx.coroutines.CancellationException
 
 /**
  * One persistent, low-priority status notification per document. These
@@ -18,6 +22,23 @@ import au.datacube.app.R
  * They are private on lock screens and never contain document titles/text.
  */
 class LocalNotificationService(private val context: Context) {
+    fun enabled(): Boolean = manager() != null
+
+    fun ensureChannels() {
+        val service = context.getSystemService(NotificationManager::class.java) ?: return
+        service.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Background processing", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Document extraction and indexing progress"
+            setShowBadge(false)
+        })
+        service.createNotificationChannel(NotificationChannel(READY_CHANNEL, "AU task completion", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Completed document, AI and audio tasks"
+        })
+    }
+
+    fun showPermissionExample() {
+        showAiReady("notifications-enabled", "Notifications are enabled. AU will keep you informed about your tasks.")
+    }
+
     private fun manager(): NotificationManager? {
         val service = context.getSystemService(NotificationManager::class.java) ?: return null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -25,15 +46,46 @@ class LocalNotificationService(private val context: Context) {
                 PackageManager.PERMISSION_GRANTED
         ) return null
         if (!service.areNotificationsEnabled()) return null
-        service.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID, "Background processing", NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Document extraction and optional indexing progress."
-                setShowBadge(false)
-            }
-        )
+        ensureChannels()
         return service
+    }
+
+    private fun workerNotification(detail: String, percent: Int?): Notification {
+        ensureChannels()
+        return Notification.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification_datacube)
+            .setContentTitle("DataCube AU · Preparing document")
+            .setContentText(detail).setContentIntent(openApp())
+            .setProgress(100, percent?.coerceIn(0, 100) ?: 0, percent == null)
+            .setOnlyAlertOnce(true).setOngoing(true).setShowWhen(false)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setCategory(Notification.CATEGORY_PROGRESS).build()
+    }
+
+    private fun workerId(worker: CoroutineWorker): Int = 0x20000000 or (worker.id.hashCode() and 0x0fffffff)
+
+    /** WorkManager owns foreground-service lifetime; background-start restrictions
+     * may deny promotion, in which case the durable worker still runs normally. */
+    suspend fun startDocumentWorker(worker: CoroutineWorker, detail: String, percent: Int? = null): Boolean {
+        val notification = workerNotification(detail, percent)
+        return try {
+            val info = if (Build.VERSION.SDK_INT >= 29)
+                ForegroundInfo(workerId(worker), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            else ForegroundInfo(workerId(worker), notification)
+            worker.setForeground(info)
+            true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { false }
+    }
+
+    fun updateDocumentWorker(worker: CoroutineWorker, documentId: String, foreground: Boolean,
+        detail: String, percent: Int? = null) {
+        val manager = manager() ?: return
+        val notice = workerNotification(detail, percent)
+        runCatching {
+            if (foreground) manager.notify(workerId(worker), notice)
+            else manager.notify(tag(documentId), PROGRESS_ID, notice)
+        }
     }
 
     fun showDocumentExtraction(documentId: String, percentage: Int) {
@@ -86,13 +138,12 @@ class LocalNotificationService(private val context: Context) {
     }
 
     fun showDocumentCheckComplete(jobId: String, documentId: String) {
-        clearDocumentProgress(documentId)
-        showCompletion(documentId, "Document verification complete")
+        // Integrity verification runs independently from extraction. Do not clear its progress.
     }
 
     fun showTextReady(documentId: String) {
         clearDocumentProgress(documentId)
-        showCompletion(documentId, "Document is ready for study")
+        // Text is available, but indexing may still be running. Final alert comes from the index worker.
     }
 
     fun showIndexComplete(documentId: String) {
@@ -102,15 +153,52 @@ class LocalNotificationService(private val context: Context) {
 
     private fun showCompletion(documentId: String, message: String) {
         val manager = manager() ?: return
-        val notification = Notification.Builder(context, CHANNEL_ID)
+        val notification = Notification.Builder(context, READY_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification_datacube)
+            .setContentIntent(openApp())
             .setContentTitle("DataCube AU")
             .setContentText(message)
-            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .build()
-        manager.notify(tag(documentId), COMPLETE_ID, notification)
+        runCatching { manager.notify(tag(documentId), COMPLETE_ID, notification) }
+    }
+
+    fun showSemanticComplete(documentId: String) {
+        showCompletion(documentId, "Document semantic search is ready")
+    }
+
+    fun showSemanticFailed(documentId: String) {
+        showCompletion(documentId, "Semantic search needs attention. Document keyword search is still available.")
+    }
+
+    fun showDocumentFailed(documentId: String) {
+        clearDocumentProgress(documentId)
+        showCompletion(documentId, "Document processing needs attention. Open AU to review.")
+    }
+
+    private fun openApp(): PendingIntent = PendingIntent.getActivity(context, 73, Intent(context, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+
+    /** Update progress reflects transferred bytes; never imply verification before it finishes. */
+    fun showUpdateDownloadProgress(versionCode: Int, percent: Int) {
+        val manager = manager() ?: return
+        val progress = percent.coerceIn(0, 100)
+        runCatching {
+            manager.notify("au-update-download-$versionCode", PROGRESS_ID, Notification.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_notification_datacube)
+                .setContentTitle("DataCube AU · App update")
+                .setContentText(if (progress == 100) "Verifying downloaded APK" else "Downloading update · $progress%")
+                .setContentIntent(openApp())
+                .setProgress(100, progress, progress == 100)
+                .setOnlyAlertOnce(true).setOngoing(true)
+                .setVisibility(Notification.VISIBILITY_PRIVATE).build())
+        }
+    }
+
+    fun clearUpdateDownloadProgress(versionCode: Int) {
+        context.getSystemService(NotificationManager::class.java)?.cancel("au-update-download-$versionCode", PROGRESS_ID)
     }
 
     /** Completion alerts are separate from silent ongoing progress. No private text. */
@@ -122,11 +210,11 @@ class LocalNotificationService(private val context: Context) {
         val open = PendingIntent.getActivity(context, 73, Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        manager.notify("au-ready-$key", 1, Notification.Builder(context, "au_ai_ready")
+        runCatching { manager.notify("au-ready-$key", 1, Notification.Builder(context, "au_ai_ready")
             .setSmallIcon(R.drawable.ic_notification_datacube)
             .setContentTitle("DataCube AU").setContentText(message)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(open).setAutoCancel(true).build())
+            .setContentIntent(open).setAutoCancel(true).build()) }
     }
 
     fun cancelDocument(documentId: String, legacyJobIds: Collection<String>) {
@@ -139,6 +227,7 @@ class LocalNotificationService(private val context: Context) {
 
     companion object {
         private const val CHANNEL_ID = "datacube_local_processing"
+        private const val READY_CHANNEL = "au_document_ready_v2"
         private const val COMPLETE_ID = 1
         private const val PROGRESS_ID = 2
         private fun tag(documentId: String) = "document-$documentId"

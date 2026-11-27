@@ -34,6 +34,7 @@ class LocalJobScheduler(context: Context) {
                 Constraints.Builder()
                     .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                     .setRequiresBatteryNotLow(true)
+                    .setRequiresStorageNotLow(true)
                     .build()
             )
             .setBackoffCriteria(

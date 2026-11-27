@@ -9,7 +9,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.*
@@ -84,7 +84,7 @@ fun AuActivityTimeline(
                 val (label, icon) = when (kind) {
                     AuActivityKind.SEARCH -> "Retrieval" to Icons.Outlined.Search
                     AuActivityKind.EVIDENCE -> "Evidence" to Icons.Outlined.FactCheck
-                    AuActivityKind.ANSWER -> "Response" to Icons.Outlined.AutoAwesome
+                    AuActivityKind.ANSWER -> "Response" to Icons.Outlined.ChatBubbleOutline
                     AuActivityKind.ERROR -> "Attention" to Icons.Outlined.ErrorOutline
                     AuActivityKind.OTHER -> "Preparation" to Icons.Outlined.Circle
                 }

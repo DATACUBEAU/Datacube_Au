@@ -36,17 +36,19 @@ class LexicalIndexWorker(context: Context, parameters: WorkerParameters) :
         try {
             checkNotNull(db.documents().find(documentId)) { "Document was deleted." }
             val file = ExtractedTextStore.fileFor(applicationContext.filesDir, documentId)
-            if (index.hasCurrent(documentId, file)) return@withContext Result.success()
-            notifications.showDocumentSearchIndexing(documentId, 0)
+            val foreground = notifications.startDocumentWorker(this@LexicalIndexWorker, "Preparing document search")
+            notifications.updateDocumentWorker(this@LexicalIndexWorker, documentId, foreground, "Preparing document search")
             val count = index.build(documentId, file) { completed ->
                 // Schedule WorkManager persistence without suspending SQLite's
                 // thread-bound indexing transaction.
                 setProgressAsync(workDataOf(KEY_COUNT to completed))
-                notifications.showDocumentSearchIndexing(documentId, completed)
+                notifications.updateDocumentWorker(this@LexicalIndexWorker, documentId, foreground, "Indexed $completed passages")
             }
             // A deleted document must never publish a new ready notification.
             if (db.documents().find(documentId) != null) {
                 notifications.showIndexComplete(documentId)
+                // Optional embedding index is scheduled automatically, without opening chat.
+                LocalSemanticSearch(applicationContext).scheduleIndex(documentId)
             } else {
                 index.remove(documentId)
             }
@@ -54,6 +56,7 @@ class LexicalIndexWorker(context: Context, parameters: WorkerParameters) :
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            if (db.documents().find(documentId) != null) notifications.showDocumentFailed(documentId)
             Result.failure(workDataOf(KEY_ERROR to
                 (error.message ?: "AU could not finish building the document search index.")))
         } finally {

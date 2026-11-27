@@ -46,17 +46,23 @@ class VerifiedModelDownloadWorker(
                 download(artifact)
             }
             savePortableCopy(artifact)
+            runCatching { au.datacube.app.notifications.LocalNotificationService(applicationContext)
+                .showAiReady("model-$id", "Model installed and backup verified") }
             Result.success(workDataOf(KEY_BACKUP_VERIFIED to true, KEY_STAGE to "Installed · backup verified"))
         } catch (cancelled: CancellationException) {
             // Keep the partial file for explicit Pause -> Resume and process recovery.
             throw cancelled
         } catch (rejected: ModelDownloadRejected) {
+            runCatching { au.datacube.app.notifications.LocalNotificationService(applicationContext)
+                .showAiReady("model-$id", "Model download needs attention. Open Models to review.") }
             setProgress(workDataOf(KEY_ERROR to (rejected.message ?: "Model download refused.")))
             Result.failure(workDataOf(KEY_ERROR to (rejected.message ?: "Model download refused.")))
         } catch (failure: IOException) {
             setProgress(workDataOf(KEY_ERROR to "Connection interrupted. Retrying the download."))
             Result.retry()
         } catch (failure: Exception) {
+            runCatching { au.datacube.app.notifications.LocalNotificationService(applicationContext)
+                .showAiReady("model-$id", "Model download needs attention. Open Models to review.") }
             Result.failure(workDataOf(KEY_ERROR to (failure.message ?: "Cannot download this model.")))
         }
     }

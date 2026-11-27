@@ -46,4 +46,11 @@ class AuScheduleIntentTest {
         assertNull(AuScheduleIntent.parseTime("in one hour or tomorrow at 9 AM", now))
         assertNull(AuScheduleIntent.proposedTime("Remind me to study for two hours", now))
     }
+
+    @Test fun countdownUsesDueTimeAndNeverClaimsDelivery() {
+        assertEquals("5 h 0 m remaining", AuScheduleCountdown.label(18_000_000L, 0L))
+        assertEquals("1 m remaining", AuScheduleCountdown.label(60_000L, 0L))
+        assertEquals("1 s remaining", AuScheduleCountdown.label(1L, 0L))
+        assertEquals("Due now · awaiting delivery", AuScheduleCountdown.label(100L, 101L))
+    }
 }

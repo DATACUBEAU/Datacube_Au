@@ -8,76 +8,94 @@ import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.notifications.LocalNotificationService
-import java.security.MessageDigest
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
-/** Creates REAL vectors using the downloaded EmbeddingGemma2 model; never uses mock inference. */
+/** Build real embeddings from the committed FTS index. Staged vectors remain
+ * invisible to search; each committed batch survives interruption. */
 class SemanticIndexWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val id = inputData.getString(KEY_DOCUMENT).orEmpty()
-        if (id.isBlank()) return@withContext Result.failure(workDataOf(KEY_ERROR to "Document ID missing."))
-        if (!LocalEmbeddingRuntime.available(applicationContext)) {
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,80}"))) return@withContext Result.failure()
+        if (!LocalEmbeddingRuntime.available(applicationContext))
             return@withContext Result.failure(workDataOf(KEY_ERROR to "Download the EmbeddingGemma 2 search model."))
-        }
         val db = DataCubeDatabase.get(applicationContext)
+        val dao = db.semanticChunks()
+        val model = LocalEmbeddingRuntime.MODEL_ID
+        val staging = "$model:staging"
         val notifications = LocalNotificationService(applicationContext)
+        val index = LocalPassageIndex(applicationContext)
         try {
             checkNotNull(db.documents().find(id)) { "Document no longer exists." }
             val extracted = ExtractedTextStore.fileFor(applicationContext.filesDir, id)
             check(extracted.isFile) { "Document extraction is not finished." }
-            require(extracted.length() <= 21L * 1024 * 1024) { "Extracted document exceeds the index size limit." }
-            val input = extracted.readBytes()
-            val hash = MessageDigest.getInstance("SHA-256").digest(input)
-                .joinToString("") { "%02x".format(it) }
-            if (db.semanticChunks().sourceHash(id, LocalEmbeddingRuntime.MODEL_ID) == hash) {
-                return@withContext Result.success()
-            }
-            val chunks = RagTextChunker(maxChunks = 8_000).chunk(id, input.toString(Charsets.UTF_8))
-            if (chunks.isEmpty()) return@withContext Result.failure(workDataOf(KEY_ERROR to "No readable text to index."))
-            // Do not silently truncate a large source. Streaming indexing follows in optimization.
-            check(chunks.size < 8_000) { "This document needs the large-document indexing pipeline." }
-            val vectors = ArrayList<SemanticVectorChunk>(chunks.size)
-            notifications.showDocumentIndexing(id, 0, chunks.size)
-            var size: Int? = null
-            chunks.forEachIndexed { index, chunk ->
-                currentCoroutineContext().ensureActive()
-                val embedding = LocalEmbeddingRuntime.embed(applicationContext, chunk.text)
-                if (size == null) size = embedding.size
-                check(embedding.size == size) { "Embedding dimensions changed during indexing." }
-                vectors += SemanticVectorChunk(
-                    documentId = id,
-                    modelId = LocalEmbeddingRuntime.MODEL_ID,
-                    ordinal = chunk.sequence,
-                    page = chunk.page,
-                    text = chunk.text,
-                    sourceHash = hash,
-                    dimension = embedding.size,
-                    vectorBytes = DenseVectorCodec.encode(embedding)
-                )
-                if (index % 10 == 0 || index == chunks.lastIndex) {
-                    val done = index + 1
-                    setProgress(workDataOf(KEY_PROGRESS to (done * 100 / chunks.size), KEY_COUNT to done))
-                    notifications.showDocumentIndexing(id, done, chunks.size)
+            val snapshot = index.snapshot(id, extracted)
+            if (snapshot == null) {
+                if (runAttemptCount < 8) {
+                    LexicalIndexWorker.schedule(applicationContext, id)
+                    return@withContext Result.retry()
                 }
+                return@withContext Result.failure(workDataOf(KEY_ERROR to "Document search index is not ready."))
             }
-            currentCoroutineContext().ensureActive()
-            // Atomic publication: do not expose a partially populated index.
-            db.withTransaction {
+            val hash = snapshot.sourceHash
+            val total = snapshot.count
+            if (dao.sourceHash(id, model) == hash && dao.count(id, model) == total) {
+                dao.clear(id, staging)
+                return@withContext Result.success(workDataOf(KEY_COUNT to total))
+            }
+            if (dao.sourceHash(id, staging) != hash) dao.clear(id, staging)
+            var done = dao.count(id, staging)
+            if (done > total) { dao.clear(id, staging); done = 0 }
+            var rowId = if (done == 0) 0L else index.rowIdForOrdinal(id, done - 1)
+                ?: error("The source index changed during embedding preparation.")
+            var dimension = dao.chunkPageAfter(id, staging, -1, 1).firstOrNull()?.dimension
+            val initialPercent = (done * 100L / total).toInt()
+            val foreground = notifications.startDocumentWorker(this@SemanticIndexWorker,
+                "Preparing semantic search · $initialPercent%", initialPercent)
+            while (done < total) {
+                currentCoroutineContext().ensureActive()
+                check(applicationContext.filesDir.usableSpace > 32L * 1024 * 1024) { "Free storage before continuing semantic indexing." }
+                check(index.snapshot(id, extracted) == snapshot) { "Document changed during indexing." }
+                val batch = index.batchAfter(id, rowId, 32)
+                check(batch.isNotEmpty()) { "Source index is incomplete." }
+                val vectors = ArrayList<SemanticVectorChunk>(batch.size)
+                for ((nextRowId, chunk) in batch) {
+                    currentCoroutineContext().ensureActive()
+                    check(chunk.ordinal == done + vectors.size) { "Source index sequence changed." }
+                    val vector = LocalEmbeddingRuntime.embed(applicationContext, chunk.text)
+                    if (dimension == null) dimension = vector.size
+                    check(vector.size == dimension) { "Embedding dimensions changed." }
+                    vectors += SemanticVectorChunk(id, staging, chunk.ordinal, chunk.page, chunk.text,
+                        hash, vector.size, DenseVectorCodec.encode(vector))
+                    rowId = nextRowId
+                }
                 checkNotNull(db.documents().find(id)) { "Document deleted during indexing." }
-                db.semanticChunks().clear(id, LocalEmbeddingRuntime.MODEL_ID)
-                db.semanticChunks().insertAll(vectors)
+                dao.insertAll(vectors)
+                done += vectors.size
+                val percent = (done * 100L / total).toInt()
+                setProgress(workDataOf(KEY_PROGRESS to percent, KEY_COUNT to done))
+                notifications.updateDocumentWorker(this@SemanticIndexWorker, id, foreground,
+                    "Embedding passages · $percent% ($done of $total)", percent)
             }
-            notifications.showIndexComplete(id)
-            Result.success(workDataOf(KEY_COUNT to vectors.size))
+            check(index.snapshot(id, extracted) == snapshot) { "Document changed during indexing." }
+            db.withTransaction {
+                checkNotNull(db.documents().find(id))
+                check(dao.count(id, staging) == total)
+                dao.clear(id, model)
+                check(dao.publishStaged(id, staging, model) == total)
+            }
+            notifications.showSemanticComplete(id)
+            Result.success(workDataOf(KEY_COUNT to total))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            Result.failure(workDataOf(KEY_ERROR to (error.message ?: "Local indexing failed.")))
+            if (db.documents().find(id) != null) notifications.showSemanticFailed(id)
+            Result.failure(workDataOf(KEY_ERROR to (error.message ?: "Local semantic indexing failed.")))
         } finally {
+            index.close()
             notifications.clearDocumentProgress(id)
         }
     }
