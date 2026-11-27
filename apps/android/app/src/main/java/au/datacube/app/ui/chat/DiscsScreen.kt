@@ -371,7 +371,8 @@ fun DiscsScreen(
                         var lastUpdate = 0L
                         try {
                             LocalGenerativeEngine.generate(context, input + personalization.contextFor(question, requestEffort), allowGeneral = !searchDocuments,
-                                generalOnly = !searchDocuments, effort = requestEffort) { text ->
+                                generalOnly = !searchDocuments, effort = requestEffort,
+                                visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { text ->
                                 raw.append(text)
                                 val now = SystemClock.elapsedRealtime()
                                 if (now - lastUpdate > 120L) {
@@ -417,8 +418,8 @@ fun DiscsScreen(
                     generationError = "AU could not finish this request."))
             } finally {
                 session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
-                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
                 session.searching = false
                 session.searchingStage = ""
@@ -467,7 +468,8 @@ fun DiscsScreen(
                 }
                 var lastUpdate = 0L
                 LocalGenerativeEngine.generate(context, input,
-                    image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort) { part ->
+                    image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort,
+                    visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastUpdate >= 120) {
@@ -490,8 +492,8 @@ fun DiscsScreen(
                     generationError = "AU could not understand this attachment.")
             } finally {
                 session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
-                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
                 session.searching = false
                 session.searchingStage = ""
@@ -658,7 +660,8 @@ fun DiscsScreen(
 
         if (session.searching && !turns.any { it.generating }) {
             AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
-        }        ConversationWindow.warning(userTurns)?.let {
+        }
+        ConversationWindow.warning(userTurns)?.let {
             Text(it, Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall)

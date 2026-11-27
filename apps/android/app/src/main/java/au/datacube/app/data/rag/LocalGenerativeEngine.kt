@@ -145,6 +145,7 @@ object LocalGenerativeEngine {
         studyVisuals: Boolean = false,
         image: ByteArray? = null,
         effort: AuEffort = AuEffort.BALANCED,
+        visualRequested: Boolean = false,
         onText: suspend (String) -> Unit
     ) = withContext(dispatcher) {
         val queuedAt = android.os.SystemClock.elapsedRealtime()
@@ -237,7 +238,7 @@ object LocalGenerativeEngine {
                                 "Use [OK], [WARN], [ERROR] only for supported factual statuses. " +
                                 ""
                         } + " " + AuTeachingPolicy.LANGUAGE +
-                            (if (studyVisuals || (!studyTask && AuTeachingPolicy.plan(groundedPrompt).visual == AuTeachingPolicy.Visual.REQUESTED))
+                            (if (studyVisuals || (!studyTask && visualRequested))
                                 " " + AuTeachingPolicy.VISUALS else "") +
                             (if (!studyTask) " " + effort.instruction else "")
                     ),

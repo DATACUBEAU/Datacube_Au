@@ -83,6 +83,7 @@ class MainActivity : ComponentActivity() {
     private var mobileSignInRequest: String? = null
     private var ignoreViewIntentOnResume = false
     private var workspaceRecoveryStarted = false
+    private var notificationRoute by mutableStateOf<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
@@ -91,6 +92,7 @@ class MainActivity : ComponentActivity() {
         AndroidUpdateCheckWorker.schedule(applicationContext)
         val updateJustCompleted = AndroidUpdateManager.consumeUpdatedOnLaunch(applicationContext)
         receiveMobileSignInIntent(intent, "cold")
+        notificationRoute = au.datacube.app.notifications.TaskDestination.fromIntent(intent)
 
         setContent {
             val themeStore = remember { ThemePreferenceStore(applicationContext) }
@@ -108,6 +110,8 @@ class MainActivity : ComponentActivity() {
                     openBrowser = ::openBrowser,
                     onWorkspaceDrawn = ::recoverWorkspaceJobs,
                     updateJustCompleted = updateJustCompleted,
+                    notificationRoute = notificationRoute,
+                    onNotificationOpened = { notificationRoute = null },
                     themePreference = displayMode,
                     onThemeChange = { selected ->
                         themeStore.set(selected)
@@ -121,6 +125,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         receiveMobileSignInIntent(intent, "warm")
+        au.datacube.app.notifications.TaskDestination.fromIntent(intent)?.let { notificationRoute = it }
     }
 
     override fun onResume() {
@@ -201,7 +206,9 @@ internal fun DataCubeRoot(
     onWorkspaceDrawn: () -> Unit = {},
     updateJustCompleted: Boolean = false,
     themePreference: ThemePreference = ThemePreference.SYSTEM,
-    onThemeChange: (ThemePreference) -> Unit = {}
+    onThemeChange: (ThemePreference) -> Unit = {},
+    notificationRoute: String? = null,
+    onNotificationOpened: () -> Unit = {}
 ) {
     val authState by authViewModel.state.collectAsStateWithLifecycle()
     ReportDrawnWhen { authState.sessionRestored && !authState.isLoading }
@@ -224,7 +231,7 @@ internal fun DataCubeRoot(
     key(authState.user?.id) {
         AuthenticatedWorkspace(
             authState, authViewModel, documentsViewModel(),
-            themePreference, onThemeChange, updateJustCompleted
+            themePreference, onThemeChange, updateJustCompleted, notificationRoute, onNotificationOpened
         )
         val view = LocalView.current
         DisposableEffect(view) {
@@ -241,7 +248,9 @@ private fun AuthenticatedWorkspace(
     documentsViewModel: DataCubeViewModel,
     themePreference: ThemePreference,
     onThemeChange: (ThemePreference) -> Unit,
-    updateJustCompleted: Boolean
+    updateJustCompleted: Boolean,
+    notificationRoute: String?,
+    onNotificationOpened: () -> Unit
 ) {
     val documents by documentsViewModel.documents.collectAsStateWithLifecycle()
     val collections by documentsViewModel.collections.collectAsStateWithLifecycle()
@@ -563,6 +572,14 @@ private fun AuthenticatedWorkspace(
 
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    LaunchedEffect(notificationRoute, currentRoute != null) {
+        val route = au.datacube.app.notifications.TaskDestination.validated(notificationRoute)
+        if (route != null && currentRoute != null) {
+            tourIndex = -1
+            navController.navigate(route) { launchSingleTop = true }
+            onNotificationOpened()
+        }
+    }
     val isWorkspaceRoute = currentRoute == Screen.Collection.route || currentRoute == Screen.Document.route
     val tourRoute=when(tourStep?.page) {
         TourPage.HOME -> Screen.Home.route

@@ -35,6 +35,8 @@ class ModelVaultBackupWorker(
             val notification = Notification.Builder(applicationContext, CHANNEL)
                 .setSmallIcon(android.R.drawable.stat_sys_upload)
                 .setContentTitle("Backing up $modelId")
+                .setContentIntent(au.datacube.app.notifications.TaskDestination.pending(applicationContext, "models", modelId))
+                .setVisibility(Notification.VISIBILITY_PRIVATE)
                 .setContentText("Saving verified model files to your folder")
                 .setProgress(0, 0, true)
                 .setOngoing(true)
