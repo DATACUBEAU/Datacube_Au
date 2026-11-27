@@ -26,6 +26,7 @@ import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -117,8 +118,17 @@ fun DiscsScreen(
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
     val chatListState = key(ownerId, threadId) { rememberLazyListState() }
+    var followLatest by remember(ownerId, threadId) { mutableStateOf(true) }
+    val dragging by chatListState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(dragging) {
+        if (dragging) followLatest = false
+    }
     LaunchedEffect(ready, threadId, userTurns) {
+        followLatest = true
         if (ready && turns.isNotEmpty()) chatListState.scrollToItem(0)
+    }
+    LaunchedEffect(ready, threadId, turns.size) {
+        if (ready && followLatest && turns.isNotEmpty()) chatListState.scrollToItem(0)
     }
     val modelReady = LocalGenerativeEngine.installed(context)
     val needsCollectionModel = collectionId != null && !modelReady
@@ -245,7 +255,7 @@ fun DiscsScreen(
         }
         if (!ready || needsCollectionModel || session.searching || question.isBlank() ||
             (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
-        if (audioPath == null) prompt = ""
+        if (audioPath == null && !alreadyAdded) prompt = ""
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
         val requestEffort = effort.forDevice(context)
         session.searching = true
@@ -589,8 +599,23 @@ fun DiscsScreen(
                                 message.generationError?.let { Text(it,
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall) }
+                                val retryQuestion = session.regenerationQuestion(messageIndex)
+                                if (retryQuestion != null && (modelReady && !historyBusy && !preparingAttachment)) {
+                                    TextButton(onClick = {
+                                        val question = session.regenerationQuestion(messageIndex) ?: return@TextButton
+                                        speech.stop()
+                                        expandedSources = expandedSources - messageIndex
+                                        turns.removeAt(messageIndex)
+                                        followLatest = true
+                                        send(question, alreadyAdded = true)
+                                    }) {
+                                        Icon(Icons.Outlined.Refresh, null, Modifier.size(17.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(if (message.generationError != null) "Retry response" else "Regenerate")
+                                    }
+                                }
                                 val i = messageIndex
-                                if (message.matches.isNotEmpty()) {
+                                if (!message.generating && message.matches.isNotEmpty()) {
                                     if (i !in expandedSources) {
                                         Row(Modifier.horizontalScroll(rememberScrollState()),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -651,7 +676,7 @@ fun DiscsScreen(
 
         if (turns.isNotEmpty() && chatListState.canScrollBackward) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                FilledTonalIconButton(onClick = { uiScope.launch { chatListState.scrollToItem(0) } }) {
+                FilledTonalIconButton(onClick = { followLatest = true; uiScope.launch { chatListState.scrollToItem(0) } }) {
                     Icon(Icons.Outlined.ArrowDownward, "Jump to latest message")
                 }
             }
