@@ -16,6 +16,9 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import java.io.File
 import java.io.RandomAccessFile
+import android.util.AtomicFile
+import org.json.JSONObject
+import org.json.JSONArray
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
@@ -88,7 +91,9 @@ object NeuralNarration {
     suspend fun speakDialogue(
         context: Context, turns: List<PodcastTurn>, speed: Float,
         onSpeaker: suspend (Int) -> Unit,
-        onStage: suspend (String) -> Unit = {}
+        onStage: suspend (String) -> Unit = {},
+        cacheDirectory: File? = null,
+        isPaused: () -> Boolean = { false }
     ) {
         require(turns.size in 1..PodcastDialogue.MAX_TURNS) { "Prepare a valid discussion first." }
         val parts = turns.flatMapIndexed { index, turn ->
@@ -96,7 +101,8 @@ object NeuralNarration {
                 SpeechPart(it, PodcastDialogue.voiceFor(turn.speaker), index)
             }
         }
-        renderAndPlay(context, parts, speed, onSpeaker, onStage)
+        renderAndPlay(context, parts, speed, onSpeaker, onStage,
+            cacheDirectory = cacheDirectory, isPaused = isPaused)
     }
 
     /** Adaptive message playback also writes the finished WAV for subsequent seeks/replays. */
@@ -129,7 +135,8 @@ object NeuralNarration {
         destination: File? = null,
         playWhilePreparing: Boolean = false,
         onStarted: suspend () -> Unit = {},
-        isPaused: () -> Boolean = { false }
+        isPaused: () -> Boolean = { false },
+        cacheDirectory: File? = null
     ) = withContext(speechDispatcher) {
         require(installed(context)) { "Install Kokoro in Models to use neural voices." }
         require(parts.isNotEmpty() && parts.all { it.voice in presetVoices })
@@ -140,7 +147,15 @@ object NeuralNarration {
             val published = AtomicReference(PublishedAudio())
             val totalChars = parts.sumOf { it.text.length }
             val shouldPlay = destination == null || playWhilePreparing
+            val key = cacheDirectory?.let { speechKey(parts) }
             try {
+                val cached = if (cacheDirectory != null && key != null) readCache(cacheDirectory, key, pcm) else null
+                if (cached != null) {
+                    published.set(cached)
+                    onStage("Opening saved neural audio")
+                    consumeAudio(pcm, published, totalChars, speed, onSpeaker, onStage, onProgress, onStarted, isPaused)
+                    return@withLock
+                }
                 coroutineScope {
                     val consumer = if (shouldPlay) async(Dispatchers.IO) {
                         consumeAudio(pcm, published, totalChars, speed, onSpeaker, onStage,
@@ -213,6 +228,11 @@ object NeuralNarration {
                     val finished = published.get()
                     if (destination != null) writeWaveFile(pcm, destination, finished.rate, finished.samples)
                     published.set(finished.copy(complete = true))
+                    if (cacheDirectory != null && key != null) {
+                        try { saveCache(cacheDirectory, key, pcm, finished) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { Log.w("AuNeuralSpeech", "Audio cache unavailable", failure) }
+                    }
                     Log.i("AuNeuralSpeech", "synthesisSeconds=${finished.synthesisSeconds} audioSeconds=${finished.samples.toDouble() / finished.rate}")
                     consumer?.await()
                 }
@@ -220,6 +240,91 @@ object NeuralNarration {
                 pcm.delete()
             }
         }
+    }
+
+    private fun speechKey(parts: List<SpeechPart>): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val artifact = requireNotNull(VerifiedModelDownloads.find(MODEL_ID))
+        digest.update(("au-pcm-v2:" + artifact.sha256).toByteArray())
+        parts.forEach {
+            digest.update(("${it.speaker}:${it.voice}:${it.text.length}:").toByteArray())
+            digest.update(it.text.toByteArray(Charsets.UTF_8))
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    private suspend fun copyPcm(source: File, target: File) {
+        source.inputStream().buffered().use { input ->
+            target.outputStream().buffered().use { output ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                }
+            }
+        }
+    }
+
+    /** Cache contains rendered audio only; the digest identifies transcript and voice revision. */
+    private suspend fun readCache(directory: File, key: String, target: File): PublishedAudio? {
+        try {
+            val manifest = File(directory, "manifest.json")
+            val pcm = File(directory, "audio.pcm")
+            if (!manifest.isFile || manifest.length() !in 1L..8192L) return null
+            val json = JSONObject(AtomicFile(manifest).openRead().bufferedReader().use { it.readText() })
+            if (json.getString("key") != key) return null
+            val rate = json.getInt("rate")
+            val samples = json.getLong("samples")
+            require(rate in 16_000..48_000 && samples in 1L..64L * 1024 * 1024 && pcm.length() == samples * 2)
+            val rows = json.getJSONArray("boundaries")
+            require(rows.length() in 1..PodcastDialogue.MAX_TURNS)
+            val boundaries = (0 until rows.length()).map { index ->
+                val row = rows.getJSONArray(index)
+                row.getLong(0) to row.getInt(1)
+            }
+            require(boundaries.first().first == 0L && boundaries.zipWithNext().all { (a, b) -> a.first < b.first })
+            require(boundaries.all { it.first in 0 until samples && it.second in 0 until PodcastDialogue.MAX_TURNS })
+            copyPcm(pcm, target)
+            require(target.length() == samples * 2)
+            directory.setLastModified(System.currentTimeMillis())
+            return PublishedAudio(rate, samples, boundaries = boundaries, complete = true)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { return null }
+    }
+
+    private suspend fun saveCache(directory: File, key: String, source: File, state: PublishedAudio) {
+        check(directory.isDirectory || directory.mkdirs())
+        val temporary = File.createTempFile("audio-", ".tmp", directory)
+        try {
+            copyPcm(source, temporary)
+            currentCoroutineContext().ensureActive()
+            check(temporary.length() == state.samples * 2)
+            val manifest = AtomicFile(File(directory, "manifest.json"))
+            // Remove the old identity before replacing its payload.
+            manifest.delete()
+            val target = File(directory, "audio.pcm")
+            check(temporary.renameTo(target)) { "Could not publish cached audio." }
+            val rows = JSONArray()
+            state.boundaries.forEach { rows.put(JSONArray().put(it.first).put(it.second)) }
+            val data = JSONObject().put("key", key).put("rate", state.rate)
+                .put("samples", state.samples).put("boundaries", rows).toString().toByteArray()
+            val output = manifest.startWrite()
+            try { output.write(data); manifest.finishWrite(output) }
+            catch (failure: Exception) { manifest.failWrite(output); throw failure }
+            directory.setLastModified(System.currentTimeMillis())
+            // At most one rendered podcast per document; evict least recently used
+            // completed caches when the aggregate storage budget is exceeded.
+            val others = directory.parentFile?.listFiles().orEmpty()
+                .filter { it.isDirectory && it != directory }.sortedBy { it.lastModified() }
+            var total = (others + directory).sumOf { File(it, "audio.pcm").length() }
+            for (old in others) {
+                if (total <= 256L * 1024 * 1024) break
+                val size = File(old, "audio.pcm").length()
+                if (old.deleteRecursively()) total -= size
+            }
+        } finally { temporary.delete() }
     }
 
     private suspend fun consumeAudio(
@@ -262,6 +367,8 @@ object NeuralNarration {
             var speaker = -1
             var lastProgress = 0L
             var lastStage = ""
+            var lastHead = 0L
+            var lastMovement = SystemClock.elapsedRealtime()
             suspend fun stage(value: String) {
                 if (lastStage != value) { lastStage = value; onStage(value) }
             }
@@ -287,6 +394,7 @@ object NeuralNarration {
                 check(primed >= 0 && primed % 2 == 0)
                 submitted = primed / 2L
                 input.seek(submitted * 2)
+                while (isPaused()) { currentCoroutineContext().ensureActive(); stage("Paused"); delay(50) }
                 track.play()
                 onStarted()
                 stage("Playing neural audio")
@@ -298,6 +406,7 @@ object NeuralNarration {
                     if (isPaused()) {
                         if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
                         stage("Paused")
+                        lastMovement = SystemClock.elapsedRealtime()
                         delay(50)
                         continue
                     }
@@ -309,11 +418,15 @@ object NeuralNarration {
                             !current.complete && available < AdaptiveSpeechBuffer.refillSamples(rate, actualSpeed))) {
                         if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
                         stage("Buffering neural audio")
+                        lastMovement = SystemClock.elapsedRealtime()
                         delay(50)
                         continue
                     }
                     if (track.playState != AudioTrack.PLAYSTATE_PLAYING) track.play()
                     stage("Playing neural audio")
+                    val now = SystemClock.elapsedRealtime()
+                    if (played > lastHead) { lastHead = played; lastMovement = now }
+                    check(now - lastMovement < 15_000) { "Audio output stalled." }
                     val remaining = current.samples - submitted
                     if (remaining > 0) {
                         val size = minOf(buffer.size.toLong(), remaining * 2).toInt()
