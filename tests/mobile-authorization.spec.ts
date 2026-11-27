@@ -159,12 +159,27 @@ test('server pairing context survives missing browser tab storage and Site URL f
   await expect(page.getByRole('textbox', { name: 'Pairing code' })).toBeVisible();
 });
 
-test('server pairing context intercepts the download page during an active sign-in', async ({ page }) => {
+test('public distribution stays public with an unfinished mobile sign-in and stale auth lock', async ({ page }) => {
   await page.goto(`/login?redirectTo=${encodeURIComponent(approvalPath)}&forceReauth=1`);
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeEnabled();
+  expect((await page.context().cookies()).some(c => c.name === 'dcau-mobile-pairing-request')).toBe(true);
+  await page.addInitScript(() => {
+    localStorage.setItem('dcau:auth-runtime-state', 'EXPIRED');
+    localStorage.setItem('dcau:auth-actions-disabled', '1');
+  });
+  await page.route('**/api/android-update', route => route.fulfill({json:{
+    schema:1, versionCode:1, versionName:'1.0.0', sizeBytes:1000000,
+    sha256:'a'.repeat(64),
+    apkUrl:'https://github.com/DATACUBEAU/Datacube_Au/releases/download/android-test-aaaaaaaaaaaa/DataCube-AU-Android-arm64.apk',
+    notes:'',
+  }}));
+  await page.goto('/');
+  await page.getByRole('link', { name: 'Download for Android' }).first().click();
+  await expect(page).toHaveURL(/\/download$/);
+  await expect(page.getByRole('heading', { name: 'Get the Android app' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download AU for Android' })).toHaveAttribute('href', /github\.com\/DATACUBEAU/);
   await page.goto('/mobile-app-required');
-  await expect(page).toHaveURL(/\/login\?redirectTo=/, { timeout: 30000 });
-  expect(new URL(page.url()).searchParams.get('redirectTo')).toBe(approvalPath);
+  await expect(page).toHaveURL(/\/mobile-app-required$/);
 });
 
 test('malformed mobile login must not fall back to the website', async ({ page }) => {
