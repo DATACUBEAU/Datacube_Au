@@ -73,7 +73,7 @@ import au.datacube.app.ui.documents.ChatMessage
 import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.ui.documents.SourceSnippet
 import au.datacube.app.ui.theme.dataCubeBackdrop
-import au.datacube.app.ui.voice.VoiceNoteInputButton
+import au.datacube.app.ui.voice.VoiceNoteConfig
 import au.datacube.app.ui.voice.VoiceNotePlayback
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
@@ -733,9 +733,9 @@ fun DiscsScreen(
                     )
                 }
             },
-            actions = {
-                VoiceNoteInputButton(
+            voiceNote = VoiceNoteConfig(
                     ownerId = ownerId,
+                    sessionId = threadId,
                     enabled = ready && !needsCollectionModel && !historyBusy && !session.searching && !preparingAttachment && attachment == null &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
@@ -765,7 +765,6 @@ fun DiscsScreen(
                         }
                     }
                 )
-            }
         )
     }
 }
