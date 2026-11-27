@@ -682,36 +682,12 @@ fun DiscsScreen(
                 }
             }
         }
-        if (attachment != null) {
-            val photo = attachment as? GistAttachment.Photo
-            if (photo != null) {
-                val thumbnail = remember(photo) {
-                    val options = BitmapFactory.Options().apply { inSampleSize = 4 }
-                    BitmapFactory.decodeByteArray(photo.bytes, 0, photo.bytes.size, options)
-                }
-                if (thumbnail != null) {
-                    Image(thumbnail.asImageBitmap(), contentDescription = "Attached image preview",
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                            .size(88.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
-                }
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(attachment?.label.orEmpty(), Modifier.weight(1f), maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { attachment = null; attachmentError = null }, enabled = !session.searching) {
-                    Text("Remove")
-                }
-            }
-            if ((attachment as? GistAttachment.Document)?.truncated == true) {
-                Text("Large file: only the first excerpt is attached. Import it into Documents for full retrieval.",
-                    modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-            }
-        }
         if (preparingAttachment) Text("Preparing attachment…", Modifier.padding(horizontal = 16.dp))
         attachmentError?.let { Text(it, Modifier.padding(horizontal = 16.dp),
             color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
         AuComposer(
             modifier = if(collectionId==null) Modifier.auTourTarget(TourTarget.GIST_INPUT) else Modifier,
+            attachmentContent = { attachment?.let { GistAttachmentPreview(it, { attachment = null; attachmentError = null }, !session.searching) } },
             value = prompt,
             onValueChange = { prompt = it.take(700) },
             onSend = { if (attachment != null) sendAttachment() else send() },
