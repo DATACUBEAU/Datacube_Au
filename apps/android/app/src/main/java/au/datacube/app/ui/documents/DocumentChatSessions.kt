@@ -7,12 +7,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import au.datacube.app.data.rag.LocalDocumentChatHistory
+import au.datacube.app.data.rag.LocalGenerativeEngine
+import au.datacube.app.ui.voice.RecordedVoiceNote
 import au.datacube.app.data.rag.LocalConversationThreads
 import au.datacube.app.data.rag.SavedDocumentTurn
 import au.datacube.app.data.rag.SavedSource
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -80,6 +83,47 @@ internal class DocumentChatSession(private val historyKey: String) {
         val first = turn.firstVisibleMs ?: if (answer.isNotBlank() && requestStartedAt > 0L)
             (android.os.SystemClock.elapsedRealtime() - requestStartedAt).coerceAtLeast(0L) else null
         messages[index] = turn.copy(answer = answer, firstVisibleMs = first)
+    }
+
+    /** Audio transcription hands off to the same scoped chat request. Keep the
+     * original start time and the audio bubble; never leak an unfinished job. */
+    fun submitVoiceNote(context: Context, note: RecordedVoiceNote, onTranscribed: (String, String, String) -> Unit) {
+        if (!historyReady || searching) {
+            note.file.delete()
+            return
+        }
+        val label = "Voice note · " + note.durationSeconds + "s"
+        messages.add(ChatMessage(label, emptyList(), true, audioPath = note.file.absolutePath))
+        val firstIndex = messages.size
+        val startedAt = startRequestClock()
+        searching = true
+        searchingStage = "AU is listening"
+        activitySteps.clear()
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            var handedOff = false
+            try {
+                val words = LocalGenerativeEngine.understandVoiceNote(context.applicationContext, note.file)
+                searching = false
+                searchingStage = ""
+                activeRequest = null
+                onTranscribed(words, label, note.file.absolutePath)
+                handedOff = activeRequest != null
+                if (!handedOff) {
+                    messages.add(ChatMessage(label, emptyList(), false,
+                        generationError = "Chat could not start the voice reply. Try again."))
+                }
+            } catch (cancelled: CancellationException) {
+                messages.add(ChatMessage(label, emptyList(), false, generationError = "Voice request stopped."))
+                throw cancelled
+            } catch (error: Exception) {
+                messages.add(ChatMessage(label, emptyList(), false,
+                    generationError = error.message ?: "AU could not understand this audio."))
+            } finally {
+                if (!handedOff) finishRequest(firstIndex, startedAt, false) {}
+            }
+        }
+        activeRequest = job
+        job.start()
     }
 
     /** Only the latest ordinary text exchange can be regenerated without
