@@ -15,6 +15,10 @@ import com.google.mediapipe.tasks.audio.texttospeech.TextToSpeechOptions
 import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.core.Delegate
 import java.io.File
+import java.io.RandomAccessFile
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
 import java.security.MessageDigest
 import java.util.concurrent.Executors
 import kotlinx.coroutines.asCoroutineDispatcher
@@ -69,7 +73,7 @@ object NeuralNarration {
         onProgress: suspend (Long, Long) -> Unit = { _, _ -> },
         onStage: suspend (String) -> Unit = {}
     ) {
-        val parts = NeuralTextSegmenter.split(text, maxText = 12_000)
+        val parts = NeuralTextSegmenter.split(text, maxChunk = 600, maxText = 12_000)
             .map { SpeechPart(it, voice, 0) }
         renderAndPlay(context, parts, speed, {}, onStage, onProgress)
     }
@@ -77,7 +81,7 @@ object NeuralNarration {
     /** Render one private WAV for the reusable message player, without playing it. */
     suspend fun prepareReadAloud(context: Context, text: String, voice: String, destination: File,
         onStage: suspend (String) -> Unit = {}) {
-        val parts = NeuralTextSegmenter.split(text, maxText = 12_000).map { SpeechPart(it, voice, 0) }
+        val parts = NeuralTextSegmenter.split(text, maxChunk = 600, maxText = 12_000).map { SpeechPart(it, voice, 0) }
         renderAndPlay(context, parts, 1f, {}, onStage, destination = destination)
     }
 
@@ -95,169 +99,240 @@ object NeuralNarration {
         renderAndPlay(context, parts, speed, onSpeaker, onStage)
     }
 
+    /** Adaptive message playback also writes the finished WAV for subsequent seeks/replays. */
+    suspend fun playAndCacheReadAloud(context: Context, text: String, voice: String, speed: Float,
+        destination: File, onStage: suspend (String) -> Unit,
+        onProgress: suspend (Long, Long) -> Unit, onStarted: suspend () -> Unit,
+        isPaused: () -> Boolean) {
+        val parts = NeuralTextSegmenter.split(text, maxChunk = 600, maxText = 12_000)
+            .map { SpeechPart(it, voice, 0) }
+        renderAndPlay(context, parts, speed, {}, onStage, onProgress, destination,
+            playWhilePreparing = true, onStarted = onStarted, isPaused = isPaused)
+    }
+
+    private data class PublishedAudio(
+        val rate: Int = 0, val samples: Long = 0, val completedChars: Int = 0,
+        val synthesisSeconds: Double = 0.0, val boundaries: List<Pair<Long, Int>> = emptyList(),
+        val complete: Boolean = false
+    )
+
     /**
-     * Render bounded PCM to temporary private storage before playback. CPU
-     * inference can be slower than real time; playing a partially synthesized
-     * buffer caused audible gaps. The complete buffer avoids synthesis underruns.
+     * Producer uses the existing thread-affine Kokoro runtime. Consumer reads
+     * only flushed PCM from disk on a separate dispatcher. Slow devices wait
+     * for the entire render; fast devices can safely start with an adaptive lead.
      */
     private suspend fun renderAndPlay(
         context: Context, parts: List<SpeechPart>, speed: Float,
         onSpeaker: suspend (Int) -> Unit,
         onStage: suspend (String) -> Unit,
         onProgress: suspend (Long, Long) -> Unit = { _, _ -> },
-        destination: File? = null
+        destination: File? = null,
+        playWhilePreparing: Boolean = false,
+        onStarted: suspend () -> Unit = {},
+        isPaused: () -> Boolean = { false }
     ) = withContext(speechDispatcher) {
         require(installed(context)) { "Install Kokoro in Models to use neural voices." }
         require(parts.isNotEmpty() && parts.all { it.voice in presetVoices })
         require(speed in 0.7f..1.5f)
         mutex.withLock {
             val app = context.applicationContext
-            onStage("Preparing neural audio")
-            var task: TextToSpeech? = null
             val pcm = File.createTempFile("au-narration-", ".pcm", app.cacheDir)
-            var player: AudioTrack? = null
-            var rate = 0
-            var totalSamples = 0L
-            var usedDelegate: Delegate? = null
-            val boundaries = mutableListOf<Pair<Long, Int>>()
+            val published = AtomicReference(PublishedAudio())
+            val totalChars = parts.sumOf { it.text.length }
+            val shouldPlay = destination == null || playWhilePreparing
             try {
-                suspend fun prepareAudio() {
-                    rate = 0
-                    totalSamples = 0L
-                    boundaries.clear()
-                    pcm.outputStream().buffered().use { output ->
-                    parts.forEachIndexed { index, part ->
-                        currentCoroutineContext().ensureActive()
-                        if (boundaries.lastOrNull()?.second != part.speaker) {
-                            boundaries += totalSamples to part.speaker
-                        }
-                        onStage("Preparing audio ${index + 1} of ${parts.size}")
-                        checkNotNull(task).synthesizeStream(part.text, SynthesisOptions(part.voice, null)).collect { chunk ->
-                            currentCoroutineContext().ensureActive()
-                            if (chunk.samples.isEmpty()) return@collect
-                            require(chunk.sampleRateHz in 16_000..48_000)
-                            if (rate == 0) rate = chunk.sampleRateHz
-                            check(rate == chunk.sampleRateHz) { "Audio sample rate changed." }
-                            totalSamples += chunk.samples.size
-                            check(totalSamples <= 64L * 1024 * 1024) { "Audio is too long to prepare." }
-                            val bytes = ByteArray(chunk.samples.size * 2)
-                            chunk.samples.forEachIndexed { i, sample ->
-                                val value = (sample.coerceIn(-1f, 1f) * 32767f).toInt()
-                                bytes[i * 2] = value.toByte()
-                                bytes[i * 2 + 1] = (value shr 8).toByte()
+                coroutineScope {
+                    val consumer = if (shouldPlay) async(Dispatchers.IO) {
+                        consumeAudio(pcm, published, totalChars, speed, onSpeaker, onStage,
+                            onProgress, onStarted, isPaused)
+                    } else null
+                    var task: TextToSpeech? = null
+                    suspend fun prepareAudio() {
+                        var rate = 0
+                        var samples = 0L
+                        var completedChars = 0
+                        var synthesisNanos = 0L
+                        val boundaries = mutableListOf<Pair<Long, Int>>()
+                        pcm.outputStream().buffered().use { output ->
+                            parts.forEachIndexed { index, part ->
+                                currentCoroutineContext().ensureActive()
+                                if (boundaries.lastOrNull()?.second != part.speaker)
+                                    boundaries += samples to part.speaker
+                                val began = System.nanoTime()
+                                val before = samples
+                                checkNotNull(task).synthesizeStream(part.text, SynthesisOptions(part.voice, null)).collect { chunk ->
+                                    currentCoroutineContext().ensureActive()
+                                    if (chunk.samples.isEmpty()) return@collect
+                                    require(chunk.sampleRateHz in 16_000..48_000)
+                                    if (rate == 0) rate = chunk.sampleRateHz
+                                    check(rate == chunk.sampleRateHz) { "Audio sample rate changed." }
+                                    samples += chunk.samples.size
+                                    check(samples <= 64L * 1024 * 1024) { "Audio is too long to prepare." }
+                                    val bytes = ByteArray(chunk.samples.size * 2)
+                                    chunk.samples.forEachIndexed { i, sample ->
+                                        val value = (sample.coerceIn(-1f, 1f) * 32767f).toInt()
+                                        bytes[i * 2] = value.toByte()
+                                        bytes[i * 2 + 1] = (value shr 8).toByte()
+                                    }
+                                    output.write(bytes)
+                                }
+                                check(samples > before) { "A speech segment returned no audio." }
+                                output.flush()
+                                synthesisNanos += System.nanoTime() - began
+                                completedChars += part.text.length
+                                published.set(PublishedAudio(rate, samples, completedChars,
+                                    synthesisNanos / 1_000_000_000.0, boundaries.toList()))
+                                if (!shouldPlay) onStage("Preparing audio ${index + 1} of ${parts.size}")
                             }
-                            output.write(bytes)
+                        }
+                        check(rate > 0 && samples > 0) { "No audio was generated." }
+                    }
+
+                    onStage("Preparing neural audio")
+                    LocalComputeGate.mutex.withLock {
+                        LocalComputeGate.prepare(app, LocalComputeGate.Engine.SPEECH)
+                        try {
+                            task = load(app)
+                            prepareAudio()
+                        } catch (cancelled: CancellationException) {
+                            runCatching { task?.cancel() }
+                            throw cancelled
+                        } catch (failure: Exception) {
+                            // Restart only if nothing has been published for playback.
+                            if (loadedDelegate != Delegate.GPU || published.get().samples > 0) throw failure
+                            gpuRejected = true
+                            onStage("Preparing audio with compatible engine")
+                            closeEngine()
+                            task = load(app)
+                            prepareAudio()
+                        } finally {
+                            closeEngine()
+                            task = null
                         }
                     }
-                    }
-                    check(rate > 0 && totalSamples > 0) { "No audio was generated." }
+                    val finished = published.get()
+                    if (destination != null) writeWaveFile(pcm, destination, finished.rate, finished.samples)
+                    published.set(finished.copy(complete = true))
+                    Log.i("AuNeuralSpeech", "synthesisSeconds=${finished.synthesisSeconds} audioSeconds=${finished.samples.toDouble() / finished.rate}")
+                    consumer?.await()
                 }
-                val began = SystemClock.elapsedRealtime()
-                LocalComputeGate.mutex.withLock {
-                    LocalComputeGate.prepare(app, LocalComputeGate.Engine.SPEECH)
-                    try {
-                        task = load(app)
-                        prepareAudio()
-                    } catch (cancelled: CancellationException) {
-                        runCatching { task?.cancel() }
-                        throw cancelled
-                    } catch (failure: Exception) {
-                        if (loadedDelegate != Delegate.GPU) throw failure
-                        gpuRejected = true
-                        onStage("Preparing audio with compatible engine")
-                        closeEngine()
-                        task = load(app)
-                        prepareAudio()
-                    } finally {
-                        // Synthesis is done before playback. Release neural weights
-                        // so other local engines do not contend with a silent cache.
-                        usedDelegate = loadedDelegate
-                        closeEngine()
-                        task = null
-                    }
-                }
-                Log.i("AuNeuralSpeech", "delegateUsed=$usedDelegate synthesisMs=${SystemClock.elapsedRealtime() - began} audioMs=${totalSamples * 1000 / rate}")
-                if (destination != null) {
-                    writeWaveFile(pcm, destination, rate, totalSamples)
-                    return@withLock
-                }
-                val minimum = AudioTrack.getMinBufferSize(
-                    rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
-                )
-                check(minimum > 0)
-                val track = AudioTrack.Builder()
-                    .setAudioAttributes(AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                    .setAudioFormat(AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .setBufferSizeInBytes(maxOf(minimum, rate / 2 * 2))
-                    .build()
-                player = track
-                audio = track
-                check(track.state == AudioTrack.STATE_INITIALIZED)
-                if (speed != 1f) {
-                    // Time stretching preserves the speaker's pitch where supported.
-                    // If unsupported, keep natural playback rather than changing pitch.
-                    try {
-                        track.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
-                    } catch (_: IllegalArgumentException) {
-                        Log.w("AuNeuralSpeech", "Pitch-preserving speed unsupported; using normal speed")
-                    }
-                }
-                var speaker = -1
-                var lastProgress = 0L
-                suspend fun reportSpeaker() {
-                    val head = track.playbackHeadPosition.toLong() and 0xffffffffL
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastProgress >= 200L) {
-                        onProgress(head.coerceAtMost(totalSamples) * 1000 / rate, totalSamples * 1000 / rate)
-                        lastProgress = now
-                    }
-                    val next = boundaries.lastOrNull { it.first <= head }?.second ?: 0
-                    if (next != speaker) { speaker = next; onSpeaker(next) }
-                }
-                LocalNotificationService(app).showAiReady("neural-audio", "Voice audio is ready")
-                onStage("Playing neural audio")
-                track.play()
-                reportSpeaker()
-                pcm.inputStream().buffered().use { input ->
-                    val buffer = ByteArray(8192)
-                    while (true) {
-                        currentCoroutineContext().ensureActive()
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        var offset = 0
-                        while (offset < read) {
-                            currentCoroutineContext().ensureActive()
-                            val written = track.write(buffer, offset, read - offset)
-                            check(written > 0) { "Audio output stopped." }
-                            offset += written
-                        }
-                        reportSpeaker()
-                    }
-                }
-                var polls = 0
-                while (track.playState == AudioTrack.PLAYSTATE_PLAYING &&
-                    (track.playbackHeadPosition.toLong() and 0xffffffffL) < totalSamples && polls++ < 750) {
-                    currentCoroutineContext().ensureActive()
-                    reportSpeaker()
-                    delay(40)
-                }
-            } catch (cancelled: CancellationException) {
-                task?.cancel()
-                throw cancelled
             } finally {
-                player?.let { track ->
-                    runCatching { track.pause() }
-                    runCatching { track.flush() }
-                    runCatching { track.release() }
-                }
-                audio = null
                 pcm.delete()
             }
+        }
+    }
+
+    private suspend fun consumeAudio(
+        pcm: File, published: AtomicReference<PublishedAudio>, totalChars: Int, speed: Float,
+        onSpeaker: suspend (Int) -> Unit, onStage: suspend (String) -> Unit,
+        onProgress: suspend (Long, Long) -> Unit, onStarted: suspend () -> Unit, isPaused: () -> Boolean
+    ) {
+        var snapshot = published.get()
+        while (!AdaptiveSpeechBuffer.canStart(
+                if (snapshot.rate == 0) 0.0 else snapshot.samples.toDouble() / snapshot.rate,
+                snapshot.synthesisSeconds, snapshot.completedChars, totalChars, speed, snapshot.complete)) {
+            currentCoroutineContext().ensureActive()
+            delay(80)
+            snapshot = published.get()
+        }
+        val rate = snapshot.rate
+        val minimum = AudioTrack.getMinBufferSize(rate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        check(minimum > 0)
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                .setSampleRate(rate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .setBufferSizeInBytes(maxOf(minimum, rate))
+            .build()
+        audio = track
+        try {
+            check(track.state == AudioTrack.STATE_INITIALIZED)
+            var actualSpeed = speed
+            if (speed != 1f) try {
+                track.playbackParams = android.media.PlaybackParams().setSpeed(speed).setPitch(1f)
+            } catch (_: IllegalArgumentException) {
+                actualSpeed = 1f
+                Log.w("AuNeuralSpeech", "Pitch-preserving speed unsupported; using normal speed")
+            }
+            // Some devices start automatically when PlaybackParams are applied.
+            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
+            var submitted = 0L
+            var speaker = -1
+            var lastProgress = 0L
+            var lastStage = ""
+            suspend fun stage(value: String) {
+                if (lastStage != value) { lastStage = value; onStage(value) }
+            }
+            fun head(): Long = track.playbackHeadPosition.toLong() and 0xffffffffL
+            suspend fun progress(force: Boolean = false) {
+                val now = SystemClock.elapsedRealtime()
+                val current = published.get()
+                val position = head().coerceAtMost(current.samples)
+                if (force || now - lastProgress >= 150L) {
+                    onProgress(position * 1000 / rate, current.samples * 1000 / rate)
+                    lastProgress = now
+                }
+                val next = current.boundaries.lastOrNull { it.first <= position }?.second ?: 0
+                if (next != speaker) { speaker = next; onSpeaker(next) }
+            }
+
+            RandomAccessFile(pcm, "r").use { input ->
+                val buffer = ByteArray(8192)
+                // Pre-fill the platform buffer before starting playback.
+                val prime = minOf(buffer.size.toLong(), snapshot.samples * 2).toInt()
+                input.readFully(buffer, 0, prime)
+                val primed = track.write(buffer, 0, prime, AudioTrack.WRITE_NON_BLOCKING)
+                check(primed >= 0 && primed % 2 == 0)
+                submitted = primed / 2L
+                input.seek(submitted * 2)
+                track.play()
+                onStarted()
+                stage("Playing neural audio")
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val current = published.get()
+                    val played = head()
+                    if (current.complete && played >= current.samples) break
+                    if (isPaused()) {
+                        if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
+                        stage("Paused")
+                        delay(50)
+                        continue
+                    }
+                    val available = current.samples - played
+                    // Pause before the hardware buffer runs dry. Never jump past
+                    // missing samples or replay an already submitted byte.
+                    val rebuffer = !current.complete && available < rate / 3L
+                    if (rebuffer || (track.playState != AudioTrack.PLAYSTATE_PLAYING &&
+                            !current.complete && available < AdaptiveSpeechBuffer.refillSamples(rate, actualSpeed))) {
+                        if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.pause()
+                        stage("Buffering neural audio")
+                        delay(50)
+                        continue
+                    }
+                    if (track.playState != AudioTrack.PLAYSTATE_PLAYING) track.play()
+                    stage("Playing neural audio")
+                    val remaining = current.samples - submitted
+                    if (remaining > 0) {
+                        val size = minOf(buffer.size.toLong(), remaining * 2).toInt()
+                        input.seek(submitted * 2)
+                        input.readFully(buffer, 0, size)
+                        val written = track.write(buffer, 0, size, AudioTrack.WRITE_NON_BLOCKING)
+                        check(written >= 0 && written % 2 == 0) { "Audio output stopped." }
+                        submitted += written / 2
+                        if (written == 0) delay(20)
+                    } else delay(25)
+                    progress()
+                }
+            }
+            progress(true)
+        } finally {
+            runCatching { track.pause() }
+            runCatching { track.flush() }
+            runCatching { track.release() }
+            audio = null
         }
     }
 
