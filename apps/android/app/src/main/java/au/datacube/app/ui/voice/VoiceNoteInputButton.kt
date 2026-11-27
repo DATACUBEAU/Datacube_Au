@@ -5,273 +5,295 @@ import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import au.datacube.app.audio.AuAudioPlayback
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Pause
-import androidx.compose.material.icons.outlined.Send
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Mic
-import androidx.compose.material.icons.outlined.MicOff
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Slider
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import au.datacube.app.ui.common.DataCubeDialog
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
-/** WhatsApp-like voice note: record, review, then explicitly send. */
+data class VoiceNoteConfig(
+    val ownerId: String,
+    val sessionId: String,
+    val enabled: Boolean,
+    val supportsAudio: Boolean,
+    val onReady: (RecordedVoiceNote) -> Unit
+)
+
+/** Replaces the entire typing composer while recording or reviewing. */
 @Composable
-fun VoiceNoteInputButton(
-    ownerId: String,
-    enabled: Boolean,
-    supportsAudio: Boolean,
-    onReady: (RecordedVoiceNote) -> Unit,
-    modifier: Modifier = Modifier
+internal fun VoiceNoteComposer(
+    config: VoiceNoteConfig,
+    normalContent: @Composable (@Composable () -> Unit) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val recorder = remember(context, ownerId) { LocalVoiceNoteRecorder(context, ownerId) }
-    var recording by remember(ownerId) { mutableStateOf(false) }
-    var seconds by remember(ownerId) { mutableIntStateOf(0) }
-    var paused by remember(ownerId) { mutableStateOf(false) }
-    var levels by remember(ownerId) { mutableStateOf(List(36) { 0f }) }
-    val pausedNoteState = remember(ownerId) { mutableStateOf<RecordedVoiceNote?>(null) }
-    var pausedNote by pausedNoteState
-    var previewing by remember(ownerId) { mutableStateOf(false) }
-    val pendingVoice = remember(ownerId) { mutableStateOf<RecordedVoiceNote?>(null) }
-    var preview by pendingVoice
-    var finishing by remember(ownerId) { mutableStateOf(false) }
-    var error by remember(ownerId) { mutableStateOf<String?>(null) }
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val currentConfig by rememberUpdatedState(config)
+    val recorder = remember(context, config.ownerId, config.sessionId) {
+        LocalVoiceNoteRecorder(context, config.ownerId)
+    }
+    var recording by remember(recorder) { mutableStateOf(false) }
+    var paused by remember(recorder) { mutableStateOf(false) }
+    var busy by remember(recorder) { mutableStateOf(false) }
+    var millis by remember(recorder) { mutableIntStateOf(0) }
+    var levels by remember(recorder) { mutableStateOf(emptyList<Float>()) }
+    var preview by remember(recorder) { mutableStateOf<RecordedVoiceNote?>(null) }
+    var error by remember(recorder) { mutableStateOf<String?>(null) }
+    var previewJob by remember(recorder) { mutableStateOf<Job?>(null) }
+    var player by remember(recorder) { mutableStateOf<MediaPlayer?>(null) }
+    var playing by remember(recorder) { mutableStateOf(false) }
+    var position by remember(recorder) { mutableIntStateOf(0) }
+    val active = recording || paused || busy || preview != null
+
+    fun stopPreview() {
+        previewJob?.cancel()
+        previewJob = null
+        playing = false
+        player = null
+        position = 0
+    }
+
+    fun discard() {
+        if (busy) return
+        stopPreview()
+        recorder.cancel()
+        preview?.file?.delete()
+        preview = null
+        recording = false
+        paused = false
+        millis = 0
+        levels = emptyList()
+        error = null
+    }
 
     fun start() {
-        if (!enabled || recording || finishing || preview != null) return
+        if (!currentConfig.enabled || active) return
         try {
             recorder.start(scope)
-            seconds = 0
+            focus.clearFocus(force = true)
+            keyboard?.hide()
+            error = null
+            millis = 0
+            levels = emptyList()
             paused = false
-            levels = List(36) { 0f }
             recording = true
         } catch (_: Exception) {
-            recording = false
+            recorder.cancel()
             error = "The microphone could not start. Check microphone permission and device audio settings."
         }
     }
 
-    fun discard() {
-        recorder.cancel()
-        recording = false
-        paused = false
-        pausedNote?.file?.delete()
-        pausedNote = null
+    fun pauseRecording() {
+        if (!recording || paused || busy) return
+        try {
+            recorder.pause()
+            millis = recorder.durationMillis
+            paused = true
+            busy = true
+            scope.launch {
+                try { preview = recorder.pausedPreview() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { error = "Could not prepare the preview. You can still resume or send." }
+                finally { busy = false }
+            }
+        } catch (_: Exception) {
+            discard()
+            error = "The microphone could not pause."
+        }
     }
 
-    fun stop(sendNow: Boolean = false) {
-        if (!recording || finishing || previewing) return
-        recording = false
-        paused = false
-        pausedNote?.file?.delete()
-        pausedNote = null
-        finishing = true
+    fun resumeRecording() {
+        if (!paused || busy || millis >= WavePcm.MAX_SECONDS * 1000) return
+        stopPreview()
+        preview?.file?.delete()
+        preview = null
+        try {
+            recorder.resume()
+            paused = false
+            error = null
+        } catch (_: Exception) {
+            discard()
+            error = "The microphone could not resume."
+        }
+    }
+
+    fun send() {
+        if (!recording || busy || millis < 1000 || !currentConfig.enabled) return
+        stopPreview()
+        preview?.file?.delete()
+        preview = null
+        busy = true
         scope.launch {
+            var note: RecordedVoiceNote? = null
             try {
-                val note = recorder.finish()
-                if (note == null) error = "The voice note was too short. Record at least one second."
-                else if (sendNow) onReady(note) else preview = note
-            } catch (_: Exception) {
-                error = "Voice recording could not be saved."
+                note = recorder.finish()
+                if (note == null) error = "Record at least one second."
+                else if (!currentConfig.enabled) error = "Chat is busy. Record again when it is ready."
+                else {
+                    currentConfig.onReady(note)
+                    note = null // Ownership transferred to chat history.
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { error = "Voice recording could not be saved." }
+            finally {
+                note?.file?.delete()
                 recorder.cancel()
-            } finally {
-                finishing = false
+                recording = false
+                paused = false
+                busy = false
             }
         }
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { allowed ->
-        if (allowed) start()
-        else error = "Microphone access is required to record voice notes. Text chat still works."
+    val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (it) start() else error = "Microphone permission is required. You can still type."
     }
-
     LaunchedEffect(recording, paused) {
         if (!recording || paused) return@LaunchedEffect
         while (recording && !paused) {
-            seconds = recorder.durationMillis / 1000
-            levels = levels.drop(1) + recorder.amplitude
+            millis = recorder.durationMillis
+            levels = (levels + recorder.amplitude).takeLast(320)
             if (recorder.capturedBytes >= WavePcm.MAX_AUDIO_BYTES) {
-                stop()
+                pauseRecording()
+                break
+            }
+            if (recorder.captureFailed) {
+                pauseRecording()
+                error = "Microphone capture stopped. Review or discard the recording."
                 break
             }
             delay(85)
         }
     }
-
-    DisposableEffect(ownerId) {
-        onDispose {
-            recorder.cancel()
-            pendingVoice.value?.file?.delete()
-            pausedNoteState.value?.file?.delete()
+    LaunchedEffect(player, playing) {
+        while (playing && player != null) {
+            runCatching { position = player?.currentPosition ?: 0 }
+            delay(80)
         }
     }
+    DisposableEffect(recorder) {
+        onDispose {
+            previewJob?.cancel()
+            recorder.cancel()
+            preview?.file?.delete()
+        }
+    }
+    BackHandler(active) { discard() }
 
-    if (recording) {
-        DataCubeDialog(
-            onDismissRequest = { if (!previewing && !finishing) discard() },
-            title = { Text(if (paused) "Recording paused" else "Recording voice note") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Text("%d:%02d".format(java.util.Locale.ROOT, seconds / 60, seconds % 60),
-                            style = MaterialTheme.typography.titleLarge)
-                        val accent = MaterialTheme.colorScheme.primary
-                        Canvas(Modifier.weight(1f).height(48.dp)) {
-                            val step = size.width / levels.size
-                            levels.forEachIndexed { index, level ->
-                                val x = step * (index + 0.5f)
-                                val h = (kotlin.math.sqrt(level.coerceIn(0f, 1f)) * size.height * 0.9f)
-                                    .coerceAtLeast(2.dp.toPx())
-                                drawLine(accent, Offset(x, (size.height - h) / 2), Offset(x, (size.height + h) / 2),
-                                    strokeWidth = (step * 0.55f).coerceAtLeast(1f), cap = StrokeCap.Round)
+    if (!active) {
+        normalContent {
+            IconButton(enabled = currentConfig.enabled, modifier = Modifier.size(48.dp), onClick = {
+                if (!currentConfig.supportsAudio) error = "Select an installed Gemma 4 E2B or E4B model to record voice notes."
+                else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) start()
+                else permission.launch(Manifest.permission.RECORD_AUDIO)
+            }) {
+                Icon(if (currentConfig.supportsAudio) Icons.Outlined.Mic else Icons.Outlined.MicOff, "Record a voice note")
+            }
+        }
+        error?.let {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                TextButton(onClick = { error = null }) { Text("Dismiss") }
+            }
+        }
+    } else {
+        Column(Modifier.fillMaxWidth().padding(12.dp).testTag("au-inline-voice-recorder"),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (paused) {
+                    IconButton(enabled = preview != null && !busy, onClick = {
+                        if (playing) stopPreview() else {
+                            val path = preview?.file?.absolutePath ?: return@IconButton
+                            playing = true
+                            position = 0
+                            previewJob = AuAudioPlayback.launch(context, "Preview voice note",
+                                onFinished = { playing = false; player = null; position = 0 }) {
+                                try { playPrivateVoiceNote(path) { player = it } }
+                                catch (cancelled: CancellationException) { throw cancelled }
+                                catch (_: Exception) { error = "Could not play the recording." }
                             }
                         }
+                    }) {
+                        Icon(if (playing) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
+                            if (playing) "Stop preview" else "Play recording")
                     }
-                    if (paused) {
-                        pausedNote?.let { VoiceNotePlayback(it.file.absolutePath, "Listen to recording") }
-                        if (previewing) Text("Preparing preview…", style = MaterialTheme.typography.labelSmall)
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalIconButton(onClick = ::discard, enabled = !previewing) {
-                            Icon(Icons.Outlined.DeleteOutline, "Discard recording", tint = MaterialTheme.colorScheme.error)
-                        }
-                        TextButton(enabled = !previewing, onClick = {
-                            try {
-                                if (paused) {
-                                    pausedNote?.file?.delete()
-                                    pausedNote = null
-                                    recorder.resume()
-                                    paused = false
-                                } else {
-                                    recorder.pause()
-                                    paused = true
-                                    previewing = true
-                                    scope.launch {
-                                        try { pausedNote = recorder.pausedPreview() }
-                                        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
-                                        catch (_: Exception) { error = "Could not prepare recording preview." }
-                                        finally { previewing = false }
-                                    }
-                                }
-                            } catch (_: Exception) { error = "The microphone could not change recording state."; discard() }
-                        }) {
-                            Icon(if (paused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause, null)
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (paused) "Resume" else "Pause")
-                        }
-                        FilledTonalIconButton(onClick = { stop(sendNow = true) },
-                            enabled = !previewing && seconds >= 1) {
-                            Icon(Icons.Outlined.Send, "Send recording")
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { stop() }, enabled = !previewing && seconds >= 1) { Text("Review") } }
-        )
-    }
-
-    preview?.let { note ->
-        DataCubeDialog(
-            onDismissRequest = {
-                note.file.delete()
-                preview = null
-            },
-            title = {
-                Text("Your voice note", style = MaterialTheme.typography.titleLarge)
-            },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("${note.durationSeconds}s recorded privately on this device",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Send this audio to AU. Your selected Gemma model will listen and answer; the app won't replace your voice note with text.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        VoiceNotePlayback(note.file.absolutePath, "Preview recording")
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    preview = null
-                    onReady(note)
-                }) { Text("Send voice note") }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    note.file.delete()
-                    preview = null
-                }) { Text("Discard") }
-            }
-        )
-    }
-
-    error?.let { message ->
-        DataCubeDialog(
-            onDismissRequest = { error = null },
-            title = { Text("Voice notes") },
-            text = { Text(message) },
-            confirmButton = { TextButton(onClick = { error = null }) { Text("OK") } }
-        )
-    }
-
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier) {
-        IconButton(
-            enabled = enabled && !finishing,
-            modifier = Modifier.size(48.dp),
-            onClick = {
-                if (recording) stop()
-                else if (!supportsAudio) {
-                    error = "Select and download a Gemma 4 E2B or E4B model in Models. Other chat models cannot listen to voice notes."
-                } else if (ContextCompat.checkSelfPermission(
-                        context, Manifest.permission.RECORD_AUDIO
-                    ) == PackageManager.PERMISSION_GRANTED) {
-                    start()
                 } else {
-                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    Icon(Icons.Outlined.Mic, "Recording", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(24.dp))
+                }
+                val accent = MaterialTheme.colorScheme.primary
+                val muted = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .45f)
+                val bars = remember(levels, paused) {
+                    if (paused && levels.size > 40) List(40) { index ->
+                        val from = index * levels.size / 40
+                        val to = (index + 1) * levels.size / 40
+                        levels.subList(from, to).maxOrNull() ?: 0f
+                    } else List(40) { index -> levels.getOrNull(levels.size - 40 + index) ?: 0f }
+                }
+                val progress = if (millis > 0) position.toFloat() / millis else 0f
+                Canvas(Modifier.weight(1f).height(44.dp).pointerInput(paused, player, millis) {
+                    if (paused) detectTapGestures { point ->
+                        if (size.width > 0 && millis > 0) runCatching {
+                            player?.seekTo((point.x / size.width * millis).toInt().coerceIn(0, millis))
+                        }
+                    }
+                }) {
+                    val step = size.width / bars.size
+                    bars.forEachIndexed { index, level ->
+                        val x = step * (index + .5f)
+                        val h = (kotlin.math.sqrt(level.coerceIn(0f, 1f)) * size.height * .9f).coerceAtLeast(2.dp.toPx())
+                        drawLine(if (!paused || index.toFloat() / bars.size < progress) accent else muted,
+                            Offset(x, (size.height - h) / 2), Offset(x, (size.height + h) / 2),
+                            strokeWidth = (step * .52f).coerceAtLeast(1f), cap = StrokeCap.Round)
+                    }
+                }
+                Text("%d:%02d".format(java.util.Locale.ROOT, millis / 60_000, millis / 1000 % 60),
+                    style = MaterialTheme.typography.titleMedium)
+            }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalIconButton(onClick = ::discard, enabled = !busy) {
+                    Icon(Icons.Outlined.DeleteOutline, "Discard recording", tint = MaterialTheme.colorScheme.error)
+                }
+                FilledTonalButton(onClick = { if (paused) resumeRecording() else pauseRecording() },
+                    enabled = !busy && millis < WavePcm.MAX_SECONDS * 1000,
+                    modifier = Modifier.weight(1f), shape = RoundedCornerShape(16.dp)) {
+                    Icon(if (paused) Icons.Outlined.Mic else Icons.Outlined.Pause, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(if (paused) "Resume" else "Pause")
+                }
+                FilledIconButton(onClick = ::send, enabled = !busy && millis >= 1000 && currentConfig.enabled) {
+                    Icon(Icons.Outlined.Send, "Send recording")
                 }
             }
-        ) {
-            Icon(
-                if (recording) Icons.Outlined.Stop
-                else if (supportsAudio) Icons.Outlined.Mic
-                else Icons.Outlined.MicOff,
-                contentDescription = if (recording) "Stop voice note recording"
-                    else "Record a voice note"
-            )
-        }
-        if (recording) {
-            Text("${seconds}s", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.error)
+            if (busy) Text("Preparing recording…", style = MaterialTheme.typography.labelSmall)
+            else if (millis >= WavePcm.MAX_SECONDS * 1000)
+                Text("Recording limit reached. Play, send or discard.", style = MaterialTheme.typography.labelSmall)
+            error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         }
     }
 }
