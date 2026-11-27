@@ -47,6 +47,9 @@ object SmoothOfflineNarration {
             return tts
         } catch (failure: Throwable) {
             withContext(NonCancellable + Dispatchers.Main.immediate) { tts.shutdown() }
+            if (failure is TimeoutCancellationException) {
+                throw IllegalStateException("Android offline speech initialization timed out.", failure)
+            }
             throw failure
         }
     }
