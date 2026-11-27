@@ -1,5 +1,7 @@
 package au.datacube.app.audio
 
+import au.datacube.app.data.rag.LocalComputeGate
+
 import android.content.Context
 import au.datacube.app.notifications.LocalNotificationService
 import android.media.AudioAttributes
@@ -86,7 +88,7 @@ object NeuralNarration {
     ) {
         require(turns.size in 1..PodcastDialogue.MAX_TURNS) { "Prepare a valid discussion first." }
         val parts = turns.flatMapIndexed { index, turn ->
-            NeuralTextSegmenter.split(turn.text).map {
+            NeuralTextSegmenter.split(turn.text, maxChunk = 1000, maxText = 2000).map {
                 SpeechPart(it, PodcastDialogue.voiceFor(turn.speaker), index)
             }
         }
@@ -111,7 +113,7 @@ object NeuralNarration {
         mutex.withLock {
             val app = context.applicationContext
             onStage("Preparing neural audio")
-            var task = load(app)
+            var task: TextToSpeech? = null
             val pcm = File.createTempFile("au-narration-", ".pcm", app.cacheDir)
             var player: AudioTrack? = null
             var rate = 0
@@ -129,7 +131,7 @@ object NeuralNarration {
                             boundaries += totalSamples to part.speaker
                         }
                         onStage("Preparing audio ${index + 1} of ${parts.size}")
-                        task.synthesizeStream(part.text, SynthesisOptions(part.voice, null)).collect { chunk ->
+                        checkNotNull(task).synthesizeStream(part.text, SynthesisOptions(part.voice, null)).collect { chunk ->
                             currentCoroutineContext().ensureActive()
                             if (chunk.samples.isEmpty()) return@collect
                             require(chunk.sampleRateHz in 16_000..48_000)
@@ -150,18 +152,26 @@ object NeuralNarration {
                     check(rate > 0 && totalSamples > 0) { "No audio was generated." }
                 }
                 val began = SystemClock.elapsedRealtime()
-                try {
-                    prepareAudio()
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Exception) {
-                    if (loadedDelegate != Delegate.GPU) throw failure
-                    // No audio has played yet, so retry safely without duplicate speech.
-                    gpuRejected = true
-                    onStage("Preparing audio with compatible engine")
-                    closeEngine()
-                    task = load(app)
-                    prepareAudio()
+                LocalComputeGate.mutex.withLock {
+                    try {
+                        task = load(app)
+                        prepareAudio()
+                    } catch (cancelled: CancellationException) {
+                        runCatching { task?.cancel() }
+                        throw cancelled
+                    } catch (failure: Exception) {
+                        if (loadedDelegate != Delegate.GPU) throw failure
+                        gpuRejected = true
+                        onStage("Preparing audio with compatible engine")
+                        closeEngine()
+                        task = load(app)
+                        prepareAudio()
+                    } finally {
+                        // Synthesis is done before playback. Release neural weights
+                        // so other local engines do not contend with a silent cache.
+                        closeEngine()
+                        task = null
+                    }
                 }
                 Log.i("AuNeuralSpeech", "delegateRequested=$loadedDelegate synthesisMs=${SystemClock.elapsedRealtime() - began} audioMs=${totalSamples * 1000 / rate}")
                 if (destination != null) {
@@ -234,7 +244,7 @@ object NeuralNarration {
                     delay(40)
                 }
             } catch (cancelled: CancellationException) {
-                task.cancel()
+                task?.cancel()
                 throw cancelled
             } finally {
                 player?.let { track ->
