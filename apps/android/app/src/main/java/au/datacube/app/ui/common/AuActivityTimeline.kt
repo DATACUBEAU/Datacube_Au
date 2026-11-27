@@ -212,7 +212,7 @@ internal fun AuCompletedActivity(steps: List<String>, durationMs: Long?, firstVi
     val duration = when {
         interrupted -> "Response interrupted"
         firstVisibleMs != null -> thoughtLabel(firstVisibleMs)
-        "Answered a simple greeting locally" in steps -> "Answered instantly"
+        "Answered a simple greeting locally" in steps -> "Quick reply"
         seconds == null -> "AU activity"
         seconds < 1 -> "AU worked for <1s"
         seconds < 60 -> "AU worked for ${seconds}s"
