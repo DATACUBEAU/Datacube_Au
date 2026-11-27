@@ -1,18 +1,14 @@
 package au.datacube.app.data.rag
 
 import android.content.Context
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
+import au.datacube.app.work.DocumentWorkPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.ExtractedTextStore
 import java.security.MessageDigest
-import java.util.concurrent.TimeUnit
 import java.util.PriorityQueue
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -32,16 +28,14 @@ class LocalSemanticSearch(private val context: Context) {
 
     fun scheduleIndex(documentId: String) {
         if (!supported() || documentId.isBlank()) return
-        val request = OneTimeWorkRequestBuilder<SemanticIndexWorker>()
-            .setInputData(workDataOf(SemanticIndexWorker.KEY_DOCUMENT to documentId))
-            .setConstraints(Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                .setRequiresBatteryNotLow(true)
-                .setRequiresStorageNotLow(true)
-                .build())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30L, TimeUnit.SECONDS)
-            .build()
+        val request = DocumentWorkPolicy.request(SemanticIndexWorker::class.java,
+            workDataOf(SemanticIndexWorker.KEY_DOCUMENT to documentId))
         work.enqueueUniqueWork(workName(documentId), ExistingWorkPolicy.KEEP, request)
+    }
+
+    internal suspend fun updateLegacyRequest(documentId: String) {
+        DocumentWorkPolicy.updateLegacy(work, workName(documentId), SemanticIndexWorker::class.java,
+            workDataOf(SemanticIndexWorker.KEY_DOCUMENT to documentId))
     }
 
     fun cancelIndex(documentId: String) {

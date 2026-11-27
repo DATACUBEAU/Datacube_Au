@@ -1,19 +1,15 @@
 package au.datacube.app.data.rag
 
 import android.content.Context
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
+import au.datacube.app.work.DocumentWorkPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.notifications.LocalNotificationService
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -73,17 +69,16 @@ class LexicalIndexWorker(context: Context, parameters: WorkerParameters) :
 
         fun schedule(context: Context, documentId: String) {
             if (!documentId.matches(Regex("[A-Za-z0-9_-]{1,80}"))) return
-            val request = OneTimeWorkRequestBuilder<LexicalIndexWorker>()
-                .setInputData(workDataOf(KEY_DOCUMENT to documentId))
-                .setConstraints(Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                    .setRequiresBatteryNotLow(true)
-                    .setRequiresStorageNotLow(true)
-                    .build())
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30L, TimeUnit.SECONDS)
-                .build()
+            val request = DocumentWorkPolicy.request(LexicalIndexWorker::class.java,
+                workDataOf(KEY_DOCUMENT to documentId))
             WorkManager.getInstance(context.applicationContext)
                 .enqueueUniqueWork(workName(documentId), ExistingWorkPolicy.KEEP, request)
+        }
+
+        internal suspend fun updateLegacyRequest(context: Context, documentId: String) {
+            if (!documentId.matches(Regex("[A-Za-z0-9_-]{1,80}"))) return
+            DocumentWorkPolicy.updateLegacy(WorkManager.getInstance(context.applicationContext),
+                workName(documentId), LexicalIndexWorker::class.java, workDataOf(KEY_DOCUMENT to documentId))
         }
 
         fun cancel(context: Context, documentId: String) {
