@@ -68,6 +68,8 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
     private var recordingJob: Job? = null
     private var partial: File? = null
     private val captureLock = Any()
+    @Volatile var captureFailed = false
+        private set
     @Volatile private var running = false
     @Volatile private var paused = false
     @Volatile var capturedBytes: Int = 0
@@ -116,6 +118,7 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
             throw error
         }
         capturedBytes = 0
+        captureFailed = false
         amplitude = 0f
         paused = false
         partial = file
@@ -123,6 +126,7 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
         running = true
         recordingJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(capacity)
+            try {
             FileOutputStream(file).use { output ->
                 while (running && capturedBytes < WavePcm.MAX_AUDIO_BYTES) {
                     currentCoroutineContext().ensureActive()
@@ -143,10 +147,12 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
                             count
                         }
                     }
-                    if (read < 0) break
+                    if (read < 0) { captureFailed = true; break }
                     if (read == 0) delay(30)
                 }
             }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+            catch (_: Exception) { captureFailed = true }
         }
     }
 
@@ -162,6 +168,7 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
     fun resume() {
         synchronized(captureLock) {
             if (!running || !paused) return
+            check(!captureFailed) { "Recording capture failed." }
             track?.startRecording()
             paused = false
         }
@@ -198,7 +205,7 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
         recordingJob = null
         partial = null
         val bytes = source.length().toInt()
-        if (bytes < WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE / 2 ||
+        if (bytes < WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE ||
             bytes > WavePcm.MAX_AUDIO_BYTES) {
             source.delete()
             return@withContext null
