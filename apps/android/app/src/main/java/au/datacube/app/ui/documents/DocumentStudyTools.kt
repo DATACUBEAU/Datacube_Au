@@ -1118,16 +1118,10 @@ fun DocumentChatWorkspace(
         if (session.searching && !messages.any { it.generating }) {
             AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
         }
-        if (attached != null) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(attached?.label.orEmpty(), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                TextButton(onClick = { attached = null; attachmentError = null }) { Text("Remove") }
-            }
-            Text("Attachment is analyzed separately from this document.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-        }
         if (preparingAttachment) Text("Preparing attachment…", Modifier.padding(horizontal = 16.dp))
         attachmentError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
         AuComposer(
+            attachmentContent = { attached?.let { au.datacube.app.ui.chat.GistAttachmentPreview(it, { attached = null; attachmentError = null }, !session.searching) } },
             value = prompt,
             onValueChange = { prompt = it.take(500) },
             onSend = { if (attached != null) sendAttached() else submitQuestion(prompt.trim()) },
