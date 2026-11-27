@@ -1046,8 +1046,9 @@ fun DocumentChatWorkspace(
                                                 shape = RoundedCornerShape(12.dp),
                                                 color = MaterialTheme.colorScheme.surfaceVariant) {
                                                 Column(Modifier.padding(11.dp)) {
-                                                    Text("[${index + 1}] " + (source.page?.let { "Page $it" } ?: "Document"),
-                                                        style = MaterialTheme.typography.labelMedium)
+                                                    Text("[${index + 1}] " + (source.documentName ?: documentName),
+                                                        style = MaterialTheme.typography.labelMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    source.page?.let { Text("Page $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                                     Text(source.text.take(160), maxLines = 3,
                                                         overflow = TextOverflow.Ellipsis,
                                                         style = MaterialTheme.typography.bodySmall)
