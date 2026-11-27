@@ -439,7 +439,7 @@ fun DocumentChatWorkspace(
         val question = prompt.trim().ifBlank {
             if (selected is GistAttachment.Photo) "Explain this image." else "Explain this attachment."
         }
-        val mode = effort
+        val mode = effort.forDevice(context)
         // An attachment is independent evidence, never silently imported into the open document.
         val sources = if (selected is GistAttachment.Document)
             listOf(SourceSnippet(selected.excerpt, null, documentName = selected.label)) else emptyList()
@@ -507,7 +507,7 @@ fun DocumentChatWorkspace(
             return
         }
                         if (llmInstalled && cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
-                            val requestEffort = effort
+                            val requestEffort = effort.forDevice(context)
                             if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
                             if (audioPath == null) prompt = ""
                             session.searching = true
