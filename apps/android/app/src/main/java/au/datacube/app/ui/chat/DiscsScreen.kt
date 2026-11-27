@@ -628,6 +628,7 @@ fun DiscsScreen(
                                                         Text("[${sourceIndex + 1}] ${source.documentName ?: "Document"}",
                                                             style = MaterialTheme.typography.labelMedium,
                                                             maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        source.page?.let { Text("Page $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                                         Text(source.text.take(160), maxLines = 3,
                                                             overflow = TextOverflow.Ellipsis,
                                                             style = MaterialTheme.typography.bodySmall)
