@@ -69,22 +69,22 @@ object NeuralNarration {
             "models/installed/$MODEL_ID/${artifact.fileName}").isFile
     }
 
-    private data class SpeechPart(val text: String, val voice: String, val speaker: Int)
+    private data class SpeechPart(val text: String, val voice: String, val speaker: Int, val pauseAfterMs: Int)
 
     suspend fun speak(
         context: Context, text: String, voice: String, speed: Float,
         onProgress: suspend (Long, Long) -> Unit = { _, _ -> },
         onStage: suspend (String) -> Unit = {}
     ) {
-        val parts = NeuralTextSegmenter.split(text, maxChunk = 600, maxText = 12_000)
-            .map { SpeechPart(it, voice, 0) }
+        val parts = NeuralTextSegmenter.plan(text, maxChunk = 600, maxText = 12_000)
+            .map { SpeechPart(it.text, voice, 0, it.pauseAfterMs) }
         renderAndPlay(context, parts, speed, {}, onStage, onProgress)
     }
 
     /** Render one private WAV for the reusable message player, without playing it. */
     suspend fun prepareReadAloud(context: Context, text: String, voice: String, destination: File,
         onStage: suspend (String) -> Unit = {}) {
-        val parts = NeuralTextSegmenter.split(text, maxChunk = 600, maxText = 12_000).map { SpeechPart(it, voice, 0) }
+        val parts = NeuralTextSegmenter.plan(text, maxChunk = 600, maxText = 12_000).map { SpeechPart(it.text, voice, 0, it.pauseAfterMs) }
         renderAndPlay(context, parts, 1f, {}, onStage, destination = destination)
     }
 
@@ -97,8 +97,11 @@ object NeuralNarration {
     ) {
         require(turns.size in 1..PodcastDialogue.MAX_TURNS) { "Prepare a valid discussion first." }
         val parts = turns.flatMapIndexed { index, turn ->
-            NeuralTextSegmenter.split(turn.text, maxChunk = 1000, maxText = 2000).map {
-                SpeechPart(it, PodcastDialogue.voiceFor(turn.speaker), index)
+            val planned = NeuralTextSegmenter.plan(turn.text, maxChunk = 600, maxText = 2000)
+            planned.mapIndexed { partIndex, segment ->
+                SpeechPart(segment.text, PodcastDialogue.voiceFor(turn.speaker), index,
+                    if (partIndex == planned.lastIndex && index < turns.lastIndex)
+                        maxOf(350, segment.pauseAfterMs) else segment.pauseAfterMs)
             }
         }
         renderAndPlay(context, parts, speed, onSpeaker, onStage,
@@ -110,8 +113,8 @@ object NeuralNarration {
         destination: File, onStage: suspend (String) -> Unit,
         onProgress: suspend (Long, Long) -> Unit, onStarted: suspend () -> Unit,
         isPaused: () -> Boolean) {
-        val parts = NeuralTextSegmenter.split(text, maxChunk = 600, maxText = 12_000)
-            .map { SpeechPart(it, voice, 0) }
+        val parts = NeuralTextSegmenter.plan(text, maxChunk = 600, maxText = 12_000)
+            .map { SpeechPart(it.text, voice, 0, it.pauseAfterMs) }
         renderAndPlay(context, parts, speed, {}, onStage, onProgress, destination,
             playWhilePreparing = true, onStarted = onStarted, isPaused = isPaused)
     }
@@ -168,33 +171,72 @@ object NeuralNarration {
                         var completedChars = 0
                         var synthesisNanos = 0L
                         val boundaries = mutableListOf<Pair<Long, Int>>()
-                        pcm.outputStream().buffered().use { output ->
+                        RandomAccessFile(pcm, "rw").use { output ->
+                            output.setLength(0)
                             parts.forEachIndexed { index, part ->
                                 currentCoroutineContext().ensureActive()
                                 if (boundaries.lastOrNull()?.second != part.speaker)
                                     boundaries += samples to part.speaker
                                 val began = System.nanoTime()
                                 val before = samples
-                                checkNotNull(task).synthesizeStream(part.text, SynthesisOptions(part.voice, null)).collect { chunk ->
-                                    currentCoroutineContext().ensureActive()
-                                    if (chunk.samples.isEmpty()) return@collect
-                                    require(chunk.sampleRateHz in 16_000..48_000)
-                                    if (rate == 0) rate = chunk.sampleRateHz
-                                    check(rate == chunk.sampleRateHz) { "Audio sample rate changed." }
-                                    samples += chunk.samples.size
-                                    check(samples <= 64L * 1024 * 1024) { "Audio is too long to prepare." }
-                                    val bytes = ByteArray(chunk.samples.size * 2)
-                                    chunk.samples.forEachIndexed { i, sample ->
-                                        val value = (sample.coerceIn(-1f, 1f) * 32767f).toInt()
-                                        bytes[i * 2] = value.toByte()
-                                        bytes[i * 2 + 1] = (value shr 8).toByte()
+                                val rateBefore = rate
+
+                                suspend fun synthesize(text: String, pauseAfterMs: Int): Boolean {
+                                    var quality: SpeechAudioQuality? = null
+                                    checkNotNull(task).synthesizeStream(text, SynthesisOptions(part.voice, null)).collect { chunk ->
+                                        currentCoroutineContext().ensureActive()
+                                        if (chunk.samples.isEmpty()) return@collect
+                                        require(chunk.sampleRateHz in 16_000..48_000)
+                                        if (rate == 0) rate = chunk.sampleRateHz
+                                        check(rate == chunk.sampleRateHz) { "Audio sample rate changed." }
+                                        val metrics = quality ?: SpeechAudioQuality(rate).also { quality = it }
+                                        samples += chunk.samples.size
+                                        check(samples <= 64L * 1024 * 1024) { "Audio is too long to prepare." }
+                                        val bytes = ByteArray(chunk.samples.size * 2)
+                                        chunk.samples.forEachIndexed { i, sample ->
+                                            metrics.observe(sample)
+                                            val value = if (sample.isFinite())
+                                                (sample.coerceIn(-1f, 1f) * 32767f).toInt() else 0
+                                            bytes[i * 2] = value.toByte()
+                                            bytes[i * 2 + 1] = (value shr 8).toByte()
+                                        }
+                                        output.write(bytes)
                                     }
-                                    output.write(bytes)
+                                    val metrics = quality ?: return false
+                                    if (!metrics.acceptable(text)) return false
+                                    // Add only missing quiet time at a meaningful boundary;
+                                    // never trim or crossfade potentially spoken samples.
+                                    val silence = metrics.additionalSilenceSamples(pauseAfterMs)
+                                    check(samples + silence <= 64L * 1024 * 1024)
+                                    if (silence > 0) {
+                                        output.write(ByteArray(silence * 2))
+                                        samples += silence
+                                    }
+                                    return true
                                 }
-                                check(samples > before) { "A speech segment returned no audio." }
-                                output.flush()
+
+                                val pause = if (index == parts.lastIndex) 0 else part.pauseAfterMs
+                                if (!synthesize(part.text, pause)) {
+                                    // The consumer cannot see this segment yet. Roll back
+                                    // only unpublished PCM, then retry with shorter phrases.
+                                    output.setLength(before * 2)
+                                    output.seek(before * 2)
+                                    samples = before
+                                    rate = rateBefore
+                                    Log.w("AuNeuralSpeech", "Retrying suspicious segment ${index + 1}")
+                                    val retry = NeuralTextSegmenter.plan(part.text, maxChunk = 260, maxText = 2000)
+                                    for ((retryIndex, phrase) in retry.withIndex()) {
+                                        val nextPause = if (retryIndex == retry.lastIndex) pause else phrase.pauseAfterMs
+                                        check(synthesize(phrase.text, nextPause)) {
+                                            "Voice generated incomplete or silent audio. Try a different voice or Android speech."
+                                        }
+                                    }
+                                }
+                                check(samples > before)
                                 synthesisNanos += System.nanoTime() - began
                                 completedChars += part.text.length
+                                // Publication happens only after the entire segment passed
+                                // sanity checks and its bytes are visible to the reader.
                                 published.set(PublishedAudio(rate, samples, completedChars,
                                     synthesisNanos / 1_000_000_000.0, boundaries.toList()))
                                 if (!shouldPlay) onStage("Preparing audio ${index + 1} of ${parts.size}")
@@ -246,9 +288,9 @@ object NeuralNarration {
     private fun speechKey(parts: List<SpeechPart>): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val artifact = requireNotNull(VerifiedModelDownloads.find(MODEL_ID))
-        digest.update(("au-pcm-v2:" + artifact.sha256).toByteArray())
+        digest.update(("au-pcm-v3:" + artifact.sha256).toByteArray())
         parts.forEach {
-            digest.update(("${it.speaker}:${it.voice}:${it.text.length}:").toByteArray())
+            digest.update(("${it.speaker}:${it.voice}:${it.pauseAfterMs}:${it.text.length}:").toByteArray())
             digest.update(it.text.toByteArray(Charsets.UTF_8))
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
