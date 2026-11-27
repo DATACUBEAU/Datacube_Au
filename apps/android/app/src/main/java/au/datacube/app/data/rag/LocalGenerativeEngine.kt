@@ -150,6 +150,7 @@ object LocalGenerativeEngine {
         image: ByteArray? = null,
         effort: AuEffort = AuEffort.BALANCED,
         visualRequested: Boolean = false,
+        studyOutputTokens: Int? = null,
         onText: suspend (String) -> Unit
     ) = withContext(dispatcher) {
         val queuedAt = android.os.SystemClock.elapsedRealtime()
@@ -249,7 +250,7 @@ object LocalGenerativeEngine {
                             (if (!studyTask) " " + effectiveEffort.instruction else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
-                    maxOutputToken = if (studyTask) null else effectiveEffort.outputTokens,
+                    maxOutputToken = if (studyTask) studyOutputTokens?.coerceIn(128, 3072) else effectiveEffort.outputTokens,
                     thinkingConfig = thinkingBudget?.let { ThinkingConfig(enableThinking = it > 0, thinkingTokenBudget = it) }
                 )
             )
