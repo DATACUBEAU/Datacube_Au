@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.work.WorkInfo
 import au.datacube.app.models.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -208,9 +210,48 @@ private fun ModelCard(
     LaunchedEffect(model.id, complete) { if(complete) onAvailabilityChanged() }
     var chooseNetwork by remember(model.id) { mutableStateOf(false) }
     var revision by remember(model.id) { mutableIntStateOf(0) }
+    var queueMessage by remember(model.id) { mutableStateOf("Queued · starting download") }
+    var queueError by remember(model.id) { mutableStateOf<String?>(null) }
+    var changingNetwork by remember(model.id) { mutableStateOf(false) }
     val paused = remember(revision, work?.state) { verified != null && downloader.paused(model.id) }
     val percent = work?.progress?.getInt(VerifiedModelDownloadWorker.KEY_PROGRESS, -1) ?: -1
     val error = work?.outputData?.getString(VerifiedModelDownloadWorker.KEY_ERROR)
+
+    LaunchedEffect(work?.id, work?.state, work?.constraints, revision) {
+        val current = work ?: return@LaunchedEffect
+        if (current.state == WorkInfo.State.ENQUEUED && current.constraints.requiresBatteryNotLow()) {
+            try {
+                downloader.updateQueued(model.id, current.id)
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { queueError = "Could not update the existing queue. Pause and resume to retry." }
+        }
+        if (current.state == WorkInfo.State.ENQUEUED || current.state == WorkInfo.State.BLOCKED) {
+            while (true) {
+                queueMessage = downloader.queuedMessage(current)
+                delay(2_000)
+            }
+        }
+    }
+    fun selectNetwork(wifiOnly: Boolean) {
+        val queued = work?.takeIf { it.state == WorkInfo.State.ENQUEUED }
+        if (queued != null) {
+            changingNetwork = true
+            chooseNetwork = false
+            scope.launch {
+                try {
+                    downloader.updateQueued(model.id, queued.id, wifiOnly)
+                    queueError = null
+                    revision += 1
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { queueError = "Could not change the download network. Pause and resume to retry." }
+                finally { changingNetwork = false }
+            }
+        } else {
+            downloader.start(model.id, wifiOnly)
+            revision += 1
+            chooseNetwork = false
+        }
+    }
 
     if (chooseNetwork && verified != null) {
         DataCubeDialog(
@@ -221,14 +262,10 @@ private fun ModelCard(
             confirmButton = {
                 Column {
                     Button(onClick = {
-                        downloader.start(model.id, wifiOnly = true)
-                        revision += 1
-                        chooseNetwork = false
+                        selectNetwork(true)
                     }, modifier = Modifier.fillMaxWidth()) { Text("Wi-Fi only") }
                     TextButton(onClick = {
-                        downloader.start(model.id, wifiOnly = false)
-                        revision += 1
-                        chooseNetwork = false
+                        selectNetwork(false)
                     }, modifier = Modifier.fillMaxWidth()) { Text("Allow mobile data") }
                 }
             },
@@ -267,7 +304,7 @@ private fun ModelCard(
             if (working) {
                 Text(if (work?.state == WorkInfo.State.RUNNING)
                     work.progress.getString(VerifiedModelDownloadWorker.KEY_STAGE) ?: "Downloading"
-                    else if (complete) "Backup queued" else "Queued · waiting for network and battery",
+                    else queueMessage,
                     style = MaterialTheme.typography.bodySmall)
                 if (percent >= 0) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -275,7 +312,12 @@ private fun ModelCard(
                         Spacer(Modifier.width(9.dp))
                         Text(percent.toString() + "%", style = MaterialTheme.typography.labelSmall)
                     }
-                } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                } else if (work?.state == WorkInfo.State.RUNNING) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                if (work?.state == WorkInfo.State.ENQUEUED && !complete) {
+                    OutlinedButton(onClick = { chooseNetwork = true }, enabled = !changingNetwork,
+                        modifier = Modifier.fillMaxWidth()) { Text("Change download network") }
+                }
+                queueError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = { scope.launch { downloader.pause(model.id); revision += 1 } },

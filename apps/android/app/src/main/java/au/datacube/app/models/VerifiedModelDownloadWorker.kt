@@ -58,8 +58,14 @@ class VerifiedModelDownloadWorker(
             setProgress(workDataOf(KEY_ERROR to (rejected.message ?: "Model download refused.")))
             Result.failure(workDataOf(KEY_ERROR to (rejected.message ?: "Model download refused.")))
         } catch (failure: IOException) {
-            setProgress(workDataOf(KEY_ERROR to "Connection interrupted. Retrying the download."))
-            Result.retry()
+            if (runAttemptCount < MAX_NETWORK_RETRIES) {
+                setProgress(workDataOf(KEY_ERROR to "Connection interrupted. Retrying the download."))
+                Result.retry()
+            } else {
+                runCatching { au.datacube.app.notifications.LocalNotificationService(applicationContext)
+                    .showAiReady("model-$id", "Model download interrupted. Open Models to retry.") }
+                Result.failure(workDataOf(KEY_ERROR to "Connection repeatedly interrupted. Partial download retained; retry when connected."))
+            }
         } catch (failure: Exception) {
             runCatching { au.datacube.app.notifications.LocalNotificationService(applicationContext)
                 .showAiReady("model-$id", "Model download needs attention. Open Models to review.") }
@@ -313,6 +319,7 @@ class VerifiedModelDownloadWorker(
         const val KEY_BACKUP_VERIFIED = "backupVerified"
         private const val CHANNEL_ID = "datacube_verified_downloads"
         private const val NOTIFICATION_BASE = 50_000
+        private const val MAX_NETWORK_RETRIES = 6
         private const val STORAGE_HEADROOM = 160L * 1024L * 1024L
 
         fun partialFile(context: Context, id: String): File =

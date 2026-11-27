@@ -45,6 +45,22 @@ class VerifiedModelDownloadsTest {
         assertEquals(ModelRole.VOICE, ModelCatalog.find("kokoro-82m-cpu").role)
     }
 
+    @Test fun queuedStateExplainsNetworkAndStorageWithoutInventingProgress() {
+        val unmetered = androidx.work.NetworkType.UNMETERED
+        val connected = androidx.work.NetworkType.CONNECTED
+        val none = androidx.work.NetworkType.NOT_REQUIRED
+        fun message(type: androidx.work.NetworkType, online: Boolean, free: Boolean, battery: Boolean = false,
+            storage: Boolean = false, retries: Int = 0) =
+            VerifiedModelDownloadManager.queueMessage(type, online, free, battery, storage, retries)
+        assertTrue(message(unmetered, true, false).contains("Wi-Fi"))
+        assertTrue(message(connected, false, false).contains("internet"))
+        assertTrue(message(connected, true, false).contains("Android"))
+        assertTrue(message(none, false, false).contains("Android"))
+        assertTrue(message(connected, true, true, storage = true).contains("storage"))
+        assertTrue(message(connected, true, true, battery = true).contains("battery"))
+        assertTrue(message(connected, true, true, retries = 1).contains("retrying"))
+    }
+
     @Test fun invalidManifestCannotBeRegistered() {
         assertThrows(IllegalArgumentException::class.java) {
             VerifiedModelArtifact(
