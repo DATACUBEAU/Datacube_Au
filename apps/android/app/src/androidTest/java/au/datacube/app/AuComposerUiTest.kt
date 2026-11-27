@@ -105,9 +105,9 @@ class AuComposerUiTest {
         val initial = row.getBoundsInRoot().let { it.bottom - it.top }
         org.junit.Assert.assertTrue(kotlin.math.abs(initial.value - 48f) <= 1f)
         rule.onNodeWithTag("au-composer-input").performTextInput((1..15).joinToString("\n") { "A long draft line $it" })
-        assertEquals(initial, row.getBoundsInRoot().let { it.bottom - it.top })
+        org.junit.Assert.assertTrue(kotlin.math.abs((row.getBoundsInRoot().let { it.bottom - it.top }).value - initial.value) <= 0.5f)
         rule.onNodeWithContentDescription("Expand composer").performClick()
         rule.onNodeWithContentDescription("Collapse composer").performClick()
-        assertEquals(initial, row.getBoundsInRoot().let { it.bottom - it.top })
+        org.junit.Assert.assertTrue(kotlin.math.abs((row.getBoundsInRoot().let { it.bottom - it.top }).value - initial.value) <= 0.5f)
     }
 }

@@ -213,7 +213,7 @@ class LocalPassageIndex(context: Context) :
 
     internal fun rowIdForOrdinal(documentId: String, ordinal: Int): Long? =
         readableDatabase.rawQuery(
-            "SELECT rowid FROM passages WHERE documentId = ? AND ordinal = ? LIMIT 1",
+            "SELECT rowid FROM passages WHERE documentId = ? AND CAST(ordinal AS INTEGER) = CAST(? AS INTEGER) LIMIT 1",
             arrayOf(documentId, ordinal.toString())
         ).use { if (it.moveToFirst()) it.getLong(0) else null }
 
