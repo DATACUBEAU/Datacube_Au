@@ -40,6 +40,7 @@ object LocalEmbeddingRuntime {
         }
         mutex.withLock {
             currentCoroutineContext().ensureActive()
+            LocalComputeGate.prepare(context, LocalComputeGate.Engine.EMBEDDING)
             val artifact = requireNotNull(VerifiedModelDownloads.find(MODEL_ID))
             val model = File(context.filesDir, "models/installed/$MODEL_ID/${artifact.fileName}")
             check(model.isFile) { "Download the EmbeddingGemma 2 search model first." }
@@ -83,7 +84,9 @@ object LocalEmbeddingRuntime {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    suspend fun close() = mutex.withLock {
+    suspend fun close() = mutex.withLock { closeAdmitted() }
+
+    internal fun closeAdmitted() {
         active?.close()
         active = null
         activePath = null
