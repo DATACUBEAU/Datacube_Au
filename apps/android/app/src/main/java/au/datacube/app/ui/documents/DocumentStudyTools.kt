@@ -22,6 +22,7 @@ import au.datacube.app.audio.NeuralNarration
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -308,6 +309,10 @@ fun DocumentChatWorkspace(
     val messages = session.messages
     val historyReady = session.historyReady
     val userTurns = messages.count { it.isUser }
+    val chatListState = key(chatOwner, threadId) { rememberLazyListState() }
+    LaunchedEffect(historyReady, threadId, userTurns) {
+        if (historyReady && messages.isNotEmpty()) chatListState.scrollToItem(0)
+    }
     fun startNewChat() {
         scope.launch {
             runCatching { threads.create(chatOwner) }
@@ -961,12 +966,12 @@ fun DocumentChatWorkspace(
             }
         } else {
             LazyColumn(
-                Modifier.weight(1f).fillMaxWidth(),
+                Modifier.weight(1f).fillMaxWidth(), state = chatListState, reverseLayout = true,
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                item { DocumentChatModelNotice(llmInstalled, onOpenModels) }
-                itemsIndexed(messages) { messageIndex, message ->
+                itemsIndexed(messages.asReversed()) { reversedIndex, message ->
+                    val messageIndex = messages.lastIndex - reversedIndex
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
@@ -1112,6 +1117,14 @@ fun DocumentChatWorkspace(
                             }
                         }
                     }
+                }
+                item { DocumentChatModelNotice(llmInstalled, onOpenModels) }
+            }
+        }
+        if (messages.isNotEmpty() && chatListState.canScrollBackward) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                FilledTonalIconButton(onClick = { scope.launch { chatListState.scrollToItem(0) } }) {
+                    Icon(Icons.Outlined.ArrowDownward, "Jump to latest message")
                 }
             }
         }
