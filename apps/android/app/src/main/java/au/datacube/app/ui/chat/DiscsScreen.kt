@@ -25,6 +25,7 @@ import au.datacube.app.models.ActiveLocalChatModel
 import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -115,6 +116,10 @@ fun DiscsScreen(
     val turns = session.messages
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
+    val chatListState = key(ownerId, threadId) { rememberLazyListState() }
+    LaunchedEffect(ready, threadId, userTurns) {
+        if (ready && turns.isNotEmpty()) chatListState.scrollToItem(0)
+    }
     val modelReady = LocalGenerativeEngine.installed(context)
     val needsCollectionModel = collectionId != null && !modelReady
     // In collection mode callers pass only documents in the selected collection.
@@ -565,10 +570,11 @@ fun DiscsScreen(
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = chatListState, reverseLayout = true,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                itemsIndexed(turns) { messageIndex, message ->
+                itemsIndexed(turns.asReversed()) { reversedIndex, message ->
+                    val messageIndex = turns.lastIndex - reversedIndex
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(color = MaterialTheme.colorScheme.primaryContainer,
@@ -658,6 +664,13 @@ fun DiscsScreen(
             }
         }
 
+        if (turns.isNotEmpty() && chatListState.canScrollBackward) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                FilledTonalIconButton(onClick = { uiScope.launch { chatListState.scrollToItem(0) } }) {
+                    Icon(Icons.Outlined.ArrowDownward, "Jump to latest message")
+                }
+            }
+        }
         if (session.searching && !turns.any { it.generating }) {
             AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
         }
