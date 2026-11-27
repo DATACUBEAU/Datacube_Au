@@ -1309,7 +1309,7 @@ fun SmartNoteWorkspace(
                         label = { Text("Concept tree") }
                     )
                 }
-                Text("Based on selected source passages. Check the original document for complete coverage.",
+                Text(if (session.processedBlocks > 0) "Prepared from all extracted text in ${session.processedBlocks} sequential sections. The summary may omit details; consult the original." else "Based on selected source passages. Check the original document for complete coverage.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (conceptTree) {
                     if (conceptBlock != null) AuRichResponse(conceptBlock)
