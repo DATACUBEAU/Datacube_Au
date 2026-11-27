@@ -247,7 +247,7 @@ fun DiscsScreen(
             (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
         if (audioPath == null) prompt = ""
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
-        val requestEffort = effort
+        val requestEffort = effort.forDevice(context)
         session.searching = true
         session.activitySteps.clear()
         session.searchingStage = "Understanding your question"
@@ -446,7 +446,7 @@ fun DiscsScreen(
         val question = prompt.trim().ifBlank {
             if (selected is GistAttachment.Photo) "Explain this image." else "Explain this file."
         }
-        val requestEffort = effort
+        val requestEffort = effort.forDevice(context)
         val label = selected.label
         val sources = if (selected is GistAttachment.Document)
             listOf(SourceSnippet(selected.excerpt, null, documentName = label)) else emptyList()
