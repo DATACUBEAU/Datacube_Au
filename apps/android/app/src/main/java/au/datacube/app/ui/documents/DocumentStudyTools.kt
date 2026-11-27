@@ -84,7 +84,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
 import androidx.work.WorkInfo
-import au.datacube.app.ui.voice.VoiceNoteInputButton
+import au.datacube.app.ui.voice.VoiceNoteConfig
 import au.datacube.app.ui.voice.VoiceNotePlayback
 import au.datacube.app.ui.theme.DataCubeColors
 import java.util.Locale
@@ -1154,9 +1154,9 @@ fun DocumentChatWorkspace(
                     )
                 }
             },
-            actions = {
-                VoiceNoteInputButton(
+            voiceNote = VoiceNoteConfig(
                     ownerId = chatOwner,
+                    sessionId = threadId,
                     enabled = historyReady && !session.searching && !preparingAttachment && attached == null && threadIndex != null && llmInstalled &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
@@ -1185,7 +1185,6 @@ fun DocumentChatWorkspace(
                         }
                     }
                 )
-            }
         )
     }
 }
