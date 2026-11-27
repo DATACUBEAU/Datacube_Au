@@ -8,6 +8,7 @@ import {
 } from '@/lib/server/billing-request-guard';
 import { verifyPaystackWebhookSignature } from '@/lib/server/paystack';
 import { createSupabaseAdminClient } from '@/lib/server/supabase-admin';
+import { readBoundedWebhookBody } from '@/lib/server/webhook-body';
 
 export const runtime = 'nodejs';
 
@@ -42,26 +43,25 @@ function isValidPaystackPayload(payload: any): boolean {
 export async function POST(req: NextRequest) {
   const traceId = randomUUID();
   try {
-    const rateLimit = consumeBillingRateLimit({
-      scope: 'paystack-webhook',
-      key: resolveBillingRequestIp(req),
-      maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
-      windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
-    });
-    if (rateLimit.limited) {
-      return NextResponse.json(
-        { error: 'rate_limited', traceId },
-        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
-      );
-    }
-
     const signature = req.headers.get('x-paystack-signature');
-    const rawBody = await req.text();
-    if (Buffer.byteLength(rawBody, 'utf8') > WEBHOOK_MAX_BODY_BYTES) {
+    const rawBody = await readBoundedWebhookBody(req, WEBHOOK_MAX_BODY_BYTES);
+    if (rawBody === null) {
       return NextResponse.json({ error: 'payload_too_large', traceId }, { status: 413 });
     }
 
     if (!verifyPaystackWebhookSignature(rawBody, signature)) {
+      const rateLimit = consumeBillingRateLimit({
+        scope: 'paystack-webhook-invalid-signature',
+        key: resolveBillingRequestIp(req),
+        maxHits: WEBHOOK_RATE_LIMIT_MAX_HITS,
+        windowMs: WEBHOOK_RATE_LIMIT_WINDOW_MS,
+      });
+      if (rateLimit.limited) {
+        return NextResponse.json(
+          { error: 'rate_limited', traceId },
+          { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds) } },
+        );
+      }
       return NextResponse.json(
         { error: 'invalid_signature', traceId },
         { status: 401 }

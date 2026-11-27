@@ -1,0 +1,106 @@
+-- Non-mutating assertions for an isolated database after migration replay.
+DO $$
+DECLARE
+  item record;
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity
+  ) THEN
+    RAISE EXCEPTION 'Public table without row-level security';
+  END IF;
+  FOR item IN SELECT p.oid, p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = 'public' AND p.proname IN ('apply_billing_renewal_failure','admin_set_user_plan_override','approve_manual_payment','apply_plan_transition')
+  LOOP
+    IF has_function_privilege('anon',item.oid,'EXECUTE') OR has_function_privilege('authenticated',item.oid,'EXECUTE')
+      OR NOT has_function_privilege('service_role',item.oid,'EXECUTE') THEN
+      RAISE EXCEPTION 'Privileged billing function ACL mismatch: %',item.proname;
+    END IF;
+  END LOOP;
+  IF (SELECT count(DISTINCT p.proname) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname='public' AND p.proname IN ('apply_billing_renewal_failure','admin_set_user_plan_override','approve_manual_payment','apply_plan_transition')) <> 4 THEN
+    RAISE EXCEPTION 'Expected four billing function names';
+  END IF;
+  FOR item IN SELECT * FROM (VALUES
+    ('admin_access_logs','Service role full access'),
+    ('au_activity_log','Service role full access activity'),
+    ('au_auth_mappings','Service role can manage all auth mappings'),
+    ('au_conex_config','Service role full access conex config'),
+    ('au_config','Service role can insert config'),
+    ('au_config','Service role can update config'),
+    ('au_events','Service role can manage events'),
+    ('au_model_routing','Allow read for everyone model routing')
+  ) AS expected(table_name, policy_name)
+  LOOP
+    -- Legacy auth mappings may be absent from a clean local-first schema.
+    IF item.table_name = 'au_auth_mappings' AND to_regclass('public.au_auth_mappings') IS NULL THEN
+      CONTINUE;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.schemaname='public' AND p.tablename=item.table_name
+      AND p.policyname=item.policy_name AND p.roles=ARRAY['service_role']::name[]) THEN
+      RAISE EXCEPTION 'Service-only policy mismatch: %.%',item.table_name,item.policy_name;
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='au_config' AND policyname='Allow read for everyone') THEN
+    RAISE EXCEPTION 'Legacy public configuration policy still present';
+  END IF;
+END $$;
+
+-- Administrative read RPCs must remain behind the server authorization layer.
+DO $$
+DECLARE item record;
+BEGIN
+  IF (SELECT count(DISTINCT p.proname) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+      WHERE n.nspname='public' AND p.proname IN ('admin_count_auth_users','admin_list_auth_users','au_admin_db_stats')) <> 3 THEN
+    RAISE EXCEPTION 'Expected three administrative read RPCs';
+  END IF;
+  FOR item IN SELECT p.oid,p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname='public' AND p.proname IN ('admin_count_auth_users','admin_list_auth_users','au_admin_db_stats')
+  LOOP
+    IF has_function_privilege('anon',item.oid,'EXECUTE') OR has_function_privilege('authenticated',item.oid,'EXECUTE')
+      OR NOT has_function_privilege('service_role',item.oid,'EXECUTE') THEN
+      RAISE EXCEPTION 'Administrative RPC ACL mismatch: %',item.proname;
+    END IF;
+  END LOOP;
+END $$;
+
+-- Use synthetic identities only; never execute this transaction against production.
+BEGIN;
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.role','authenticated',true);
+SELECT set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',true);
+SELECT set_config('request.jwt.claims','{"role":"authenticated","sub":"11111111-1111-4111-8111-111111111111"}',true);
+DO $$
+DECLARE target uuid := '22222222-2222-4222-8222-222222222222';
+BEGIN
+  BEGIN
+    PERFORM public.get_effective_entitlements(target);
+    RAISE EXCEPTION 'Cross-account entitlements request was not denied';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM public.get_effective_limits(target);
+    RAISE EXCEPTION 'Cross-account limits request was not denied';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  IF public.is_conex_admin(target) IS DISTINCT FROM FALSE THEN
+    RAISE EXCEPTION 'Cross-account admin check was not denied';
+  END IF;
+END $$;
+SELECT set_config('request.jwt.claim.sub','',true);
+SELECT set_config('request.jwt.claims','{"role":"authenticated"}',true);
+DO $$
+DECLARE target uuid := '22222222-2222-4222-8222-222222222222';
+BEGIN
+  BEGIN
+    PERFORM public.get_effective_entitlements(target);
+    RAISE EXCEPTION 'Entitlements request without subject was not denied';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+  BEGIN
+    PERFORM public.get_effective_limits(target);
+    RAISE EXCEPTION 'Limits request without subject was not denied';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END $$;
+ROLLBACK;
