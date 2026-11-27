@@ -262,7 +262,8 @@ fun DiscsScreen(
         session.activitySteps.clear()
         session.searchingStage = "Understanding your question"
         val firstResponseIndex = turns.size
-        val workStartedAt = session.startRequestClock()
+        val workStartedAt = if (alreadyAdded && audioPath != null && session.requestStartedAt > 0L)
+            session.requestStartedAt else session.startRequestClock()
         session.activeRequest = session.scope.launch {
             val events = session.activitySteps
             try {
@@ -743,28 +744,8 @@ fun DiscsScreen(
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->
-                        val label = "Voice note · " + note.durationSeconds + "s"
-                        turns.add(ChatMessage(label, emptyList(), true,
-                            audioPath = note.file.absolutePath))
-                        session.searching = true
-                        session.searchingStage = "AU is listening"
-                        session.activeRequest = session.scope.launch {
-                            try {
-                                val question = LocalGenerativeEngine.understandVoiceNote(
-                                    context, note.file)
-                                session.searching = false
-                                session.searchingStage = ""
-                                send(question, label, note.file.absolutePath, alreadyAdded = true)
-                            } catch (cancelled: CancellationException) {
-                                session.searching = false
-                                session.searchingStage = ""
-                                throw cancelled
-                            } catch (error: Exception) {
-                                session.searching = false
-                                session.searchingStage = ""
-                                turns.add(ChatMessage(label, emptyList(), false,
-                                    generationError = error.message ?: "AU could not understand this audio."))
-                            }
+                        session.submitVoiceNote(context, note) { words, label, path ->
+                            send(words, label, path, alreadyAdded = true)
                         }
                     }
                 )
