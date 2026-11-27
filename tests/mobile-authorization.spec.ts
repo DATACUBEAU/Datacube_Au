@@ -38,7 +38,7 @@ async function mockBrowserOAuth(page: Page, role: 'member' | 'admin', fallback =
     if (!cookieOnly) sessionStorage.setItem('dcau:pending-mobile-oauth', JSON.stringify({ path, createdAt: Date.now() }));
     else sessionStorage.removeItem('dcau:pending-mobile-oauth');
   }, { key: verifierKey, path: approvalPath, cookieOnly });
-  await page.route('**/auth/v1/token?grant_type=pkce', (route) => route.fulfill({ json: session }));
+  await page.route('**/api/auth/session?grant_type=pkce', (route) => route.fulfill({ json: session }));
   await page.route('**/auth/v1/user', (route) => route.fulfill({ json: user }));
   await page.route('**/rest/v1/**', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/auth/activity', (route) => route.fulfill({ json: { ok: true } }));
@@ -212,9 +212,12 @@ test('fresh Android login performs a real SDK PKCE round trip without seeded ver
     // Simulate Google returning via Supabase; do not seed a verifier.
     await route.fulfill({ status: 302, headers: { location: callback.toString() } });
   });
-  await page.route('**/auth/v1/token?grant_type=pkce', async (route) => {
+  await page.route('**/api/auth/session?grant_type=pkce', async (route) => {
     const body = route.request().postDataJSON();
     expect(body.auth_code).toBe('test-fresh-code');
+    expect(new URL(route.request().url()).origin).toBe(new URL(page.url()).origin);
+    expect(await route.request().headerValue('authorization')).toBeNull();
+    expect(await route.request().headerValue('apikey')).toBeNull();
     expect(typeof body.code_verifier).toBe('string');
     matched = createHash('sha256').update(body.code_verifier).digest('base64url') === challenge;
     expect(matched).toBe(true);

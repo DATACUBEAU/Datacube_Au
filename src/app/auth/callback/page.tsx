@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
-import { supabase } from '@/lib/supabase-client/client';
+import { supabase, getLastPkceTransportDiagnostic } from '@/lib/supabase-client/client';
 import { syncServerAuthSessionCookie } from '@/lib/auth/session-cookie';
 import { markAuthSessionRestored, markAuthUnauthenticated } from '@/lib/auth/session-expiry-events';
 import { isMobileAuthorizationDestination, isDownloadDestination, looksLikeMobileAuthDestination, readMobileOAuthDestination, sanitizeLocalRedirectPath } from '@/lib/auth/redirects';
@@ -184,6 +184,10 @@ export default function AuthCallbackPage() {
               : networkFailure
                 ? 'The connection to the sign-in server did not complete. Check your connection and start a fresh sign-in. (Session transport interrupted)'
                 : 'The sign-in session could not be established. Return to the app and start a fresh sign-in. (Code exchange failed)');
+          const diagnostic = getLastPkceTransportDiagnostic();
+          if (diagnostic) {
+            setMessage(previous => `${previous} [${diagnostic.stage}${diagnostic.status ? ` HTTP ${diagnostic.status}` : ''}${diagnostic.requestId ? ` · ${diagnostic.requestId}` : ''}]`);
+          }
           if (isMobileDestination) setNeedsAppRestart(true);
           else router.replace(safeLoginRedirect(nextPath, 'auth_error'));
         }

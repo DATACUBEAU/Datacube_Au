@@ -28,6 +28,10 @@ const publicEnv = {
 let refreshBrowserSessionPromise: Promise<Session | null> | null = null;
 let resolveBrowserSessionPromise: Promise<BrowserSessionResolution> | null = null;
 const BROWSER_SESSION_RESOLVE_TIMEOUT_MS = 12000;
+let lastPkceTransport: { stage: string; requestId: string | null; status: number | null } | null = null;
+export function getLastPkceTransportDiagnostic() {
+  return lastPkceTransport;
+}
 const USER_ACTIVITY_HEARTBEAT_MS = 5 * 60 * 1000;
 const USER_ACTIVITY_METADATA_SYNC_MS = 15 * 60 * 1000;
 const userActivityHeartbeatAt = new Map<string, number>();
@@ -142,10 +146,47 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
 
   // PKCE authorization codes are single use. Avoid replaying a token POST
   // after an ambiguous network failure, and release the SDK lock on timeout.
-  if (isSupabaseAuthRequest && new URL(url).searchParams.get('grant_type') === 'pkce') {
-    const timeout = AbortSignal.timeout(12000);
-    const signal = newInit.signal ? AbortSignal.any([newInit.signal, timeout]) : timeout;
-    return fetch(fetchInput, { ...newInit, signal });
+  if (typeof window !== 'undefined' && isSupabaseAuthRequest
+    && new URL(url).pathname === '/auth/v1/token'
+    && new URL(url).searchParams.get('grant_type') === 'pkce'
+    && newInit.method?.toUpperCase() === 'POST') {
+    // Keep the SDK's existing verifier/session lifecycle. Only the single-use
+    // HTTP transport changes, removing the cross-origin token fetch from Chrome.
+    // No browser cookies, bearer headers or API keys are sent to this relay.
+    lastPkceTransport = { stage: 'website_request_started', requestId: null, status: null };
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const timer = window.setTimeout(abort, 22000);
+    newInit.signal?.addEventListener('abort', abort, { once: true });
+    if (newInit.signal?.aborted) abort();
+    try {
+      const response = await fetch('/api/auth/session?grant_type=pkce', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: newInit.body,
+        credentials: 'omit',
+        cache: 'no-store',
+        redirect: 'error',
+        signal: controller.signal,
+      });
+      const stage = response.headers.get('x-dcau-pkce-stage') || 'website_response';
+      const requestId = response.headers.get('x-request-id');
+      lastPkceTransport = {
+        stage: /^[a-z_]{1,60}$/.test(stage) ? stage : 'website_response',
+        requestId: requestId && /^[0-9a-f-]{36}$/i.test(requestId) ? requestId : null,
+        status: response.status,
+      };
+      // Consume the full response under the same deadline. Never retry a code
+      // once the exchange request may have reached Supabase.
+      const body = await response.text();
+      return new Response(body, { status: response.status, headers: response.headers });
+    } catch (error) {
+      lastPkceTransport = { ...lastPkceTransport, stage: 'website_transport_interrupted' };
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+      newInit.signal?.removeEventListener('abort', abort);
+    }
   }
 
   // Retry logic for network failures only.
