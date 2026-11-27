@@ -284,9 +284,42 @@ private fun inlineText(text: String): AnnotatedString = buildAnnotatedString {
     append(text.substring(end))
 }
 
+/**
+ * Cache only definitely closed, ordinary prose paragraphs. Anything containing a
+ * table, fence, or native directive stays in the reparsed suffix. A changed
+ * prefix invalidates the cache (for example when retrieval switches to fallback).
+ */
+internal class AuIncrementalResponseParser {
+    private var prefix = ""
+    private val stable = mutableListOf<AuResponseBlock>()
+
+    fun parse(answer: String): List<AuResponseBlock> {
+        val bounded = answer.take(12_000)
+        if (!bounded.startsWith(prefix)) {
+            prefix = ""
+            stable.clear()
+        }
+        var offset = prefix.length
+        while (offset < bounded.length) {
+            val end = bounded.indexOf("\n\n", offset)
+            if (end < 0) break
+            val candidate = bounded.substring(offset, end + 2)
+            if (candidate.lineSequence().any { line ->
+                    val text = line.trim()
+                    text.startsWith("[") || text.startsWith("\u0060\u0060\u0060") || '|' in text
+                }) break
+            stable += AuResponseParser.parse(candidate)
+            offset = end + 2
+        }
+        prefix = bounded.substring(0, offset)
+        return stable.toList() + AuResponseParser.parse(bounded.substring(offset))
+    }
+}
+
 @Composable
 internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextClick: ((String, Int) -> Unit)? = null) {
-    val blocks = remember(answer) { AuResponseParser.parse(answer) }
+    val incrementalParser = remember { AuIncrementalResponseParser() }
+    val blocks = remember(answer) { incrementalParser.parse(answer) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         blocks.forEachIndexed { blockIndex, block ->
             androidx.compose.runtime.key(blockIndex, block::class) {
