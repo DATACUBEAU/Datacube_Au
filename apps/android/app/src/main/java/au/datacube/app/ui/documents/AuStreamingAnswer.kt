@@ -27,7 +27,8 @@ internal class AuStreamingAnswer(
     }
 
     suspend fun finish(): String {
-        val answer = ModelOutputCleaner.visible(raw.toString(), sourceCount).trim()
+        val answer = ModelOutputCleaner.streamingVisible(raw.toString(), sourceCount).trim()
+        check(answer.isNotBlank()) { "AU produced no visible answer. Try again." }
         emit(answer)
         return answer
     }
