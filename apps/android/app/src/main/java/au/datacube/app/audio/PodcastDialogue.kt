@@ -37,7 +37,7 @@ object PodcastDialogue {
                 val continued = sanitize(result.last().text + " " + clean)
                 result[result.lastIndex] = result.last().copy(text = continued)
             }
-            if (result.size >= MAX_TURNS) break
+            require(result.size <= MAX_TURNS) { "Podcast has too many speaker turns. Regenerate a shorter dialogue." }
         }
         val useful = result.dropWhile { it.speaker != PodcastSpeaker.HOST }
             .dropLastWhile { it.speaker != PodcastSpeaker.GUIDE }
