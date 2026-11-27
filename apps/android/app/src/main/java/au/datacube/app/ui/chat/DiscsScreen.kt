@@ -3,6 +3,15 @@ package au.datacube.app.ui.chat
 import android.os.SystemClock
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import au.datacube.app.R
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -74,6 +83,7 @@ import kotlinx.coroutines.withContext
  * document lookup when the user explicitly references their local library.
  * No cloud requests and no automatic model downloads.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun DiscsScreen(
     accountId: String,
@@ -99,7 +109,8 @@ fun DiscsScreen(
     LaunchedEffect(ownerId) { index = runCatching { threads.list(ownerId) }.getOrNull() }
     val threadId = index?.activeId ?: "main"
     val speech = rememberAuReadAloud("chat:$ownerId:$threadId")
-    val session = remember(ownerId, threadId) { DocumentChatSessions.get(ownerId, threadId, context) }
+    var historyRevision by remember(ownerId) { mutableIntStateOf(0) }
+    val session = remember(ownerId, threadId, historyRevision) { DocumentChatSessions.get(ownerId, threadId, context) }
     val turns = session.messages
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
@@ -124,77 +135,95 @@ fun DiscsScreen(
     var expandedProcess by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var liveActivityOpen by remember(threadId) { mutableStateOf(false) }
 
+    var menuOpen by remember { mutableStateOf(false) }
+    var historyBusy by remember(ownerId) { mutableStateOf(false) }
+    var deleteTarget by remember(ownerId) { mutableStateOf<String?>(null) }
+    var clearAll by remember(ownerId) { mutableStateOf(false) }
+    var clearChatError by remember(ownerId) { mutableStateOf<String?>(null) }
     fun newChat() {
+        if (historyBusy || preparingAttachment) return
         uiScope.launch {
-            runCatching { threads.create(ownerId) }.onSuccess { index = it; historyOpen = false }
+            historyBusy = true
+            try { index = threads.create(ownerId); historyOpen = false }
+            catch (_: Exception) { clearChatError = "Could not create a chat. Remove an old chat and try again." }
+            finally { historyBusy = false }
         }
     }
-    var confirmClearChat by remember(ownerId, threadId) { mutableStateOf(false) }
-    var clearChatError by remember(ownerId, threadId) { mutableStateOf<String?>(null) }
-    if (confirmClearChat) {
-        DataCubeDialog(
-            onDismissRequest = { confirmClearChat = false },
-            title = { Text("Clear this chat?") },
-            text = { Text("Delete the messages and voice notes in this conversation. Your documents and other chats will stay.") },
-            confirmButton = { TextButton(onClick = {
-                confirmClearChat = false
-                historyOpen = false
-                speech.stop()
-                session.scope.launch {
-                    if (!session.clearHistory(context, ownerId)) clearChatError = "Chat cleanup could not finish. Try again."
+    fun deleteHistory() {
+        val all = clearAll
+        val ids = if (all) index?.threads.orEmpty().map { it.id } else listOfNotNull(deleteTarget)
+        if (ids.isEmpty() || historyBusy || preparingAttachment) return
+        historyBusy = true
+        uiScope.launch {
+            // Finish the selected local deletion even if the dialog is closed or the screen rotates.
+            withContext(kotlinx.coroutines.NonCancellable) {
+                try {
+                    ids.forEach { au.datacube.app.ui.common.AuReadAloudSessions.forget("chat:$ownerId:$it") }
+                    val audio = DocumentChatSessions.detachForDeletion(ownerId, ids)
+                    index = threads.deleteChats(ownerId, ids.toSet(), all, audio)
+                    historyOpen = false
+                } catch (_: Exception) {
+                    clearChatError = "History cleanup could not finish. Try again."
+                    index = runCatching { threads.list(ownerId) }.getOrDefault(index)
+                } finally {
+                    historyRevision++
+                    historyBusy = false
+                    deleteTarget = null
+                    clearAll = false
                 }
-            }, enabled = session.historyReady && !session.searching) { Text("Clear chat") } },
-            dismissButton = { TextButton(onClick = { confirmClearChat = false }) { Text("Cancel") } }
-        )
+            }
+        }
+    }
+    if (clearAll || deleteTarget != null) {
+        DataCubeDialog(onDismissRequest = { if (!historyBusy) { clearAll = false; deleteTarget = null } },
+            title = { Text(if (clearAll) "Clear all history?" else "Delete this chat?") },
+            text = { Text(if (clearAll) "Delete every conversation and voice note in this workspace. Documents and other workspaces will stay."
+                else "Delete this conversation and its voice notes permanently.") },
+            confirmButton = { TextButton(onClick = ::deleteHistory, enabled = !historyBusy && !preparingAttachment) {
+                Text(if (historyBusy) "Deleting…" else if (clearAll) "Clear all" else "Delete")
+            } },
+            dismissButton = { TextButton(onClick = { clearAll = false; deleteTarget = null }, enabled = !historyBusy) { Text("Cancel") } })
     }
     clearChatError?.let { error ->
-        DataCubeDialog(onDismissRequest = { clearChatError = null },
-            title = { Text("Chat cleanup") }, text = { Text(error) },
-            confirmButton = { TextButton(onClick = { clearChatError = null }) { Text("OK") } })
+        DataCubeDialog(onDismissRequest = { clearChatError = null }, title = { Text("Chat history") },
+            text = { Text(error) }, confirmButton = { TextButton(onClick = { clearChatError = null }) { Text("OK") } })
     }
-
-    if (historyOpen) {
-        DataCubeDialog(
-            onDismissRequest = { historyOpen = false },
+    if (historyOpen && !clearAll && deleteTarget == null) {
+        DataCubeDialog(onDismissRequest = { if (!historyBusy) historyOpen = false },
             title = { Text("Gist history", style = MaterialTheme.typography.titleLarge) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(onClick = { historyOpen = false; confirmClearChat = true },
-                        enabled = session.historyReady && !session.searching) { Text("Clear current chat") }
-                    Text("Independent private conversations. Each new chat starts with a fresh context.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Column(Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+                    TextButton(onClick = { clearAll = true }, enabled = !historyBusy && !preparingAttachment) { Text("Clear all history") }
+                    Text("Touch and hold a chat to delete it.", style = MaterialTheme.typography.bodySmall)
+                    Column(Modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         index?.threads.orEmpty().sortedByDescending { it.updatedAt }.forEach { item ->
-                            Surface(
-                                onClick = {
-                                    uiScope.launch {
-                                        index = threads.activate(ownerId, item.id)
-                                        historyOpen = false
-                                    }
-                                },
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (item.id == threadId) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Row(Modifier.fillMaxWidth().padding(13.dp),
+                            Surface(shape = RoundedCornerShape(14.dp),
+                                color = if (item.id == threadId) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant) {
+                                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).combinedClickable(
+                                    enabled = !historyBusy && !preparingAttachment,
+                                    onLongClickLabel = "Delete chat", onLongClick = { deleteTarget = item.id },
+                                    onClick = {
+                                        uiScope.launch {
+                                            historyBusy = true
+                                            try { index = threads.activate(ownerId, item.id); historyOpen = false }
+                                            catch (_: Exception) { clearChatError = "Could not open chat." }
+                                            finally { historyBusy = false }
+                                        }
+                                    }).padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Outlined.ChatBubbleOutline, null,
-                                        tint = MaterialTheme.colorScheme.primary)
+                                    Icon(Icons.Outlined.ChatBubbleOutline, null, tint = MaterialTheme.colorScheme.primary)
                                     Spacer(Modifier.width(10.dp))
                                     Text(item.title, Modifier.weight(1f), maxLines = 2)
-                                    if (item.id == threadId) Icon(Icons.Outlined.Check, null,
-                                        tint = MaterialTheme.colorScheme.primary)
+                                    IconButton(onClick = { deleteTarget = item.id }, enabled = !historyBusy && !preparingAttachment) {
+                                        Icon(Icons.Outlined.DeleteOutline, "Delete " + item.title)
+                                    }
                                 }
                             }
                         }
                     }
                 }
-            },
-            confirmButton = { TextButton(onClick = ::newChat) { Text("New chat") } },
-            dismissButton = { TextButton(onClick = { historyOpen = false }) { Text("Close") } }
-        )
+            }, confirmButton = { TextButton(onClick = { historyOpen = false }, enabled = !historyBusy) { Text("Done") } })
     }
 
     fun send(
@@ -474,21 +503,28 @@ fun DiscsScreen(
                     Text(if (!modelReady) "Install an AU model to chat"
                         else if (collectionId != null) "${library.size} source documents · Collection AU"
                         else "AU ready · Offline chat",
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { scheduleTitle = ""; scheduleOpen = true }) {
-                    Icon(Icons.Outlined.Schedule, contentDescription = "Schedules")
+                IconButton(onClick = ::newChat, enabled = ready && !historyBusy && !preparingAttachment) {
+                    Icon(Icons.Outlined.Add, "New Gist chat")
                 }
-                TextButton(onClick = ::newChat, enabled = ready, contentPadding = PaddingValues(horizontal = 5.dp)) {
-                    Icon(Icons.Outlined.Add, "New Gist chat", modifier = Modifier.size(19.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text("New")
-                }
-                TextButton(onClick = { historyOpen = true }, contentPadding = PaddingValues(horizontal = 5.dp)) {
-                    Icon(Icons.Outlined.History, "Gist history", modifier = Modifier.size(19.dp))
-                    Spacer(Modifier.width(3.dp))
-                    Text("History")
+                Box {
+                    IconButton(onClick = { menuOpen = true }, enabled = !historyBusy) {
+                        val ink = MaterialTheme.colorScheme.onSurface
+                        Canvas(Modifier.size(24.dp).then(Modifier.semantics { contentDescription = "Gist options" })) {
+                            drawCircle(ink, radius = 2.dp.toPx(), center = Offset(size.width * .34f, center.y))
+                            drawCircle(ink, radius = 2.dp.toPx(), center = Offset(size.width * .66f, center.y))
+                        }
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false },
+                        shape = RoundedCornerShape(20.dp),
+                        containerColor = androidx.compose.ui.graphics.lerp(MaterialTheme.colorScheme.surface, MaterialTheme.colorScheme.primaryContainer, .48f).copy(alpha = .96f)) {
+                        DropdownMenuItem(text = { Text("History") }, leadingIcon = { Icon(Icons.Outlined.History, null) },
+                            onClick = { menuOpen = false; historyOpen = true })
+                        DropdownMenuItem(text = { Text("Schedules") }, leadingIcon = { Icon(Icons.Outlined.Schedule, null) },
+                            onClick = { menuOpen = false; scheduleTitle = ""; scheduleOpen = true })
+                    }
                 }
             }
         }
@@ -498,9 +534,8 @@ fun DiscsScreen(
             Column(Modifier.weight(1f).fillMaxWidth().padding(25.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(Icons.Outlined.AutoAwesome, null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(48.dp))
+                Image(painterResource(R.drawable.datacube_logo), "DataCube AU",
+                    modifier = Modifier.size(76.dp), contentScale = ContentScale.Fit)
                 Spacer(Modifier.height(12.dp))
                 Text(if (collectionId == null) "What’s on your mind?" else "Ask about this collection",
                     fontWeight = FontWeight.Bold,
@@ -696,8 +731,8 @@ fun DiscsScreen(
             onSend = { if (attachment != null) sendAttachment() else send() },
             placeholder = if (collectionId == null) "Ask Gist anything…"
                 else "Ask AU about this collection…",
-            enabled = !session.searching,
-            sendEnabled = !session.searching && !preparingAttachment &&
+            enabled = !session.searching && !historyBusy,
+            sendEnabled = !historyBusy && !session.searching && !preparingAttachment &&
                 (if (attachment != null) ready && modelReady && userTurns < ConversationWindow.MAX_USER_TURNS
                  else prompt.isNotBlank() && (AuScheduleIntent.matches(prompt) || (ready && !needsCollectionModel &&
                     userTurns < ConversationWindow.MAX_USER_TURNS))),
@@ -708,7 +743,7 @@ fun DiscsScreen(
             leadingActions = {
                 if (collectionId == null) key(ownerId, threadId) {
                     GistAttachmentMenu(
-                        enabled = ready && modelReady && !session.searching && userTurns < ConversationWindow.MAX_USER_TURNS,
+                        enabled = ready && modelReady && !historyBusy && !session.searching && userTurns < ConversationWindow.MAX_USER_TURNS,
                         supportsImages = LocalGenerativeEngine.supportsImages(context),
                         onPreparing = { preparingAttachment = it },
                         onAttachment = { attachment = it; attachmentError = null },
@@ -719,7 +754,7 @@ fun DiscsScreen(
             actions = {
                 VoiceNoteInputButton(
                     ownerId = ownerId,
-                    enabled = ready && !needsCollectionModel && !session.searching && !preparingAttachment && attachment == null &&
+                    enabled = ready && !needsCollectionModel && !historyBusy && !session.searching && !preparingAttachment && attachment == null &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->

@@ -278,6 +278,7 @@ internal object AuReadAloudSessions {
     fun activate(current: AuReadAloudState) {
         sessions.values.filter { it !== current && it.active != null }.forEach { it.stop() }
     }
+    fun forget(key: String) { sessions.remove(key)?.stop() }
     fun stopAll() {
         sessions.values.forEach { it.stop() }
         sessions.clear()

@@ -165,6 +165,19 @@ internal object DocumentChatSessions {
         return session
     }
 
+    /** Stop generation AND the debounced saver before deleting an owned history. */
+    suspend fun detachForDeletion(ownerId: String, threadIds: List<String>): List<String> {
+        val audio = mutableListOf<String>()
+        for (id in threadIds) {
+            val key = LocalConversationThreads.historyKey(ownerId, id)
+            val session = sessions.remove(key) ?: continue
+            session.stop()
+            session.scope.coroutineContext[Job]?.join()
+            audio += session.messages.mapNotNull { it.audioPath }
+        }
+        return audio
+    }
+
     fun forgetDocument(documentId: String) {
         sessions.keys.filter { it == documentId || it.startsWith("$documentId--") }.forEach { key ->
             sessions.remove(key)?.stop()

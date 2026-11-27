@@ -127,33 +127,61 @@ object AuScheduleIntent {
     private val request = Regex("^(?:au[, ]+)?(?:(?:can|could|would) you\\s+)?(?:please\\s+)?(?:remind me|set (?:a |an )?reminder|schedule (?:a |an )?(?:study session|reminder|task))\\b", RegexOption.IGNORE_CASE)
     fun matches(message: String): Boolean = request.containsMatchIn(message.trim())
 
-    /** Conservative English parser. Ambiguous or past dates require a manual choice. */
-    fun proposedTime(message: String, now: java.time.ZonedDateTime = java.time.ZonedDateTime.now()): Long? {
-        if (!matches(message)) return null
-        val relative = Regex("\\bin\\s+(\\d{1,4})\\s+(minutes?|hours?|days?)\\b", RegexOption.IGNORE_CASE).findAll(message).toList()
-        val clock = Regex("\\b(today|tomorrow)\\s+at\\s+(\\d{1,2})(?::(\\d{2}))?\\s*(am|pm)\\b", RegexOption.IGNORE_CASE).findAll(message).toList()
-        if (relative.size + clock.size != 1) return null
-        val candidate = if (relative.isNotEmpty()) {
-            val match = relative.single()
-            val amount = match.groupValues[1].toLong()
-            if (amount <= 0) return null
-            when {
-                match.groupValues[2].startsWith("minute", true) -> now.plusMinutes(amount)
-                match.groupValues[2].startsWith("hour", true) -> now.plusHours(amount)
-                else -> now.plusDays(amount)
+    /** Explicit chat intent can prefill the same parser used by the manual editor. */
+    fun proposedTime(message: String, now: java.time.ZonedDateTime = java.time.ZonedDateTime.now()): Long? =
+        if (matches(message)) parseTime(message, now) else null
+
+    fun parseTime(message: String, now: java.time.ZonedDateTime = java.time.ZonedDateTime.now()): Long? {
+        val text = message.trim().lowercase(java.util.Locale.ROOT)
+        if (text.isBlank() || text.length > 700) return null
+        val words = mapOf("a" to 1L, "an" to 1L, "one" to 1L, "two" to 2L, "three" to 3L,
+            "four" to 4L, "five" to 5L, "six" to 6L, "seven" to 7L, "eight" to 8L,
+            "nine" to 9L, "ten" to 10L, "eleven" to 11L, "twelve" to 12L)
+        val relative = Regex("""\b(?:in\s+|next\s+|after\s+)?(\d{1,4}|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(minutes?|hours?|days?)\b""")
+            .findAll(text).toList()
+        if (matches(text) && relative.any { !it.value.startsWith("in ") && !it.value.startsWith("next ") && !it.value.startsWith("after ") }) return null
+        val bareNext = Regex("""\bnext\s+(minute|hour|day)\b""").findAll(text).toList()
+        val dateTime = Regex("""\b(\d{4}-\d{2}-\d{2}|today|tomorrow)\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b""").findAll(text).toList()
+        val clock = Regex("""^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$""").matchEntire(text)
+        if (relative.size + bareNext.size + dateTime.size + (if (clock == null) 0 else 1) != 1) return null
+        if (Regex("""\b(?:or|either|yesterday|last|ago|before)\b""").containsMatchIn(text)) return null
+        return runCatching {
+            val candidate = if (relative.isNotEmpty() || bareNext.isNotEmpty()) {
+                val match = relative.firstOrNull()
+                val amount = if (match == null) 1L else match.groupValues[1].toLongOrNull() ?: words[match.groupValues[1]] ?: return null
+                val unit = match?.groupValues?.get(2) ?: bareNext.single().groupValues[1]
+                if (amount <= 0L) return null
+                when {
+                    unit.startsWith("minute") -> now.plusMinutes(amount)
+                    unit.startsWith("hour") -> now.plusHours(amount)
+                    else -> now.plusDays(amount)
+                }
+            } else {
+                val match = dateTime.firstOrNull() ?: clock ?: return null
+                val explicitDay = dateTime.isNotEmpty()
+                val dayToken = if (explicitDay) match.groupValues[1] else "today"
+                val index = if (explicitDay) 2 else 1
+                var hour = match.groupValues[index].toInt()
+                val minute = match.groupValues[index + 1].toIntOrNull() ?: 0
+                val suffix = match.groupValues[index + 2]
+                if (minute !in 0..59) return null
+                if (suffix.isNotEmpty()) {
+                    if (hour !in 1..12) return null
+                    hour = hour % 12 + if (suffix == "pm") 12 else 0
+                } else {
+                    if (hour !in 0..23 || match.groupValues[index + 1].isBlank()) return null
+                }
+                val day = when (dayToken) {
+                    "today" -> now.toLocalDate()
+                    "tomorrow" -> now.toLocalDate().plusDays(1)
+                    else -> java.time.LocalDate.parse(dayToken)
+                }
+                val local = day.atTime(hour, minute)
+                val offsets = now.zone.rules.getValidOffsets(local)
+                if (offsets.size != 1) return null
+                java.time.ZonedDateTime.ofStrict(local, offsets.single(), now.zone)
             }
-        } else {
-            val match = clock.single()
-            val hour = match.groupValues[2].toInt()
-            val minute = match.groupValues[3].toIntOrNull() ?: 0
-            if (hour !in 1..12 || minute !in 0..59) return null
-            val day = now.toLocalDate().plusDays(if (match.groupValues[1].equals("tomorrow", true)) 1 else 0)
-            val hour24 = hour % 12 + if (match.groupValues[4].equals("pm", true)) 12 else 0
-            val local = day.atTime(hour24, minute)
-            val offsets = now.zone.rules.getValidOffsets(local)
-            if (offsets.size != 1) return null
-            java.time.ZonedDateTime.ofStrict(local, offsets.single(), now.zone)
-        }
-        return candidate.toInstant().toEpochMilli().takeIf { it > now.toInstant().toEpochMilli() }
+            candidate.toInstant().toEpochMilli().takeIf { it > now.toInstant().toEpochMilli() }
+        }.getOrNull()
     }
 }
