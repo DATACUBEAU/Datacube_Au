@@ -91,6 +91,9 @@ class SemanticIndexWorker(context: Context, params: WorkerParameters) : Coroutin
             Result.success(workDataOf(KEY_COUNT to total))
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (pressure: DeviceComputePressure) {
+            // Previously committed staging batches remain intact for the next run.
+            Result.retry()
         } catch (error: Exception) {
             // Keep the exact failure locally for troubleshooting; do not expose source text in notifications.
             android.util.Log.w("AuSemanticIndex", "Embedding indexing failed: " + error.javaClass.simpleName)
