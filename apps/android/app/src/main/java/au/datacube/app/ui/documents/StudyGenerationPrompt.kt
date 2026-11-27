@@ -34,14 +34,14 @@ internal object StudyGenerationPrompt {
         val includeExtra = mode == GeneratedStudyMode.REVISION && !attachmentText.isNullOrBlank()
         val instructions = when (mode) {
             GeneratedStudyMode.NOTES ->
-                "Write detailed, readable study notes. Use 4-8 meaningful sections " +
+                "Write a concise one-page summary (about 350-550 words). Use 3-6 meaningful sections " +
                     "only when the evidence supports that many distinct topics. " +
                     "Start each section with TOPIC: followed by a precise name. " +
-                    "After each heading explain the concept in 2-5 clear, useful " +
+                    "After each heading explain the concept in 1-3 clear, useful " +
                     "sentences, including an example only if the text supports it. " +
                     "Explain relationships among important concepts. Bold key terms, definitions and formulas using Markdown. " +
                     "Use source references [1], [2] beside supported explanations. Clearly state that these notes cover selected passages, not necessarily every chapter. " +
-                    "Do not output a generic list of short copied phrases."
+                    "Finish the notes with key terms. Then add exactly one distinct native [WORKFLOW] Concept map block: first stage one central concept; second stage two or three related concepts; optional third stage only if the evidence supports their relationship. Use short concept labels and relationship details, not repeated paragraphs. Close with [/WORKFLOW]."
             GeneratedStudyMode.REVISION ->
                 "Create an evidence-based revision forecast. Use 4-8 meaningful " +
                     "sections only if the sources support that many topics. " +
@@ -66,7 +66,7 @@ internal object StudyGenerationPrompt {
             appendLine("Main document: " + documentName.take(100).replace('\n', ' '))
             appendLine(instructions)
             if (mode != GeneratedStudyMode.PRACTICE) {
-                appendLine(AuTeachingPolicy.plan("",documentName).instruction())
+                appendLine(AuTeachingPolicy.plan(if (mode == GeneratedStudyMode.NOTES) "diagram" else "",documentName).instruction())
             }
             appendLine("Use source material for factual claims. Be clear, complete and context-aware.")
             appendLine("Do not invent facts, page numbers, exam probabilities or quotations.")
