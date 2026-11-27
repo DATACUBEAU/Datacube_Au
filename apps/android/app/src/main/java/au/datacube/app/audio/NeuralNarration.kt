@@ -154,6 +154,7 @@ object NeuralNarration {
                 }
                 val began = SystemClock.elapsedRealtime()
                 LocalComputeGate.mutex.withLock {
+                    LocalComputeGate.prepare(app, LocalComputeGate.Engine.SPEECH)
                     try {
                         task = load(app)
                         prepareAudio()
