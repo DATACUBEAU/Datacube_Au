@@ -189,3 +189,22 @@ object AuScheduleIntent {
         }.getOrNull()
     }
 }
+
+/** Countdown is a presentation of persisted due time, not a second scheduler. */
+internal object AuScheduleCountdown {
+    fun label(at: Long, now: Long): String {
+        val remaining = (at - now).coerceAtLeast(0L)
+        if (remaining == 0L) return "Due now · awaiting delivery"
+        val seconds = (remaining / 1000L) + if (remaining % 1000L == 0L) 0L else 1L
+        val days = seconds / 86400L
+        val hours = seconds % 86400L / 3600L
+        val minutes = seconds % 3600L / 60L
+        val remainder = seconds % 60L
+        return when {
+            days > 0 -> "$days d $hours h $minutes m remaining"
+            hours > 0 -> "$hours h $minutes m remaining"
+            minutes > 0 -> "$minutes m remaining"
+            else -> "$remainder s remaining"
+        }
+    }
+}

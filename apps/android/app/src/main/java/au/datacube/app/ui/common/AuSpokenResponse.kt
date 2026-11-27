@@ -6,16 +6,25 @@ internal object AuSpokenResponse {
     private val partialThought = Regex("(?is)<(?:think(?:ing)?|analysis|reasoning)(?:>|\\s|$).*")
     private val link = Regex("\\[([^\\]]+)]\\((?:https?://|www\\.)[^\\s)]+\\)", RegexOption.IGNORE_CASE)
     private val url = Regex("(?i)(?:https?://|www\\.)[^\\s<>]+")
+    private val inlineCode = Regex("""\x60[^\x60\n]+\x60""")
+    private val decorations = Regex("""[*#_~|<>\[\]{}]+""")
+    private val punctuationRun = Regex("""[.!,;:?\u2026]{2,}""")
+    private val isolatedSymbols = Regex("""(?<![\p{L}\p{N}])[\p{P}\p{S}&&[^.?!,;:]]+(?![\p{L}\p{N}])""")
     private fun plain(text: String): String =
-        text.replace(link) { it.groupValues[1] + " (link in the response)" }
-            .replace(url, "link in the response")
+        text.replace(inlineCode, "See the code in the response. ")
+            .replace(link) { it.groupValues[1] + ". See the link in the response." }
+            .replace(url, "See the URL in the response. ")
             .replace(Regex("\\[(?:\\d{1,3})]"), "")
-            .replace(Regex("[*\\x60_]+"), "")
+            .replace(decorations, " ")
+            .replace(Regex("\\x60+"), "")
+            .replace(punctuationRun, ". ")
+            .replace(isolatedSymbols, " ")
             .replace(Regex("\\s+"), " ").trim()
 
     fun format(answer: String): String {
         val visible = answer.replace(completeThought, "").replace(partialThought, "")
         val blocks = AuResponseParser.parse(visible)
+        var tableNumber = 0
         return buildList {
             blocks.forEach { block ->
                 when (block) {
@@ -72,9 +81,10 @@ internal object AuSpokenResponse {
                         add(plain(block.scene.description))
                     }
                     AuResponseBlock.ProjectileIllustration -> add("Illustration: a person tosses a ball. It rises, reaches its highest point, and falls under gravity. The path is schematic and not to scale.")
-                    is AuResponseBlock.Code -> add("A code example is available in the written response.")
+                    is AuResponseBlock.Code -> add("A code example is available. Look at the code block in the written response.")
                     is AuResponseBlock.Table -> {
-                        add("Here is the table, row by row.")
+                        tableNumber++
+                        add("Here is table $tableNumber, row by row.")
                         block.rows.forEachIndexed { i, row ->
                             val contents = row.mapIndexedNotNull { column, cell ->
                                 val value = plain(cell)
