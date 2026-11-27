@@ -50,6 +50,19 @@ internal class DocumentChatSession(private val historyKey: String) {
         messages[index] = turn.copy(answer = answer, firstVisibleMs = first)
     }
 
+    /** Only the latest ordinary text exchange can be regenerated without
+     * replaying a voice note, memory command, scheduling action or attachment. */
+    fun regenerationQuestion(index: Int): String? {
+        if (searching || index != messages.lastIndex || index < 1) return null
+        val answer = messages[index]
+        val user = messages[index - 1]
+        if (answer.isUser || answer.generating || !user.isUser || user.audioPath != null ||
+            user.question.isBlank() || user.question.contains("\nAttachment:") ||
+            au.datacube.app.data.rag.AuMemoryCommand.parse(user.question) != null ||
+            au.datacube.app.schedule.AuScheduleIntent.matches(user.question)) return null
+        return user.question
+    }
+
     fun streamingAnswer(index: Int, sourceCount: Int): AuStreamingAnswer =
         AuStreamingAnswer(sourceCount) { visible ->
             withContext(Dispatchers.Main.immediate) { publishAnswer(index, visible) }
