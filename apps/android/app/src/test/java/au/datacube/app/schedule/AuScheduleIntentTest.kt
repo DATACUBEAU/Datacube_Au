@@ -31,4 +31,19 @@ class AuScheduleIntentTest {
         assertNull(AuScheduleIntent.proposedTime("Remind me in 0 minutes", now))
         assertNull(AuScheduleIntent.proposedTime("Remind me tomorrow at 7 PM or in 30 minutes", now))
     }
+
+    @Test fun typedTimeAndChatIntentShareConservativeParsing() {
+        assertEquals(now.plusHours(5).toInstant().toEpochMilli(), AuScheduleIntent.parseTime("next five hours", now))
+        assertEquals(now.plusHours(1).toInstant().toEpochMilli(), AuScheduleIntent.parseTime("next hour", now))
+        assertEquals(now.plusHours(1).toInstant().toEpochMilli(), AuScheduleIntent.parseTime("one hour", now))
+        assertEquals(now.plusHours(5).toInstant().toEpochMilli(), AuScheduleIntent.proposedTime("Remind me to revise in five hours", now))
+        assertEquals(now.withHour(18).withMinute(30).toInstant().toEpochMilli(), AuScheduleIntent.parseTime("18:30", now))
+        assertEquals(now.plusDays(9).withHour(9).toInstant().toEpochMilli(), AuScheduleIntent.parseTime("2026-12-03 09:00", now))
+        assertNull(AuScheduleIntent.parseTime("2026-02-30 09:00", now))
+        assertNull(AuScheduleIntent.parseTime("tomorrow", now))
+        assertNull(AuScheduleIntent.parseTime("tomorrow at 7", now))
+        assertNull(AuScheduleIntent.parseTime("in 0 hours", now))
+        assertNull(AuScheduleIntent.parseTime("in one hour or tomorrow at 9 AM", now))
+        assertNull(AuScheduleIntent.proposedTime("Remind me to study for two hours", now))
+    }
 }

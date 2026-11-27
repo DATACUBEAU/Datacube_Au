@@ -55,6 +55,13 @@ internal object AuSpokenResponse {
                         add(plain(block.title))
                         block.rows.forEach { (label, value) -> add(plain(label) + ": " + value.toString().removeSuffix(".0")) }
                     }
+                    is AuResponseBlock.Steps -> {
+                        add(plain(block.title))
+                        block.pages.forEachIndexed { index,page ->
+                            add("Step "+(index+1)+". "+plain(page.title))
+                            add(format(page.body))
+                        }
+                    }
                     is AuResponseBlock.Formula -> {
                         add(plain(block.title))
                         add("Formula: " + block.equation)

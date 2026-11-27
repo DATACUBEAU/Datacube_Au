@@ -311,15 +311,13 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("Practice").performClick()
         // Practice requires real on-device inference; CI has no downloaded weights.
         composeRule.onNodeWithText("Generate practice").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Install and select an AU chat model in Models.").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Open Models").performScrollTo().assertIsDisplayed()
 
         composeRule.onNodeWithContentDescription("Document options and tools").performClick()
         composeRule.onNodeWithText("Podcast").performClick()
-        // The two-speaker conversation is now the default; narration is an explicit tab.
         composeRule.onNodeWithText("AU Podcast").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Create podcast").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Narration").performScrollTo().performClick()
-        composeRule.onNodeWithText("Play summary").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithText("Chapters").performScrollTo().assertIsDisplayed()
+        composeRule.onNodeWithText("Narration").assertDoesNotExist()
+        composeRule.onNodeWithText("Play summary").assertDoesNotExist()
     }
 }

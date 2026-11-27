@@ -22,6 +22,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.zIndex
 import au.datacube.app.ui.common.WorkspaceTopBar
+import au.datacube.app.ui.common.auTourTarget
+import au.datacube.app.ui.common.TourTarget
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.TextStyle
@@ -45,7 +47,8 @@ fun HomeScreen(
     onNavigateToChat: () -> Unit,
     onOpenDocument: (String) -> Unit,
     onNavigateSettings: () -> Unit,
-    onSendPromptToDocument: (String, String) -> Unit = { _, _ -> }
+    onSendPromptToDocument: (String, String) -> Unit = { _, _ -> },
+    onOpenModels: (() -> Unit)? = null
 ) {
     var quickPrompt by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
     val chatPress = androidx.compose.runtime.remember { MutableInteractionSource() }
@@ -104,7 +107,7 @@ fun HomeScreen(
                             }
                             OutlinedButton(
                                 onClick = onNavigateToGist,
-                                modifier = Modifier.weight(1f).heightIn(min = 48.dp).scale(studyScale),
+                                modifier = Modifier.weight(1f).heightIn(min = 48.dp).scale(studyScale).auTourTarget(TourTarget.GIST),
                                 interactionSource = studyPress,
                                 contentPadding = PaddingValues(horizontal = 8.dp),
                                 border = BorderStroke(1.dp, Color(0xFF81ACDA)),
@@ -114,6 +117,21 @@ fun HomeScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Text("Gist")
                             }
+                        }
+                    }
+                }
+            }
+        }
+        if (onOpenModels != null) {
+            item {
+                val setup = au.datacube.app.ui.models.ModelSetupGuide.readiness(androidx.compose.ui.platform.LocalContext.current)
+                if (setup.needsSetup) {
+                    Surface(shape=RoundedCornerShape(18.dp),color=MaterialTheme.colorScheme.surface,
+                        border=BorderStroke(1.dp,MaterialTheme.colorScheme.outlineVariant)) {
+                        Column(Modifier.fillMaxWidth().padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Text("Finish setting up AU",fontWeight=FontWeight.SemiBold)
+                            Text(au.datacube.app.ui.models.ModelSetupGuide.missingText(setup),style=MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick=onOpenModels) { Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS) }
                         }
                     }
                 }

@@ -10,7 +10,20 @@ import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.OpenInFull
 import androidx.compose.material.icons.outlined.CloseFullscreen
-import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.roundToInt
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import au.datacube.app.data.rag.AuEffort
@@ -40,7 +53,15 @@ fun AuComposer(
     leadingActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {}
 ) {
-    var expanded by remember { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    var inputWidth by remember { mutableIntStateOf(0) }
+    val measurer = rememberTextMeasurer()
+    val style = MaterialTheme.typography.bodyLarge
+    val canExpand = remember(value, inputWidth, style, measurer) {
+        inputWidth > 0 && value.isNotBlank() && measurer.measure(value, style = style, maxLines = 5,
+            constraints = Constraints(maxWidth = inputWidth)).hasVisualOverflow
+    }
+    LaunchedEffect(canExpand) { if (!canExpand) expanded = false }
     var tuning by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier.fillMaxWidth()
@@ -61,12 +82,12 @@ fun AuComposer(
                 value = value,
                 onValueChange = onValueChange,
                 enabled = enabled,
-                modifier = Modifier.fillMaxWidth().heightIn(min = 31.dp).testTag("au-composer-input"),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 31.dp).onSizeChanged { inputWidth = it.width }.testTag("au-composer-input"),
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                maxLines = if (expanded) 14 else 5,
+                maxLines = 5,
                 decorationBox = { inner ->
                     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
                         if (value.isEmpty()) {
@@ -86,31 +107,11 @@ fun AuComposer(
             ) {
                 leadingActions()
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(if (expanded) Icons.Outlined.CloseFullscreen else Icons.Outlined.OpenInFull,
-                        contentDescription = if (expanded) "Collapse composer" else "Expand composer")
+                if (canExpand) IconButton(onClick = { expanded = true }, enabled = enabled) {
+                    Icon(Icons.Outlined.OpenInFull, contentDescription = "Expand composer")
                 }
                 if (onEffortChange != null) {
-                    Box {
-                        IconButton(onClick = { tuning = true }, enabled = enabled) {
-                            Icon(Icons.Outlined.Tune, contentDescription = "Response effort: " + effort.label,
-                                tint = MaterialTheme.colorScheme.primary)
-                        }
-                        DropdownMenu(expanded = tuning, onDismissRequest = { tuning = false }) {
-                            AuEffort.entries.forEach { mode ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(mode.label)
-                                            Text(mode.description, style = MaterialTheme.typography.labelSmall)
-                                        }
-                                    },
-                                    onClick = { onEffortChange(mode); tuning = false },
-                                    trailingIcon = { if (effort == mode) Text("✓") }
-                                )
-                            }
-                        }
-                    }
+                    IconButton(onClick = { tuning = true }, enabled = enabled) { EffortGauge(effort) }
                 }
                 actions()
                 Spacer(Modifier.width(4.dp))
@@ -127,5 +128,58 @@ fun AuComposer(
                 }
             }
         }
+    }
+    if (expanded) {
+        DataCubeDialog(onDismissRequest = { expanded = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Edit message", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    IconButton(onClick = { expanded = false }) {
+                        Icon(Icons.Outlined.CloseFullscreen, "Collapse composer")
+                    }
+                }
+            }, text = {
+                BasicTextField(value, onValueChange,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp, max = 320.dp).testTag("au-expanded-input"),
+                    enabled = enabled, textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary))
+            }, confirmButton = { TextButton(onClick = { expanded = false }) { Text("Done") } })
+    }
+    if (tuning && onEffortChange != null) {
+        DataCubeDialog(onDismissRequest = { tuning = false },
+            title = { Text(effort.label + " effort", style = MaterialTheme.typography.headlineSmall) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { EffortGauge(effort, Modifier.size(56.dp)) }
+                    Slider(value = effort.ordinal.toFloat(),
+                        onValueChange = { onEffortChange(AuEffort.entries[it.roundToInt().coerceIn(0, AuEffort.entries.lastIndex)]) },
+                        valueRange = 0f..AuEffort.entries.lastIndex.toFloat(), steps = AuEffort.entries.size - 2,
+                        modifier = Modifier.testTag("au-effort-slider"))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("Fast", style = MaterialTheme.typography.labelMedium)
+                        Text("Maximum", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Text(effort.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }, confirmButton = { TextButton(onClick = { tuning = false }) { Text("Done") } })
+    }
+}
+
+@Composable
+private fun EffortGauge(effort: AuEffort, modifier: Modifier = Modifier.size(28.dp)) {
+    val progress by animateFloatAsState(effort.ordinal.toFloat() / AuEffort.entries.lastIndex, label = "effort")
+    val accent = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.outlineVariant
+    Canvas(modifier.semantics { contentDescription = "Response effort: " + effort.label }) {
+        val stroke = size.minDimension * .09f
+        val diameter = size.minDimension - stroke * 2
+        val top = Offset((size.width - diameter) / 2, (size.height - diameter) / 2)
+        val arcSize = androidx.compose.ui.geometry.Size(diameter, diameter)
+        drawArc(track, 135f, 270f, false, topLeft = top, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+        drawArc(accent, 135f, 12f + 258f * progress, false, topLeft = top, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+        val angle = Math.toRadians((135 + progress * 270).toDouble())
+        val length = diameter * .34f
+        drawLine(accent, center, center + Offset((cos(angle) * length).toFloat(), (sin(angle) * length).toFloat()), stroke, StrokeCap.Round)
+        drawCircle(accent, stroke * .8f, center)
     }
 }

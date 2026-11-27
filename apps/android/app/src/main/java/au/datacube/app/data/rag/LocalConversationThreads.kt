@@ -89,6 +89,47 @@ class LocalConversationThreads(private val filesDir: File) {
             }
         }
 
+    /** Caller has already joined live session writers for the selected threads. */
+    suspend fun deleteChats(ownerId: String, threadIds: Set<String>, all: Boolean,
+        unsavedAudio: List<String> = emptyList()): ConversationThreadIndex = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            require(safeId(ownerId))
+            val current = read(ownerId)
+            val removed = if (all) current.threads else current.threads.filter { it.id in threadIds }
+            require(removed.isNotEmpty()) { "Chat was not found." }
+            val history = LocalDocumentChatHistory(filesDir)
+            val voiceRoot = File(filesDir, "voice-notes/$ownerId").canonicalFile
+            val audio = (unsavedAudio + removed.flatMap { thread ->
+                history.load(historyKey(ownerId, thread.id)).mapNotNull { it.audioPath }
+            }).distinct()
+            for (thread in removed) history.clear(historyKey(ownerId, thread.id))
+            if (all) {
+                val folder = File(filesDir, "document-chat-history")
+                folder.listFiles().orEmpty().filter { it.name.startsWith("$ownerId--") }.forEach {
+                    check(it.delete() || !it.exists()) { "Could not remove an old chat." }
+                }
+                check(voiceRoot.deleteRecursively() || !voiceRoot.exists()) { "Could not remove voice notes." }
+            } else {
+                val retainedPaths = current.threads.filterNot { it in removed }.flatMap { thread ->
+                    history.load(historyKey(ownerId, thread.id)).mapNotNull { it.audioPath }
+                }.toSet()
+                for (path in audio.filterNot { it in retainedPaths }) {
+                    val file = File(path).canonicalFile
+                    if (file.parentFile == voiceRoot && file.extension == "wav")
+                        check(file.delete() || !file.exists()) { "Could not remove a voice note." }
+                }
+            }
+            val remaining = current.threads.filterNot { it in removed }.ifEmpty {
+                val now = System.currentTimeMillis()
+                listOf(ConversationThread(UUID.randomUUID().toString(), "New chat", now, now))
+            }
+            val result = ConversationThreadIndex(current.activeId.takeIf { active -> remaining.any { it.id == active } }
+                ?: remaining.maxBy { it.updatedAt }.id, remaining)
+            write(ownerId, result)
+            result
+        }
+    }
+
     suspend fun clear(ownerId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = read(ownerId)

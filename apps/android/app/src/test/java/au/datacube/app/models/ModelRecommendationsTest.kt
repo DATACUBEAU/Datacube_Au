@@ -23,4 +23,25 @@ class ModelRecommendationsTest {
         assertTrue(ModelRecommendations.compatible("gemma-4-e2b", 8))
         assertFalse(ModelRecommendations.compatible("gemma-4-e4b", 5))
     }
+
+    @Test fun setupPlanRespectsCombinedStorageAndAndroidRuntime() {
+        val plan = ModelRecommendations.setupPlan(8,12,35,true)
+        assertEquals("gemma-4-e4b",plan.chat)
+        assertEquals("embeddinggemma-2-270m",plan.search)
+        assertEquals("kokoro-82m-cpu",plan.voice)
+        val low = ModelRecommendations.setupPlan(8,1,35,true)
+        assertNull(low.chat)
+        assertNull(low.search)
+        assertNull(low.voice)
+        val oldAndroid = ModelRecommendations.setupPlan(8,12,26,true)
+        assertNull(oldAndroid.search)
+        assertNull(oldAndroid.voice)
+        assertNull(ModelRecommendations.setupPlan(8,12,35,false).chat)
+    }
+
+    @Test fun setupPlanKeepsCompatibleInstalledChatAndDoesNotChargeForItAgain() {
+        val plan = ModelRecommendations.setupPlan(8,4,35,true,setOf("gemma-4-e2b"))
+        assertEquals("gemma-4-e2b",plan.chat)
+        assertEquals("embeddinggemma-2-270m",plan.search)
+    }
 }

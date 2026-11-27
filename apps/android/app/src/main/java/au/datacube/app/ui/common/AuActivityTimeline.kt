@@ -10,6 +10,8 @@ import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.FactCheck
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -193,4 +195,26 @@ fun AuElapsedFeedback(stage: String) {
     }
     Text("Current stage · ${elapsed}s", style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+@Composable
+internal fun AuCompletedActivity(steps: List<String>, durationMs: Long?) {
+    if (steps.isEmpty() && durationMs == null) return
+    var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
+    val seconds = durationMs?.div(1000)
+    val duration = when {
+        seconds == null -> "AU activity"
+        seconds < 1 -> "AU worked for <1s"
+        seconds < 60 -> "AU worked for ${seconds}s"
+        else -> "AU worked for ${seconds / 60}m ${seconds % 60}s"
+    }
+    Column {
+        TextButton(onClick = { expanded = !expanded }, enabled = steps.isNotEmpty(),
+            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)) {
+            Text(duration, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (steps.isNotEmpty()) Icon(if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
+                contentDescription = if (expanded) "Hide AU activity" else "Show AU activity", modifier = Modifier.size(16.dp))
+        }
+        androidx.compose.animation.AnimatedVisibility(expanded) { AuActivityTimeline(steps) }
+    }
 }

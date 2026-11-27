@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -146,4 +148,26 @@ internal fun AuResponseFeedback(account: String?, scope: String, index: Int, cre
         }
     }
     if (error) Text("Could not save feedback. Try again.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.labelSmall)
+}
+
+/** Compact common action row for Gist and document answers. */
+@Composable
+internal fun AuMessageActions(answer: String, speech: AuReadAloudState, id: Int,
+    feedback: @Composable () -> Unit) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val context = LocalContext.current
+    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        IconButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(answer)) }) {
+            Icon(Icons.Outlined.ContentCopy, "Copy", modifier = Modifier.size(20.dp))
+        }
+        feedback()
+        AuReadAloudAction(speech, id, answer)
+        IconButton(onClick = {
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(android.content.Intent.EXTRA_TEXT, answer)
+            }
+            context.startActivity(android.content.Intent.createChooser(intent, "Share response"))
+        }) { Icon(Icons.Outlined.Share, "Share", Modifier.size(20.dp)) }
+    }
 }

@@ -31,7 +31,8 @@ object SmoothOfflineNarration {
         onSpeaker: suspend (Int) -> Unit,
         onStage: suspend (String) -> Unit,
         distinguishSpeakers: Boolean = false,
-        enginePackage: String? = null
+        enginePackage: String? = null,
+        renderDirectory: java.io.File? = null
     ) = mutex.withLock {
         require(turns.isNotEmpty()) { "Create an audio conversation first." }
         val app = context.applicationContext
@@ -75,7 +76,7 @@ object SmoothOfflineNarration {
                     check(tts.setVoice(chosen) != TextToSpeech.ERROR) { "Offline voice is unavailable." }
                 }
                 onSpeaker(index)
-                onStage("Playing ${index + 1} of ${turns.size}")
+                onStage((if (renderDirectory == null) "Playing " else "Preparing audio ") + "${index + 1} of ${turns.size}")
                 // Android TTS has an utterance length limit. Podcast turns are already
                 // short; reject oversized text rather than silently truncating speech.
                 val text = turn.text.trim()
@@ -97,13 +98,18 @@ object SmoothOfflineNarration {
                         done.completeExceptionally(CancellationException("Speech stopped"))
                     }
                 })
-                check(tts.speak(text, TextToSpeech.QUEUE_FLUSH, null,
-                    "datacube-podcast-${index}") != TextToSpeech.ERROR) {
-                    "Android offline voice refused the audio request."
-                }
+                val utteranceId = "datacube-audio-${index}"
+                val destination = renderDirectory?.let { java.io.File(it, "part-${index}.wav") }
+                val result = if (destination == null) tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, utteranceId)
+                    else tts.synthesizeToFile(text, android.os.Bundle(), destination, utteranceId)
+                check(result != TextToSpeech.ERROR) { "Android offline voice refused the audio request." }
                 // Do not stall for a minute between sentences. The app offers
                 // the error to the user if a device voice engine hangs.
                 withTimeout(30_000) { done.await() }
+                if (destination != null) withContext(Dispatchers.IO) {
+                    check(destination.length() > 44L) { "Android voice did not produce playable audio." }
+                    check(renderDirectory?.listFiles().orEmpty().sumOf { it.length() } <= 128L * 1024 * 1024) { "Audio is too long to prepare." }
+                }
             }
         } finally {
             withContext(NonCancellable + Dispatchers.Main) {
@@ -112,6 +118,15 @@ object SmoothOfflineNarration {
                 if (active === tts) active = null
             }
         }
+    }
+
+    suspend fun prepareReadAloud(context: Context, text: String, directory: java.io.File,
+        onStage: suspend (String) -> Unit): List<java.io.File> {
+        val turns = NeuralTextSegmenter.split(text, maxChunk = 1000, maxText = 12_000)
+            .map { PodcastTurn(PodcastSpeaker.GUIDE, it) }
+        speakDialogue(context, turns, OfflineNarrationPreferences(context).speed, {}, onStage,
+            renderDirectory = directory)
+        return turns.indices.map { java.io.File(directory, "part-$it.wav") }
     }
 
     fun stop() {

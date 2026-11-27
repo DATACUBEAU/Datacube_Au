@@ -38,6 +38,8 @@ internal sealed interface AuResponseBlock {
     data object ProjectileIllustration : AuResponseBlock
     data class Sketch(val scene: AuSketchScene) : AuResponseBlock
     data class Formula(val title: String, val equation: String, val symbols: List<Pair<String,String>>) : AuResponseBlock
+    data class StepCard(val title:String,val body:String)
+    data class Steps(val title:String,val pages:List<StepCard>) : AuResponseBlock
 }
 
 /** Deliberately bounded markdown subset; never executes model-generated HTML or code. */
@@ -75,6 +77,28 @@ internal object AuResponseParser {
                     }
                     result += AuResponseBlock.Table(header, rows)
                     continue
+                }
+            }
+            if (line.startsWith("[STEPS] ")) {
+                val end = (i+1 until minOf(lines.size,i+100)).firstOrNull { lines[it].trim()=="[/STEPS]" }
+                if(end!=null) {
+                    val title=line.removePrefix("[STEPS] ").trim()
+                    val inner=lines.subList(i+1,end)
+                    val starts=inner.indices.filter { inner[it].trim().startsWith("[STEP] ") }
+                    if(title.length in 1..100 && starts.size in 2..6 && starts.firstOrNull()==0 &&
+                        inner.none { it.trim().startsWith("[STEPS]") || it.trim()=="[/STEPS]" }) {
+                        val pages=starts.mapIndexed { n,start ->
+                            val heading=inner[start].trim().removePrefix("[STEP] ").trim()
+                            val body=inner.subList(start+1,starts.getOrElse(n+1){inner.size}).joinToString("\n").trim()
+                            AuResponseBlock.StepCard(heading,body)
+                        }
+                        if(pages.all { it.title.length in 1..80 && it.body.length in 1..1500 } &&
+                            pages.sumOf { it.body.length }<=6000) {
+                            result+=AuResponseBlock.Steps(title,pages)
+                            i=end+1
+                            continue
+                        }
+                    }
                 }
             }
             if (line.startsWith("[FORMULA] ")) {
@@ -373,6 +397,7 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                 }
                 AuResponseBlock.ProjectileIllustration -> AuProjectileIllustration()
                 is AuResponseBlock.Sketch -> AuSketchIllustration(block.scene)
+                is AuResponseBlock.Steps -> AuStepDeck(block)
                 is AuResponseBlock.Formula -> Surface(
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)

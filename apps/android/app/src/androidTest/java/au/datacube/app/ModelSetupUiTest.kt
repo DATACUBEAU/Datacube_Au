@@ -3,8 +3,10 @@ package au.datacube.app
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performScrollToKey
+import androidx.compose.ui.test.performScrollTo
+import au.datacube.app.models.DeviceCapability
 import androidx.compose.ui.test.performClick
 import au.datacube.app.models.ModelSpec
 import au.datacube.app.ui.models.ModelsScreen
@@ -45,13 +47,18 @@ class ModelSetupUiTest {
                     installed = { false },
                     onGet = {},
                     onImport = { selected = it },
-                    onBack = {}
+                    onBack = {},
+                    scanDevice = { DeviceCapability(8,12,"arm64-v8a","Gemma") },
+                    runtimeSdk = 35
                 )
             }
         }
+        composeRule.onNodeWithTag("model-list").performScrollToKey("recommended-search")
         composeRule.onNodeWithText("EmbeddingGemma 2 · 270M").assertIsDisplayed()
-        composeRule.onAllNodesWithText("Import files").onFirst().performClick()
-        assertNotNull(selected)
-        assertEquals("embeddinggemma-2-270m", selected?.id)
+        composeRule.onNodeWithTag("import-embeddinggemma-2-270m").performScrollTo().assertIsDisplayed().performClick()
+        composeRule.runOnIdle {
+            assertNotNull(selected)
+            assertEquals("embeddinggemma-2-270m", selected?.id)
+        }
     }
 }

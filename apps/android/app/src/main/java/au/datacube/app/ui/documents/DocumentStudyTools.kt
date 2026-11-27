@@ -5,6 +5,8 @@ import au.datacube.app.ui.common.AuComposer
 import au.datacube.app.ui.chat.GistAttachment
 import au.datacube.app.ui.chat.GistAttachmentMenu
 import au.datacube.app.ui.common.AuActivityTimeline
+import au.datacube.app.ui.common.AuCompletedActivity
+import au.datacube.app.ui.common.AuMessageActions
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuResponseFeedback
@@ -99,7 +101,8 @@ internal data class ChatMessage(
     val generating: Boolean = false,
     val generationError: String? = null,
     val audioPath: String? = null,
-    val createdAtEpochMs: Long? = System.currentTimeMillis()
+    val createdAtEpochMs: Long? = System.currentTimeMillis(),
+    val workDurationMs: Long? = null
 )
 
 private fun sourceSnippets(raw: String?): List<SourceSnippet> {
@@ -440,6 +443,8 @@ fun DocumentChatWorkspace(
         session.searching = true
         session.searchingStage = "Understanding attachment"
         session.activitySteps.clear()
+        val firstResponseIndex = answerIndex
+        val workStartedAt = SystemClock.elapsedRealtime()
         session.activeRequest = session.scope.launch {
             val raw = StringBuilder()
             try {
@@ -467,6 +472,7 @@ fun DocumentChatWorkspace(
             } catch (_: Exception) {
                 messages[answerIndex] = messages[answerIndex].copy(generating = false, generationError = "AU could not understand this attachment.")
             } finally {
+                session.recordWorkDuration(firstResponseIndex, workStartedAt)
                 session.searching = false
                 session.searchingStage = ""
                 session.activeRequest = null
@@ -496,6 +502,8 @@ fun DocumentChatWorkspace(
                             // The response belongs to the document/thread session, not
                             // this Compose screen; navigation must not cancel it.
                             session.scope.launch { threads.nameFromQuestion(chatOwner, threadId, cleanPrompt) }
+                            val firstResponseIndex = messages.size
+                            val workStartedAt = SystemClock.elapsedRealtime()
                             session.activeRequest = session.scope.launch {
                                 val events = session.activitySteps
                                 try {
@@ -790,6 +798,7 @@ fun DocumentChatWorkspace(
                                     events += "Search could not finish: ${error.message ?: "unknown error"}"
                                     messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList(), generationError = "Document search could not finish. Try again."))
                                 } finally {
+                                    session.recordWorkDuration(firstResponseIndex, workStartedAt)
                                     session.searching = false
                                     session.searchingStage = ""
                                     session.activitySteps.clear()
@@ -925,7 +934,7 @@ fun DocumentChatWorkspace(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Button(onClick = onOpenModels) { Text("Open Models") }
+                    Button(onClick = onOpenModels) { Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS) }
                 }
             }
         }
@@ -980,6 +989,7 @@ fun DocumentChatWorkspace(
                                 },
                                 fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
                             )
+                            AuCompletedActivity(message.steps, message.workDurationMs)
                             if ("General knowledge · Not verified in document" in message.steps) {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
@@ -1009,8 +1019,9 @@ fun DocumentChatWorkspace(
                                     }
                                 }
                                 if (!message.generating && message.generationError == null) {
-                                    AuReadAloudAction(speech, messageIndex, message.answer)
-                                    AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
+                                    AuMessageActions(message.answer, speech, messageIndex) {
+                                        AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
+                                    }
                                 }
                                 Spacer(Modifier.height(8.dp))
                             }
@@ -1100,33 +1111,10 @@ fun DocumentChatWorkspace(
                                 }
                                 }
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = {
-                                    clipboard.setText(AnnotatedString(
-                                        if (message.answer.isNotBlank()) message.answer
-                                        else message.matches.joinToString("\n\n") { evidence ->
-                                            evidence.text + (evidence.page?.let { "\nPage $it" } ?: "")
-                                        }
-                                    ))
-                                }) {
-                                    Icon(Icons.Outlined.ContentCopy, null, Modifier.size(17.dp))
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("Copy")
+                            if (message.answer.isBlank() && !message.generating && message.matches.isNotEmpty()) {
+                                IconButton(onClick = { clipboard.setText(AnnotatedString(message.matches.joinToString("\n\n") { it.text + (it.page?.let { page -> "\nPage $page" } ?: "") })) }) {
+                                    Icon(Icons.Outlined.ContentCopy, "Copy sources", Modifier.size(20.dp))
                                 }
-                                Spacer(Modifier.weight(1f))
-                                TextButton(onClick = {
-                                    expandedSteps = if (message.steps.isEmpty()) expandedSteps
-                                    else if (messageIndex in expandedSteps) {
-                                        expandedSteps - messageIndex
-                                    } else expandedSteps + messageIndex
-                                }) {
-                                    Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("AU activity")
-                                }
-                            }
-                            if (messageIndex in expandedSteps) {
-                                AuActivityTimeline(message.steps)
                             }
                         }
                     }
@@ -1274,7 +1262,8 @@ fun SmartNoteWorkspace(
     documentName: String,
     textPreview: String?,
     previewLoading: Boolean,
-    documentId: String = documentName
+    documentId: String = documentName,
+    onOpenModels: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val session = remember(documentId) {
@@ -1296,11 +1285,7 @@ fun SmartNoteWorkspace(
         } else {
             ToolCard {
                 if (!ready) {
-                    Text("Select a local AU model before generating notes.",
-                        color = MaterialTheme.colorScheme.onSurface)
-                    Text("Open Settings → Models to install or select a chat model.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    StudyModelSetup(onOpenModels)
                 }
                 Button(
                     onClick = {
@@ -1433,7 +1418,8 @@ fun PredictionWorkspace(
     documentName: String,
     textPreview: String?,
     previewLoading: Boolean,
-    documentId: String = documentName
+    documentId: String = documentName,
+    onOpenModels: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val session = remember(documentId) {
@@ -1452,8 +1438,7 @@ fun PredictionWorkspace(
             SourceUnavailableCard(previewLoading, null)
         } else {
             ToolCard {
-                if (!ready) Text("Choose a model in Settings → Models.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!ready) StudyModelSetup(onOpenModels)
                 OutlinedButton(
                     onClick = { picker.launch(arrayOf("application/pdf", "text/plain", "text/markdown")) },
                     enabled = !session.attaching && !session.working,
@@ -1526,7 +1511,7 @@ fun PredictionWorkspace(
 
 @Composable
 fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading: Boolean,
-    documentId: String = documentName) {
+    documentId: String = documentName, onOpenModels: () -> Unit = {}) {
     val context = LocalContext.current
     val session = remember(documentId) {
         GeneratedStudySessions.get(documentId, GeneratedStudyMode.PRACTICE)
@@ -1586,8 +1571,7 @@ fun PracticeWorkspace(documentName: String, textPreview: String?, previewLoading
                     enabled = ready && !session.working) {
                     Icon(Icons.Outlined.PlayArrow, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Generate practice")
                 }
-                if (!ready) Text("Install and select an AU chat model in Models.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!ready) StudyModelSetup(onOpenModels)
                 if (session.working) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                     Text("AI is preparing your questions", style = MaterialTheme.typography.bodySmall)
@@ -1690,388 +1674,18 @@ private fun ChoiceDropdown(value: String, options: List<String>, onSelect: (Stri
 @Composable
 fun PodcastWorkspace(documentId: String, documentName: String, textPreview: String?, previewLoading: Boolean) {
     val context = LocalContext.current
-    val narratorScope = rememberCoroutineScope()
-    val neuralInstalled = remember(context) { NeuralNarration.installed(context) }
-    val neuralPrefs = remember(context) {
-        context.getSharedPreferences("datacube_neural_voice", android.content.Context.MODE_PRIVATE)
-    }
-    var useNeural by remember(context) {
-        mutableStateOf(neuralInstalled && neuralPrefs.getBoolean("neural_opt_in_v3", true))
-    }
-    var neuralVoice by remember(context) {
-        mutableStateOf(neuralPrefs.getString("voice", NeuralNarration.DEFAULT_VOICE)
-            ?: NeuralNarration.DEFAULT_VOICE)
-    }
-    var neuralJob by remember { mutableStateOf<Job?>(null) }
-    var speechReady by remember { mutableStateOf(false) }
-    var speaking by remember { mutableStateOf(false) }
-    var speechError by remember { mutableStateOf<String?>(null) }
-    var neuralStage by remember { mutableStateOf("") }
-    var activeChapter by remember(documentName) { mutableIntStateOf(0) }
-    var podcastMode by remember(documentId) { mutableIntStateOf(0) }
-    val voicePreferences = remember(context) { OfflineNarrationPreferences(context) }
-    var speechRate by remember { mutableFloatStateOf(voicePreferences.speed) }
-    var speechPitch by remember { mutableFloatStateOf(voicePreferences.pitch) }
-    var selectedVoiceName by remember { mutableStateOf(voicePreferences.voiceName) }
-    var offlineVoices by remember { mutableStateOf<List<Voice>>(emptyList()) }
-    val narrationReady = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty()
-    var voiceMenuExpanded by remember { mutableStateOf(false) }
-    var voiceRefresh by remember { mutableIntStateOf(0) }
-    val snippets = remember(textPreview) { sourceSnippets(textPreview) }
-    val chapters = remember(textPreview) {
-        snippets.chunked(5).mapIndexed { index, group ->
-            val chapterTitles = listOf("Overview & key ideas", "Main concepts", "Examples & applications", "Key takeaways", "Summary & next steps")
-            SourceSnippet(group.joinToString(" ") { it.text }.take(2_000), group.firstOrNull()?.page) to
-                chapterTitles.getOrElse(index) { "Section " + (index + 1) }
-        }.take(5)
-    }
-    val summary = remember(textPreview) { documentSummary(textPreview) }
-    val tts = remember(context) {
-        TextToSpeech(context.applicationContext) { status ->
-            speechReady = status == TextToSpeech.SUCCESS
-            if (status != TextToSpeech.SUCCESS && !useNeural) {
-                speechError = "The Android offline speech engine could not be initialized."
-            }
-        }
-    }
-
-    DisposableEffect(tts) {
-        tts.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(utteranceId: String?) { speaking = true }
-            override fun onDone(utteranceId: String?) { speaking = false }
-            override fun onError(utteranceId: String?) {
-                speaking = false
-                speechError = "Narration could not be played by the installed speech engine."
-            }
-        })
-        onDispose {
-            if (neuralJob?.isActive == true) neuralJob?.cancel()
-            tts.stop()
-            tts.shutdown()
-        }
-    }
-
-    LaunchedEffect(tts, speechReady, voiceRefresh) {
-        if (speechReady) {
-            offlineVoices = runCatching {
-                tts.voices.orEmpty()
-                    .filter { !it.isNetworkConnectionRequired }
-                    .sortedWith(
-                        compareByDescending<Voice> { it.locale.language == Locale.getDefault().language }
-                            .thenBy { it.locale.displayLanguage }
-                            .thenBy { it.name }
-                    )
-            }.getOrDefault(emptyList())
-            if (offlineVoices.isEmpty()) {
-                speechError = "No offline voices installed. Download an offline voice in Android speech settings."
-            } else {
-                val match = offlineVoices.firstOrNull { it.name == selectedVoiceName }
-                    ?: offlineVoices.first()
-                if (selectedVoiceName != match.name) {
-                    selectedVoiceName = match.name
-                    voicePreferences.voiceName = match.name
-                }
-                speechError = null
-            }
-        }
-    }
-
-    fun speak(text: String) {
-        if (text.isBlank()) return
-        if (useNeural) {
-            if (!neuralInstalled) {
-                speechError = "Download Kokoro in Settings → Models."
-                return
-            }
-            neuralJob?.cancel()
-            tts.stop()
-            speechError = null
-            neuralStage = "Preparing Kokoro on your device"
-            speaking = true
-            neuralJob = au.datacube.app.audio.AuAudioPlayback.launch(context, "Preparing narration") {
-                try {
-                    NeuralNarration.speak(context, text, neuralVoice, speechRate) { stage ->
-                        withContext(Dispatchers.Main) { neuralStage = stage }
-                    }
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (error: Exception) {
-                    speechError = "Kokoro neural playback failed: " +
-                        (error.message ?: "The model or device runtime could not synthesize audio.")
-                } finally {
-                    neuralStage = ""
-                    speaking = false
-                }
-            }
-            return
-        }
-        if (!speechReady) return
-        val voice = offlineVoices.firstOrNull { it.name == selectedVoiceName }
-        if (voice == null) {
-            speechError = "Select an installed offline voice first."
-            return
-        }
-        tts.stop()
-        if (tts.setVoice(voice) == TextToSpeech.ERROR) {
-            speechError = "This offline voice is unavailable. Try another voice."
-            return
-        }
-        tts.setSpeechRate(speechRate)
-        tts.setPitch(speechPitch)
-        speechError = null
-        val result = tts.speak(text.take(4_000), TextToSpeech.QUEUE_FLUSH, null, "datacube-document-audio")
-        if (result == TextToSpeech.ERROR) {
-            speaking = false
-            speechError = "Narration could not be started."
-        } else speaking = true
-    }
-
-    ToolPage("Podcast", "Review $documentName through a guided conversation or a narrated summary.") {
+    val playbackSpeed = remember(context) { OfflineNarrationPreferences(context).speed }
+    ToolPage("Podcast", "Review $documentName through a guided conversation.") {
         if (textPreview.isNullOrBlank()) SourceUnavailableCard(previewLoading, null)
-        else {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                listOf("Conversation", "Narration").forEachIndexed { index, title ->
-                    Surface(
-                        onClick = { podcastMode = index },
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(18.dp),
-                        color = if (podcastMode == index)
-                            MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp,
-                            if (podcastMode == index) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Text(title,
-                            Modifier.padding(vertical = 14.dp, horizontal = 6.dp),
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (podcastMode == index)
-                                MaterialTheme.colorScheme.onPrimaryContainer
-                            else MaterialTheme.colorScheme.onSurface)
-                    }
-                }
-            }
-            if (podcastMode == 0) {
-                PodcastConversationPanel(
-                    documentId = documentId,
-                    documentName = documentName,
-                    textPreview = textPreview,
-                    playbackSpeed = speechRate
-                )
-            } else {
-            ToolCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                        Icon(Icons.Outlined.GraphicEq, contentDescription = "Audio summary", tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(78.dp).padding(20.dp))
-                    }
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("$documentName · Audio Summary", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                        Text(chapters.size.toString() + " chapters · Text-to-speech", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                        Text(
-                            if (speaking) {
-                                if (useNeural) neuralStage.ifBlank { "Preparing neural voice" }
-                                else "Android offline narration playing"
-                            } else "Ready to play",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                }
-                Spacer(Modifier.height(16.dp))
-                Text("Voice engine", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = !useNeural,
-                        onClick = {
-                            neuralJob?.cancel()
-                                            useNeural = false
-                            neuralPrefs.edit().putBoolean("neural_opt_in_v3", false).apply()
-                            speaking = false
-                        },
-                        label = { Text("Smooth offline") }
-                    )
-                    FilterChip(
-                        selected = useNeural,
-                        enabled = neuralInstalled,
-                        onClick = {
-                            tts.stop()
-                            useNeural = true
-                            neuralPrefs.edit().putBoolean("neural_opt_in_v3", true).apply()
-                            speaking = false
-                        },
-                        label = { Text("Neural (optional)") }
-                    )
-                }
-                if (!neuralInstalled) {
-                    Text("Kokoro: optional download in Settings → Models",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall)
-                }
-                Text("Voice", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Spacer(Modifier.height(6.dp))
-                Box(Modifier.fillMaxWidth()) {
-                    OutlinedButton(
-                        onClick = { voiceMenuExpanded = true },
-                        enabled = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty(),
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
-                    ) {
-                        Icon(Icons.Outlined.RecordVoiceOver, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (useNeural)
-                                NeuralNarration.presetVoices[neuralVoice] ?: "Select Kokoro voice"
-                            else offlineVoices.firstOrNull { it.name == selectedVoiceName }?.let { voice ->
-                                "${voice.locale.displayName} · ${voice.name}"
-                            } ?: "No installed offline voices",
-                            Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Icon(Icons.Outlined.ArrowDropDown, contentDescription = "Choose offline voice")
-                    }
-                    DropdownMenu(
-                        expanded = voiceMenuExpanded,
-                        onDismissRequest = { voiceMenuExpanded = false }
-                    ) {
-                        if (useNeural) {
-                            NeuralNarration.presetVoices.forEach { (id, label) ->
-                                DropdownMenuItem(
-                                    text = { Text(label) },
-                                    onClick = {
-                                        neuralJob?.cancel()
-                                                                    speaking = false
-                                        neuralVoice = id
-                                        neuralPrefs.edit().putString("voice", id).apply()
-                                        voiceMenuExpanded = false
-                                    },
-                                    leadingIcon = {
-                                        if (id == neuralVoice) Icon(Icons.Outlined.Check, null)
-                                    }
-                                )
-                            }
-                        } else offlineVoices.forEach { voice ->
-                            DropdownMenuItem(
-                                text = { Text("${voice.locale.displayName} · ${voice.name}", maxLines = 2) },
-                                onClick = {
-                                    tts.stop()
-                                    speaking = false
-                                    selectedVoiceName = voice.name
-                                    voicePreferences.voiceName = voice.name
-                                    voiceMenuExpanded = false
-                                },
-                                leadingIcon = {
-                                    if (voice.name == selectedVoiceName) Icon(Icons.Outlined.Check, contentDescription = null)
-                                }
-                            )
-                        }
-                    }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (useNeural) "Offline neural · 4 voices"
-                        else "${offlineVoices.size} installed voices", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
-                    TextButton(
-                        onClick = { voiceRefresh += 1 },
-                        enabled = !useNeural && speechReady
-                    ) { Text("Refresh voices") }
-                    TextButton(
-                        onClick = { speak("Welcome to DataCube AU. Let's review your study notes.") },
-                        enabled = if (useNeural) neuralInstalled else speechReady && offlineVoices.isNotEmpty()
-                    ) { Text("Preview") }
-                }
-                Text("Narration speed", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(0.8f, 1.0f, 1.2f).forEach { rate ->
-                        FilterChip(
-                            selected = speechRate == rate,
-                            onClick = {
-                                speechRate = rate
-                                voicePreferences.speed = rate
-                                if (speaking) speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
-                            },
-                            label = { Text(rate.toString() + "x") }
-                        )
-                    }
-                }
-                if (!useNeural) {
-                Text("Voice tone", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(0.9f, 1.0f, 1.1f).forEach { pitch ->
-                        FilterChip(
-                            selected = speechPitch == pitch,
-                            onClick = {
-                                speechPitch = pitch
-                                voicePreferences.pitch = pitch
-                                if (speaking) speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
-                            },
-                            label = { Text(when (pitch) { 0.9f -> "Lower"; 1.1f -> "Higher"; else -> "Normal" }) }
-                        )
-                    }
-                }
-                }
-                Spacer(Modifier.height(14.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = {
-                            if (speaking) {
-                                neuralJob?.cancel()
-                                                    tts.stop()
-                                speaking = false
-                            }
-                            else speak(chapters.getOrNull(activeChapter)?.first?.text ?: summary)
-                        },
-                        enabled = narrationReady && summary.isNotBlank(),
-                        modifier = Modifier.weight(1f).heightIn(min = 50.dp)
-                    ) {
-                        Icon(if (speaking) Icons.Outlined.Stop else Icons.Outlined.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(7.dp)); Text(if (speaking) "Stop narration" else "Play summary")
-                    }
-                    OutlinedButton(onClick = { activeChapter = 0; speak(summary) }, enabled = narrationReady && summary.isNotBlank()) { Text("Full summary") }
-                }
-                speechError?.let { Spacer(Modifier.height(8.dp)); Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-                if (!useNeural && !speechReady && speechError == null) {
-                    Spacer(Modifier.height(8.dp)); Text("Preparing the installed Android speech engine…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                Text(
-                    "Kokoro plays only through the downloaded neural model. No automatic Android-voice fallback. If neural synthesis fails, review the error above.",
-                    Modifier.padding(top = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            ToolCard {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Chapters", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                    Spacer(Modifier.weight(1f)); Text(chapters.size.toString() + " sections", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-                }
-                chapters.forEachIndexed { index, chapter ->
-                    Surface(
-                        onClick = { activeChapter = index; speak(chapter.first.text) },
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (activeChapter == index) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), enabled = narrationReady
-                    ) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (activeChapter == index && speaking) Icons.Outlined.VolumeUp else Icons.Outlined.PlayArrow, contentDescription = "Play " + chapter.second, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(chapter.second, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.SemiBold)
-                                Text(chapter.first.page?.let { "Starts near page $it" } ?: "Extracted document passage", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-                    if (index != chapters.lastIndex) Spacer(Modifier.height(8.dp))
-                }
-            }
-            ToolCard {
-                Text("Audio summary text", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
-                Spacer(Modifier.height(7.dp)); Text(summary, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            }
-        }
+        else PodcastConversationPanel(documentId, documentName, textPreview, playbackSpeed)
+    }
+}
+
+@Composable
+private fun StudyModelSetup(onOpenModels:()->Unit) {
+    val state = au.datacube.app.ui.models.ModelSetupGuide.readiness(LocalContext.current)
+    Text(au.datacube.app.ui.models.ModelSetupGuide.missingText(state),style=MaterialTheme.typography.bodySmall)
+    OutlinedButton(onClick=onOpenModels,modifier=Modifier.fillMaxWidth()) {
+        Text(au.datacube.app.ui.models.ModelSetupGuide.OPEN_MODELS)
     }
 }
