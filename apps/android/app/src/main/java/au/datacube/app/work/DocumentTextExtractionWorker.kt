@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.withTransaction
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.DocumentTextExtractor
 import au.datacube.app.data.ExtractedTextStore
@@ -77,14 +78,16 @@ class DocumentTextExtractionWorker(
 
             val destination = ExtractedTextStore.fileFor(applicationContext.filesDir, documentId)
             var lastNotified = -5
-            notifications.showDocumentExtraction(documentId, 0)
+            val foreground = notifications.startDocumentWorker(this, "Extracting document text · 0%", 0)
+            notifications.updateDocumentWorker(this, documentId, foreground, "Extracting document text · 0%", 0)
             extractor.extract(source, destination) { progress ->
                 val bounded = progress.coerceIn(0.0, 0.95)
                 database.jobs().updateProgress(jobId, bounded, System.currentTimeMillis())
                 val percentage = (bounded * 100).toInt()
                 if (percentage - lastNotified >= 5 || percentage >= 95 && lastNotified < 95) {
                     // Replaces the same silent status, not dozens of notification dots.
-                    notifications.showDocumentExtraction(documentId, percentage)
+                    setProgress(workDataOf("percentage" to percentage))
+                    notifications.updateDocumentWorker(this, documentId, foreground, "Extracting document text · $percentage%", percentage)
                     lastNotified = percentage
                 }
             }
@@ -146,7 +149,11 @@ class DocumentTextExtractionWorker(
         // Start follow-up indexing only after extraction clears its own
         // notification; the two workers must not cancel each other's status.
         indexDocumentId?.let { id ->
-            runCatching { LexicalIndexWorker.schedule(applicationContext, id) }
+            try { LexicalIndexWorker.schedule(applicationContext, id) }
+            catch (_: Exception) { notifications.showDocumentFailed(id) }
+        }
+        if (outcome is Result.Failure) trackedDocumentId?.let { id ->
+            if (database.documents().find(id) != null) notifications.showDocumentFailed(id)
         }
         return outcome
     }

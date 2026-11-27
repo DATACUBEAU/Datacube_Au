@@ -11,6 +11,10 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import au.datacube.app.R
+import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
+import android.content.pm.ServiceInfo
+import kotlinx.coroutines.CancellationException
 
 /**
  * One persistent, low-priority status notification per document. These
@@ -44,6 +48,44 @@ class LocalNotificationService(private val context: Context) {
         if (!service.areNotificationsEnabled()) return null
         ensureChannels()
         return service
+    }
+
+    private fun workerNotification(detail: String, percent: Int?): Notification {
+        ensureChannels()
+        return Notification.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification_datacube)
+            .setContentTitle("DataCube AU · Preparing document")
+            .setContentText(detail).setContentIntent(openApp())
+            .setProgress(100, percent?.coerceIn(0, 100) ?: 0, percent == null)
+            .setOnlyAlertOnce(true).setOngoing(true).setShowWhen(false)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setCategory(Notification.CATEGORY_PROGRESS).build()
+    }
+
+    private fun workerId(worker: CoroutineWorker): Int = 0x20000000 or (worker.id.hashCode() and 0x0fffffff)
+
+    /** WorkManager owns foreground-service lifetime; background-start restrictions
+     * may deny promotion, in which case the durable worker still runs normally. */
+    suspend fun startDocumentWorker(worker: CoroutineWorker, detail: String, percent: Int? = null): Boolean {
+        val notification = workerNotification(detail, percent)
+        return try {
+            val info = if (Build.VERSION.SDK_INT >= 29)
+                ForegroundInfo(workerId(worker), notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            else ForegroundInfo(workerId(worker), notification)
+            worker.setForeground(info)
+            true
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { false }
+    }
+
+    fun updateDocumentWorker(worker: CoroutineWorker, documentId: String, foreground: Boolean,
+        detail: String, percent: Int? = null) {
+        val manager = manager() ?: return
+        val notice = workerNotification(detail, percent)
+        runCatching {
+            if (foreground) manager.notify(workerId(worker), notice)
+            else manager.notify(tag(documentId), PROGRESS_ID, notice)
+        }
     }
 
     fun showDocumentExtraction(documentId: String, percentage: Int) {

@@ -47,7 +47,7 @@ class PlainTextDocumentExtractor : DocumentTextExtractor {
         val sourceBytes = source.length()
         if (sourceBytes > MAX_SOURCE_BYTES) {
             throw TextExtractionRejectedException(
-                "Text files larger than 20 MB are not extracted on this device."
+                "Text files larger than 100 MB are not extracted on this device."
             )
         }
 
@@ -161,7 +161,7 @@ class PlainTextDocumentExtractor : DocumentTextExtractor {
     }
 
     companion object {
-        private const val MAX_SOURCE_BYTES = 20L * 1024L * 1024L
+        private const val MAX_SOURCE_BYTES = 100L * 1024L * 1024L
         private const val BUFFER_SIZE = 8192
         private const val PROGRESS_INTERVAL_CHARS = 512L * 1024L
     }
@@ -211,7 +211,7 @@ class PdfDocumentTextExtractor : DocumentTextExtractor {
                                 page.openTextPage().use { textPage ->
                                     val characterCount = textPage.textPageCountChars()
                                     if (characterCount < 0 ||
-                                        characterCount > MAX_EXTRACTED_TEXT_CHARACTERS
+                                        characterCount > MAX_PAGE_CHARACTERS
                                     ) {
                                         throw TextExtractionRejectedException(
                                             "The PDF page contains too much text to extract safely."
@@ -252,6 +252,9 @@ class PdfDocumentTextExtractor : DocumentTextExtractor {
                         writer.flush()
                     }
 
+                    if (temporary.length() > MAX_EXTRACTED_BYTES) {
+                        throw TextExtractionRejectedException("Extracted PDF text exceeds the 100 MiB search limit.")
+                    }
                     if (!hasSelectableText) {
                         throw TextExtractionRejectedException(
                             "This PDF has no selectable text. OCR is not yet available."
@@ -300,7 +303,9 @@ class PdfDocumentTextExtractor : DocumentTextExtractor {
 
     companion object {
         private const val MAX_SOURCE_BYTES = 100L * 1024L * 1024L
-        private const val MAX_EXTRACTED_TEXT_CHARACTERS = 20L * 1024L * 1024L
+        private const val MAX_PAGE_CHARACTERS = 2L * 1024L * 1024L
+        private const val MAX_EXTRACTED_TEXT_CHARACTERS = 100L * 1024L * 1024L
+        private const val MAX_EXTRACTED_BYTES = 100L * 1024L * 1024L
     }
 }
 

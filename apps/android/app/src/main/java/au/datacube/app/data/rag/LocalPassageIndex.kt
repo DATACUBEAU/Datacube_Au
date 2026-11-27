@@ -307,7 +307,7 @@ class LocalPassageIndex(context: Context) :
         private const val INDEX_VERSION = 2
         private const val TARGET_CHARS = 800
         private const val OVERLAP_CHARS = 120
-        private const val MAX_PASSAGES = 60_000
+        private const val MAX_PASSAGES = 400_000
         private const val MAX_SOURCE_BYTES = 100L * 1024 * 1024
         private val termRegex = Regex("""[\p{L}\p{N}]{2,}""")
         private val stopWords = setOf(
