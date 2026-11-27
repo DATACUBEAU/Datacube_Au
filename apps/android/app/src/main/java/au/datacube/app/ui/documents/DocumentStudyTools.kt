@@ -468,7 +468,8 @@ fun DocumentChatWorkspace(
                     visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
                 }
-                messages[answerIndex] = messages[answerIndex].copy(answer = raw.finish(), generating = false)
+                val completedAnswer = raw.finish()
+                messages[answerIndex] = messages[answerIndex].copy(answer = completedAnswer, generating = false)
             } catch (cancelled: CancellationException) {
                 messages[answerIndex] = messages[answerIndex].copy(answer = raw.partial(), generating = false, generationError = "Reply stopped.")
                 throw cancelled
@@ -558,8 +559,9 @@ fun DocumentChatWorkspace(
                                                 answer.append(part)
                                             }
                                             events += "AU answered without searching the document"
+                                            val completedAnswer = answer.finish()
                                             messages[answerIndex] = messages[answerIndex].copy(
-                                                answer = answer.finish(),
+                                                answer = completedAnswer,
                                                 generating = false,
                                                 steps = events.toList()
                                             )
@@ -711,7 +713,8 @@ fun DocumentChatWorkspace(
                                                  visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 raw.append(part)
                                             }
-                                            messages[resultIndex] = messages[resultIndex].copy(answer = raw.finish(),
+                                            val completedAnswer = raw.finish()
+                                            messages[resultIndex] = messages[resultIndex].copy(answer = completedAnswer,
                                                 generating = false)
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
@@ -940,7 +943,7 @@ fun DocumentChatWorkspace(
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                itemsIndexed(messages.asReversed()) { reversedIndex, message ->
+                itemsIndexed(messages.asReversed(), key = { i, _ -> messages.lastIndex - i }) { reversedIndex, message ->
                     val messageIndex = messages.lastIndex - reversedIndex
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -949,7 +952,7 @@ fun DocumentChatWorkspace(
                                     VoiceNotePlayback(message.audioPath, message.question)
                                 } else {
                                     Text(message.question, Modifier.padding(13.dp),
-                                        color = MaterialTheme.colorScheme.onSurface)
+                                        color = MaterialTheme.colorScheme.onPrimaryContainer)
                                 }
                             }
                         }
@@ -978,9 +981,8 @@ fun DocumentChatWorkspace(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.labelSmall)
                             }
-                            Spacer(Modifier.height(8.dp))
                             if (message.answer.isNotBlank()) {
-                                AuRichResponse(message.answer) { visible, offset ->
+                                AuRichResponse(message.answer, streaming = message.generating) { visible, offset ->
                                     val term = SourceTermGrounding.wordAt(visible, offset)
                                     val source = term?.let { key ->
                                         SourceTermGrounding.find(key, message.matches.map { RagEvidence(it.text, it.page) })
@@ -996,7 +998,6 @@ fun DocumentChatWorkspace(
                                         AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
                                     }
                                 }
-                                Spacer(Modifier.height(8.dp))
                             }
                             if (message.generationError != null) {
                                 Text(message.generationError,
