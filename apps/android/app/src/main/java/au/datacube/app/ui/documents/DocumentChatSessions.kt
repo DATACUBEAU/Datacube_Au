@@ -37,6 +37,23 @@ internal class DocumentChatSession(private val historyKey: String) {
     val activitySteps = mutableStateListOf<String>()
     var searching by mutableStateOf(false)
     var searchingStage by mutableStateOf("")
+    var requestStartedAt by mutableStateOf(0L)
+        private set
+
+    fun startRequestClock(): Long = android.os.SystemClock.elapsedRealtime().also { requestStartedAt = it }
+
+    fun publishAnswer(index: Int, answer: String) {
+        val turn = messages.getOrNull(index) ?: return
+        if (turn.answer == answer || !turn.generating) return
+        val first = turn.firstVisibleMs ?: if (answer.isNotBlank() && requestStartedAt > 0L)
+            (android.os.SystemClock.elapsedRealtime() - requestStartedAt).coerceAtLeast(0L) else null
+        messages[index] = turn.copy(answer = answer, firstVisibleMs = first)
+    }
+
+    fun streamingAnswer(index: Int, sourceCount: Int): AuStreamingAnswer =
+        AuStreamingAnswer(sourceCount) { visible ->
+            withContext(Dispatchers.Main.immediate) { publishAnswer(index, visible) }
+        }
     var activeRequest: Job? = null
     var historyReady by mutableStateOf(false)
         private set
@@ -67,7 +84,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                         generationError = if (turn.interrupted) "Previous response stopped before completion." else null,
                         audioPath = turn.audioPath,
                         createdAtEpochMs = turn.createdAtEpochMs,
-                        workDurationMs = turn.workDurationMs
+                        workDurationMs = turn.workDurationMs,
+                        firstVisibleMs = turn.firstVisibleMs
                     )
                 })
             } catch (cancelled: CancellationException) {
@@ -95,7 +113,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                             interrupted = item.generating || item.generationError != null,
                             audioPath = item.audioPath,
                             createdAtEpochMs = item.createdAtEpochMs,
-                            workDurationMs = item.workDurationMs
+                            workDurationMs = item.workDurationMs,
+                            firstVisibleMs = item.firstVisibleMs
                         )
                     })
                 } catch (cancelled: CancellationException) {
@@ -145,7 +164,8 @@ internal class DocumentChatSession(private val historyKey: String) {
         val duration = (android.os.SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
         for (index in firstIndex.coerceAtLeast(0) until messages.size) {
             val turn = messages[index]
-            if (!turn.isUser && !turn.generating) messages[index] = turn.copy(workDurationMs = duration)
+            if (!turn.isUser && !turn.generating) messages[index] = turn.copy(workDurationMs = duration,
+                firstVisibleMs = turn.firstVisibleMs)
         }
     }
 
