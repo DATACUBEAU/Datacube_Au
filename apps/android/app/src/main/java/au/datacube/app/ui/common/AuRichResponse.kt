@@ -224,17 +224,29 @@ internal object AuResponseParser {
                     continue
                 }
             }
+            // A malformed declarative block is not plain text. Skip its commands
+            // and retain the rest of the response, rather than exposing internals.
+            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|STEPS)](?:.*)$""")
+                .matchEntire(line)?.groupValues?.get(1)
+            if (invalidVisual != null) {
+                val close = (i + 1 until lines.size).firstOrNull { lines[it].trim() == "[/" + invalidVisual + "]" }
+                if (close == null) break
+                val title = line.substringAfter(']').trim().substringBefore('|').take(100)
+                result += AuResponseBlock.Prose(if (title.isBlank()) "Visual could not be rendered." else "$title — visual could not be rendered.")
+                i = close + 1
+                continue
+            }
             if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|STEPS|STEP)](?:.*)$"))) {
                 i++
                 continue
             }
-            val heading = Regex("^(#{1,4})\\s+(.+)$").matchEntire(line)
-            val bullet = Regex("^([-*]|\\d+[.)])\\s+(.+)$").matchEntire(line)
+            val heading = Regex("^(#{1,6})\\s*(\\S.+|\\S)$").matchEntire(line)
+            val bullet = Regex("^([-*+•]|\\d+[.)])\\s+(.+)$").matchEntire(line)
             val status = Regex("^\\[(OK|WARN|ERROR)]\\s+(.+)$").matchEntire(line)
             result += when {
                 heading != null -> AuResponseBlock.Prose(heading.groupValues[2], heading.groupValues[1].length)
                 bullet != null -> AuResponseBlock.Prose(bullet.groupValues[2], prefix =
-                    if (bullet.groupValues[1] in listOf("-", "*")) "• " else bullet.groupValues[1] + " ")
+                    if (bullet.groupValues[1] in listOf("-", "*", "+", "•")) "• " else bullet.groupValues[1].trimEnd(')', '.') + ". ")
                 status != null -> AuResponseBlock.Status(status.groupValues[1], status.groupValues[2])
                 else -> AuResponseBlock.Prose(line)
             }
@@ -260,15 +272,16 @@ private fun inlineText(text: String): AnnotatedString = buildAnnotatedString {
 }
 
 @Composable
-internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)? = null) {
+internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextClick: ((String, Int) -> Unit)? = null) {
     val blocks = remember(answer) { AuResponseParser.parse(answer) }
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        blocks.forEach { block ->
+        blocks.forEachIndexed { blockIndex, block ->
+            androidx.compose.runtime.key(blockIndex, block::class) {
             when (block) {
                 is AuResponseBlock.Prose -> {
                     val style = when (block.heading) {
                         1, 2 -> MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold, lineHeight = 28.sp)
-                        3, 4 -> MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold, lineHeight = 24.sp)
+                        3, 4, 5, 6 -> MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold, lineHeight = 24.sp)
                         else -> MaterialTheme.typography.bodyLarge.copy(lineHeight = 25.sp)
                     }
                     val annotated = remember(block) { inlineText(block.text) }
@@ -277,9 +290,10 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                         if (block.prefix.isNotBlank()) Text(block.prefix.trim(),
                             Modifier.widthIn(min = 20.dp), style = style, fontWeight = FontWeight.Medium)
                         Box(Modifier.weight(1f)) {
-                            if (onTextClick != null) ClickableText(annotated,
+                            if (onTextClick != null && !streaming) ClickableText(annotated,
                                 style = style.copy(color = MaterialTheme.colorScheme.onSurface),
                                 onClick = { onTextClick(annotated.text, it) })
+                            else if (streaming) Text(annotated, style = style)
                             else SelectionContainer { Text(annotated, style = style) }
                         }
                     }
@@ -465,6 +479,7 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                         }
                     }
                 }
+            }
             }
         }
     }
