@@ -12,6 +12,7 @@ import au.datacube.app.data.ExtractedTextStore
 import au.datacube.app.data.PdfDocumentTextExtractor
 import au.datacube.app.data.PlainTextDocumentExtractor
 import au.datacube.app.data.rag.LocalGenerativeEngine
+import au.datacube.app.data.rag.SequentialDocumentDigest
 import au.datacube.app.data.rag.LocalPassageIndex
 import au.datacube.app.data.rag.ModelOutputCleaner
 import au.datacube.app.data.rag.RagEvidence
@@ -93,6 +94,8 @@ class GeneratedStudySession {
         private set
     var response by mutableStateOf("")
         private set
+    var processedBlocks by mutableStateOf(0)
+        private set
     var working by mutableStateOf(false)
         private set
     var stage by mutableStateOf("")
@@ -119,6 +122,7 @@ class GeneratedStudySession {
                     if (!working && response.isBlank() && saved != null) {
                         response = saved.text
                         sources = saved.sources
+                        processedBlocks = saved.processedBlocks
                         stage = "Saved Smart Notes"
                     }
                 }
@@ -148,11 +152,21 @@ class GeneratedStudySession {
         stage = "Reading document"
         response = ""
         sources = emptyList()
+        processedBlocks = 0
         val attached = attachmentText
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 val sourceHash = if (mode == GeneratedStudyMode.NOTES) PersistentStudyNotes.sourceHash(app.filesDir,documentId) else null
-                val excerpts = runCatching {
+                val sourceFile = ExtractedTextStore.fileFor(app.filesDir, documentId)
+                val sequential = if (mode == GeneratedStudyMode.NOTES && sourceFile.isFile) {
+                    val hash = requireNotNull(sourceHash) { "The extracted document exceeds the verified local study limit." }
+                    SequentialDocumentDigest.build(app, documentId, sourceFile, hash) { count ->
+                        withContext(Dispatchers.Main) {
+                            stage = "Reading sequentially · $count sections prepared"
+                        }
+                    }
+                } else null
+                val excerpts = if (sequential != null) emptyList() else runCatching {
                     val index = LocalPassageIndex(app)
                     try {
                         val source = ExtractedTextStore.fileFor(app.filesDir, documentId)
@@ -168,10 +182,11 @@ class GeneratedStudySession {
                     StudyGenerationPrompt.spreadAcross(previewChunks, count = 10)
                         .map { SourceSnippet(it.text, it.page) }
                 }
-                require(excerpts.isNotEmpty()) {
+                require(sequential != null || excerpts.isNotEmpty()) {
                     "No readable evidence is available yet. Finish document processing first."
                 }
-                val prepared = StudyGenerationPrompt.prepare(
+                val prepared = if (sequential != null) StudyGenerationPrompt.notesFromDigest(documentName, sequential.text)
+                    else StudyGenerationPrompt.prepare(
                     documentName, mode,
                     excerpts.map { RagEvidence(it.text, it.page) },
                     attached, questionCount, questionStyle, focus
@@ -180,11 +195,13 @@ class GeneratedStudySession {
                     // These are exactly the passages supplied to AU, not a larger
                     // list that might incorrectly imply model-visible citations.
                     sources = prepared.evidence.map { SourceSnippet(it.text, it.page) }
+                    processedBlocks = sequential?.blocks ?: 0
                     stage = "AU is generating"
                 }
                 val answer = StringBuilder()
                 var last = 0L
-                LocalGenerativeEngine.generate(app, prepared.text, studyTask = true, studyVisuals = mode != GeneratedStudyMode.PRACTICE) { chunk ->
+                LocalGenerativeEngine.generate(app, prepared.text, studyTask = true, studyVisuals = mode != GeneratedStudyMode.PRACTICE,
+                    studyOutputTokens = if (sequential != null) 1800 else null) { chunk ->
                     answer.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - last >= 120) {
@@ -205,7 +222,7 @@ class GeneratedStudySession {
                     }
                 }
                 if (mode == GeneratedStudyMode.NOTES && sourceHash != null) {
-                    PersistentStudyNotes.save(app.filesDir,documentId,sourceHash,complete,sources)
+                    PersistentStudyNotes.save(app.filesDir,documentId,sourceHash,complete,sources, sequential?.blocks ?: 0)
                 }
                 withContext(Dispatchers.Main) {
                     response = complete.take(18_000)
