@@ -21,7 +21,8 @@ object NeuralTextSegmenter {
                 normalized[index] in ".!?" && normalized.getOrNull(index + 1) == ' '
             }?.plus(1)
             val wordEnd = (minimumEnd until maxEnd).lastOrNull { normalized[it] == ' ' }
-            val cut = preferred ?: wordEnd ?: maxEnd
+            val boundary = preferred ?: wordEnd ?: maxEnd
+            val cut = if (boundary < normalized.length && normalized[boundary - 1].isHighSurrogate()) boundary - 1 else boundary
             normalized.substring(offset, cut).trim().takeIf { it.isNotBlank() }?.let(result::add)
             offset = cut
             while (offset < normalized.length && normalized[offset] == ' ') offset++
