@@ -5,6 +5,7 @@ import android.util.AtomicFile
 import au.datacube.app.models.ActiveLocalChatModel
 import java.io.BufferedReader
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -20,7 +21,8 @@ internal object SequentialDocumentDigest {
     private const val FANOUT = 5
     private const val MAX_DIGEST_CHARS = 2200
     private const val VERSION = 1
-    private val mutex = Mutex()
+    private val locks = ConcurrentHashMap<String, Mutex>()
+    private fun lock(root: File, id: String) = locks.getOrPut(File(root, id).absolutePath) { Mutex() }
     data class Result(val text: String, val blocks: Int)
     private data class Part(val first: Int, val last: Int, val text: String)
     private data class State(
@@ -71,7 +73,7 @@ internal object SequentialDocumentDigest {
 
     suspend fun build(context: Context, documentId: String, source: File, sourceHash: String,
         onProgress: suspend (Int) -> Unit): Result = withContext(Dispatchers.IO) {
-        mutex.withLock {
+        lock(context.filesDir, documentId).withLock {
             require(source.isFile && source.length() > 0)
             val model = requireNotNull(ActiveLocalChatModel(context).selected()) { "Choose an installed AU model." }
             val bytes = source.length()
@@ -207,6 +209,6 @@ internal object SequentialDocumentDigest {
     }
 
     suspend fun delete(root: File, id: String) = withContext(Dispatchers.IO) {
-        mutex.withLock { checkpoint(root, id).delete() }
+        lock(root, id).withLock { checkpoint(root, id).delete() }
     }
 }
