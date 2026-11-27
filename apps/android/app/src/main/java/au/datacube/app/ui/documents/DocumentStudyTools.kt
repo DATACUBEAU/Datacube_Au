@@ -465,7 +465,7 @@ fun DocumentChatWorkspace(
         session.activitySteps.clear()
         val firstResponseIndex = answerIndex
         val workStartedAt = session.startRequestClock()
-        session.activeRequest = session.scope.launch {
+        session.launchRequest launch@{
             val raw = session.streamingAnswer(answerIndex, sources.size)
             try {
                 val input = when (selected) {
@@ -517,7 +517,7 @@ fun DocumentChatWorkspace(
                             val firstResponseIndex = messages.size
                             val workStartedAt = if (alreadyAdded && audioPath != null && session.requestStartedAt > 0L)
             session.requestStartedAt else session.startRequestClock()
-                            session.activeRequest = session.scope.launch {
+                            session.launchRequest launch@{
                                 val events = session.activitySteps
                                 try {
                                     session.searchingStage = "Understanding your question"
