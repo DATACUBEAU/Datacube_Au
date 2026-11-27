@@ -1008,10 +1008,9 @@ fun DocumentChatWorkspace(
                             val retryQuestion = session.regenerationQuestion(messageIndex)
                             if (retryQuestion != null && (llmInstalled && threadIndex != null && !textPreview.isNullOrBlank() && !preparingAttachment)) {
                                 TextButton(onClick = {
-                                    val question = session.regenerationQuestion(messageIndex) ?: return@TextButton
+                                    val question = session.beginRegeneration(messageIndex) ?: return@TextButton
                                     speech.stop()
                                     expandedSources = expandedSources - messageIndex
-                                    messages.removeAt(messageIndex)
                                     followLatest = true
                                     submitQuestion(question, alreadyAdded = true)
                                 }) {
@@ -1019,6 +1018,13 @@ fun DocumentChatWorkspace(
                                     Spacer(Modifier.width(6.dp))
                                     Text(if (message.generationError != null) "Retry response" else "Regenerate")
                                 }
+                            }
+                            if (session.hasAlternate(messageIndex)) {
+                                TextButton(onClick = {
+                                    speech.stop()
+                                    expandedSources = expandedSources - messageIndex
+                                    session.swapAlternate(messageIndex)
+                                }) { Text("Switch response version") }
                             }
                             if (message.matches.isEmpty() && message.answer.isBlank() &&
                                 !message.generating && message.generationError == null) {
