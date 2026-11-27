@@ -5,6 +5,8 @@ import au.datacube.app.ui.common.AuComposer
 import au.datacube.app.ui.chat.GistAttachment
 import au.datacube.app.ui.chat.GistAttachmentMenu
 import au.datacube.app.ui.common.AuActivityTimeline
+import au.datacube.app.ui.common.AuCompletedActivity
+import au.datacube.app.ui.common.AuMessageActions
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuResponseFeedback
@@ -99,7 +101,8 @@ internal data class ChatMessage(
     val generating: Boolean = false,
     val generationError: String? = null,
     val audioPath: String? = null,
-    val createdAtEpochMs: Long? = System.currentTimeMillis()
+    val createdAtEpochMs: Long? = System.currentTimeMillis(),
+    val workDurationMs: Long? = null
 )
 
 private fun sourceSnippets(raw: String?): List<SourceSnippet> {
@@ -440,6 +443,8 @@ fun DocumentChatWorkspace(
         session.searching = true
         session.searchingStage = "Understanding attachment"
         session.activitySteps.clear()
+        val firstResponseIndex = answerIndex
+        val workStartedAt = SystemClock.elapsedRealtime()
         session.activeRequest = session.scope.launch {
             val raw = StringBuilder()
             try {
@@ -467,6 +472,7 @@ fun DocumentChatWorkspace(
             } catch (_: Exception) {
                 messages[answerIndex] = messages[answerIndex].copy(generating = false, generationError = "AU could not understand this attachment.")
             } finally {
+                session.recordWorkDuration(firstResponseIndex, workStartedAt)
                 session.searching = false
                 session.searchingStage = ""
                 session.activeRequest = null
@@ -496,6 +502,8 @@ fun DocumentChatWorkspace(
                             // The response belongs to the document/thread session, not
                             // this Compose screen; navigation must not cancel it.
                             session.scope.launch { threads.nameFromQuestion(chatOwner, threadId, cleanPrompt) }
+                            val firstResponseIndex = messages.size
+                            val workStartedAt = SystemClock.elapsedRealtime()
                             session.activeRequest = session.scope.launch {
                                 val events = session.activitySteps
                                 try {
@@ -790,6 +798,7 @@ fun DocumentChatWorkspace(
                                     events += "Search could not finish: ${error.message ?: "unknown error"}"
                                     messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList(), generationError = "Document search could not finish. Try again."))
                                 } finally {
+                                    session.recordWorkDuration(firstResponseIndex, workStartedAt)
                                     session.searching = false
                                     session.searchingStage = ""
                                     session.activitySteps.clear()
@@ -980,6 +989,7 @@ fun DocumentChatWorkspace(
                                 },
                                 fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
                             )
+                            AuCompletedActivity(message.steps, message.workDurationMs)
                             if ("General knowledge · Not verified in document" in message.steps) {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
@@ -1009,8 +1019,9 @@ fun DocumentChatWorkspace(
                                     }
                                 }
                                 if (!message.generating && message.generationError == null) {
-                                    AuReadAloudAction(speech, messageIndex, message.answer)
-                                    AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
+                                    AuMessageActions(message.answer, speech, messageIndex) {
+                                        AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
+                                    }
                                 }
                                 Spacer(Modifier.height(8.dp))
                             }
@@ -1100,33 +1111,10 @@ fun DocumentChatWorkspace(
                                 }
                                 }
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = {
-                                    clipboard.setText(AnnotatedString(
-                                        if (message.answer.isNotBlank()) message.answer
-                                        else message.matches.joinToString("\n\n") { evidence ->
-                                            evidence.text + (evidence.page?.let { "\nPage $it" } ?: "")
-                                        }
-                                    ))
-                                }) {
-                                    Icon(Icons.Outlined.ContentCopy, null, Modifier.size(17.dp))
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("Copy")
+                            if (message.answer.isBlank() && !message.generating && message.matches.isNotEmpty()) {
+                                IconButton(onClick = { clipboard.setText(AnnotatedString(message.matches.joinToString("\n\n") { it.text + (it.page?.let { page -> "\nPage $page" } ?: "") })) }) {
+                                    Icon(Icons.Outlined.ContentCopy, "Copy sources", Modifier.size(20.dp))
                                 }
-                                Spacer(Modifier.weight(1f))
-                                TextButton(onClick = {
-                                    expandedSteps = if (message.steps.isEmpty()) expandedSteps
-                                    else if (messageIndex in expandedSteps) {
-                                        expandedSteps - messageIndex
-                                    } else expandedSteps + messageIndex
-                                }) {
-                                    Icon(Icons.Outlined.AccountTree, null, Modifier.size(17.dp))
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("AU activity")
-                                }
-                            }
-                            if (messageIndex in expandedSteps) {
-                                AuActivityTimeline(message.steps)
                             }
                         }
                     }

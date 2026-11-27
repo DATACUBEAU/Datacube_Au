@@ -48,6 +48,8 @@ import au.datacube.app.ui.common.AuComposer
 import au.datacube.app.ui.common.auTourTarget
 import au.datacube.app.ui.common.TourTarget
 import au.datacube.app.ui.common.AuActivityTimeline
+import au.datacube.app.ui.common.AuCompletedActivity
+import au.datacube.app.ui.common.AuMessageActions
 import au.datacube.app.ui.common.AuWorkingStatus
 import au.datacube.app.ui.common.AuRichResponse
 import au.datacube.app.ui.common.AuResponseFeedback
@@ -214,6 +216,8 @@ fun DiscsScreen(
         session.searching = true
         session.activitySteps.clear()
         session.searchingStage = "Understanding your question"
+        val firstResponseIndex = turns.size
+        val workStartedAt = SystemClock.elapsedRealtime()
         session.activeRequest = session.scope.launch {
             val events = session.activitySteps
             try {
@@ -377,6 +381,7 @@ fun DiscsScreen(
                 turns.add(ChatMessage(question, emptyList(), false,
                     generationError = "AU could not finish this request."))
             } finally {
+                session.recordWorkDuration(firstResponseIndex, workStartedAt)
                 session.searching = false
                 session.searchingStage = ""
                 session.activitySteps.clear()
@@ -410,6 +415,8 @@ fun DiscsScreen(
         session.activitySteps.clear()
         val answerIndex = turns.size
         turns.add(ChatMessage(question, sources, false, generating = true))
+        val firstResponseIndex = answerIndex
+        val workStartedAt = SystemClock.elapsedRealtime()
         session.activeRequest = session.scope.launch {
             val raw = StringBuilder()
             try {
@@ -444,6 +451,7 @@ fun DiscsScreen(
                 turns[answerIndex] = turns[answerIndex].copy(generating = false,
                     generationError = "AU could not understand this attachment.")
             } finally {
+                session.recordWorkDuration(firstResponseIndex, workStartedAt)
                 session.searching = false
                 session.searchingStage = ""
                 session.activeRequest = null
@@ -533,17 +541,12 @@ fun DiscsScreen(
                                 Text("AU", fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary)
                                 if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
+                                AuCompletedActivity(message.steps, message.workDurationMs)
                                 if (message.answer.isNotBlank()) AuRichResponse(message.answer)
                                 if (!message.generating && message.answer.isNotBlank() && message.generationError == null) {
-                                    Row {
-                                        TextButton(onClick = { clipboard.setText(AnnotatedString(message.answer)) }) {
-                                            Icon(Icons.Outlined.ContentCopy, null, Modifier.size(17.dp))
-                                            Spacer(Modifier.width(5.dp))
-                                            Text("Copy")
-                                        }
+                                    AuMessageActions(message.answer, speech, messageIndex) {
+                                        AuResponseFeedback(accountId, "$ownerId:$threadId", messageIndex, message.createdAtEpochMs, "android_gist")
                                     }
-                                    AuReadAloudAction(speech, messageIndex, message.answer)
-                                    AuResponseFeedback(accountId, "$ownerId:$threadId", messageIndex, message.createdAtEpochMs, "android_gist")
                                 }
                                 if (message.generating) LinearProgressIndicator(Modifier.fillMaxWidth())
                                 message.generationError?.let { Text(it,
@@ -601,18 +604,7 @@ fun DiscsScreen(
                                         }
                                     }
                                 }
-                                if (message.steps.isNotEmpty()) {
-                                    TextButton(onClick = {
-                                        expandedProcess = if (i in expandedProcess) expandedProcess - i else expandedProcess + i
-                                    }) {
-                                        Icon(Icons.Outlined.AccountTree, null)
-                                        Spacer(Modifier.width(7.dp))
-                                        Text("AU activity")
-                                    }
-                                    if (i in expandedProcess) {
-                                        AuActivityTimeline(message.steps)
-                                    }
-                                }
+
                             }
                         }
                     }

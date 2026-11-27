@@ -66,7 +66,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                         answer = turn.answer,
                         generationError = if (turn.interrupted) "Previous response stopped before completion." else null,
                         audioPath = turn.audioPath,
-                        createdAtEpochMs = turn.createdAtEpochMs
+                        createdAtEpochMs = turn.createdAtEpochMs,
+                        workDurationMs = turn.workDurationMs
                     )
                 })
             } catch (cancelled: CancellationException) {
@@ -93,7 +94,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                             corrections = item.corrected,
                             interrupted = item.generating || item.generationError != null,
                             audioPath = item.audioPath,
-                            createdAtEpochMs = item.createdAtEpochMs
+                            createdAtEpochMs = item.createdAtEpochMs,
+                            workDurationMs = item.workDurationMs
                         )
                     })
                 } catch (cancelled: CancellationException) {
@@ -136,6 +138,14 @@ internal class DocumentChatSession(private val historyKey: String) {
             searching = false
             initialized = false
             if (scope.coroutineContext[Job]?.isActive == true) initialize(context)
+        }
+    }
+
+    fun recordWorkDuration(firstIndex: Int, startedAt: Long) {
+        val duration = (android.os.SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
+        for (index in firstIndex.coerceAtLeast(0) until messages.size) {
+            val turn = messages[index]
+            if (!turn.isUser && !turn.generating) messages[index] = turn.copy(workDurationMs = duration)
         }
     }
 
