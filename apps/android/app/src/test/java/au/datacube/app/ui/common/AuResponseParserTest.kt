@@ -6,6 +6,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AuResponseParserTest {
+    @Test fun malformedVisualCommandsAreNotDisplayedAsProse() {
+        val raw = "Introduction.\n[SKETCH] Cell\nSCRIPT | arbitrary\n[/SKETCH]\nConclusion."
+        val blocks = AuResponseParser.parse(raw)
+        assertTrue(blocks.none { it is AuResponseBlock.Prose && it.text.contains("SCRIPT") })
+        assertTrue(blocks.any { it is AuResponseBlock.Prose && it.text == "Conclusion." })
+    }
+
+    @Test fun numberedItemsAndCompactHeadingAreNormalized() {
+        val blocks = AuResponseParser.parse("##Heading\n1) First\n+ Second")
+        assertEquals(2, (blocks[0] as AuResponseBlock.Prose).heading)
+        assertEquals("1. ", (blocks[1] as AuResponseBlock.Prose).prefix)
+        assertEquals("• ", (blocks[2] as AuResponseBlock.Prose).prefix)
+    }
+
     @Test fun legacyDiagramCommandsRenderInsteadOfLeakingIntoProse() {
         val raw = "[DIAGRAM] Widget tree | Parent and child |\nLINE | 10 | 10 | 50 | 50 |\nLABEL | 10 | 10 | Root |\n[/DIAGRAM]"
         val blocks = AuResponseParser.parse(raw)
