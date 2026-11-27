@@ -30,7 +30,9 @@ class StudyGenerationPromptTest {
             passages, "PREDICTION_ONLY_REFERENCE"
         )
         assertTrue(prepared.text.contains("TOPIC:"))
-        assertTrue(prepared.text.contains("2-5 clear"))
+        assertTrue(prepared.text.contains("1-3 clear"))
+        assertTrue(prepared.text.contains("one-page summary"))
+        assertTrue(prepared.text.contains("[WORKFLOW] Concept map"))
         assertFalse(prepared.text.contains("PREDICTION_ONLY_REFERENCE"))
         assertTrue(prepared.text.contains("Do not invent facts"))
     }

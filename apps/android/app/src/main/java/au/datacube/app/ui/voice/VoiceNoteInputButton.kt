@@ -11,6 +11,13 @@ import kotlin.coroutines.resumeWithException
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Pause
+import androidx.compose.material.icons.outlined.Send
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MicOff
@@ -46,6 +53,11 @@ fun VoiceNoteInputButton(
     val recorder = remember(context, ownerId) { LocalVoiceNoteRecorder(context, ownerId) }
     var recording by remember(ownerId) { mutableStateOf(false) }
     var seconds by remember(ownerId) { mutableIntStateOf(0) }
+    var paused by remember(ownerId) { mutableStateOf(false) }
+    var levels by remember(ownerId) { mutableStateOf(List(36) { 0f }) }
+    val pausedNoteState = remember(ownerId) { mutableStateOf<RecordedVoiceNote?>(null) }
+    var pausedNote by pausedNoteState
+    var previewing by remember(ownerId) { mutableStateOf(false) }
     val pendingVoice = remember(ownerId) { mutableStateOf<RecordedVoiceNote?>(null) }
     var preview by pendingVoice
     var finishing by remember(ownerId) { mutableStateOf(false) }
@@ -56,6 +68,8 @@ fun VoiceNoteInputButton(
         try {
             recorder.start(scope)
             seconds = 0
+            paused = false
+            levels = List(36) { 0f }
             recording = true
         } catch (_: Exception) {
             recording = false
@@ -63,15 +77,26 @@ fun VoiceNoteInputButton(
         }
     }
 
-    fun stop() {
-        if (!recording || finishing) return
+    fun discard() {
+        recorder.cancel()
         recording = false
+        paused = false
+        pausedNote?.file?.delete()
+        pausedNote = null
+    }
+
+    fun stop(sendNow: Boolean = false) {
+        if (!recording || finishing || previewing) return
+        recording = false
+        paused = false
+        pausedNote?.file?.delete()
+        pausedNote = null
         finishing = true
         scope.launch {
             try {
                 val note = recorder.finish()
                 if (note == null) error = "The voice note was too short. Record at least one second."
-                else preview = note
+                else if (sendNow) onReady(note) else preview = note
             } catch (_: Exception) {
                 error = "Voice recording could not be saved."
                 recorder.cancel()
@@ -88,20 +113,91 @@ fun VoiceNoteInputButton(
         else error = "Microphone access is required to record voice notes. Text chat still works."
     }
 
-    LaunchedEffect(recording) {
-        if (!recording) return@LaunchedEffect
-        while (recording && seconds < WavePcm.MAX_SECONDS) {
-            delay(1_000)
-            seconds++
+    LaunchedEffect(recording, paused) {
+        if (!recording || paused) return@LaunchedEffect
+        while (recording && !paused) {
+            seconds = recorder.durationMillis / 1000
+            levels = levels.drop(1) + recorder.amplitude
+            if (recorder.capturedBytes >= WavePcm.MAX_AUDIO_BYTES) {
+                stop()
+                break
+            }
+            delay(85)
         }
-        if (recording) stop()
     }
 
     DisposableEffect(ownerId) {
         onDispose {
             recorder.cancel()
             pendingVoice.value?.file?.delete()
+            pausedNoteState.value?.file?.delete()
         }
+    }
+
+    if (recording) {
+        DataCubeDialog(
+            onDismissRequest = { if (!previewing && !finishing) discard() },
+            title = { Text(if (paused) "Recording paused" else "Recording voice note") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Text("%d:%02d".format(java.util.Locale.ROOT, seconds / 60, seconds % 60),
+                            style = MaterialTheme.typography.titleLarge)
+                        val accent = MaterialTheme.colorScheme.primary
+                        Canvas(Modifier.weight(1f).height(48.dp)) {
+                            val step = size.width / levels.size
+                            levels.forEachIndexed { index, level ->
+                                val x = step * (index + 0.5f)
+                                val h = (kotlin.math.sqrt(level.coerceIn(0f, 1f)) * size.height * 0.9f)
+                                    .coerceAtLeast(2.dp.toPx())
+                                drawLine(accent, Offset(x, (size.height - h) / 2), Offset(x, (size.height + h) / 2),
+                                    strokeWidth = (step * 0.55f).coerceAtLeast(1f), cap = StrokeCap.Round)
+                            }
+                        }
+                    }
+                    if (paused) {
+                        pausedNote?.let { VoiceNotePlayback(it.file.absolutePath, "Listen to recording") }
+                        if (previewing) Text("Preparing preview…", style = MaterialTheme.typography.labelSmall)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically) {
+                        FilledTonalIconButton(onClick = ::discard, enabled = !previewing) {
+                            Icon(Icons.Outlined.DeleteOutline, "Discard recording", tint = MaterialTheme.colorScheme.error)
+                        }
+                        TextButton(enabled = !previewing, onClick = {
+                            try {
+                                if (paused) {
+                                    pausedNote?.file?.delete()
+                                    pausedNote = null
+                                    recorder.resume()
+                                    paused = false
+                                } else {
+                                    recorder.pause()
+                                    paused = true
+                                    previewing = true
+                                    scope.launch {
+                                        try { pausedNote = recorder.pausedPreview() }
+                                        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                                        catch (_: Exception) { error = "Could not prepare recording preview." }
+                                        finally { previewing = false }
+                                    }
+                                }
+                            } catch (_: Exception) { error = "The microphone could not change recording state."; discard() }
+                        }) {
+                            Icon(if (paused) Icons.Outlined.PlayArrow else Icons.Outlined.Pause, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (paused) "Resume" else "Pause")
+                        }
+                        FilledTonalIconButton(onClick = { stop(sendNow = true) },
+                            enabled = !previewing && seconds >= 1) {
+                            Icon(Icons.Outlined.Send, "Send recording")
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { stop() }, enabled = !previewing && seconds >= 1) { Text("Review") } }
+        )
     }
 
     preview?.let { note ->

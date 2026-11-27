@@ -21,7 +21,6 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -33,10 +32,10 @@ import kotlinx.coroutines.withContext
 object LocalGenerativeEngine {
     const val MODEL_ID = "qwen3-0.6b-litert"
     private val executor = Executors.newSingleThreadExecutor { task ->
-        Thread(task, "datacube-local-llm").apply { isDaemon = true }
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); task.run() }, "datacube-local-llm").apply { isDaemon = true }
     }
     private val dispatcher = executor.asCoroutineDispatcher()
-    private val mutex = Mutex()
+    private val mutex = LocalComputeGate.mutex
     private var engine: Engine? = null
     private var loadedPath: String? = null
     private var loadedWithAudio = false
@@ -71,6 +70,7 @@ object LocalGenerativeEngine {
                 canonical.isFile && canonical.length() in 16044L..1_500_000L
             ) { "Voice note is missing or not a supported private WAV recording." }
             mutex.withLock {
+                LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
                 val selectedId = requireNotNull(ActiveLocalChatModel(context).selected()) {
                     "Select a Gemma 4 model to understand a voice note."
                 }
@@ -81,6 +81,10 @@ object LocalGenerativeEngine {
                 val source = File(context.filesDir,
                     "models/installed/$selectedId/${artifact.fileName}")
                 check(source.isFile) { "Restore the selected Gemma 4 model in Models." }
+                val memory = ActivityManager.MemoryInfo().also {
+                    (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.getMemoryInfo(it)
+                }
+                check(!memory.lowMemory) { "Device memory is critically low. Retry when memory is available." }
                 if (engine == null || loadedPath != source.absolutePath || !loadedWithAudio) {
                     engine?.close()
                     engine = null
@@ -146,6 +150,7 @@ object LocalGenerativeEngine {
         image: ByteArray? = null,
         effort: AuEffort = AuEffort.BALANCED,
         visualRequested: Boolean = false,
+        studyOutputTokens: Int? = null,
         onText: suspend (String) -> Unit
     ) = withContext(dispatcher) {
         val queuedAt = android.os.SystemClock.elapsedRealtime()
@@ -153,6 +158,7 @@ object LocalGenerativeEngine {
             "The document context is empty or too long."
         }
         mutex.withLock {
+            LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
             val acquiredAt = android.os.SystemClock.elapsedRealtime()
             val modelId = requireNotNull(ActiveLocalChatModel(context).selected()) {
                 "Download and select a compatible chat model in Models."
@@ -162,6 +168,11 @@ object LocalGenerativeEngine {
             check(file.isFile) { "Selected chat model is missing. Open Models to restore it." }
             require(image == null || (modelId in setOf("gemma-4-e2b", "gemma-4-e4b") &&
                 image.size in 1..2_000_000)) { "Select a compatible Gemma 4 model for image understanding." }
+            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            val memory = ActivityManager.MemoryInfo().also { manager?.getMemoryInfo(it) }
+            val lowRam = manager?.isLowRamDevice == true || (memory.totalMem in 1L..(6L * 1024 * 1024 * 1024)) ||
+                (memory.availMem in 1L..(1024L * 1024 * 1024))
+            check(!memory.lowMemory) { "Device memory is critically low. Close other apps or select a smaller local model before retrying." }
             val coldLoad = loadedPath != file.absolutePath || engine == null || (image != null && !loadedWithVision)
             if (coldLoad) {
                 engine?.close()
@@ -187,12 +198,8 @@ object LocalGenerativeEngine {
             }
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
-            val manager = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
-            val memory = ActivityManager.MemoryInfo().also { manager?.getMemoryInfo(it) }
-            val lowRam = manager?.isLowRamDevice == true || (memory.totalMem in 1L..(6L * 1024 * 1024 * 1024)) ||
-                (memory.availMem in 1L..(1024L * 1024 * 1024))
-            val thinkingBudget = if (studyTask) null else if (effort == AuEffort.BALANCED && lowRam)
-                AuEffort.FAST.thinkingBudget(modelId, true) else effort.thinkingBudget(modelId, lowRam)
+            val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam)
+            val thinkingBudget = if (studyTask) null else effectiveEffort.thinkingBudget(modelId, lowRam)
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
@@ -240,10 +247,10 @@ object LocalGenerativeEngine {
                         } + " " + AuTeachingPolicy.LANGUAGE +
                             (if (studyVisuals || (!studyTask && visualRequested))
                                 " " + AuTeachingPolicy.VISUALS else "") +
-                            (if (!studyTask) " " + effort.instruction else "")
+                            (if (!studyTask) " " + effectiveEffort.instruction else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
-                    maxOutputToken = if (studyTask) null else if (lowRam) minOf(effort.outputTokens, 1536) else effort.outputTokens,
+                    maxOutputToken = if (studyTask) studyOutputTokens?.coerceIn(128, 3072) else effectiveEffort.outputTokens,
                     thinkingConfig = thinkingBudget?.let { ThinkingConfig(enableThinking = it > 0, thinkingTokenBudget = it) }
                 )
             )
@@ -297,12 +304,14 @@ object LocalGenerativeEngine {
     }
 
     suspend fun release() = withContext(dispatcher) {
-        mutex.withLock {
-            engine?.close()
-            engine = null
-            loadedPath = null
-            loadedWithAudio = false
-            loadedWithVision = false
-        }
+        mutex.withLock { releaseAdmitted() }
+    }
+
+    internal suspend fun releaseAdmitted() = withContext(dispatcher) {
+        engine?.close()
+        engine = null
+        loadedPath = null
+        loadedWithAudio = false
+        loadedWithVision = false
     }
 }

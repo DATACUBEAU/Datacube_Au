@@ -51,7 +51,8 @@ fun AuComposer(
     effort: AuEffort = AuEffort.BALANCED,
     onEffortChange: ((AuEffort) -> Unit)? = null,
     leadingActions: @Composable RowScope.() -> Unit = {},
-    actions: @Composable RowScope.() -> Unit = {}
+    actions: @Composable RowScope.() -> Unit = {},
+    attachmentContent: @Composable ColumnScope.() -> Unit = {}
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var inputWidth by remember { mutableIntStateOf(0) }
@@ -78,6 +79,7 @@ fun AuComposer(
             modifier = Modifier.padding(start = 15.dp, top = 12.dp, end = 9.dp, bottom = 8.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
+            attachmentContent()
             BasicTextField(
                 value = value,
                 onValueChange = onValueChange,

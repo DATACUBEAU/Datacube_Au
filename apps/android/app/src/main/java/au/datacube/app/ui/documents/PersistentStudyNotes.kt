@@ -2,6 +2,7 @@ package au.datacube.app.ui.documents
 
 import android.util.AtomicFile
 import au.datacube.app.data.ExtractedTextStore
+import au.datacube.app.data.rag.SequentialDocumentDigest
 import java.io.File
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
@@ -16,7 +17,7 @@ import org.json.JSONObject
 /** Only completed notes are persisted; a changed or deleted source invalidates them. */
 internal object PersistentStudyNotes {
     private val lock = Mutex()
-    internal data class Saved(val text: String, val sources: List<SourceSnippet>, val sourceHash: String)
+    internal data class Saved(val text: String, val sources: List<SourceSnippet>, val sourceHash: String, val processedBlocks: Int = 0)
     private fun file(root: File, id: String): File {
         require(id.matches(Regex("[A-Za-z0-9_-]{1,80}")))
         return File(root, "study-notes/$id.json")
@@ -52,22 +53,23 @@ internal object PersistentStudyNotes {
                     if (item.isNull("page")) null else item.optInt("page"))
             }
             val text = json.optString("text").take(12_000)
-            if (text.isBlank() || sources.isEmpty()) null else Saved(text,sources,hash)
+            val blocks = json.optInt("processedBlocks", 0).coerceAtLeast(0)
+            if (text.isBlank() || (sources.isEmpty() && blocks == 0)) null else Saved(text,sources,hash,blocks)
         }
     }
 
-    suspend fun save(root: File,id: String,expectedHash: String,text: String,sources: List<SourceSnippet>) =
+    suspend fun save(root: File,id: String,expectedHash: String,text: String,sources: List<SourceSnippet>, processedBlocks: Int = 0) =
         withContext(Dispatchers.IO) {
             lock.withLock {
                 check(sourceHash(root,id) == expectedHash) { "The document changed. Regenerate notes." }
-                require(text.isNotBlank() && sources.isNotEmpty())
+                require(text.isNotBlank() && (sources.isNotEmpty() || processedBlocks > 0))
                 val target = file(root,id)
                 check(target.parentFile?.let { it.isDirectory || it.mkdirs() } == true)
                 val rows = JSONArray()
                 sources.take(8).forEach { rows.put(JSONObject().put("text",it.text.take(1300))
                     .put("page",it.page ?: JSONObject.NULL)) }
                 val bytes = JSONObject().put("version",1).put("sourceHash",expectedHash)
-                    .put("text",text.take(12_000)).put("sources",rows).toString().toByteArray(Charsets.UTF_8)
+                    .put("text",text.take(12_000)).put("sources",rows).put("processedBlocks",processedBlocks).toString().toByteArray(Charsets.UTF_8)
                 require(bytes.size <= 256_000)
                 val atomic = AtomicFile(target)
                 val output = atomic.startWrite()
@@ -78,5 +80,6 @@ internal object PersistentStudyNotes {
 
     suspend fun delete(root: File,id: String) = withContext(Dispatchers.IO) {
         lock.withLock { AtomicFile(file(root,id)).delete() }
+        SequentialDocumentDigest.delete(root,id)
     }
 }

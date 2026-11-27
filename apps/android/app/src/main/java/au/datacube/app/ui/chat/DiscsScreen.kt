@@ -25,6 +25,7 @@ import au.datacube.app.models.ActiveLocalChatModel
 import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -115,6 +116,10 @@ fun DiscsScreen(
     val turns = session.messages
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
+    val chatListState = key(ownerId, threadId) { rememberLazyListState() }
+    LaunchedEffect(ready, threadId, userTurns) {
+        if (ready && turns.isNotEmpty()) chatListState.scrollToItem(0)
+    }
     val modelReady = LocalGenerativeEngine.installed(context)
     val needsCollectionModel = collectionId != null && !modelReady
     // In collection mode callers pass only documents in the selected collection.
@@ -242,7 +247,7 @@ fun DiscsScreen(
             (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
         if (audioPath == null) prompt = ""
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
-        val requestEffort = effort
+        val requestEffort = effort.forDevice(context)
         session.searching = true
         session.activitySteps.clear()
         session.searchingStage = "Understanding your question"
@@ -441,7 +446,7 @@ fun DiscsScreen(
         val question = prompt.trim().ifBlank {
             if (selected is GistAttachment.Photo) "Explain this image." else "Explain this file."
         }
-        val requestEffort = effort
+        val requestEffort = effort.forDevice(context)
         val label = selected.label
         val sources = if (selected is GistAttachment.Document)
             listOf(SourceSnippet(selected.excerpt, null, documentName = label)) else emptyList()
@@ -565,10 +570,11 @@ fun DiscsScreen(
                 }
             }
         } else {
-            LazyColumn(Modifier.weight(1f).fillMaxWidth(),
+            LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = chatListState, reverseLayout = true,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                itemsIndexed(turns) { messageIndex, message ->
+                itemsIndexed(turns.asReversed()) { reversedIndex, message ->
+                    val messageIndex = turns.lastIndex - reversedIndex
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(color = MaterialTheme.colorScheme.primaryContainer,
@@ -658,6 +664,13 @@ fun DiscsScreen(
             }
         }
 
+        if (turns.isNotEmpty() && chatListState.canScrollBackward) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                FilledTonalIconButton(onClick = { uiScope.launch { chatListState.scrollToItem(0) } }) {
+                    Icon(Icons.Outlined.ArrowDownward, "Jump to latest message")
+                }
+            }
+        }
         if (session.searching && !turns.any { it.generating }) {
             AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
         }
@@ -682,36 +695,12 @@ fun DiscsScreen(
                 }
             }
         }
-        if (attachment != null) {
-            val photo = attachment as? GistAttachment.Photo
-            if (photo != null) {
-                val thumbnail = remember(photo) {
-                    val options = BitmapFactory.Options().apply { inSampleSize = 4 }
-                    BitmapFactory.decodeByteArray(photo.bytes, 0, photo.bytes.size, options)
-                }
-                if (thumbnail != null) {
-                    Image(thumbnail.asImageBitmap(), contentDescription = "Attached image preview",
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                            .size(88.dp).clip(RoundedCornerShape(12.dp)), contentScale = ContentScale.Crop)
-                }
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(attachment?.label.orEmpty(), Modifier.weight(1f), maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { attachment = null; attachmentError = null }, enabled = !session.searching) {
-                    Text("Remove")
-                }
-            }
-            if ((attachment as? GistAttachment.Document)?.truncated == true) {
-                Text("Large file: only the first excerpt is attached. Import it into Documents for full retrieval.",
-                    modifier = Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-            }
-        }
         if (preparingAttachment) Text("Preparing attachment…", Modifier.padding(horizontal = 16.dp))
         attachmentError?.let { Text(it, Modifier.padding(horizontal = 16.dp),
             color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall) }
         AuComposer(
             modifier = if(collectionId==null) Modifier.auTourTarget(TourTarget.GIST_INPUT) else Modifier,
+            attachmentContent = { attachment?.let { GistAttachmentPreview(it, { attachment = null; attachmentError = null }, !session.searching) } },
             value = prompt,
             onValueChange = { prompt = it.take(700) },
             onSend = { if (attachment != null) sendAttachment() else send() },

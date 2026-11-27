@@ -23,6 +23,13 @@ class PodcastDialogueTest {
         assertEquals("am_adam", PodcastDialogue.voiceFor(parsed[1].speaker))
     }
 
+    @Test fun preservesLongTurnAndKeepsTypicalPodcastSentenceTogether() {
+        val passage = ("A continuous explanation connects the ideas without dropping words. ").repeat(12).trim()
+        assertEquals(passage, PodcastDialogue.sanitize(passage))
+        val chunks = NeuralTextSegmenter.split(passage, maxChunk = 1000, maxText = 2000)
+        assertEquals(listOf(passage), chunks)
+    }
+
     @Test fun rejectsUnstructuredTextInsteadOfPretendingItIsAnAudioDiscussion() {
         assertThrows(IllegalArgumentException::class.java) {
             PodcastDialogue.parse("The document is about Android. This is a nice lecture.")

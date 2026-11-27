@@ -13,6 +13,27 @@ class NeuralTextSegmenterTest {
         assertEquals(input, chunks.joinToString(" "))
     }
 
+    @Test fun longAnswersAreNotSilentlyTruncated() {
+        val input = ("Natural sentences should continue without skipping words. ").repeat(320).trim()
+        val chunks = NeuralTextSegmenter.split(input, maxChunk = 600, maxText = 12000)
+        assertEquals(input, chunks.joinToString(" "))
+        assertTrue(chunks.all { it.length <= 600 })
+    }
+
+    @Test fun preservesWordsWhenPreferredHalfChunkHasNoSpaces() {
+        val input = "He chose to be a guy. " + "x".repeat(75) + " final word."
+        val segments = NeuralTextSegmenter.plan(input, maxChunk = 100)
+        assertEquals(input, segments.joinToString(" ") { it.text })
+        assertEquals("He chose to be a guy.", segments.first().text)
+        assertEquals(260, segments.first().pauseAfterMs)
+    }
+
+    @Test fun preservesParagraphBreathingSpaceAndDecimalText() {
+        val segments = NeuralTextSegmenter.plan("Dr. Ada measured 3.14 volts.\n\nHe chose to be a guy.")
+        assertEquals(listOf("Dr. Ada measured 3.14 volts.", "He chose to be a guy."), segments.map { it.text })
+        assertEquals(420, segments.first().pauseAfterMs)
+    }
+
     @Test fun ignoresWhitespaceAndEmptyInput() {
         assertTrue(NeuralTextSegmenter.split(" \n \t ").isEmpty())
     }

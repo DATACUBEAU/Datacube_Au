@@ -11,7 +11,6 @@ import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -22,7 +21,7 @@ import kotlinx.coroutines.withContext
  */
 object LocalEmbeddingRuntime {
     const val MODEL_ID = "embeddinggemma-2-270m"
-    private val mutex = Mutex()
+    private val mutex = LocalComputeGate.mutex
     private var active: UniversalEmbedder? = null
     private var activePath: String? = null
 
@@ -41,6 +40,7 @@ object LocalEmbeddingRuntime {
         }
         mutex.withLock {
             currentCoroutineContext().ensureActive()
+            LocalComputeGate.prepare(context, LocalComputeGate.Engine.EMBEDDING)
             val artifact = requireNotNull(VerifiedModelDownloads.find(MODEL_ID))
             val model = File(context.filesDir, "models/installed/$MODEL_ID/${artifact.fileName}")
             check(model.isFile) { "Download the EmbeddingGemma 2 search model first." }
@@ -84,7 +84,9 @@ object LocalEmbeddingRuntime {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
-    suspend fun close() = mutex.withLock {
+    suspend fun close() = mutex.withLock { closeAdmitted() }
+
+    internal fun closeAdmitted() {
         active?.close()
         active = null
         activePath = null

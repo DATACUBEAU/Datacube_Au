@@ -37,12 +37,12 @@ object PodcastDialogue {
                 val continued = sanitize(result.last().text + " " + clean)
                 result[result.lastIndex] = result.last().copy(text = continued)
             }
-            if (result.size >= MAX_TURNS) break
+            require(result.size <= MAX_TURNS) { "Podcast has too many speaker turns. Regenerate a shorter dialogue." }
         }
         val useful = result.dropWhile { it.speaker != PodcastSpeaker.HOST }
             .dropLastWhile { it.speaker != PodcastSpeaker.GUIDE }
         require(useful.size >= 4 && useful.size % 2 == 0 &&
-            useful.all { it.text.length >= 8 } &&
+            useful.all { it.text.length in 8..2_000 } &&
             useful.zipWithNext().all { (a, b) -> a.speaker != b.speaker } &&
             useful.any { it.speaker == PodcastSpeaker.HOST && '?' in it.text }) {
             "The AI did not produce a clear two-speaker discussion. Try generating again."
@@ -57,7 +57,6 @@ object PodcastDialogue {
             .replace(Regex("""\s+"""), " ")
             .replace(Regex("""^[\"'*\s]+|[\"'*\s]+$"""), "")
             .trim()
-            .take(600)
 
     fun voiceFor(speaker: PodcastSpeaker): String =
         if (speaker == PodcastSpeaker.HOST) "af_heart" else "am_adam"

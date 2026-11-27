@@ -22,6 +22,7 @@ import au.datacube.app.audio.NeuralNarration
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -308,6 +309,10 @@ fun DocumentChatWorkspace(
     val messages = session.messages
     val historyReady = session.historyReady
     val userTurns = messages.count { it.isUser }
+    val chatListState = key(chatOwner, threadId) { rememberLazyListState() }
+    LaunchedEffect(historyReady, threadId, userTurns) {
+        if (historyReady && messages.isNotEmpty()) chatListState.scrollToItem(0)
+    }
     fun startNewChat() {
         scope.launch {
             runCatching { threads.create(chatOwner) }
@@ -434,7 +439,7 @@ fun DocumentChatWorkspace(
         val question = prompt.trim().ifBlank {
             if (selected is GistAttachment.Photo) "Explain this image." else "Explain this attachment."
         }
-        val mode = effort
+        val mode = effort.forDevice(context)
         // An attachment is independent evidence, never silently imported into the open document.
         val sources = if (selected is GistAttachment.Document)
             listOf(SourceSnippet(selected.excerpt, null, documentName = selected.label)) else emptyList()
@@ -502,7 +507,7 @@ fun DocumentChatWorkspace(
             return
         }
                         if (llmInstalled && cleanPrompt.isNotEmpty() && !textPreview.isNullOrBlank() && !session.searching && (alreadyAdded || userTurns < ConversationWindow.MAX_USER_TURNS)) {
-                            val requestEffort = effort
+                            val requestEffort = effort.forDevice(context)
                             if (!alreadyAdded) messages.add(ChatMessage(displayQuestion, emptyList(), true, audioPath = audioPath))
                             if (audioPath == null) prompt = ""
                             session.searching = true
@@ -961,12 +966,12 @@ fun DocumentChatWorkspace(
             }
         } else {
             LazyColumn(
-                Modifier.weight(1f).fillMaxWidth(),
+                Modifier.weight(1f).fillMaxWidth(), state = chatListState, reverseLayout = true,
                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                item { DocumentChatModelNotice(llmInstalled, onOpenModels) }
-                itemsIndexed(messages) { messageIndex, message ->
+                itemsIndexed(messages.asReversed()) { reversedIndex, message ->
+                    val messageIndex = messages.lastIndex - reversedIndex
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(shape = RoundedCornerShape(18.dp, 18.dp, 4.dp, 18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
@@ -1113,21 +1118,23 @@ fun DocumentChatWorkspace(
                         }
                     }
                 }
+                item { DocumentChatModelNotice(llmInstalled, onOpenModels) }
+            }
+        }
+        if (messages.isNotEmpty() && chatListState.canScrollBackward) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                FilledTonalIconButton(onClick = { scope.launch { chatListState.scrollToItem(0) } }) {
+                    Icon(Icons.Outlined.ArrowDownward, "Jump to latest message")
+                }
             }
         }
         if (session.searching && !messages.any { it.generating }) {
             AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
         }
-        if (attached != null) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(attached?.label.orEmpty(), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                TextButton(onClick = { attached = null; attachmentError = null }) { Text("Remove") }
-            }
-            Text("Attachment is analyzed separately from this document.", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.labelSmall)
-        }
         if (preparingAttachment) Text("Preparing attachment…", Modifier.padding(horizontal = 16.dp))
         attachmentError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
         AuComposer(
+            attachmentContent = { attached?.let { au.datacube.app.ui.chat.GistAttachmentPreview(it, { attached = null; attachmentError = null }, !session.searching) } },
             value = prompt,
             onValueChange = { prompt = it.take(500) },
             onSend = { if (attached != null) sendAttached() else submitQuestion(prompt.trim()) },
@@ -1239,11 +1246,14 @@ fun SmartNoteWorkspace(
         GeneratedStudySessions.get(documentId, GeneratedStudyMode.NOTES)
     }
     var conceptTree by remember(documentId) { mutableStateOf(false) }
-    var openTopics by remember(documentId) { mutableStateOf<Set<Int>>(emptySet()) }
     val ready = LocalGenerativeEngine.installed(context)
-    val sections = remember(session.response) {
-        GeneratedStudySectionParser.parse(session.response)
+    val conceptBlock = remember(session.response) {
+        Regex("""(?s)\[WORKFLOW] [^\n]+\n.*?\[/WORKFLOW]""").find(session.response)?.value
     }
+    val notesText = remember(session.response, conceptBlock) {
+        conceptBlock?.let { session.response.replace(it, "").trim() } ?: session.response
+    }
+    val sections = remember(notesText) { GeneratedStudySectionParser.parse(notesText) }
     val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
     LaunchedEffect(documentId, textPreview) { if (!textPreview.isNullOrBlank()) session.restoreNotes(context,documentId) }
 
@@ -1284,7 +1294,7 @@ fun SmartNoteWorkspace(
                 }
             }
             if (session.response.isNotBlank()) {
-                if (!session.working) AuReadAloudAction(notesSpeech, 0, session.response)
+                if (!session.working) AuReadAloudAction(notesSpeech, 0, notesText)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     FilterChip(
                         modifier = Modifier.weight(1f),
@@ -1299,70 +1309,12 @@ fun SmartNoteWorkspace(
                         label = { Text("Concept tree") }
                     )
                 }
-                Text("Based on selected source passages. Check the original document for complete coverage.",
+                Text(if (session.processedBlocks > 0) "Prepared from all extracted text in ${session.processedBlocks} sequential sections. The summary may omit details; consult the original." else "Based on selected source passages. Check the original document for complete coverage.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (conceptTree) {
-                    Surface(
-                        Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                        shape = RoundedCornerShape(20.dp)
-                    ) {
-                        Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.AccountTree, null)
-                            Spacer(Modifier.width(10.dp))
-                            Text(documentName, Modifier.weight(1f), maxLines = 2,
-                                style = MaterialTheme.typography.titleMedium)
-                        }
-                    }
-                    sections.forEachIndexed { index, section ->
-                        Canvas(Modifier.fillMaxWidth().height(32.dp)) {
-                            val x = size.width * 0.08f
-                            drawLine(color = Color(0xFF66A7FF), start = Offset(x, 0f),
-                                end = Offset(x, size.height), strokeWidth = 2.dp.toPx())
-                        }
-                        val open = index in openTopics
-                        Surface(
-                            onClick = {
-                                openTopics = if (open) openTopics - index else openTopics + index
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(18.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
-                            Column(Modifier.padding(22.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.primaryContainer,
-                                        shape = RoundedCornerShape(50)
-                                    ) {
-                                        Text("${index + 1}", Modifier.padding(
-                                            horizontal = 10.dp, vertical = 6.dp),
-                                            color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                    }
-                                    Spacer(Modifier.width(12.dp))
-                                    Text(section.topic, Modifier.weight(1f),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold)
-                                    Icon(
-                                        if (open) Icons.Outlined.ExpandLess
-                                            else Icons.Outlined.ExpandMore,
-                                        contentDescription = if (open) "Collapse topic" else "Expand topic"
-                                    )
-                                }
-                                if (!open && section.details.isNotBlank()) {
-                                    Text(section.details, maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                                if (open) {
-                                    AuRichResponse(section.details.ifBlank { "No additional detail was generated." })
-                                }
-                            }
-                        }
-                    }
+                    if (conceptBlock != null) AuRichResponse(conceptBlock)
+                    else Text(if (session.working) "Preparing concept map…" else "No separate concept map was generated. Regenerate notes to try again.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     sections.forEach { section ->
                         Column(Modifier.fillMaxWidth().padding(vertical = 8.dp),

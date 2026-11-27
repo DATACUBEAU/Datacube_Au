@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileInputStream
@@ -14,6 +13,7 @@ import java.io.FileOutputStream
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -67,8 +67,14 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
     private var track: AudioRecord? = null
     private var recordingJob: Job? = null
     private var partial: File? = null
-    private var startedAt = 0L
+    private val captureLock = Any()
     @Volatile private var running = false
+    @Volatile private var paused = false
+    @Volatile var capturedBytes: Int = 0
+        private set
+    @Volatile var amplitude: Float = 0f
+        private set
+    val durationMillis: Int get() = (capturedBytes * 1000L / (WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE)).toInt()
 
     init { require(ownerId.matches(Regex("[A-Za-z0-9_-]{1,80}"))) }
 
@@ -109,33 +115,83 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
             recorder.release()
             throw error
         }
-        startedAt = SystemClock.elapsedRealtime()
+        capturedBytes = 0
+        amplitude = 0f
+        paused = false
         partial = file
         track = recorder
         running = true
         recordingJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(capacity)
             FileOutputStream(file).use { output ->
-                while (running &&
-                    (SystemClock.elapsedRealtime() - startedAt) < WavePcm.MAX_SECONDS * 1000L &&
-                    file.length() < WavePcm.MAX_AUDIO_BYTES) {
+                while (running && capturedBytes < WavePcm.MAX_AUDIO_BYTES) {
                     currentCoroutineContext().ensureActive()
-                    val count = try {
-                        recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
-                    } catch (_: IllegalStateException) {
-                        break
+                    val read = synchronized(captureLock) {
+                        if (!running || paused) 0 else {
+                            val count = recorder.read(buffer, 0, minOf(buffer.size, 2048), AudioRecord.READ_NON_BLOCKING)
+                            if (count > 0) {
+                                val accepted = minOf(count, WavePcm.MAX_AUDIO_BYTES - capturedBytes) and -2
+                                output.write(buffer, 0, accepted)
+                                capturedBytes += accepted
+                                var peak = 0
+                                for (i in 0 until accepted step 2) {
+                                    val sample = ((buffer[i].toInt() and 255) or (buffer[i + 1].toInt() shl 8)).toShort().toInt()
+                                    peak = maxOf(peak, kotlin.math.abs(sample))
+                                }
+                                amplitude = (peak / 32768f).coerceIn(0f, 1f)
+                            }
+                            count
+                        }
                     }
-                    if (count <= 0) break
-                    output.write(buffer, 0, minOf(count, WavePcm.MAX_AUDIO_BYTES - file.length().toInt()))
+                    if (read < 0) break
+                    if (read == 0) delay(30)
                 }
+            }
+        }
+    }
+
+    fun pause() {
+        synchronized(captureLock) {
+            if (!running || paused) return
+            track?.stop()
+            paused = true
+            amplitude = 0f
+        }
+    }
+
+    fun resume() {
+        synchronized(captureLock) {
+            if (!running || !paused) return
+            track?.startRecording()
+            paused = false
+        }
+    }
+
+    /** A private, disposable WAV snapshot; never sends or modifies the active recording. */
+    suspend fun pausedPreview(): RecordedVoiceNote? = withContext(Dispatchers.IO) {
+        synchronized(captureLock) {
+            val source = partial ?: return@synchronized null
+            if (!paused || capturedBytes < WavePcm.SAMPLE_RATE * WavePcm.BYTES_PER_SAMPLE / 2)
+                return@synchronized null
+            val bytes = capturedBytes
+            val output = File(root, UUID.randomUUID().toString() + "-preview.wav")
+            try {
+                FileOutputStream(output).use { target ->
+                    target.write(WavePcm.header(bytes))
+                    FileInputStream(source).use { it.copyTo(target) }
+                }
+                require(output.length() == bytes + 44L)
+                RecordedVoiceNote(output, (durationMillis / 1000).coerceAtLeast(1))
+            } catch (error: Exception) {
+                output.delete()
+                throw error
             }
         }
     }
 
     suspend fun finish(): RecordedVoiceNote? = withContext(Dispatchers.IO) {
         val source = partial ?: return@withContext null
-        running = false
-        runCatching { track?.stop() }
+        synchronized(captureLock) { running = false; runCatching { track?.stop() } }
         recordingJob?.join()
         track?.release()
         track = null
@@ -168,10 +224,8 @@ class LocalVoiceNoteRecorder(context: Context, ownerId: String) {
     }
 
     fun cancel() {
-        running = false
-        runCatching { track?.stop() }
+        synchronized(captureLock) { running = false; runCatching { track?.stop() }; runCatching { track?.release() } }
         recordingJob?.cancel()
-        runCatching { track?.release() }
         track = null
         recordingJob = null
         partial?.delete()
