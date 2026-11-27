@@ -454,9 +454,9 @@ fun DocumentChatWorkspace(
         session.searchingStage = "Understanding attachment"
         session.activitySteps.clear()
         val firstResponseIndex = answerIndex
-        val workStartedAt = SystemClock.elapsedRealtime()
+        val workStartedAt = session.startRequestClock()
         session.activeRequest = session.scope.launch {
-            val raw = StringBuilder()
+            val raw = session.streamingAnswer(answerIndex, sources.size)
             try {
                 val input = when (selected) {
                     is GistAttachment.Photo -> "Analyze this attachment independently of the open document. If the user asks to relate it to the open document, ask what topic or passage to compare instead of claiming that you have verified a connection.\nQuestion: " + question
@@ -464,21 +464,13 @@ fun DocumentChatWorkspace(
                         (if (selected.truncated) "Explain that this is only the beginning of the attachment. " else "") +
                         "Cite [1] for supported claims.\nQuestion: " + question + "\n[1] ATTACHMENT:\n" + selected.excerpt
                 }
-                var lastUpdate = 0L
                 LocalGenerativeEngine.generate(context, input, image = (selected as? GistAttachment.Photo)?.bytes, effort = mode,
                     visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastUpdate >= 120) {
-                        withContext(Dispatchers.Main) {
-                            messages[answerIndex] = messages[answerIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(), sources.size))
-                        }
-                        lastUpdate = now
-                    }
                 }
-                messages[answerIndex] = messages[answerIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(), sources.size).trim(), generating = false)
+                messages[answerIndex] = messages[answerIndex].copy(answer = raw.finish(), generating = false)
             } catch (cancelled: CancellationException) {
-                messages[answerIndex] = messages[answerIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(), sources.size).trim(), generating = false, generationError = "Reply stopped.")
+                messages[answerIndex] = messages[answerIndex].copy(answer = raw.partial(), generating = false, generationError = "Reply stopped.")
                 throw cancelled
             } catch (_: Exception) {
                 messages[answerIndex] = messages[answerIndex].copy(generating = false, generationError = "AU could not understand this attachment.")
@@ -517,7 +509,7 @@ fun DocumentChatWorkspace(
                             // this Compose screen; navigation must not cancel it.
                             session.scope.launch { threads.nameFromQuestion(chatOwner, threadId, cleanPrompt) }
                             val firstResponseIndex = messages.size
-                            val workStartedAt = SystemClock.elapsedRealtime()
+                            val workStartedAt = session.startRequestClock()
                             session.activeRequest = session.scope.launch {
                                 val events = session.activitySteps
                                 try {
@@ -552,7 +544,7 @@ fun DocumentChatWorkspace(
                                             steps = events.toList(),
                                             generating = true
                                         ))
-                                        val answer = StringBuilder()
+                                        val answer = session.streamingAnswer(answerIndex, 0)
                                         try {
                                             session.searchingStage = "AU is replying"
                                             LocalGenerativeEngine.generate(
@@ -564,15 +556,10 @@ fun DocumentChatWorkspace(
                                                 generalOnly = true
                                             ) { part ->
                                                 answer.append(part)
-                                                withContext(Dispatchers.Main) {
-                                                    messages[answerIndex] = messages[answerIndex].copy(
-                                                        answer = ModelOutputCleaner.visible(answer.toString(), 0).take(3_000)
-                                                    )
-                                                }
                                             }
                                             events += "AU answered without searching the document"
                                             messages[answerIndex] = messages[answerIndex].copy(
-                                                answer = ModelOutputCleaner.visible(answer.toString(), 0).trim(),
+                                                answer = answer.finish(),
                                                 generating = false,
                                                 steps = events.toList()
                                             )
@@ -714,8 +701,7 @@ fun DocumentChatWorkspace(
                                         events.add(0, "General knowledge · Not verified in document")
                                         messages[resultIndex] = messages[resultIndex].copy(steps = events.toList(), matches = emptyList(), answer = "", generating = true)
                                         session.searchingStage = "Preparing general explanation"
-                                        val raw = StringBuilder()
-                                        var lastUpdate = 0L
+                                        val raw = session.streamingAnswer(resultIndex, 0)
                                         try {
                                             LocalGenerativeEngine.generate(context,
                                                  "The retrieved document passages did not establish the answer. Answer this question from general knowledge only. " +
@@ -724,15 +710,8 @@ fun DocumentChatWorkspace(
                                                 allowGeneral = true, generalOnly = true, effort = requestEffort,
                                                  visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 raw.append(part)
-                                                val now = SystemClock.elapsedRealtime()
-                                                if (now - lastUpdate >= 90L) {
-                                                    withContext(Dispatchers.Main) {
-                                                        messages[resultIndex] = messages[resultIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(),0))
-                                                    }
-                                                    lastUpdate = now
-                                                }
                                             }
-                                            messages[resultIndex] = messages[resultIndex].copy(answer = ModelOutputCleaner.visible(raw.toString(),0).trim(),
+                                            messages[resultIndex] = messages[resultIndex].copy(answer = raw.finish(),
                                                 generating = false)
                                         } catch (cancelled: CancellationException) {
                                             throw cancelled
@@ -760,24 +739,14 @@ fun DocumentChatWorkspace(
                                         events += "Built context from ${grounded.evidence.size} source passages"
                                         matches = grounded.evidence.map { SourceSnippet(it.text, it.page,it.documentId,it.documentName) }
                                         messages[resultIndex] = messages[resultIndex].copy(matches = matches)
-                                        val generated = StringBuilder()
-                                        var lastUpdate = 0L
+                                        val generated = session.streamingAnswer(resultIndex, matches.size)
                                         try {
                                             session.searchingStage = "AU is thinking"
                                             LocalGenerativeEngine.generate(context, grounded.value + personalization?.contextFor(cleanPrompt, requestEffort).orEmpty(), effort = requestEffort,
                                                  visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 generated.append(part)
-                                                val now = SystemClock.elapsedRealtime()
-                                                if (now - lastUpdate > 90L) {
-                                                    withContext(Dispatchers.Main) {
-                                                        messages[resultIndex] = messages[resultIndex].copy(
-                                                            answer = ModelOutputCleaner.visible(generated.toString(), matches.size)
-                                                        )
-                                                    }
-                                                    lastUpdate = now
-                                                }
                                             }
-                                            val completed = ModelOutputCleaner.visible(generated.toString(), matches.size).trim()
+                                            val completed = generated.finish()
                                             if (completed.startsWith("I could not verify that in the available document passages", ignoreCase = true)) {
                                                 generalExplanation()
                                                 return@launch
@@ -790,13 +759,13 @@ fun DocumentChatWorkspace(
                                             )
                                         } catch (cancelled: CancellationException) {
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated.toString(), matches.size).trim()
+                                                answer = generated.partial()
                                             )
                                             throw cancelled
                                         } catch (generationError: Exception) {
                                             events += "AU response failed; retrieved sources remain available"
                                             messages[resultIndex] = messages[resultIndex].copy(
-                                                answer = ModelOutputCleaner.visible(generated.toString(), matches.size).trim(),
+                                                answer = generated.partial(),
                                                 generating = false,
                                                 generationError = generationError.message
                                                     ?: "AU could not finish the answer.",
@@ -992,8 +961,8 @@ fun DocumentChatWorkspace(
                             }
                             if (message.generating) {
                                     AuWorkingStatus(session.searchingStage, { session.activeRequest?.cancel() },
-                                        steps = session.activitySteps.toList())
-                                } else AuCompletedActivity(message.steps, message.workDurationMs)
+                                        steps = session.activitySteps.toList(), startedAt = session.requestStartedAt, firstVisibleMs = message.firstVisibleMs, hasAnswer = message.answer.isNotBlank())
+                                } else AuCompletedActivity(message.steps, message.workDurationMs, message.firstVisibleMs, message.generationError != null)
                             if ("General knowledge · Not verified in document" in message.steps) {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
@@ -1130,7 +1099,7 @@ fun DocumentChatWorkspace(
             }
         }
         if (session.searching && !messages.any { it.generating }) {
-            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
+            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() }, startedAt = session.requestStartedAt, steps = session.activitySteps.toList())
         }
         if (preparingAttachment) Text("Preparing attachment…", Modifier.padding(horizontal = 16.dp))
         attachmentError?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error) }
