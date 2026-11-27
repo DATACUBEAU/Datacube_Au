@@ -141,45 +141,52 @@ fun AuActivityTimeline(
     }
 }
 
+/** Chat status uses a compact text label. Detailed activity is opt-in. */
 @Composable
 fun AuWorkingStatus(
     stage: String,
     onStop: () -> Unit,
     modifier: Modifier = Modifier,
-    steps: List<String> = emptyList()
+    steps: List<String> = emptyList(),
+    startedAt: Long = 0L,
+    firstVisibleMs: Long? = null,
+    hasAnswer: Boolean = false
 ) {
-    var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
-    Column {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
-        color = Color.Transparent
-    ) {
-        Row(
-            Modifier.padding(vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(17.dp),
-                strokeWidth = 2.dp,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(stage.ifBlank { "Preparing response" },
+    var expanded by remember(startedAt) { androidx.compose.runtime.mutableStateOf(false) }
+    var pulse by remember(startedAt) { mutableIntStateOf(0) }
+    LaunchedEffect(startedAt, hasAnswer) {
+        if (!hasAnswer) while (true) { delay(450); pulse = (pulse + 1) % 3 }
+    }
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { expanded = !expanded }, enabled = steps.isNotEmpty() || stage.isNotBlank(),
+                contentPadding = PaddingValues(0.dp)) {
+                Text(if (hasAnswer && firstVisibleMs != null) thoughtLabel(firstVisibleMs)
+                    else if (hasAnswer) "Responding" else "Thinking" + ".".repeat(pulse + 1),
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface)
-                AuElapsedFeedback(stage)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (steps.isNotEmpty() || stage.isNotBlank()) Icon(
+                    if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
+                    contentDescription = if (expanded) "Hide AU activity" else "Show AU activity",
+                    modifier = Modifier.size(16.dp))
             }
-            if (steps.isNotEmpty()) IconButton(onClick = { expanded = !expanded }) {
-                Icon(if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
-                    contentDescription = if (expanded) "Hide AU activity" else "Show AU activity")
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onStop) { Text("Stop", style = MaterialTheme.typography.labelMedium) }
+        }
+        androidx.compose.animation.AnimatedVisibility(expanded) {
+            Column {
+                if (stage.isNotBlank()) Text(stage, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                AuActivityTimeline(steps)
             }
-            TextButton(onClick = onStop) { Text("Stop") }
         }
     }
-    if (expanded) AuActivityTimeline(steps)
-    }
+}
+
+internal fun thoughtLabel(ms: Long): String = when {
+    ms < 1000 -> "AU thought for <1s"
+    ms < 60_000 -> "AU thought for " + (ms / 1000) + "s"
+    else -> "AU thought for " + (ms / 60_000) + "m " + ((ms / 1000) % 60) + "s"
 }
 
 /** Elapsed time is a liveness indicator, not a fabricated completion percentage. */
@@ -198,11 +205,14 @@ fun AuElapsedFeedback(stage: String) {
 }
 
 @Composable
-internal fun AuCompletedActivity(steps: List<String>, durationMs: Long?) {
+internal fun AuCompletedActivity(steps: List<String>, durationMs: Long?, firstVisibleMs: Long? = null, interrupted: Boolean = false) {
     if (steps.isEmpty() && durationMs == null) return
     var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
     val seconds = durationMs?.div(1000)
     val duration = when {
+        interrupted -> "Response interrupted"
+        firstVisibleMs != null -> thoughtLabel(firstVisibleMs)
+        "Answered a simple greeting locally" in steps -> "Answered instantly"
         seconds == null -> "AU activity"
         seconds < 1 -> "AU worked for <1s"
         seconds < 60 -> "AU worked for ${seconds}s"
