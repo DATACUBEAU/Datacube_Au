@@ -285,7 +285,7 @@ private fun inlineText(text: String): AnnotatedString = buildAnnotatedString {
 }
 
 /**
- * Cache only definitely closed, ordinary prose paragraphs. Anything containing a
+ * Cache only definitely closed, ordinary prose lines. Anything containing a
  * table, fence, or native directive stays in the reparsed suffix. A changed
  * prefix invalidates the cache (for example when retrieval switches to fallback).
  */
@@ -301,15 +301,15 @@ internal class AuIncrementalResponseParser {
         }
         var offset = prefix.length
         while (offset < bounded.length) {
-            val end = bounded.indexOf("\n\n", offset)
+            val end = bounded.indexOf('\n', offset)
             if (end < 0) break
-            val candidate = bounded.substring(offset, end + 2)
+            val candidate = bounded.substring(offset, end + 1)
             if (candidate.lineSequence().any { line ->
                     val text = line.trim()
                     text.startsWith("[") || text.startsWith("\u0060\u0060\u0060") || '|' in text
                 }) break
             stable += AuResponseParser.parse(candidate)
-            offset = end + 2
+            offset = end + 1
         }
         prefix = bounded.substring(0, offset)
         return stable.toList() + AuResponseParser.parse(bounded.substring(offset))
