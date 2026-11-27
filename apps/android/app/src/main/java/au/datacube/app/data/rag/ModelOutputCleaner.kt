@@ -66,7 +66,13 @@ object ModelOutputCleaner {
                 }
             } else output += line
         }
-        if (final && stack.isNotEmpty()) output += "An incomplete visual could not be rendered. Regenerate to try again."
+        if (final && stack.isNotEmpty()) {
+            if (stack.size == 1 && stack.first() == "BOX") {
+                // Preserve readable callout prose, but not nested native commands.
+                output += pending.takeWhile { line -> line == pending.first() ||
+                    (!line.trim().startsWith("[") && '|' !in line && !line.trim().startsWith("\u0060\u0060\u0060")) }
+            } else output += "An incomplete visual could not be rendered. Regenerate to try again."
+        }
         return output.joinToString("\n")
     }
 
