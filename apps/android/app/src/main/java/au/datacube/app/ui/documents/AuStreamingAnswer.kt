@@ -27,13 +27,14 @@ internal class AuStreamingAnswer(
     }
 
     suspend fun finish(): String {
-        val answer = ModelOutputCleaner.streamingVisible(raw.toString(), sourceCount).trim()
+        val answer = ModelOutputCleaner.streamingVisible(raw.toString(), sourceCount, final = true).trim()
         check(answer.isNotBlank()) { "AU produced no visible answer. Try again." }
         emit(answer)
         return answer
     }
 
-    fun partial(): String = ModelOutputCleaner.streamingVisible(raw.toString(), sourceCount).trim()
+    fun partial(): String = runCatching { ModelOutputCleaner.streamingVisible(raw.toString(), sourceCount).trim() }
+        .getOrDefault(lastVisible.trim())
 
     private suspend fun emit(answer: String) {
         if (answer == lastVisible) return
