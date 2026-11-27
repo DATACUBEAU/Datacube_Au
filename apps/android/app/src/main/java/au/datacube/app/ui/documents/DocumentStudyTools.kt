@@ -104,7 +104,8 @@ internal data class ChatMessage(
     val generationError: String? = null,
     val audioPath: String? = null,
     val createdAtEpochMs: Long? = System.currentTimeMillis(),
-    val workDurationMs: Long? = null
+    val workDurationMs: Long? = null,
+    val firstVisibleMs: Long? = null
 )
 
 private fun sourceSnippets(raw: String?): List<SourceSnippet> {
