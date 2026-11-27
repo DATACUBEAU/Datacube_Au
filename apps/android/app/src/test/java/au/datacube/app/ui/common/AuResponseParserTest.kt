@@ -6,6 +6,21 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AuResponseParserTest {
+    @Test fun incrementalParsingMatchesFullParserAcrossProseVisualAndFallback() {
+        val parser = AuIncrementalResponseParser()
+        val snapshots = listOf(
+            "Intro",
+            "Introduction.\n\n##Heading\n",
+            "Introduction.\n\n##Heading\n[FLOW] Cycle\nA",
+            "Introduction.\n\n##Heading\n[FLOW] Cycle\nA\nB\n[/FLOW]\nSummary.",
+            "Replacement answer.\n\n1) First\n2) Second",
+            "Replacement answer.\n\n| Name | Value |\n| --- | --- |\n| A | 1 |"
+        )
+        snapshots.forEach { answer ->
+            assertEquals(AuResponseParser.parse(answer), parser.parse(answer))
+        }
+    }
+
     @Test fun malformedVisualCommandsAreNotDisplayedAsProse() {
         val raw = "Introduction.\n[SKETCH] Cell\nSCRIPT | arbitrary\n[/SKETCH]\nConclusion."
         val blocks = AuResponseParser.parse(raw)
