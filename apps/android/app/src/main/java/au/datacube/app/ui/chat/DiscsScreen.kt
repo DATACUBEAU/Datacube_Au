@@ -264,7 +264,7 @@ fun DiscsScreen(
         val firstResponseIndex = turns.size
         val workStartedAt = if (alreadyAdded && audioPath != null && session.requestStartedAt > 0L)
             session.requestStartedAt else session.startRequestClock()
-        session.activeRequest = session.scope.launch {
+        session.launchRequest launch@{
             val events = session.activitySteps
             try {
                 threads.nameFromQuestion(ownerId, threadId, question)
@@ -462,7 +462,7 @@ fun DiscsScreen(
         turns.add(ChatMessage(question, sources, false, generating = true))
         val firstResponseIndex = answerIndex
         val workStartedAt = session.startRequestClock()
-        session.activeRequest = session.scope.launch {
+        session.launchRequest launch@{
             val raw = session.streamingAnswer(answerIndex, sources.size)
             try {
                 val input = when (selected) {
