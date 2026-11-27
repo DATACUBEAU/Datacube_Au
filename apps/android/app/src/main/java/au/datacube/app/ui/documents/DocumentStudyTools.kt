@@ -389,7 +389,7 @@ fun DocumentChatWorkspace(
     }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
     var expandedSteps by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var liveActivityOpen by remember(chatOwner, threadId) { mutableStateOf(false) }
+
     var expandedSources by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
@@ -525,6 +525,11 @@ fun DocumentChatWorkspace(
                                         })
                                         events += "Checked dated saved conversations in this workspace"
                                         messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = recap, steps = events.toList()))
+                                        return@launch
+                                    }
+                                    au.datacube.app.data.rag.LocalQuickReply.forMessage(cleanPrompt)?.let { reply ->
+                                        events += "Answered a simple greeting locally"
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = reply, steps = events.toList()))
                                         return@launch
                                     }
                                     if (DocumentChatIntent.isGreeting(cleanPrompt)) {
@@ -902,23 +907,7 @@ fun DocumentChatWorkspace(
 
     Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
         AuReadAloudBar(speech)
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(if (collectionId != null) "Searching this collection" else "Searching in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-            }
-            AssistChip(onClick = {}, enabled = false, label = {
-                Text(when {
-                    indexing -> "Indexing"
-                    llmInstalled -> "AU ready"
-                    semanticSupported -> "Search ready"
-                    else -> "Search ready"
-
-                })
-            })
-        }
+        if (indexing) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
         ConversationWindow.warning(userTurns)?.let { warning ->
             Text(
                 warning,
@@ -974,17 +963,14 @@ fun DocumentChatWorkspace(
                         }
                     } else {
                         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                when {
-                                    message.answer.isNotBlank() -> "AU"
-                                    message.generating -> "AU is thinking"
-                                    message.overview -> "Overview · source excerpts"
-                                    message.semantic -> "Semantic matches from your document"
-                                    else -> "Matches from your document"
-                                },
-                                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
-                            )
-                            AuCompletedActivity(message.steps, message.workDurationMs)
+                            if (message.answer.isBlank() && !message.generating && message.matches.isNotEmpty()) {
+                                Text("Source excerpts", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (message.generating) {
+                                    AuWorkingStatus(session.searchingStage, { session.activeRequest?.cancel() },
+                                        steps = session.activitySteps.toList())
+                                } else AuCompletedActivity(message.steps, message.workDurationMs)
                             if ("General knowledge · Not verified in document" in message.steps) {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
@@ -1018,10 +1004,6 @@ fun DocumentChatWorkspace(
                                         AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
                                     }
                                 }
-                                Spacer(Modifier.height(8.dp))
-                            }
-                            if (message.generating) {
-                                LinearProgressIndicator(Modifier.fillMaxWidth())
                                 Spacer(Modifier.height(8.dp))
                             }
                             if (message.generationError != null) {
@@ -1116,35 +1098,9 @@ fun DocumentChatWorkspace(
                 }
             }
         }
-        if (session.searching) {
-            if (session.activitySteps.isNotEmpty()) {
-                TextButton(
-                    onClick = { liveActivityOpen = !liveActivityOpen },
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                ) {
-                    Icon(Icons.Outlined.AccountTree, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("AU activity (" + session.activitySteps.size + ")")
-                    Icon(
-                        if (liveActivityOpen) Icons.Outlined.ExpandLess
-                        else Icons.Outlined.ExpandMore, null
-                    )
-                }
-                if (liveActivityOpen) {
-                    AuActivityTimeline(
-                        session.activitySteps.toList(),
-                        modifier = Modifier.heightIn(max = 220.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp)
-                    )
-                }
-            }
-            AuWorkingStatus(
-                stage = session.searchingStage,
-                onStop = { session.activeRequest?.cancel() }
-            )
-        }
-        if (attached != null) {
+        if (session.searching && !messages.any { it.generating }) {
+            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
+        }        if (attached != null) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(attached?.label.orEmpty(), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 TextButton(onClick = { attached = null; attachmentError = null }) { Text("Remove") }

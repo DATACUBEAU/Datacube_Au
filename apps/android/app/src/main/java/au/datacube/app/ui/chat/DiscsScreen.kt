@@ -134,7 +134,7 @@ fun DiscsScreen(
     }
     var expandedSources by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var expandedProcess by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var liveActivityOpen by remember(threadId) { mutableStateOf(false) }
+
 
     var menuOpen by remember { mutableStateOf(false) }
     var historyBusy by remember(ownerId) { mutableStateOf(false) }
@@ -264,6 +264,11 @@ fun DiscsScreen(
                     })
                     events += "Checked dated saved conversations in this workspace"
                     turns.add(ChatMessage(question, emptyList(), false, answer = recap, steps = events.toList()))
+                    return@launch
+                }
+                au.datacube.app.data.rag.LocalQuickReply.forMessage(question)?.let { reply ->
+                    events += "Answered a simple greeting locally"
+                    turns.add(ChatMessage(question, emptyList(), false, answer = reply, steps = events.toList()))
                     return@launch
                 }
                 val completedTurns = turns.dropLast(1).filter {
@@ -507,11 +512,8 @@ fun DiscsScreen(
                     Text(if (collectionId == null) "Gist" else collectionName ?: "Collection AU",
                         fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleLarge)
-                    Text(if (!modelReady) "Install an AU model to chat"
-                        else if (collectionId != null) "${library.size} source documents · Collection AU"
-                        else "AU ready · Offline chat",
-                        style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!modelReady) Text("Install a model to chat",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = ::newChat, enabled = ready && !historyBusy && !preparingAttachment) {
                     Icon(Icons.Outlined.Add, "New Gist chat")
@@ -580,17 +582,17 @@ fun DiscsScreen(
                     } else {
                         Box(Modifier.fillMaxWidth()) {
                             Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("AU", fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary)
                                 if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
-                                AuCompletedActivity(message.steps, message.workDurationMs)
+                                if (message.generating) {
+                                    AuWorkingStatus(session.searchingStage, { session.activeRequest?.cancel() },
+                                        steps = session.activitySteps.toList())
+                                } else AuCompletedActivity(message.steps, message.workDurationMs)
                                 if (message.answer.isNotBlank()) AuRichResponse(message.answer)
                                 if (!message.generating && message.answer.isNotBlank() && message.generationError == null) {
                                     AuMessageActions(message.answer, speech, messageIndex) {
                                         AuResponseFeedback(accountId, "$ownerId:$threadId", messageIndex, message.createdAtEpochMs, "android_gist")
                                     }
                                 }
-                                if (message.generating) LinearProgressIndicator(Modifier.fillMaxWidth())
                                 message.generationError?.let { Text(it,
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall) }
@@ -654,35 +656,9 @@ fun DiscsScreen(
             }
         }
 
-        if (session.searching) {
-            if (session.activitySteps.isNotEmpty()) {
-                TextButton(
-                    onClick = { liveActivityOpen = !liveActivityOpen },
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                ) {
-                    Icon(Icons.Outlined.AccountTree, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("AU activity (" + session.activitySteps.size + ")")
-                    Icon(
-                        if (liveActivityOpen) Icons.Outlined.ExpandLess
-                        else Icons.Outlined.ExpandMore, null
-                    )
-                }
-                if (liveActivityOpen) {
-                    AuActivityTimeline(
-                        session.activitySteps.toList(),
-                        modifier = Modifier.heightIn(max = 220.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp)
-                    )
-                }
-            }
-            AuWorkingStatus(
-                stage = session.searchingStage,
-                onStop = { session.activeRequest?.cancel() }
-            )
-        }
-        ConversationWindow.warning(userTurns)?.let {
+        if (session.searching && !turns.any { it.generating }) {
+            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
+        }        ConversationWindow.warning(userTurns)?.let {
             Text(it, Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall)
