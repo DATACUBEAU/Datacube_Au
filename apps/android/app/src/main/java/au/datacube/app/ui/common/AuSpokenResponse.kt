@@ -106,6 +106,6 @@ internal object AuSpokenResponse {
                     }
                 }
             }
-        }.joinToString("\n")
+        }.joinToString("\n\n")
     }
 }
