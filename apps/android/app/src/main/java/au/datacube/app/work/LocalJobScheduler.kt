@@ -1,19 +1,17 @@
 package au.datacube.app.work
 
 import android.content.Context
-import androidx.work.BackoffPolicy
-import androidx.work.Constraints
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ListenableWorker
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequest
+import au.datacube.app.data.rag.LexicalIndexWorker
+import au.datacube.app.data.rag.LocalSemanticSearch
+import kotlinx.coroutines.flow.first
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import au.datacube.app.data.DataCubeDatabase
 import au.datacube.app.data.LocalJob
 import au.datacube.app.data.LocalJobKind
 import au.datacube.app.data.LocalJobStatus
-import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 
 class LocalJobScheduler(context: Context) {
@@ -28,21 +26,8 @@ class LocalJobScheduler(context: Context) {
             LocalJobKind.DOCUMENT_TEXT_EXTRACTION -> DocumentTextExtractionWorker::class.java
             else -> return
         }
-        val request = OneTimeWorkRequest.Builder(workerClass)
-            .setInputData(workDataOf(DocumentIntegrityWorker.KEY_JOB_ID to jobId))
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
-                    .setRequiresBatteryNotLow(true)
-                    .setRequiresStorageNotLow(true)
-                    .build()
-            )
-            .setBackoffCriteria(
-                BackoffPolicy.EXPONENTIAL,
-                30,
-                TimeUnit.SECONDS
-            )
-            .build()
+        val request = DocumentWorkPolicy.request(workerClass,
+            workDataOf(DocumentIntegrityWorker.KEY_JOB_ID to jobId))
 
         workManager.enqueueUniqueWork(
             UNIQUE_WORK_PREFIX + jobId,
@@ -73,7 +58,22 @@ class LocalJobScheduler(context: Context) {
         }
 
         database.jobs().findRecoverable().forEach { job ->
+            val workerClass: Class<out ListenableWorker> = when (job.kind) {
+                LocalJobKind.DOCUMENT_INTEGRITY_CHECK -> DocumentIntegrityWorker::class.java
+                LocalJobKind.DOCUMENT_TEXT_EXTRACTION -> DocumentTextExtractionWorker::class.java
+                else -> return@forEach
+            }
+            DocumentWorkPolicy.updateLegacy(workManager, UNIQUE_WORK_PREFIX + job.id, workerClass,
+                workDataOf(DocumentIntegrityWorker.KEY_JOB_ID to job.id))
             enqueue(job.id, job.kind)
+        }
+        // Update persisted indexing requests too, including documents that already
+        // finished extraction. No new indexing jobs or duplicate downloads are created.
+        if (DocumentWorkPolicy.hasLegacyIndexWork(workManager)) {
+            database.documents().observeAll().first().forEach { document ->
+                LexicalIndexWorker.updateLegacyRequest(appContext, document.id)
+                LocalSemanticSearch(appContext).updateLegacyRequest(document.id)
+            }
         }
     }
 
