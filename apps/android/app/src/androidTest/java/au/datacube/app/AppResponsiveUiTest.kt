@@ -264,6 +264,7 @@ class AppResponsiveUiTest {
 
     @Test
     fun documentStudyToolsAreInteractiveOnExpandedPhoneWidth() {
+        var exits = 0
         composeRule.setContent {
             DeviceConfigurationOverride(DeviceConfigurationOverride.ForcedSize(DpSize(700.dp, 900.dp))) {
                 DataCubeTheme {
@@ -292,7 +293,7 @@ class AppResponsiveUiTest {
                         previewTruncated = false,
                         previewLoading = false,
                         previewError = null,
-                        onBack = {}
+                        onBack = { exits++ }
                     )
                 }
             }
@@ -319,18 +320,30 @@ class AppResponsiveUiTest {
         composeRule.onNodeWithText("Create podcast").performScrollTo().assertIsDisplayed()
         composeRule.onNodeWithText("Narration").assertDoesNotExist()
         composeRule.onNodeWithText("Play summary").assertDoesNotExist()
-        // Both the device Back button and the workspace arrow unwind tool history.
+        // System Back unwinds tool history; only the toolbar arrow exits.
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
             .sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Generate practice").performScrollTo().assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Back").performClick()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            .sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("Generate revision forecast").assertIsDisplayed()
         androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
             .sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         composeRule.waitForIdle()
         composeRule.onNodeWithText("Generate Smart Note").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("Back").performClick()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            .sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        composeRule.waitForIdle()
         composeRule.onNodeWithText("Ask about this document").assertIsDisplayed()
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            .sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        composeRule.waitForIdle()
+        composeRule.runOnIdle { assertEquals(0, exits) }
+        composeRule.onNodeWithContentDescription("Document options and tools").performClick()
+        composeRule.onNodeWithText("Smart Note").performClick()
+        composeRule.onNodeWithContentDescription("Exit workspace").performClick()
+        composeRule.runOnIdle { assertEquals(1, exits) }
     }
 }
