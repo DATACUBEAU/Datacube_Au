@@ -61,7 +61,13 @@ fun DocumentWorkspaceScreen(
     collectionId: String? = null,
     collectionDocuments: List<LocalDocument> = emptyList()
 ) {
-    var selectedTab by remember(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
+    var selectedTab by rememberSaveable(document.id, initialTab) { mutableIntStateOf(initialTab.coerceIn(0, workspaceTabs.lastIndex)) }
+    var previousTools by rememberSaveable(document.id, initialTab) { mutableStateOf(intArrayOf()) }
+    fun openTool(index: Int) {
+        if (index == selectedTab) return
+        previousTools = (previousTools + selectedTab).takeLast(40).toIntArray()
+        selectedTab = index
+    }
     var menuExpanded by remember(document.id) { mutableStateOf(false) }
     var immersive by remember(document.id) { mutableStateOf(false) }
     var newChatToken by remember(document.id) { mutableIntStateOf(0) }
@@ -93,7 +99,19 @@ fun DocumentWorkspaceScreen(
         confirmButton={Button(onClick={closeToolsOffer(true)}){Text("Show me")}},
         dismissButton={TextButton(onClick={closeToolsOffer(false)}){Text("Not now")}}
     )
-    BackHandler(enabled=guideTools) { guideTools=false }
+    fun navigateBack() {
+        when {
+            guideTools -> guideTools = false
+            menuExpanded -> menuExpanded = false
+            immersive -> immersive = false
+            previousTools.isNotEmpty() -> {
+                selectedTab = previousTools.last()
+                previousTools = previousTools.copyOf(previousTools.size - 1)
+            }
+            else -> onBack()
+        }
+    }
+    BackHandler { navigateBack() }
     if (schedulesOpen && accountId != null) {
         AuScheduleDialog(accountId, "document:${document.id}", scheduleTitle,
             onDismiss = { schedulesOpen = false })
@@ -123,8 +141,8 @@ fun DocumentWorkspaceScreen(
             Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 5.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back to documents")
+            IconButton(onClick = ::navigateBack) {
+                Icon(Icons.Outlined.ArrowBack, contentDescription = "Back")
             }
             if (!immersive) {
                 Spacer(Modifier.width(5.dp))
@@ -191,7 +209,7 @@ fun DocumentWorkspaceScreen(
                             },
                             leadingIcon = { Icon(icon, null) },
                             onClick = {
-                                selectedTab = index
+                                openTool(index)
                                 menuExpanded = false
                             }
                         )
@@ -213,7 +231,7 @@ fun DocumentWorkspaceScreen(
                         text = { Text("New chat") },
                         leadingIcon = { Icon(Icons.Outlined.Add, null) },
                         onClick = {
-                            selectedTab = 0
+                            openTool(0)
                             newChatToken += 1
                             menuExpanded = false
                         }
@@ -222,7 +240,7 @@ fun DocumentWorkspaceScreen(
                         text = { Text("History") },
                         leadingIcon = { Icon(Icons.Outlined.History, null) },
                         onClick = {
-                            selectedTab = 0
+                            openTool(0)
                             chatHistoryOpen = true
                             menuExpanded = false
                         }

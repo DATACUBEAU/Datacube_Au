@@ -18,6 +18,23 @@ import au.datacube.app.R
  * They are private on lock screens and never contain document titles/text.
  */
 class LocalNotificationService(private val context: Context) {
+    fun enabled(): Boolean = manager() != null
+
+    fun ensureChannels() {
+        val service = context.getSystemService(NotificationManager::class.java) ?: return
+        service.createNotificationChannel(NotificationChannel(CHANNEL_ID, "Background processing", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Document extraction and indexing progress"
+            setShowBadge(false)
+        })
+        service.createNotificationChannel(NotificationChannel(READY_CHANNEL, "AU task completion", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Completed document, AI and audio tasks"
+        })
+    }
+
+    fun showPermissionExample() {
+        showAiReady("notifications-enabled", "Notifications are enabled. AU will keep you informed about your tasks.")
+    }
+
     private fun manager(): NotificationManager? {
         val service = context.getSystemService(NotificationManager::class.java) ?: return null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -25,14 +42,7 @@ class LocalNotificationService(private val context: Context) {
                 PackageManager.PERMISSION_GRANTED
         ) return null
         if (!service.areNotificationsEnabled()) return null
-        service.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID, "Background processing", NotificationManager.IMPORTANCE_LOW
-            ).apply {
-                description = "Document extraction and optional indexing progress."
-                setShowBadge(false)
-            }
-        )
+        ensureChannels()
         return service
     }
 
@@ -86,13 +96,12 @@ class LocalNotificationService(private val context: Context) {
     }
 
     fun showDocumentCheckComplete(jobId: String, documentId: String) {
-        clearDocumentProgress(documentId)
-        showCompletion(documentId, "Document verification complete")
+        // Integrity verification runs independently from extraction. Do not clear its progress.
     }
 
     fun showTextReady(documentId: String) {
         clearDocumentProgress(documentId)
-        showCompletion(documentId, "Document is ready for study")
+        // Text is available, but indexing may still be running. Final alert comes from the index worker.
     }
 
     fun showIndexComplete(documentId: String) {
@@ -102,8 +111,9 @@ class LocalNotificationService(private val context: Context) {
 
     private fun showCompletion(documentId: String, message: String) {
         val manager = manager() ?: return
-        val notification = Notification.Builder(context, CHANNEL_ID)
+        val notification = Notification.Builder(context, READY_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification_datacube)
+            .setContentIntent(openApp())
             .setContentTitle("DataCube AU")
             .setContentText(message)
             .setOnlyAlertOnce(true)
@@ -112,6 +122,15 @@ class LocalNotificationService(private val context: Context) {
             .build()
         manager.notify(tag(documentId), COMPLETE_ID, notification)
     }
+
+    fun showDocumentFailed(documentId: String) {
+        clearDocumentProgress(documentId)
+        showCompletion(documentId, "Document processing needs attention. Open AU to review.")
+    }
+
+    private fun openApp(): PendingIntent = PendingIntent.getActivity(context, 73, Intent(context, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     /** Completion alerts are separate from silent ongoing progress. No private text. */
     fun showAiReady(key: String, message: String) {
@@ -139,6 +158,7 @@ class LocalNotificationService(private val context: Context) {
 
     companion object {
         private const val CHANNEL_ID = "datacube_local_processing"
+        private const val READY_CHANNEL = "au_document_ready_v2"
         private const val COMPLETE_ID = 1
         private const val PROGRESS_ID = 2
         private fun tag(documentId: String) = "document-$documentId"

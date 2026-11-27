@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.semantics.SemanticsActions
@@ -102,12 +103,12 @@ class AuComposerUiTest {
             }
         }
         val row = rule.onNodeWithTag("au-composer-actions", useUnmergedTree = true)
-        val initial = row.getBoundsInRoot().height
+        val initial = row.getBoundsInRoot().let { it.bottom - it.top }
         assertEquals(48.dp, initial)
         rule.onNodeWithTag("au-composer-input").performTextInput((1..15).joinToString("\n") { "A long draft line $it" })
-        assertEquals(initial, row.getBoundsInRoot().height)
+        assertEquals(initial, row.getBoundsInRoot().let { it.bottom - it.top })
         rule.onNodeWithContentDescription("Expand composer").performClick()
         rule.onNodeWithContentDescription("Collapse composer").performClick()
-        assertEquals(initial, row.getBoundsInRoot().height)
+        assertEquals(initial, row.getBoundsInRoot().let { it.bottom - it.top })
     }
 }
