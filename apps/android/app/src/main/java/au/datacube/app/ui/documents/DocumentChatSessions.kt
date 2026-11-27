@@ -40,7 +40,39 @@ internal class DocumentChatSession(private val historyKey: String) {
     var requestStartedAt by mutableStateOf(0L)
         private set
 
-    fun startRequestClock(): Long = android.os.SystemClock.elapsedRealtime().also { requestStartedAt = it }
+    // Keep at most one alternate for the latest exchange in process memory.
+    // The selected response, not the alternate, is saved by the history writer.
+    private var alternate by mutableStateOf<ChatMessage?>(null)
+    private var alternateIndex by mutableStateOf(-1)
+
+    fun startRequestClock(): Long {
+        if (messages.size != alternateIndex) {
+            alternate = null
+            alternateIndex = -1
+        }
+        return android.os.SystemClock.elapsedRealtime().also { requestStartedAt = it }
+    }
+
+    fun beginRegeneration(index: Int): String? {
+        val question = regenerationQuestion(index) ?: return null
+        val previous = messages[index]
+        if (previous.answer.isNotBlank() && previous.generationError == null) {
+            alternate = previous
+            alternateIndex = index
+        }
+        messages.removeAt(index)
+        return question
+    }
+
+    fun hasAlternate(index: Int): Boolean =
+        !searching && index == messages.lastIndex && index == alternateIndex && alternate != null
+
+    fun swapAlternate(index: Int) {
+        if (!hasAlternate(index)) return
+        val prior = alternate ?: return
+        alternate = messages[index]
+        messages[index] = prior
+    }
 
     fun publishAnswer(index: Int, answer: String) {
         val turn = messages.getOrNull(index) ?: return
@@ -151,6 +183,8 @@ internal class DocumentChatSession(private val historyKey: String) {
             val audioPaths = messages.mapNotNull { it.audioPath }.distinct()
             LocalDocumentChatHistory(context).clear(historyKey)
             messages.clear()
+            alternate = null
+            alternateIndex = -1
             activitySteps.clear()
             return withContext(Dispatchers.IO) {
                 val base = File(context.filesDir, "voice-notes/$ownerId").canonicalFile
