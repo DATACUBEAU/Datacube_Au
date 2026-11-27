@@ -515,7 +515,8 @@ fun DocumentChatWorkspace(
                             // this Compose screen; navigation must not cancel it.
                             session.scope.launch { threads.nameFromQuestion(chatOwner, threadId, cleanPrompt) }
                             val firstResponseIndex = messages.size
-                            val workStartedAt = session.startRequestClock()
+                            val workStartedAt = if (alreadyAdded && audioPath != null && session.requestStartedAt > 0L)
+            session.requestStartedAt else session.startRequestClock()
                             session.activeRequest = session.scope.launch {
                                 val events = session.activitySteps
                                 try {
@@ -1165,27 +1166,8 @@ fun DocumentChatWorkspace(
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->
-                        val label = "Voice note · " + note.durationSeconds + "s"
-                        messages.add(ChatMessage(label, emptyList(), true,
-                            audioPath = note.file.absolutePath))
-                        session.searching = true
-                        session.searchingStage = "AU is listening"
-                        session.activeRequest = session.scope.launch {
-                            try {
-                                val words = LocalGenerativeEngine.understandVoiceNote(context, note.file)
-                                session.searching = false
-                                session.searchingStage = ""
-                                submitQuestion(words, label, note.file.absolutePath, alreadyAdded = true)
-                            } catch (cancelled: CancellationException) {
-                                session.searching = false
-                                session.searchingStage = ""
-                                throw cancelled
-                            } catch (error: Exception) {
-                                session.searching = false
-                                session.searchingStage = ""
-                                messages.add(ChatMessage(label, emptyList(), false,
-                                    generationError = error.message ?: "AU could not understand the audio."))
-                            }
+                        session.submitVoiceNote(context, note) { words, label, path ->
+                            submitQuestion(words, label, path, alreadyAdded = true)
                         }
                     }
                 )
