@@ -5,7 +5,9 @@ object NeuralTextSegmenter {
     fun split(input: String, maxChunk: Int = 260, maxText: Int = 2200): List<String> {
         require(maxChunk in 100..1000)
         require(maxText in maxChunk..12000)
-        val normalized = input.replace(Regex("""\s+"""), " ").trim().take(maxText)
+        val normalized = input.replace(Regex("""\s+"""), " ").trim()
+        // Batch size must never silently truncate a spoken answer.
+        require(normalized.length <= 128_000) { "Narration is too long for one session." }
         if (normalized.isBlank()) return emptyList()
         val result = mutableListOf<String>()
         var offset = 0
