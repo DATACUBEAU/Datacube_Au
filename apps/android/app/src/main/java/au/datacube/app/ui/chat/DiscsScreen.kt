@@ -427,7 +427,7 @@ fun DiscsScreen(
                 session.activeRequest = null
             }
         }
-        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response") }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
     }
 
     fun sendAttachment() {
@@ -501,7 +501,7 @@ fun DiscsScreen(
                 session.activitySteps.clear()
             }
         }
-        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response") }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
     }
 
     Column(Modifier.fillMaxSize().dataCubeBackdrop().imePadding().navigationBarsPadding()) {

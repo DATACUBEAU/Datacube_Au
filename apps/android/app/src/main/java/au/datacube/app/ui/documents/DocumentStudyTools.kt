@@ -487,7 +487,7 @@ fun DocumentChatWorkspace(
                 session.activitySteps.clear()
             }
         }
-        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response") }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response", au.datacube.app.notifications.TaskDestination.document(documentId)) }
     }
 
     fun submitQuestion(
@@ -823,7 +823,7 @@ fun DocumentChatWorkspace(
                                     session.activeRequest = null
                                 }
                             }
-                        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer") }
+                        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer", au.datacube.app.notifications.TaskDestination.document(documentId)) }
                         }
                     
     }
