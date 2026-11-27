@@ -88,7 +88,7 @@ export async function exchangePkceTransport(request: Request, deps: PkceTranspor
     const target = new URL('/auth/v1/token?grant_type=pkce', url);
     // Never accept a destination, key, cookie, bearer token or grant from the caller.
     // The project and public API key come from the existing server configuration.
-    if (target.protocol !== 'https:' && target.hostname !== 'localhost' && target.hostname !== '127.0.0.1') {
+    if (target.username || target.password || (target.protocol !== 'https:' && target.hostname !== 'localhost' && target.hostname !== '127.0.0.1')) {
       return problem('configuration_error', 503, 'unexpected_failure');
     }
     const upstream = await deps.upstreamFetch(target, {
@@ -119,7 +119,8 @@ export async function exchangePkceTransport(request: Request, deps: PkceTranspor
     }
     // The SDK processes and persists the original Supabase session. No session
     // minting, new auth client, token rewriting or storage is performed here.
-    return response('upstream_ok', upstream.status, payload);
+    if (upstream.status !== 200) return problem('upstream_response_invalid', 502, 'unexpected_failure');
+    return response('upstream_ok', 200, payload);
   } catch (error) {
     const name = error instanceof Error ? error.name : '';
     return problem(name === 'TimeoutError' || name === 'AbortError' ? 'upstream_timeout' : 'upstream_unreachable', 503, 'unexpected_failure');

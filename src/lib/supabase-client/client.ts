@@ -165,6 +165,7 @@ const customFetch = async (input: RequestInfo | URL, init?: RequestInit): Promis
         headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
         body: newInit.body,
         credentials: 'omit',
+        referrerPolicy: 'origin',
         cache: 'no-store',
         redirect: 'error',
         signal: controller.signal,

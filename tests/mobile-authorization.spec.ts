@@ -218,6 +218,7 @@ test('fresh Android login performs a real SDK PKCE round trip without seeded ver
     expect(new URL(route.request().url()).origin).toBe(new URL(page.url()).origin);
     expect(await route.request().headerValue('authorization')).toBeNull();
     expect(await route.request().headerValue('apikey')).toBeNull();
+    expect(await route.request().headerValue('origin')).toBe(new URL(page.url()).origin);
     expect(typeof body.code_verifier).toBe('string');
     matched = createHash('sha256').update(body.code_verifier).digest('base64url') === challenge;
     expect(matched).toBe(true);
