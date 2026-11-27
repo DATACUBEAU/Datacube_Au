@@ -129,6 +129,27 @@ internal object AuResponseParser {
                     }
                 }
             }
+            // Older models emit [DIAGRAM] instead of [SKETCH], sometimes with trailing separators.
+            // Normalize valid legacy sketches; do not expose drawing commands as prose.
+            if (line.startsWith("[DIAGRAM] ") && line != "[DIAGRAM] projectile") {
+                val end = (i + 1 until minOf(lines.size, i + 60)).firstOrNull { lines[it].trim() == "[/DIAGRAM]" }
+                val headingParts = line.removePrefix("[DIAGRAM] ").split('|').map(String::trim)
+                val title = headingParts.first().take(100)
+                val description = headingParts.getOrNull(1)?.take(400).orEmpty().ifBlank { title }
+                if (end != null) {
+                    val commands = lines.subList(i + 1, end).map { it.trim().trimEnd('|').trim() }.filter(String::isNotBlank)
+                    val alt = if (commands.firstOrNull()?.startsWith("ALT |") == true) commands
+                        else listOf("ALT | $description") + commands
+                    val scene = AuSketchParser.parse(title, alt)
+                    if (scene != null) result += AuResponseBlock.Sketch(scene)
+                    else result += AuResponseBlock.Prose(description)
+                    i = end + 1
+                } else {
+                    // Streaming block is not ready. Preserve earlier prose, wait for its closing marker.
+                    break
+                }
+                continue
+            }
             // Only an exact allowlisted schematic is recognized; no generated coordinates or code.
             if (line == "[DIAGRAM] projectile") {
                 result += AuResponseBlock.ProjectileIllustration
@@ -138,10 +159,10 @@ internal object AuResponseParser {
             // Each workflow row is one stage; sibling cards are separated by a pipe.
             // Bound the layout and accept only plain text nodes, never executable UI.
             if (line.startsWith("[WORKFLOW] ")) {
-                val end = (i + 1 until minOf(lines.size, i + 9)).firstOrNull { lines[it].trim() == "[/WORKFLOW]" }
+                val end = (i + 1 until minOf(lines.size, i + 30)).firstOrNull { lines[it].trim() == "[/WORKFLOW]" }
                 if (end != null) {
                     val title = line.removePrefix("[WORKFLOW] ").trim()
-                    val stages = lines.subList(i + 1, end).map { row ->
+                    val stages = lines.subList(i + 1, end).filter { it.isNotBlank() }.map { row ->
                         row.split('|').map { cell ->
                             val parts = cell.split("::", limit = 2)
                             AuResponseBlock.WorkflowNode(parts.first().trim(), parts.getOrNull(1)?.trim().orEmpty())
@@ -152,12 +173,11 @@ internal object AuResponseParser {
                             node.title.length in 1..80 && node.detail.length <= 120 &&
                                 listOf(node.title, node.detail).none { it.contains("[WORKFLOW]") || it.contains("[/WORKFLOW]") }
                         } }
-                    if (title.length in 1..100 && valid) {
-                        result += AuResponseBlock.Workflow(title, stages)
-                        i = end + 1
-                        continue
-                    }
-                }
+                    if (title.length in 1..100 && valid) result += AuResponseBlock.Workflow(title, stages)
+                    else result += AuResponseBlock.Prose(title)
+                    i = end + 1
+                    continue
+                } else break
             }
             // Only a small, complete, declarative flow is accepted. No HTML, URLs or scripts.
             if (line.startsWith("[FLOW] ")) {
@@ -204,6 +224,10 @@ internal object AuResponseParser {
                     continue
                 }
             }
+            if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|STEPS|STEP)](?:.*)$"))) {
+                i++
+                continue
+            }
             val heading = Regex("^(#{1,4})\\s+(.+)$").matchEntire(line)
             val bullet = Regex("^([-*]|\\d+[.)])\\s+(.+)$").matchEntire(line)
             val status = Regex("^\\[(OK|WARN|ERROR)]\\s+(.+)$").matchEntire(line)
@@ -247,11 +271,18 @@ internal fun AuRichResponse(answer: String, onTextClick: ((String, Int) -> Unit)
                         3, 4 -> MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold, lineHeight = 24.sp)
                         else -> MaterialTheme.typography.bodyLarge.copy(lineHeight = 25.sp)
                     }
-                    val annotated = remember(block) { inlineText(block.prefix + block.text) }
-                    if (onTextClick != null) {
-                        ClickableText(annotated, style = style.copy(color = MaterialTheme.colorScheme.onSurface),
-                            onClick = { onTextClick(annotated.text, it) })
-                    } else SelectionContainer { Text(annotated, style = style) }
+                    val annotated = remember(block) { inlineText(block.text) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top) {
+                        if (block.prefix.isNotBlank()) Text(block.prefix.trim(),
+                            Modifier.widthIn(min = 20.dp), style = style, fontWeight = FontWeight.Medium)
+                        Box(Modifier.weight(1f)) {
+                            if (onTextClick != null) ClickableText(annotated,
+                                style = style.copy(color = MaterialTheme.colorScheme.onSurface),
+                                onClick = { onTextClick(annotated.text, it) })
+                            else SelectionContainer { Text(annotated, style = style) }
+                        }
+                    }
                 }
                 is AuResponseBlock.Table -> Surface(
                     shape = RoundedCornerShape(12.dp),

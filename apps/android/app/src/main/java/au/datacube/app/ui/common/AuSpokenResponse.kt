@@ -30,7 +30,10 @@ internal object AuSpokenResponse {
                 when (block) {
                     is AuResponseBlock.Prose -> {
                         val text = plain(block.text)
-                        if (text.isNotBlank()) add(text)
+                        if (text.isNotBlank()) {
+                            val number = block.prefix.trim().removeSuffix(".").removeSuffix(")").toIntOrNull()
+                            add(if (number != null) "Number $number. $text" else text)
+                        }
                     }
                     is AuResponseBlock.Status -> {
                         val label = when (block.kind) {

@@ -47,12 +47,7 @@ class AndroidUpdateCheckWorker(
                         )
                     )
                     if (manager.getNotificationChannel(CHANNEL)?.importance == NotificationManager.IMPORTANCE_NONE) return Result.success()
-                    val open = Intent(applicationContext, MainActivity::class.java)
-                        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                    val tap = PendingIntent.getActivity(
-                        applicationContext, 75, open,
-                        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                    )
+                    val tap = au.datacube.app.notifications.TaskDestination.pending(applicationContext, au.datacube.app.notifications.TaskDestination.UPDATES, "update-available")
                     manager.notify(
                         NOTIFICATION_ID,
                         Notification.Builder(applicationContext, CHANNEL)

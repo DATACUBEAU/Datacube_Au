@@ -26,11 +26,20 @@ class LocalSemanticSearch(private val context: Context) {
 
     fun supported(): Boolean = LocalEmbeddingRuntime.available(app)
 
-    fun scheduleIndex(documentId: String) {
-        if (!supported() || documentId.isBlank()) return
+    suspend fun scheduleIndex(documentId: String, retry: Boolean = false) = withContext(Dispatchers.IO) {
+        if (!supported() || documentId.isBlank()) return@withContext
+        val existing = work.getWorkInfosForUniqueWork(workName(documentId)).get()
+        if (existing.any { !it.state.isFinished }) return@withContext
+        if (!retry && existing.any { it.state == WorkInfo.State.FAILED }) return@withContext
+        val source = ExtractedTextStore.fileFor(app.filesDir, documentId)
+        val index = LocalPassageIndex(app)
+        val current = try { index.snapshot(documentId, source) } finally { index.close() }
+        if (current != null && database.semanticChunks().sourceHash(documentId, LocalEmbeddingRuntime.MODEL_ID) == current.sourceHash &&
+            database.semanticChunks().count(documentId, LocalEmbeddingRuntime.MODEL_ID) == current.count) return@withContext
         val request = DocumentWorkPolicy.request(SemanticIndexWorker::class.java,
             workDataOf(SemanticIndexWorker.KEY_DOCUMENT to documentId))
-        work.enqueueUniqueWork(workName(documentId), ExistingWorkPolicy.KEEP, request)
+        work.enqueueUniqueWork(workName(documentId), ExistingWorkPolicy.KEEP, request).result.get()
+        Unit
     }
 
     internal suspend fun updateLegacyRequest(documentId: String) {

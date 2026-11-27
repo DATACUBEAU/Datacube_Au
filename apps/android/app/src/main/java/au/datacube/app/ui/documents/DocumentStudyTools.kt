@@ -282,6 +282,9 @@ fun DocumentChatWorkspace(
     val indexingFlow = remember(documentId) { semanticSearch.observeIndex(documentId) }
     val indexingWorks by indexingFlow.collectAsState(initial = emptyList())
     val indexing = indexingWorks.any { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+    val semanticFailure = indexingWorks.firstOrNull { it.state == WorkInfo.State.FAILED }?.takeIf { !indexing &&
+        indexingWorks.none { it.state == WorkInfo.State.SUCCEEDED } }
+    var searchDetails by remember(documentId) { mutableStateOf(false) }
     val chatOwner = remember(documentId, collectionId) {
         if (collectionId == null) documentId else {
             val suffix = java.security.MessageDigest.getInstance("SHA-256")
@@ -389,7 +392,7 @@ fun DocumentChatWorkspace(
     }
     var openedEvidence by remember(documentId) { mutableStateOf<SourceSnippet?>(null) }
     var expandedSteps by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var liveActivityOpen by remember(chatOwner, threadId) { mutableStateOf(false) }
+
     var expandedSources by remember(chatOwner, threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var tappedTerm by remember(documentId) { mutableStateOf<TermContext?>(null) }
     var termExplanation by remember(documentId) { mutableStateOf("") }
@@ -456,7 +459,8 @@ fun DocumentChatWorkspace(
                         "Cite [1] for supported claims.\nQuestion: " + question + "\n[1] ATTACHMENT:\n" + selected.excerpt
                 }
                 var lastUpdate = 0L
-                LocalGenerativeEngine.generate(context, input, image = (selected as? GistAttachment.Photo)?.bytes, effort = mode) { part ->
+                LocalGenerativeEngine.generate(context, input, image = (selected as? GistAttachment.Photo)?.bytes, effort = mode,
+                    visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastUpdate >= 120) {
@@ -474,8 +478,8 @@ fun DocumentChatWorkspace(
                 messages[answerIndex] = messages[answerIndex].copy(generating = false, generationError = "AU could not understand this attachment.")
             } finally {
                 session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && messages.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
-                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && messages.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.document(documentId))
                 }
                 session.searching = false
                 session.searchingStage = ""
@@ -483,7 +487,7 @@ fun DocumentChatWorkspace(
                 session.activitySteps.clear()
             }
         }
-        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response") }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response", au.datacube.app.notifications.TaskDestination.document(documentId)) }
     }
 
     fun submitQuestion(
@@ -525,6 +529,11 @@ fun DocumentChatWorkspace(
                                         })
                                         events += "Checked dated saved conversations in this workspace"
                                         messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = recap, steps = events.toList()))
+                                        return@launch
+                                    }
+                                    au.datacube.app.data.rag.LocalQuickReply.forMessage(cleanPrompt)?.let { reply ->
+                                        events += "Answered a simple greeting locally"
+                                        messages.add(ChatMessage(cleanPrompt, emptyList(), false, answer = reply, steps = events.toList()))
                                         return@launch
                                     }
                                     if (DocumentChatIntent.isGreeting(cleanPrompt)) {
@@ -706,7 +715,8 @@ fun DocumentChatWorkspace(
                                                  "The retrieved document passages did not establish the answer. Answer this question from general knowledge only. " +
                                                     "Do not claim to have found it in any textbook. State uncertainty if needed. Question: " +
                                                     followUp.query.take(700),
-                                                allowGeneral = true, generalOnly = true, effort = requestEffort) { part ->
+                                                allowGeneral = true, generalOnly = true, effort = requestEffort,
+                                                 visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 raw.append(part)
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate >= 90L) {
@@ -748,7 +758,8 @@ fun DocumentChatWorkspace(
                                         var lastUpdate = 0L
                                         try {
                                             session.searchingStage = "AU is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.contextFor(cleanPrompt, requestEffort).orEmpty(), effort = requestEffort) { part ->
+                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.contextFor(cleanPrompt, requestEffort).orEmpty(), effort = requestEffort,
+                                                 visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 generated.append(part)
                                                 val now = SystemClock.elapsedRealtime()
                                                 if (now - lastUpdate > 90L) {
@@ -803,8 +814,8 @@ fun DocumentChatWorkspace(
                                     messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList(), generationError = "Document search could not finish. Try again."))
                                 } finally {
                                     session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && messages.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
-                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && messages.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.document(documentId))
                 }
                                     session.searching = false
                                     session.searchingStage = ""
@@ -812,7 +823,7 @@ fun DocumentChatWorkspace(
                                     session.activeRequest = null
                                 }
                             }
-                        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer") }
+                        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer", au.datacube.app.notifications.TaskDestination.document(documentId)) }
                         }
                     
     }
@@ -902,23 +913,18 @@ fun DocumentChatWorkspace(
 
     Column(Modifier.fillMaxSize().imePadding().navigationBarsPadding()) {
         AuReadAloudBar(speech)
-        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(if (collectionId != null) "Searching this collection" else "Searching in", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(documentName, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+        if (indexing) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp))
+        if (semanticFailure != null) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { searchDetails = true }, modifier = Modifier.weight(1f)) { Text("Keyword search available") }
+                TextButton(onClick = { scope.launch { semanticSearch.scheduleIndex(documentId, retry = true) } }) { Text("Retry semantic") }
             }
-            AssistChip(onClick = {}, enabled = false, label = {
-                Text(when {
-                    indexing -> "Indexing"
-                    llmInstalled -> "AU ready"
-                    semanticSupported -> "Search ready"
-                    else -> "Search ready"
-
-                })
-            })
         }
+        if (searchDetails && semanticFailure != null) DataCubeDialog(
+            onDismissRequest = { searchDetails = false }, title = { Text("Semantic search") },
+            text = { Text(semanticFailure.outputData.getString(au.datacube.app.data.rag.SemanticIndexWorker.KEY_ERROR)
+                ?: "Embedding generation failed. Keyword search remains available.") },
+            confirmButton = { TextButton(onClick = { searchDetails = false }) { Text("Done") } })
         ConversationWindow.warning(userTurns)?.let { warning ->
             Text(
                 warning,
@@ -974,17 +980,14 @@ fun DocumentChatWorkspace(
                         }
                     } else {
                         Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                when {
-                                    message.answer.isNotBlank() -> "AU"
-                                    message.generating -> "AU is thinking"
-                                    message.overview -> "Overview · source excerpts"
-                                    message.semantic -> "Semantic matches from your document"
-                                    else -> "Matches from your document"
-                                },
-                                fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface
-                            )
-                            AuCompletedActivity(message.steps, message.workDurationMs)
+                            if (message.answer.isBlank() && !message.generating && message.matches.isNotEmpty()) {
+                                Text("Source excerpts", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (message.generating) {
+                                    AuWorkingStatus(session.searchingStage, { session.activeRequest?.cancel() },
+                                        steps = session.activitySteps.toList())
+                                } else AuCompletedActivity(message.steps, message.workDurationMs)
                             if ("General knowledge · Not verified in document" in message.steps) {
                                 Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                     Icon(Icons.Outlined.Info, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
@@ -1018,10 +1021,6 @@ fun DocumentChatWorkspace(
                                         AuResponseFeedback(accountId, "$chatOwner:$threadId", messageIndex, message.createdAtEpochMs, "android_document")
                                     }
                                 }
-                                Spacer(Modifier.height(8.dp))
-                            }
-                            if (message.generating) {
-                                LinearProgressIndicator(Modifier.fillMaxWidth())
                                 Spacer(Modifier.height(8.dp))
                             }
                             if (message.generationError != null) {
@@ -1116,33 +1115,8 @@ fun DocumentChatWorkspace(
                 }
             }
         }
-        if (session.searching) {
-            if (session.activitySteps.isNotEmpty()) {
-                TextButton(
-                    onClick = { liveActivityOpen = !liveActivityOpen },
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                ) {
-                    Icon(Icons.Outlined.AccountTree, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("AU activity (" + session.activitySteps.size + ")")
-                    Icon(
-                        if (liveActivityOpen) Icons.Outlined.ExpandLess
-                        else Icons.Outlined.ExpandMore, null
-                    )
-                }
-                if (liveActivityOpen) {
-                    AuActivityTimeline(
-                        session.activitySteps.toList(),
-                        modifier = Modifier.heightIn(max = 220.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp)
-                    )
-                }
-            }
-            AuWorkingStatus(
-                stage = session.searchingStage,
-                onStop = { session.activeRequest?.cancel() }
-            )
+        if (session.searching && !messages.any { it.generating }) {
+            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
         }
         if (attached != null) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {

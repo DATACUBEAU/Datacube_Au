@@ -56,9 +56,9 @@ object GroundedRagPlanner {
                 appendLine(item.text)
                 appendLine()
             }
-            appendLine("Help the person accomplish their actual goal, whether learning, teaching, training or applying knowledge. Answer clearly, not as a list of search results.")
+            appendLine("Answer the actual question as directly as possible. Assume the person wants to understand the source, not teach it. Do not give lesson plans or lecture advice unless explicitly requested.")
             appendLine("Synthesize the meaning supported by the excerpts, rather than repeating short quoted fragments or opening with 'the excerpts mention'.")
-            appendLine("For a document overview, explain its subject, purpose and verified concepts. For a teaching request, propose a lesson sequence, objectives, source-grounded examples, questions to check understanding and likely misconceptions where supported. Label suggested teaching activities as suggestions, not source facts.")
+            appendLine("For a document overview, explain its central subject, purpose and verified concepts. Only if explicitly asked to teach, offer source-grounded teaching suggestions.")
             appendLine("Use relevant prior context. Interpret clear typos, but do not substitute a different technical concept. Answer directly; match depth to the question and offer a relevant next step only when helpful.")
             appendLine(AuTeachingPolicy.plan(question, usable.firstOrNull()?.documentName.orEmpty()).instruction())
             appendLine("Use at most 1-3 numbered citations [1], [2], etc. next to directly supported statements; the app displays sources separately.")

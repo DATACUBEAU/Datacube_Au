@@ -257,6 +257,8 @@ class VerifiedModelDownloadWorker(
         val notification = Notification.Builder(applicationContext, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("DataCube AU · " + artifact.modelId)
+            .setContentIntent(au.datacube.app.notifications.TaskDestination.pending(applicationContext, "models", artifact.modelId))
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setContentText(if (stageOverride != null) stage + if (percent >= 0) " · $percent%" else ""
                 else if (verifying) "Verifying model..." else if (percent >= 0) "$percent% downloaded" else "Downloading model...")
             .setOngoing(true)

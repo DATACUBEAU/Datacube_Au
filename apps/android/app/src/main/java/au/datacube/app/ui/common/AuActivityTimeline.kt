@@ -145,15 +145,18 @@ fun AuActivityTimeline(
 fun AuWorkingStatus(
     stage: String,
     onStop: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    steps: List<String> = emptyList()
 ) {
+    var expanded by remember { androidx.compose.runtime.mutableStateOf(false) }
+    Column {
     Surface(
-        modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(8.dp),
         color = Color.Transparent
     ) {
         Row(
-            Modifier.padding(start = 15.dp, top = 7.dp, bottom = 7.dp, end = 5.dp),
+            Modifier.padding(vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             CircularProgressIndicator(
@@ -163,22 +166,19 @@ fun AuWorkingStatus(
             )
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    "AU is thinking",
+                Text(stage.ifBlank { "Preparing response" },
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                    color = MaterialTheme.colorScheme.onSurface)
                 AuElapsedFeedback(stage)
-                if (stage.isNotBlank()) {
-                    Text(
-                        stage,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            }
+            if (steps.isNotEmpty()) IconButton(onClick = { expanded = !expanded }) {
+                Icon(if (expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ChevronRight,
+                    contentDescription = if (expanded) "Hide AU activity" else "Show AU activity")
             }
             TextButton(onClick = onStop) { Text("Stop") }
         }
+    }
+    if (expanded) AuActivityTimeline(steps)
     }
 }
 
@@ -193,7 +193,7 @@ fun AuElapsedFeedback(stage: String) {
             elapsed = ((android.os.SystemClock.elapsedRealtime() - started) / 1000).toInt()
         }
     }
-    Text("Current stage · ${elapsed}s", style = MaterialTheme.typography.labelSmall,
+    Text("${elapsed}s", style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 

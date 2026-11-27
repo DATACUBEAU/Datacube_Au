@@ -50,12 +50,13 @@ class LocalNotificationService(private val context: Context) {
         return service
     }
 
-    private fun workerNotification(detail: String, percent: Int?): Notification {
+    private fun workerNotification(detail: String, percent: Int?, documentId: String? = null): Notification {
         ensureChannels()
         return Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_datacube)
             .setContentTitle("DataCube AU · Preparing document")
-            .setContentText(detail).setContentIntent(openApp())
+            .setContentText(detail).setContentIntent(TaskDestination.pending(context,
+                documentId?.let { TaskDestination.document(it) } ?: "documents", documentId.orEmpty()))
             .setProgress(100, percent?.coerceIn(0, 100) ?: 0, percent == null)
             .setOnlyAlertOnce(true).setOngoing(true).setShowWhen(false)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
@@ -81,7 +82,7 @@ class LocalNotificationService(private val context: Context) {
     fun updateDocumentWorker(worker: CoroutineWorker, documentId: String, foreground: Boolean,
         detail: String, percent: Int? = null) {
         val manager = manager() ?: return
-        val notice = workerNotification(detail, percent)
+        val notice = workerNotification(detail, percent, documentId)
         runCatching {
             if (foreground) manager.notify(workerId(worker), notice)
             else manager.notify(tag(documentId), PROGRESS_ID, notice)
@@ -99,6 +100,7 @@ class LocalNotificationService(private val context: Context) {
             .setSmallIcon(R.drawable.ic_notification_datacube)
             .setContentTitle("Preparing document search")
             .setContentText("Indexed " + indexedPassages.coerceAtLeast(0) + " passages")
+            .setContentIntent(TaskDestination.pending(context, TaskDestination.document(documentId), documentId))
             .setProgress(0, 0, true)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
@@ -122,6 +124,7 @@ class LocalNotificationService(private val context: Context) {
             .setSmallIcon(R.drawable.ic_notification_datacube)
             .setContentTitle("Preparing document")
             .setContentText(detail)
+            .setContentIntent(TaskDestination.pending(context, TaskDestination.document(documentId), documentId))
             .setProgress(100, percent, false)
             .setOnlyAlertOnce(true)
             .setOngoing(true)
@@ -155,7 +158,7 @@ class LocalNotificationService(private val context: Context) {
         val manager = manager() ?: return
         val notification = Notification.Builder(context, READY_CHANNEL)
             .setSmallIcon(R.drawable.ic_notification_datacube)
-            .setContentIntent(openApp())
+            .setContentIntent(TaskDestination.pending(context, TaskDestination.document(documentId), documentId))
             .setContentTitle("DataCube AU")
             .setContentText(message)
             .setAutoCancel(true)
@@ -169,17 +172,19 @@ class LocalNotificationService(private val context: Context) {
     }
 
     fun showSemanticFailed(documentId: String) {
-        showCompletion(documentId, "Semantic search needs attention. Document keyword search is still available.")
+        val manager = manager() ?: return
+        manager.createNotificationChannel(NotificationChannel("au_semantic_attention", "Optional search notices", NotificationManager.IMPORTANCE_LOW))
+        runCatching { manager.notify(tag(documentId), COMPLETE_ID, Notification.Builder(context, "au_semantic_attention")
+            .setSmallIcon(R.drawable.ic_notification_datacube).setContentTitle("Document search")
+            .setContentText("Semantic search unavailable. Keyword search still works.")
+            .setContentIntent(TaskDestination.pending(context, TaskDestination.document(documentId), documentId))
+            .setOnlyAlertOnce(true).setAutoCancel(true).setVisibility(Notification.VISIBILITY_PRIVATE).build()) }
     }
 
     fun showDocumentFailed(documentId: String) {
         clearDocumentProgress(documentId)
         showCompletion(documentId, "Document processing needs attention. Open AU to review.")
     }
-
-    private fun openApp(): PendingIntent = PendingIntent.getActivity(context, 73, Intent(context, MainActivity::class.java)
-        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     /** Update progress reflects transferred bytes; never imply verification before it finishes. */
     fun showUpdateDownloadProgress(versionCode: Int, percent: Int) {
@@ -190,7 +195,7 @@ class LocalNotificationService(private val context: Context) {
                 .setSmallIcon(R.drawable.ic_notification_datacube)
                 .setContentTitle("DataCube AU · App update")
                 .setContentText(if (progress == 100) "Verifying downloaded APK" else "Downloading update · $progress%")
-                .setContentIntent(openApp())
+                .setContentIntent(TaskDestination.pending(context, TaskDestination.UPDATES, "apk-$versionCode"))
                 .setProgress(100, progress, progress == 100)
                 .setOnlyAlertOnce(true).setOngoing(true)
                 .setVisibility(Notification.VISIBILITY_PRIVATE).build())
@@ -202,19 +207,17 @@ class LocalNotificationService(private val context: Context) {
     }
 
     /** Completion alerts are separate from silent ongoing progress. No private text. */
-    fun showAiReady(key: String, message: String) {
+    fun showAiReady(key: String, message: String, destination: String? = TaskDestination.forCompletion(key)) {
         val manager = manager() ?: return
         manager.createNotificationChannel(NotificationChannel(
             "au_ai_ready", "AI and audio ready", NotificationManager.IMPORTANCE_HIGH
         ))
-        val open = PendingIntent.getActivity(context, 73, Intent(context, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val open = TaskDestination.pending(context, destination, key)
         runCatching { manager.notify("au-ready-$key", 1, Notification.Builder(context, "au_ai_ready")
             .setSmallIcon(R.drawable.ic_notification_datacube)
             .setContentTitle("DataCube AU").setContentText(message)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
-            .setContentIntent(open).setAutoCancel(true).build()) }
+            .setContentIntent(open).setOnlyAlertOnce(true).setAutoCancel(true).build()) }
     }
 
     fun cancelDocument(documentId: String, legacyJobIds: Collection<String>) {

@@ -61,6 +61,12 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     private var directory: File? = null
     private var parts = emptyList<PreparedSpeechPart>()
     private var cacheKey = ""
+    private var directTurns = emptyList<au.datacube.app.audio.PodcastTurn>()
+    var directIndex by mutableIntStateOf(0)
+        private set
+    val directCount: Int get() = directTurns.size
+    val directMode: Boolean get() = directTurns.isNotEmpty()
+    val canToggle: Boolean get() = !preparing && (directMode || parts.isNotEmpty())
 
     val neuralAvailable: Boolean get() = NeuralNarration.installed(context)
 
@@ -72,6 +78,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         job = null
         directory = null
         parts = emptyList()
+        directTurns = emptyList()
+        directIndex = 0
         waveform = emptyList()
         cacheKey = ""
         active = null
@@ -102,7 +110,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         if (plain.isBlank()) return
         val preference = OfflineNarrationPreferences(context)
         val key = "${if (system) "android" else neuralVoice}:${preference.speed}:${preference.pitch}:${preference.voiceName}:$plain"
-        if (active == id && cacheKey == key && (preparing || parts.isNotEmpty())) {
+        if (active == id && cacheKey == key && (preparing || parts.isNotEmpty() || directMode)) {
             if (!preparing) toggle()
             return
         }
@@ -114,6 +122,12 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         if (!system && !neuralAvailable) {
             error = "Install Kokoro in Models or choose Android voice in Settings."
             stage = "Voice unavailable"
+            return
+        }
+        if (system) {
+            directTurns = au.datacube.app.audio.NeuralTextSegmenter.split(plain, maxChunk = 240, maxText = 12_000)
+                .map { au.datacube.app.audio.PodcastTurn(au.datacube.app.audio.PodcastSpeaker.GUIDE, it) }
+            startDirect()
             return
         }
         val target = File(context.cacheDir, "au-read-aloud/" + UUID.randomUUID().toString())
@@ -134,15 +148,11 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                 val report: suspend (String) -> Unit = { value ->
                     withContext(Dispatchers.Main) { if (token == revision) stage = value }
                 }
-                val files = if (system) {
-                    SmoothOfflineNarration.prepareReadAloud(context, plain, target, report)
-                } else {
-                    report("Preparing selected neural voice")
-                    LocalGenerativeEngine.release()
-                    val output = File(target, "response.wav")
-                    NeuralNarration.prepareReadAloud(context, plain, neuralVoice, output, report)
-                    listOf(output)
-                }
+                report("Preparing selected neural voice")
+                LocalGenerativeEngine.release()
+                val output = File(target, "response.wav")
+                NeuralNarration.prepareReadAloud(context, plain, neuralVoice, output, report)
+                val files = listOf(output)
                 val ready = withContext(Dispatchers.IO) {
                     check(files.isNotEmpty() && files.sumOf { it.length() } <= 128L * 1024 * 1024)
                     files.map { file ->
@@ -172,6 +182,32 @@ internal class AuReadAloudState(private val context: Context, private val scope:
             } catch (_: Exception) {
                 if (token == revision) error = "Could not prepare or play this voice. Check Voice in Settings."
             }
+        }
+    }
+
+    private fun startDirect() {
+        if (directTurns.isEmpty()) return
+        AuReadAloudSessions.activate(this)
+        if (directIndex >= directTurns.size) directIndex = 0
+        val start = directIndex
+        val token = ++revision
+        error = null
+        playing = true
+        stage = "Playing"
+        job = AuAudioPlayback.launch(context, "Reading response aloud", onFinished = {
+            if (token == revision) {
+                playing = false
+                stage = if (error != null) "Audio unavailable" else if (directIndex >= directTurns.size) "Completed" else "Paused"
+            }
+        }) {
+            try {
+                SmoothOfflineNarration.speakDialogue(context, directTurns.drop(start),
+                    OfflineNarrationPreferences(context).speed,
+                    onSpeaker = { index -> if (token == revision) directIndex = start + index },
+                    onStage = {})
+                if (token == revision) directIndex = directTurns.size
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (token == revision) error = "Android offline voice unavailable. Check Voice settings." }
         }
     }
 
@@ -238,6 +274,15 @@ internal class AuReadAloudState(private val context: Context, private val scope:
     }
 
     fun toggle() {
+        if (directMode) {
+            if (playing || job?.isActive == true) {
+                revision++
+                job?.cancel()
+                playing = false
+                stage = "Paused"
+            } else startDirect()
+            return
+        }
         if (preparing || parts.isEmpty()) return
         if (playing || job?.isActive == true) {
             revision++
@@ -314,7 +359,7 @@ internal fun AuReadAloudAction(speech: AuReadAloudState, id: Int, answer: String
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     listOf(Triple("kokoro", "Kokoro", "Natural local AI voice · prepares audio first"),
-                        Triple("android", "Android", "Quick offline voice · shorter preparation")).forEach { (engine, label, description) ->
+                        Triple("android", "Android", "Speak immediately using installed voice")).forEach { (engine, label, description) ->
                         Surface(shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
                             color = if (selected == engine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                             contentColor = if (selected == engine) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant) {
@@ -346,54 +391,52 @@ private fun timeLabel(ms: Long): String {
 @Composable
 internal fun AuReadAloudBar(speech: AuReadAloudState) {
     AnimatedVisibility(visible = speech.active != null) {
-        Surface(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+        Surface(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 2.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
             color = MaterialTheme.colorScheme.surfaceVariant) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    FilledIconButton(onClick = speech::toggle,
-                        enabled = !speech.preparing && speech.durationMs > 0) {
+            Column {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = speech::toggle, enabled = speech.canToggle) {
                         Icon(if (speech.playing) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
                             if (speech.playing) "Pause playback" else "Play audio")
                     }
-                    Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
-                        Text(speech.voiceLabel, style = MaterialTheme.typography.labelMedium)
-                        Text(speech.stage, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall)
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        if (speech.directMode) {
+                            LinearProgressIndicator(progress = {
+                                speech.directIndex.toFloat() / speech.directCount.coerceAtLeast(1)
+                            }, modifier = Modifier.fillMaxWidth())
+                        } else if (speech.preparing) {
+                            LinearProgressIndicator(Modifier.fillMaxWidth())
+                        } else if (speech.durationMs > 0) {
+                            var scrub by remember(speech.active) { mutableStateOf<Float?>(null) }
+                            val progress = (scrub ?: speech.positionMs.toFloat()) / speech.durationMs.toFloat()
+                            val accent = MaterialTheme.colorScheme.primary
+                            val unplayed = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .42f)
+                            if (speech.waveform.isNotEmpty()) Canvas(Modifier.fillMaxWidth().height(20.dp).padding(horizontal = 8.dp)) {
+                                val spacing = size.width / speech.waveform.size
+                                speech.waveform.forEachIndexed { index, level ->
+                                    val x = (index + .5f) * spacing
+                                    val height = size.height * level.coerceIn(.10f, 1f)
+                                    drawLine(if (index.toFloat() / speech.waveform.size < progress) accent else unplayed,
+                                        Offset(x, center.y - height / 2), Offset(x, center.y + height / 2),
+                                        strokeWidth = (spacing * .45f).coerceAtLeast(1f), cap = StrokeCap.Round)
+                                }
+                            }
+                            Slider(value = scrub ?: speech.positionMs.toFloat(),
+                                onValueChange = { scrub = it },
+                                onValueChangeFinished = { scrub?.let { speech.seekTo(it.toLong()) }; scrub = null },
+                                valueRange = 0f..speech.durationMs.toFloat(),
+                                colors = if (speech.waveform.isEmpty()) SliderDefaults.colors() else SliderDefaults.colors(
+                                    activeTrackColor = Color.Transparent, inactiveTrackColor = Color.Transparent))
+                        }
                     }
+                    if (speech.durationMs > 0) Text(timeLabel(speech.positionMs),
+                        style = MaterialTheme.typography.labelSmall)
                     IconButton(onClick = speech::stop) { Icon(Icons.Outlined.Close, "Close audio player") }
                 }
-                if (speech.preparing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom = 8.dp))
-                if (speech.durationMs > 0) {
-                    var scrub by remember(speech.active) { mutableStateOf<Float?>(null) }
-                    val progress = (scrub ?: speech.positionMs.toFloat()) / speech.durationMs.toFloat()
-                    val accent = MaterialTheme.colorScheme.primary
-                    val unplayed = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .42f)
-                    Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
-                        if (speech.waveform.isNotEmpty()) Canvas(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 12.dp)) {
-                            val spacing = size.width / speech.waveform.size
-                            speech.waveform.forEachIndexed { index, level ->
-                                val x = (index + .5f) * spacing
-                                val height = size.height * level.coerceIn(.10f, 1f)
-                                drawLine(if (index.toFloat() / speech.waveform.size < progress) accent else unplayed,
-                                    Offset(x, center.y - height / 2), Offset(x, center.y + height / 2),
-                                    strokeWidth = (spacing * .45f).coerceAtLeast(1f), cap = StrokeCap.Round)
-                            }
-                        }
-                        Slider(value = scrub ?: speech.positionMs.toFloat(),
-                            onValueChange = { scrub = it },
-                            onValueChangeFinished = { scrub?.let { speech.seekTo(it.toLong()) }; scrub = null },
-                            valueRange = 0f..speech.durationMs.toFloat(),
-                            colors = if (speech.waveform.isEmpty()) SliderDefaults.colors() else SliderDefaults.colors(
-                                activeTrackColor = Color.Transparent, inactiveTrackColor = Color.Transparent),
-                            modifier = Modifier.fillMaxWidth())
-                    }
-                    Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(timeLabel(scrub?.toLong() ?: speech.positionMs), style = MaterialTheme.typography.labelSmall)
-                        Text(timeLabel(speech.durationMs), style = MaterialTheme.typography.labelSmall)
-                    }
-                }
-                speech.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(bottom = 8.dp)) }
+                speech.error?.let { Text(it, color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(8.dp)) }
             }
         }
     }

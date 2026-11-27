@@ -134,7 +134,7 @@ fun DiscsScreen(
     }
     var expandedSources by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
     var expandedProcess by remember(threadId) { mutableStateOf<Set<Int>>(emptySet()) }
-    var liveActivityOpen by remember(threadId) { mutableStateOf(false) }
+
 
     var menuOpen by remember { mutableStateOf(false) }
     var historyBusy by remember(ownerId) { mutableStateOf(false) }
@@ -266,6 +266,11 @@ fun DiscsScreen(
                     turns.add(ChatMessage(question, emptyList(), false, answer = recap, steps = events.toList()))
                     return@launch
                 }
+                au.datacube.app.data.rag.LocalQuickReply.forMessage(question)?.let { reply ->
+                    events += "Answered a simple greeting locally"
+                    turns.add(ChatMessage(question, emptyList(), false, answer = reply, steps = events.toList()))
+                    return@launch
+                }
                 val completedTurns = turns.dropLast(1).filter {
                     !it.isUser && !it.generating && it.generationError == null && it.answer.isNotBlank() &&
                         au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null
@@ -366,7 +371,8 @@ fun DiscsScreen(
                         var lastUpdate = 0L
                         try {
                             LocalGenerativeEngine.generate(context, input + personalization.contextFor(question, requestEffort), allowGeneral = !searchDocuments,
-                                generalOnly = !searchDocuments, effort = requestEffort) { text ->
+                                generalOnly = !searchDocuments, effort = requestEffort,
+                                visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { text ->
                                 raw.append(text)
                                 val now = SystemClock.elapsedRealtime()
                                 if (now - lastUpdate > 120L) {
@@ -412,8 +418,8 @@ fun DiscsScreen(
                     generationError = "AU could not finish this request."))
             } finally {
                 session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
-                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
                 session.searching = false
                 session.searchingStage = ""
@@ -421,7 +427,7 @@ fun DiscsScreen(
                 session.activeRequest = null
             }
         }
-        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response") }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
     }
 
     fun sendAttachment() {
@@ -462,7 +468,8 @@ fun DiscsScreen(
                 }
                 var lastUpdate = 0L
                 LocalGenerativeEngine.generate(context, input,
-                    image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort) { part ->
+                    image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort,
+                    visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
                     val now = SystemClock.elapsedRealtime()
                     if (now - lastUpdate >= 120) {
@@ -485,8 +492,8 @@ fun DiscsScreen(
                     generationError = "AU could not understand this attachment.")
             } finally {
                 session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
-                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
                 session.searching = false
                 session.searchingStage = ""
@@ -494,7 +501,7 @@ fun DiscsScreen(
                 session.activitySteps.clear()
             }
         }
-        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response") }
+        session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
     }
 
     Column(Modifier.fillMaxSize().dataCubeBackdrop().imePadding().navigationBarsPadding()) {
@@ -507,11 +514,8 @@ fun DiscsScreen(
                     Text(if (collectionId == null) "Gist" else collectionName ?: "Collection AU",
                         fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleLarge)
-                    Text(if (!modelReady) "Install an AU model to chat"
-                        else if (collectionId != null) "${library.size} source documents · Collection AU"
-                        else "AU ready · Offline chat",
-                        style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (!modelReady) Text("Install a model to chat",
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = ::newChat, enabled = ready && !historyBusy && !preparingAttachment) {
                     Icon(Icons.Outlined.Add, "New Gist chat")
@@ -580,17 +584,17 @@ fun DiscsScreen(
                     } else {
                         Box(Modifier.fillMaxWidth()) {
                             Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("AU", fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary)
                                 if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
-                                AuCompletedActivity(message.steps, message.workDurationMs)
+                                if (message.generating) {
+                                    AuWorkingStatus(session.searchingStage, { session.activeRequest?.cancel() },
+                                        steps = session.activitySteps.toList())
+                                } else AuCompletedActivity(message.steps, message.workDurationMs)
                                 if (message.answer.isNotBlank()) AuRichResponse(message.answer)
                                 if (!message.generating && message.answer.isNotBlank() && message.generationError == null) {
                                     AuMessageActions(message.answer, speech, messageIndex) {
                                         AuResponseFeedback(accountId, "$ownerId:$threadId", messageIndex, message.createdAtEpochMs, "android_gist")
                                     }
                                 }
-                                if (message.generating) LinearProgressIndicator(Modifier.fillMaxWidth())
                                 message.generationError?.let { Text(it,
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall) }
@@ -654,33 +658,8 @@ fun DiscsScreen(
             }
         }
 
-        if (session.searching) {
-            if (session.activitySteps.isNotEmpty()) {
-                TextButton(
-                    onClick = { liveActivityOpen = !liveActivityOpen },
-                    modifier = Modifier.padding(horizontal = 12.dp)
-                ) {
-                    Icon(Icons.Outlined.AccountTree, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("AU activity (" + session.activitySteps.size + ")")
-                    Icon(
-                        if (liveActivityOpen) Icons.Outlined.ExpandLess
-                        else Icons.Outlined.ExpandMore, null
-                    )
-                }
-                if (liveActivityOpen) {
-                    AuActivityTimeline(
-                        session.activitySteps.toList(),
-                        modifier = Modifier.heightIn(max = 220.dp)
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp)
-                    )
-                }
-            }
-            AuWorkingStatus(
-                stage = session.searchingStage,
-                onStop = { session.activeRequest?.cancel() }
-            )
+        if (session.searching && !turns.any { it.generating }) {
+            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
         }
         ConversationWindow.warning(userTurns)?.let {
             Text(it, Modifier.padding(horizontal = 18.dp, vertical = 6.dp),

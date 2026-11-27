@@ -236,7 +236,7 @@ class GeneratedStudySession {
             }
         }
         job.start()
-        AuBackgroundWork.track(app, job, "Preparing study content")
+        AuBackgroundWork.track(app, job, "Preparing study content", au.datacube.app.notifications.TaskDestination.document(documentId, when (mode) { GeneratedStudyMode.NOTES -> 1; GeneratedStudyMode.REVISION -> 2; GeneratedStudyMode.PRACTICE -> 3 }))
     }
 
     fun stop() {

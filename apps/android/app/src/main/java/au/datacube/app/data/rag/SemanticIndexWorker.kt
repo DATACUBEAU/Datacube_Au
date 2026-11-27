@@ -92,8 +92,10 @@ class SemanticIndexWorker(context: Context, params: WorkerParameters) : Coroutin
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            // Keep the exact failure locally for troubleshooting; do not expose source text in notifications.
+            android.util.Log.w("AuSemanticIndex", "Embedding indexing failed: " + error.javaClass.simpleName)
             if (db.documents().find(id) != null) notifications.showSemanticFailed(id)
-            Result.failure(workDataOf(KEY_ERROR to (error.message ?: "Local semantic indexing failed.")))
+            Result.failure(workDataOf(KEY_ERROR to (error.message ?: "Local semantic indexing failed.").take(400)))
         } finally {
             index.close()
             notifications.clearDocumentProgress(id)

@@ -6,6 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AuResponseParserTest {
+    @Test fun legacyDiagramCommandsRenderInsteadOfLeakingIntoProse() {
+        val raw = "[DIAGRAM] Widget tree | Parent and child |\nLINE | 10 | 10 | 50 | 50 |\nLABEL | 10 | 10 | Root |\n[/DIAGRAM]"
+        val blocks = AuResponseParser.parse(raw)
+        assertEquals(1, blocks.size)
+        assertTrue(blocks.single() is AuResponseBlock.Sketch)
+    }
+
     @Test fun rendersStructuredResponsesAndKeepsActualStatusText() {
         val blocks = AuResponseParser.parse(
             "# Results\n| Check | Status |\n| --- | --- |\n| Backup | Verified |\n" +

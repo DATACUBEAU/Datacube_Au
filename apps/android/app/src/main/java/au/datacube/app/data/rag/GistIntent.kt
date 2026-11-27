@@ -60,13 +60,9 @@ object GistPrompt {
         require(question.isNotBlank())
         val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) minOf(3, effort.historyLimit) else effort.historyLimit)
         return buildString {
-            appendLine("GIST — NORMAL OFFLINE AU CONVERSATION")
-            appendLine("You are chatting without searching imported documents.")
-            appendLine("Answer from your general trained knowledge, not from imagined files.")
-            appendLine("Infer obvious minor typos from context; preserve unfamiliar names and technical terms. Ask one specific question only if meaning remains uncertain.")
+            appendLine("Answer directly using general knowledge, without searching imported documents. No internet access. Interpret obvious typos.")
             appendLine(AuTeachingPolicy.plan(question).instruction())
-            appendLine("Do not assume access to live news, current facts, the internet or the user's private files.")
-            appendLine("Do not invent citations or pretend to have searched a document.")
+            appendLine("Do not invent facts, citations or access to files.")
             if (history.isNotEmpty()) {
                 appendLine("RECENT CHAT (context, not external evidence):")
                 history.forEach { (user, answer) ->
