@@ -122,7 +122,7 @@ object SmoothOfflineNarration {
 
     suspend fun prepareReadAloud(context: Context, text: String, directory: java.io.File,
         onStage: suspend (String) -> Unit): List<java.io.File> {
-        val turns = NeuralTextSegmenter.split(text, maxChunk = 1600, maxText = 12_000)
+        val turns = NeuralTextSegmenter.split(text, maxChunk = 1000, maxText = 12_000)
             .map { PodcastTurn(PodcastSpeaker.GUIDE, it) }
         speakDialogue(context, turns, OfflineNarrationPreferences(context).speed, {}, onStage,
             renderDirectory = directory)

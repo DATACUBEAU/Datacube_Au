@@ -5,6 +5,15 @@ import android.media.AudioAttributes
 import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.semantics.Role
+import au.datacube.app.audio.SpeechWaveform
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
@@ -41,6 +50,8 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         private set
     var error by mutableStateOf<String?>(null)
         private set
+    var waveform by mutableStateOf<List<Float>>(emptyList())
+        private set
     var preparing by mutableStateOf(false)
         private set
     var playing by mutableStateOf(false)
@@ -61,6 +72,7 @@ internal class AuReadAloudState(private val context: Context, private val scope:
         job = null
         directory = null
         parts = emptyList()
+        waveform = emptyList()
         cacheKey = ""
         active = null
         stage = ""
@@ -141,7 +153,12 @@ internal class AuReadAloudState(private val context: Context, private val scope:
                     }
                 }
                 if (token != revision) return@launch
+                val levels = withContext(Dispatchers.IO) {
+                    SpeechWaveform.sample(ready.map { it.file to it.durationMs })
+                }
+                if (token != revision) return@launch
                 parts = ready
+                waveform = levels
                 durationMs = ready.sumOf { it.durationMs }
                 preparing = false
                 playCached(token)
@@ -309,11 +326,28 @@ internal fun AuReadAloudBar(speech: AuReadAloudState) {
                 if (speech.preparing) LinearProgressIndicator(Modifier.fillMaxWidth().padding(bottom = 8.dp))
                 if (speech.durationMs > 0) {
                     var scrub by remember(speech.active) { mutableStateOf<Float?>(null) }
-                    Slider(value = scrub ?: speech.positionMs.toFloat(),
-                        onValueChange = { scrub = it },
-                        onValueChangeFinished = { scrub?.let { speech.seekTo(it.toLong()) }; scrub = null },
-                        valueRange = 0f..speech.durationMs.toFloat(),
-                        modifier = Modifier.fillMaxWidth())
+                    val progress = (scrub ?: speech.positionMs.toFloat()) / speech.durationMs.toFloat()
+                    val accent = MaterialTheme.colorScheme.primary
+                    val unplayed = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .42f)
+                    Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.Center) {
+                        if (speech.waveform.isNotEmpty()) Canvas(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 12.dp)) {
+                            val spacing = size.width / speech.waveform.size
+                            speech.waveform.forEachIndexed { index, level ->
+                                val x = (index + .5f) * spacing
+                                val height = size.height * level.coerceIn(.10f, 1f)
+                                drawLine(if (index.toFloat() / speech.waveform.size < progress) accent else unplayed,
+                                    Offset(x, center.y - height / 2), Offset(x, center.y + height / 2),
+                                    strokeWidth = (spacing * .45f).coerceAtLeast(1f), cap = StrokeCap.Round)
+                            }
+                        }
+                        Slider(value = scrub ?: speech.positionMs.toFloat(),
+                            onValueChange = { scrub = it },
+                            onValueChangeFinished = { scrub?.let { speech.seekTo(it.toLong()) }; scrub = null },
+                            valueRange = 0f..speech.durationMs.toFloat(),
+                            colors = if (speech.waveform.isEmpty()) SliderDefaults.colors() else SliderDefaults.colors(
+                                activeTrackColor = Color.Transparent, inactiveTrackColor = Color.Transparent),
+                            modifier = Modifier.fillMaxWidth())
+                    }
                     Row(Modifier.fillMaxWidth().padding(bottom = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text(timeLabel(scrub?.toLong() ?: speech.positionMs), style = MaterialTheme.typography.labelSmall)
                         Text(timeLabel(speech.durationMs), style = MaterialTheme.typography.labelSmall)
@@ -335,13 +369,15 @@ internal fun AuVoiceSettings(onDismiss: () -> Unit) {
     val available = remember(context) { NeuralNarration.installed(context) }
     DataCubeDialog(onDismissRequest = onDismiss, title = { Text("Voice", style = MaterialTheme.typography.titleLarge) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text("Read-aloud engine", style = MaterialTheme.typography.labelMedium)
                 listOf("auto" to "Automatic · installed voice", "android" to "Android · quick offline voice",
                     "kokoro" to "Kokoro · local AI voice").forEach { (id, label) ->
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = engine == id, onClick = { engine = id; prefs.readAloudEngine = id },
-                            enabled = id != "kokoro" || available)
+                    val enabled = id != "kokoro" || available
+                    Row(Modifier.fillMaxWidth().selectable(selected = engine == id, enabled = enabled, role = Role.RadioButton,
+                        onClick = { engine = id; prefs.readAloudEngine = id }),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = engine == id, onClick = null, enabled = enabled, modifier = Modifier.padding(12.dp))
                         Text(label)
                     }
                 }
@@ -349,8 +385,9 @@ internal fun AuVoiceSettings(onDismiss: () -> Unit) {
                     HorizontalDivider()
                     Text("Kokoro voice", style = MaterialTheme.typography.labelMedium)
                     NeuralNarration.presetVoices.forEach { (id, label) ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = voice == id, onClick = { voice = id; prefs.neuralVoice = id })
+                        Row(Modifier.fillMaxWidth().selectable(selected = voice == id, role = Role.RadioButton,
+                            onClick = { voice = id; prefs.neuralVoice = id }), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = voice == id, onClick = null, modifier = Modifier.padding(12.dp))
                             Text(label)
                         }
                     }

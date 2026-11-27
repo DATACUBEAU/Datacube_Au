@@ -21,7 +21,7 @@ class LocalDocumentChatHistoryTest {
             store.save(first, listOf(
                 SavedDocumentTurn("What is an atom?", "An atom is mentioned [1].", false,
                     matches = listOf(SavedSource("An atom is a unit of matter.", 4)),
-                    steps = listOf("Ranked passages with local BM25"))
+                    steps = listOf("Ranked passages with local BM25"), workDurationMs = 19500L)
             ))
             store.save(second, listOf(SavedDocumentTurn("Hello", "", true)))
             val restored = store.load(first)
@@ -29,6 +29,7 @@ class LocalDocumentChatHistoryTest {
             assertEquals("What is an atom?", restored.single().question)
             assertEquals(4, restored.single().matches.single().page)
             assertEquals("An atom is mentioned [1].", restored.single().answer)
+            assertEquals(19500L, restored.single().workDurationMs)
             assertFalse(store.load(second).isEmpty())
             store.clear(first)
             assertTrue(store.load(first).isEmpty())
