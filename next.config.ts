@@ -398,7 +398,9 @@ const withPWA = withPWAInit({
           const requestUrl = typeof request.url === 'string' ? request.url.trim() : '';
           if (!requestUrl || !/^https?:/i.test(requestUrl)) return false;
           if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-          return sameOrigin;
+          // Authentication uses a direct, noncached transport; never replace
+          // the SDK's token response with a synthetic offline payload.
+          return sameOrigin && !url.pathname.startsWith('/api/auth/');
         },
         method: 'POST',
         handler: 'NetworkOnly',
