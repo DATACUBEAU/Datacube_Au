@@ -266,7 +266,9 @@ export async function middleware(req: NextRequest) {
   const hasOAuthResult = ['code', 'error', 'error_code', 'error_description'].some(
     (key) => req.nextUrl.searchParams.has(key),
   );
-  const fallbackPage = ['/', '/download', '/mobile-app-required', '/mobile-auth/install', '/dashboard'].includes(pathname);
+  // Only actual OAuth results can recover a misplaced callback. Ordinary public
+  // navigation (especially the APK download) must never be intercepted.
+  const fallbackPage = ['/', '/dashboard'].includes(pathname);
   const next = req.nextUrl.searchParams.get('next');
   const safeNext = sanitizeRedirectTarget(next, req.nextUrl.origin, '');
   const protectedRedirect = (destination: URL) => {
@@ -274,14 +276,11 @@ export async function middleware(req: NextRequest) {
     response.headers.set('Referrer-Policy', 'no-referrer');
     return response;
   };
-  if (pageNavigation && fallbackPage && (hasOAuthResult || pendingApproval)) {
-    if (hasOAuthResult) {
-      const callback = new URL('/auth/callback', req.nextUrl.origin);
-      callback.search = req.nextUrl.search;
-      if (pendingApproval && !isMobileAuthorizationDestination(safeNext)) callback.searchParams.set('next', pendingApproval);
-      return protectedRedirect(callback);
-    }
-    if (pendingApproval) return protectedRedirect(new URL(pendingApproval, req.nextUrl.origin));
+  if (pageNavigation && fallbackPage && hasOAuthResult) {
+    const callback = new URL('/auth/callback', req.nextUrl.origin);
+    callback.search = req.nextUrl.search;
+    if (pendingApproval && !isMobileAuthorizationDestination(safeNext)) callback.searchParams.set('next', pendingApproval);
+    return protectedRedirect(callback);
   }
   if (pageNavigation && pathname === '/auth/callback' && pendingApproval
     && (!next || !safeNext || isDownloadDestination(safeNext))) {

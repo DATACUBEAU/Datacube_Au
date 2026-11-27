@@ -152,3 +152,9 @@ export function isDownloadDestination(path: string): boolean {
 export function looksLikeMobileAuthDestination(value: string | null | undefined): boolean {
   return typeof value === 'string' && /(?:^|\/)mobile-auth(?:\/|\?|$)/.test(value);
 }
+
+/** Public distribution and information pages are not protected app surfaces. */
+export function isPublicDistributionPath(pathname: string | null | undefined): boolean {
+  const path = normalizeCandidatePath(pathname).replace(/\/$/, '') || '/';
+  return ['/', '/download', '/features', '/about', '/pricing', '/policy', '/mobile-app-required', '/mobile-auth/install'].includes(path);
+}
