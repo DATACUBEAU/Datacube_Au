@@ -17,6 +17,9 @@ data class IndexedPassage(
     val score: Int
 )
 
+internal data class PassageIndexSnapshot(val sourceHash: String, val count: Int)
+internal data class PassageIndexRow(val rowId: Long, val passage: IndexedPassage)
+
 /**
  * Persistent on-device FTS4 passage store. This deliberately lives in a
  * separate SQLite database so no existing Room schema/data migration changes.
@@ -195,6 +198,38 @@ class LocalPassageIndex(context: Context) :
         // Completion runs only after the transaction has committed and closed.
         onProgress(publishedCount)
         return publishedCount
+    }
+
+    /** Embeddings consume the complete, committed lexical index in bounded pages. */
+    internal fun snapshot(documentId: String, source: File): PassageIndexSnapshot? {
+        if (!hasCurrent(documentId, source)) return null
+        return readableDatabase.rawQuery(
+            "SELECT sourceSha256, passageCount FROM indexed_documents WHERE documentId = ?",
+            arrayOf(documentId)
+        ).use { cursor ->
+            if (cursor.moveToFirst()) PassageIndexSnapshot(cursor.getString(0), cursor.getInt(1)) else null
+        }
+    }
+
+    internal fun rowIdForOrdinal(documentId: String, ordinal: Int): Long? =
+        readableDatabase.rawQuery(
+            "SELECT rowid FROM passages WHERE documentId = ? AND ordinal = ? LIMIT 1",
+            arrayOf(documentId, ordinal.toString())
+        ).use { if (it.moveToFirst()) it.getLong(0) else null }
+
+    internal fun batchAfter(documentId: String, after: Long, limit: Int = 64): List<PassageIndexRow> {
+        require(validId(documentId) && limit in 1..128)
+        return readableDatabase.rawQuery(
+            "SELECT rowid, ordinal, page, body FROM passages WHERE documentId = ? AND rowid > ? ORDER BY rowid LIMIT ?",
+            arrayOf(documentId, after.toString(), limit.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(PassageIndexRow(cursor.getLong(0), IndexedPassage(cursor.getString(3),
+                        cursor.getString(2)?.toIntOrNull(), cursor.getString(1).toInt(), 0)))
+                }
+            }
+        }
     }
 
     suspend fun search(documentId: String, question: String, source: File, limit: Int = 5): List<IndexedPassage> {

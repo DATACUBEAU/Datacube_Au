@@ -158,11 +158,18 @@ class LocalNotificationService(private val context: Context) {
             .setContentIntent(openApp())
             .setContentTitle("DataCube AU")
             .setContentText(message)
-            .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .build()
         manager.notify(tag(documentId), COMPLETE_ID, notification)
+    }
+
+    fun showSemanticComplete(documentId: String) {
+        showCompletion(documentId, "Document semantic search is ready")
+    }
+
+    fun showSemanticFailed(documentId: String) {
+        showCompletion(documentId, "Semantic search needs attention. Document keyword search is still available.")
     }
 
     fun showDocumentFailed(documentId: String) {

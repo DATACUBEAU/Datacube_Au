@@ -58,7 +58,7 @@ class LocalSemanticSearch(private val context: Context) {
             val indexedHash = database.semanticChunks().sourceHash(documentId, LocalEmbeddingRuntime.MODEL_ID)
                 ?: return@withContext emptyList()
             val source = ExtractedTextStore.fileFor(app.filesDir, documentId)
-            if (!source.isFile || source.length() > 21L * 1024 * 1024) return@withContext emptyList()
+            if (!source.isFile || source.length() > 100L * 1024 * 1024) return@withContext emptyList()
             val digest = MessageDigest.getInstance("SHA-256")
             source.inputStream().buffered().use { input ->
                 val buffer = ByteArray(64 * 1024)
@@ -73,11 +73,11 @@ class LocalSemanticSearch(private val context: Context) {
             val queryVector = LocalEmbeddingRuntime.embed(app, query.take(6_000))
             val count = maxResults.coerceIn(1, 12)
             val best = PriorityQueue<SemanticSearchHit>(compareBy { it.score })
-            var offset = 0
+            var after = -1
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val page = database.semanticChunks().chunkPage(
-                    documentId, LocalEmbeddingRuntime.MODEL_ID, 64, offset
+                val page = database.semanticChunks().chunkPageAfter(
+                    documentId, LocalEmbeddingRuntime.MODEL_ID, after, 64
                 )
                 if (page.isEmpty()) break
                 for (chunk in page) {
@@ -95,7 +95,7 @@ class LocalSemanticSearch(private val context: Context) {
                         best.add(candidate)
                     }
                 }
-                offset += page.size
+                after = page.last().ordinal
             }
             best.toList().sortedByDescending { it.score }
         }

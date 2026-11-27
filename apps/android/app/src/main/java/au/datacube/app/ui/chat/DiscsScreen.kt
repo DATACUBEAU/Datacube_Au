@@ -74,6 +74,7 @@ import au.datacube.app.ui.theme.dataCubeBackdrop
 import au.datacube.app.ui.voice.VoiceNoteInputButton
 import au.datacube.app.ui.voice.VoiceNotePlayback
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -411,6 +412,9 @@ fun DiscsScreen(
                     generationError = "AU could not finish this request."))
             } finally {
                 session.recordWorkDuration(firstResponseIndex, workStartedAt)
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                }
                 session.searching = false
                 session.searchingStage = ""
                 session.activitySteps.clear()
@@ -481,6 +485,9 @@ fun DiscsScreen(
                     generationError = "AU could not understand this attachment.")
             } finally {
                 session.recordWorkDuration(firstResponseIndex, workStartedAt)
+                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready")
+                }
                 session.searching = false
                 session.searchingStage = ""
                 session.activeRequest = null
