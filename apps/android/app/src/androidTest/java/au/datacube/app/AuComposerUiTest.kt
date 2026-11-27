@@ -28,6 +28,26 @@ import org.junit.Test
 class AuComposerUiTest {
     @get:Rule val rule = createComposeRule()
 
+    @Test fun unsupportedVoiceModelLeavesDraftAndTypingComposerIntact() {
+        rule.setContent {
+            var input by remember { mutableStateOf("Keep my draft") }
+            DataCubeTheme {
+                AuComposer(input, { input = it }, {}, "Ask AU", true, true,
+                    voiceNote = au.datacube.app.ui.voice.VoiceNoteConfig(
+                        ownerId = "test-owner", sessionId = "test-thread", enabled = true,
+                        supportsAudio = false, onReady = { error("Unsupported model must not send audio") }
+                    ))
+            }
+        }
+        rule.onNodeWithContentDescription("Record a voice note").performClick()
+        rule.onNodeWithTag("au-composer-input").assertExists()
+        rule.onNodeWithTag("au-inline-voice-recorder").assertDoesNotExist()
+        rule.onNodeWithText("Select an installed Gemma 4 E2B or E4B model to record voice notes.").assertExists()
+        rule.onNodeWithText("Dismiss").performClick()
+        rule.onNodeWithTag("au-composer-input").assertExists()
+        rule.onNodeWithText("Keep my draft").assertExists()
+    }
+
     @Test fun nativeComposerSendsTextOnlyAfterExplicitTap() {
         var sent = ""
         rule.setContent {
