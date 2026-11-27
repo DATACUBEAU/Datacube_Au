@@ -486,14 +486,9 @@ fun DocumentChatWorkspace(
             } catch (_: Exception) {
                 messages[answerIndex] = messages[answerIndex].copy(generating = false, generationError = "AU could not understand this attachment.")
             } finally {
-                session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && messages.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                session.finishRequest(firstResponseIndex, workStartedAt, kotlinx.coroutines.currentCoroutineContext().isActive) {
                     au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.document(documentId))
                 }
-                session.searching = false
-                session.searchingStage = ""
-                session.activeRequest = null
-                session.activitySteps.clear()
             }
         }
         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response", au.datacube.app.notifications.TaskDestination.document(documentId)) }
@@ -711,7 +706,7 @@ fun DocumentChatWorkspace(
                                     suspend fun generalExplanation() {
                                         // Application-owned origin label, persisted with the turn. Never rely on the model to label itself.
                                         events.add(0, "General knowledge · Not verified in document")
-                                        messages[resultIndex] = messages[resultIndex].copy(steps = events.toList(), matches = emptyList(), answer = "", generating = true)
+                                        messages[resultIndex] = messages[resultIndex].copy(steps = events.toList(), matches = emptyList(), answer = "", generating = true, firstVisibleMs = null)
                                         session.searchingStage = "Preparing general explanation"
                                         val raw = session.streamingAnswer(resultIndex, 0)
                                         try {
@@ -801,14 +796,9 @@ fun DocumentChatWorkspace(
                                     events += "Search could not finish: ${error.message ?: "unknown error"}"
                                     messages.add(ChatMessage(cleanPrompt, emptyList(), false, steps = events.toList(), generationError = "Document search could not finish. Try again."))
                                 } finally {
-                                    session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && messages.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
-                    au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.document(documentId))
-                }
-                                    session.searching = false
-                                    session.searchingStage = ""
-                                    session.activitySteps.clear()
-                                    session.activeRequest = null
+                                    session.finishRequest(firstResponseIndex, workStartedAt, kotlinx.coroutines.currentCoroutineContext().isActive) {
+                                        au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.document(documentId))
+                                    }
                                 }
                             }
                         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing document answer", au.datacube.app.notifications.TaskDestination.document(documentId)) }
