@@ -61,7 +61,7 @@ object GistPrompt {
         val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) minOf(3, effort.historyLimit) else effort.historyLimit)
         val fast = effort == AuEffort.FAST
         return buildString {
-            appendLine("Answer directly from general knowledge. No document or internet access.")
+            appendLine("Answer directly from general knowledge without searching imported documents. No internet access.")
             appendLine(AuTeachingPolicy.plan(question).instruction())
             appendLine("Do not invent facts, citations or access to files.")
             if (history.isNotEmpty()) {
