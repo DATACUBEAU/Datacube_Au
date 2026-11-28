@@ -78,17 +78,22 @@ internal fun AuRelationshipMap(data: AuMapData) {
     val outline=MaterialTheme.colorScheme.outline
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(6.dp)) {
         Text(data.title,style=MaterialTheme.typography.titleMedium)
-        val rows=(data.nodes.size+1)/2
-        Canvas(Modifier.fillMaxWidth().height((rows*88+24).dp).semantics {
+        Canvas(Modifier.fillMaxWidth().height(maxOf(220, data.nodes.size*44).dp).semantics {
             contentDescription=data.edges.joinToString("; ") { e ->
                 "${data.nodes.first{it.id==e.from}.label} ${e.label} ${data.nodes.first{it.id==e.to}.label}"
             }
         }) {
-            val cellW=size.width/2
-            val cellH=size.height/rows
-            val boxW=cellW*.64f
-            val boxH=minOf(54.dp.toPx(),cellH*.62f)
-            val centers=data.nodes.mapIndexed { i,n -> n.id to Offset(cellW*(i%2+.5f),cellH*(i/2+.5f)) }.toMap()
+            // Convex perimeter placement keeps chords away from unrelated nodes.
+            // Edge crossings are possible, but never introduce extra graph vertices.
+            val count=data.nodes.size
+            val boxW=size.width*if(count<=4) .30f else .23f
+            val boxH=44.dp.toPx().coerceAtMost(size.height*.22f)
+            val radiusX=(size.width-boxW)/2-5.dp.toPx()
+            val radiusY=(size.height-boxH)/2-5.dp.toPx()
+            val centers=data.nodes.mapIndexed { i,n ->
+                val angle=if(count==2) i*PI else 2*PI*i/count-PI/2
+                n.id to Offset(size.width/2+radiusX*cos(angle).toFloat(),size.height/2+radiusY*sin(angle).toFloat())
+            }.toMap()
             val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=ink.toArgb();textSize=11.dp.toPx();typeface=Typeface.create("sans-serif",Typeface.NORMAL) }
             fun border(a:Offset,b:Offset):Offset {
                 val d=b-a
@@ -97,7 +102,11 @@ internal fun AuRelationshipMap(data: AuMapData) {
             }
             data.edges.forEachIndexed { i,e ->
                 val a=centers.getValue(e.from);val b=centers.getValue(e.to)
-                val start=border(a,b);val end=border(b,a)
+                val direction=b-a
+                val reverse=data.edges.any { it.from==e.to && it.to==e.from }
+                val shift=if(reverse && direction.getDistance()>1f)
+                    Offset(-direction.y,direction.x)/direction.getDistance()*4.dp.toPx() else Offset.Zero
+                val start=border(a,b)+shift;val end=border(b,a)+shift
                 drawLine(edge,start,end,1.5.dp.toPx())
                 val delta=end-start
                 val len=delta.getDistance()
@@ -106,6 +115,13 @@ internal fun AuRelationshipMap(data: AuMapData) {
                     drawLine(edge,end,end-u*tip+v*tip*.5f,1.5.dp.toPx())
                     drawLine(edge,end,end-u*tip-v*tip*.5f,1.5.dp.toPx())
                 }
+                val middle=(start+end)/2f
+                val dot=9.dp.toPx()
+                drawCircle(fill,dot,middle)
+                drawCircle(edge,dot,middle,style=Stroke(1.dp.toPx()))
+                val label=(i+1).toString()
+                paint.textSize=9.dp.toPx()
+                drawContext.canvas.nativeCanvas.drawText(label,middle.x-paint.measureText(label)/2,middle.y-(paint.ascent()+paint.descent())/2,paint)
             }
             data.nodes.forEach { n ->
                 val c=centers.getValue(n.id);val top=Offset(c.x-boxW/2,c.y-boxH/2)
@@ -122,7 +138,7 @@ internal fun AuRelationshipMap(data: AuMapData) {
         }
         Text("Relationships",style=MaterialTheme.typography.labelMedium)
         val names=data.nodes.associate { it.id to it.label }
-        data.edges.forEach { e -> Text("${names[e.from]} → ${names[e.to]}: ${e.label}",style=MaterialTheme.typography.bodySmall) }
+        data.edges.forEachIndexed { index,e -> Text("${index+1}. ${names[e.from]} → ${names[e.to]}: ${e.label}",style=MaterialTheme.typography.bodySmall) }
     }
 }
 
@@ -149,7 +165,7 @@ internal fun AuLearningSimulation(kind: AuSimulationKind) {
                 Parameter("a",a,-3f..3f,{a=it})
                 Parameter("b",b,-4f..4f,{b=it})
                 Parameter("c",c,-5f..5f,{c=it})
-                if(abs(a)>.0001f) Text("Vertex x = "+number(-b.toDouble()/(2*a)),style=MaterialTheme.typography.bodySmall)
+                if(a!=0f) Text("Vertex x = "+number(-b.toDouble()/(2*a)),style=MaterialTheme.typography.bodySmall)
                 else Text("a = 0: linear or constant function.",style=MaterialTheme.typography.bodySmall)
             }
             AuSimulationKind.PENDULUM -> {
