@@ -248,12 +248,15 @@ object AndroidUpdateManager {
         }
     }
 
-    fun launchInstaller(context: Context, release: AndroidUpdateRelease): InstallStatus {
+    suspend fun launchInstaller(context: Context, release: AndroidUpdateRelease): InstallStatus {
         val file = updateFile(context, release)
         check(file.isFile && file.length() == release.sizeBytes) {
             "The update has not been downloaded yet."
         }
-        verifyPackage(context, file, release.versionCode)
+        withContext(Dispatchers.IO) {
+            require(hashFile(file) == release.sha256) { "Downloaded update failed integrity verification." }
+            verifyPackage(context, file, release.versionCode)
+        }
         if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
             return InstallStatus.PERMISSION_REQUIRED
         }
