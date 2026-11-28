@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import au.datacube.app.data.rag.LocalDocumentChatHistory
 import au.datacube.app.data.rag.LocalGenerativeEngine
+import au.datacube.app.data.rag.LocalComputeGate
 import au.datacube.app.ui.voice.RecordedVoiceNote
 import au.datacube.app.data.rag.LocalConversationThreads
 import au.datacube.app.data.rag.SavedDocumentTurn
@@ -102,7 +103,9 @@ internal class DocumentChatSession(private val historyKey: String) {
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var handedOff = false
             try {
-                val words = LocalGenerativeEngine.understandVoiceNote(context.applicationContext, note.file)
+                val words = LocalComputeGate.interactiveRequest {
+                    LocalGenerativeEngine.understandVoiceNote(context.applicationContext, note.file)
+                }
                 searching = false
                 searchingStage = ""
                 activeRequest = null
@@ -147,7 +150,9 @@ internal class DocumentChatSession(private val historyKey: String) {
 
     /** Assign before running: even an immediate local reply must clear the correct job. */
     fun launchRequest(block: suspend CoroutineScope.() -> Unit) {
-        val job = scope.launch(start = CoroutineStart.LAZY, block = block)
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            LocalComputeGate.interactiveRequest { block(this@launch) }
+        }
         activeRequest = job
         job.start()
     }
