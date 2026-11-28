@@ -49,6 +49,16 @@ object ModelOutputCleaner {
                     continue
                 }
             }
+            // A literal code fence owns its entire body, including any example markers.
+            if (line.startsWith(fence)) {
+                result += rows[i++]
+                while (i < rows.size) {
+                    val literal = rows[i++]
+                    result += literal
+                    if (literal.trim() == fence) break
+                }
+                continue
+            }
             result += rows[i++]
         }
         return result.joinToString("\n")
