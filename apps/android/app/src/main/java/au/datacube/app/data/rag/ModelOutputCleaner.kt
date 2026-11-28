@@ -23,7 +23,7 @@ object ModelOutputCleaner {
         return displayed
     }
 
-    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS")
+    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS", "SCIENCE")
     private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS)](?:\s.*)?$""")
     private val partialCitation = Regex("""\[\d{0,3}$""")
     /** Hold incomplete native visual blocks and unfinished formatting markers.
@@ -44,6 +44,13 @@ object ModelOutputCleaner {
                 continue
             }
             if (code) { output += line; continue }
+            if (stack.isEmpty() && trimmed.startsWith("[SCIENCE]")) {
+                if (final || index < lines.lastIndex) {
+                    val template = AuScienceTemplate.fromKey(trimmed.removePrefix("[SCIENCE]").trim())
+                    output += if (template == null) "This illustration is unavailable. Try another visual." else "[SCIENCE] " + template.key
+                }
+                continue
+            }
             val opening = openVisual.matchEntire(trimmed)?.groupValues?.get(1)
             if (opening != null && trimmed != "[DIAGRAM] projectile") {
                 stack += opening
