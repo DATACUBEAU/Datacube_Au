@@ -229,7 +229,8 @@ object LocalGenerativeEngine {
             val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam || memory.lowMemory)
             val autoTemplate = if (!studyTask && image == null) AuScienceTemplate.select(question) else null
             val textOnly = question != null && AuTeachingPolicy.plan(question).visual == AuTeachingPolicy.Visual.TEXT_ONLY
-            val useVisual = !textOnly && (visualRequested || autoTemplate != null)
+            val simulation = if (!studyTask && image == null) AuSimulationKind.select(question) else null
+            val useVisual = !textOnly && (visualRequested || autoTemplate != null || simulation != null)
             val optionalVisual = if (!studyTask && image == null && !textOnly && !useVisual)
                 AuVisualPlan.optionalInstruction(question) else null
             val answerPlan = if (studyTask) null else AuAnswerPlan.build(question, effectiveEffort, modelId,
