@@ -23,8 +23,8 @@ object ModelOutputCleaner {
         return displayed
     }
 
-    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS", "MAP", "PLOT", "SCATTER", "SCIENCE", "SIM")
-    private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER)](?:\s.*)?$""")
+    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS", "MAP", "PLOT", "SCATTER", "TIMELINE", "SCIENCE", "SIM")
+    private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER|TIMELINE)](?:\s.*)?$""")
     /** Models occasionally wrap their declarative output in a Markdown fence.
      * Unwrap only a recognized visual block in an untyped/visual fence; preserve actual code. */
     private fun normalizeVisualFences(text: String, final: Boolean): String {
