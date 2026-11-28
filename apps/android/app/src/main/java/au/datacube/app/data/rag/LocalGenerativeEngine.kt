@@ -8,6 +8,9 @@ import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
@@ -21,7 +24,6 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -120,12 +122,12 @@ object LocalGenerativeEngine {
                 )
                 try {
                     val output = StringBuilder()
-                    conversation.sendMessageAsync(Contents.of(
+                    orderedText(conversation, Contents.of(
                         Content.AudioFile(canonical.absolutePath),
                         Content.Text("Transcribe this voice note exactly.")
-                    )).collect { message ->
+                    )).collect { part ->
                         currentCoroutineContext().ensureActive()
-                        output.append(message.toString())
+                        output.append(part)
                     }
                     val text = ModelOutputCleaner.visible(output.toString(), 0).trim()
                         .removeSurrounding("\"")
@@ -134,9 +136,9 @@ object LocalGenerativeEngine {
                         "No clear speech could be understood. Try recording your note again."
                     }
                     text
-                } catch (cancelled: CancellationException) {
+                } catch (failure: Exception) {
                     runCatching { conversation.cancelProcess() }
-                    throw cancelled
+                    throw failure
                 } finally {
                     conversation.close()
                 }
@@ -270,12 +272,10 @@ object LocalGenerativeEngine {
             var outputChars = 0L
             var success = false
             try {
-                val stream = if (image == null) conversation.sendMessageAsync(groundedPrompt)
-                    else conversation.sendMessageAsync(Contents.of(Content.ImageBytes(image), Content.Text(groundedPrompt)))
-                // Bounded FIFO: preserve every native chunk, apply backpressure instead of dropping text.
-                stream.buffer(capacity = 16).collect { message ->
+                val contents = if (image == null) Contents.of(groundedPrompt)
+                    else Contents.of(Content.ImageBytes(image), Content.Text(groundedPrompt))
+                orderedText(conversation, contents).collect { part ->
                     currentCoroutineContext().ensureActive()
-                    val part = message.toString()
                     if (part.isNotEmpty()) {
                         if (firstChunkAt == null) firstChunkAt = android.os.SystemClock.elapsedRealtime()
                         chunks++
@@ -284,9 +284,9 @@ object LocalGenerativeEngine {
                     onText(part)
                 }
                 success = true
-            } catch (cancelled: CancellationException) {
+            } catch (failure: Exception) {
                 runCatching { conversation.cancelProcess() }
-                throw cancelled
+                throw failure
             } finally {
                 try { conversation.close() } finally {
                     if (au.datacube.app.BuildConfig.DEBUG) {
@@ -305,6 +305,15 @@ object LocalGenerativeEngine {
     }
 
     }
+
+    private fun orderedText(conversation: Conversation, contents: Contents) =
+        OrderedNativeTextStream.read { emitText, complete, fail ->
+            conversation.sendMessageAsync(contents, object : MessageCallback {
+                override fun onMessage(message: Message) = emitText(message.toString())
+                override fun onDone() = complete()
+                override fun onError(throwable: Throwable) = fail(throwable)
+            })
+        }
 
     private suspend fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
