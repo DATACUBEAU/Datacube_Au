@@ -275,7 +275,7 @@ object LocalGenerativeEngine {
                                 ""
                         } + " " + AuTeachingPolicy.LANGUAGE +
                             (if (studyVisuals || (!studyTask && visualRequested))
-                                " " + AuTeachingPolicy.VISUALS else "") +
+                                " " + AuVisualPlan.instruction(question, studyTask) else "") +
                             (if (!studyTask) " " + effectiveEffort.instruction + " " + answerPlan?.instruction.orEmpty() else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
