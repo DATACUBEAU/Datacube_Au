@@ -21,7 +21,9 @@ internal class AuStreamingAnswer(
         raw.append(part)
         val now = clock()
         val previous = lastUpdate
-        if (previous != null && now - previous < 100L) return
+        // While the answer is still hidden, check more frequently for the first visible text.
+        val interval = if (lastVisible.isBlank()) 25L else 80L
+        if (previous != null && now - previous < interval) return
         emit(ModelOutputCleaner.streamingVisible(raw.toString(), sourceCount))
         lastUpdate = now
     }

@@ -8,6 +8,9 @@ import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
 import com.google.ai.edge.litertlm.ConversationConfig
+import com.google.ai.edge.litertlm.Conversation
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.SamplerConfig
@@ -119,12 +122,12 @@ object LocalGenerativeEngine {
                 )
                 try {
                     val output = StringBuilder()
-                    conversation.sendMessageAsync(Contents.of(
+                    orderedText(conversation, Contents.of(
                         Content.AudioFile(canonical.absolutePath),
                         Content.Text("Transcribe this voice note exactly.")
-                    )).collect { message ->
+                    )).collect { part ->
                         currentCoroutineContext().ensureActive()
-                        output.append(message.toString())
+                        output.append(part)
                     }
                     val text = ModelOutputCleaner.visible(output.toString(), 0).trim()
                         .removeSurrounding("\"")
@@ -133,9 +136,9 @@ object LocalGenerativeEngine {
                         "No clear speech could be understood. Try recording your note again."
                     }
                     text
-                } catch (cancelled: CancellationException) {
+                } catch (failure: Exception) {
                     runCatching { conversation.cancelProcess() }
-                    throw cancelled
+                    throw failure
                 } finally {
                     conversation.close()
                 }
@@ -153,6 +156,7 @@ object LocalGenerativeEngine {
         effort: AuEffort = AuEffort.BALANCED,
         visualRequested: Boolean = false,
         studyOutputTokens: Int? = null,
+        question: String? = null,
         onText: suspend (String) -> Unit
     ) {
         val submittedAt = android.os.SystemClock.elapsedRealtime()
@@ -162,6 +166,9 @@ object LocalGenerativeEngine {
             "The document context is empty or too long."
         }
         LocalComputeGate.admit(interactive = !studyTask) {
+            val priorPriority = android.os.Process.getThreadPriority(android.os.Process.myTid())
+            try {
+            runCatching { android.os.Process.setThreadPriority(if (studyTask) android.os.Process.THREAD_PRIORITY_BACKGROUND else android.os.Process.THREAD_PRIORITY_DEFAULT) }
             LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
             val acquiredAt = android.os.SystemClock.elapsedRealtime()
             val modelId = requireNotNull(ActiveLocalChatModel(context).selected()) {
@@ -203,7 +210,9 @@ object LocalGenerativeEngine {
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
             val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam)
-            val thinkingBudget = if (studyTask) null else effectiveEffort.thinkingBudget(modelId, lowRam)
+            val answerPlan = if (studyTask) null else AuAnswerPlan.build(question, effectiveEffort, modelId,
+                lowRam, visualRequested, image != null)
+            val thinkingBudget = answerPlan?.thinkingTokens
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
@@ -250,10 +259,10 @@ object LocalGenerativeEngine {
                         } + " " + AuTeachingPolicy.LANGUAGE +
                             (if (studyVisuals || (!studyTask && visualRequested))
                                 " " + AuTeachingPolicy.VISUALS else "") +
-                            (if (!studyTask) " " + effectiveEffort.instruction else "")
+                            (if (!studyTask) " " + effectiveEffort.instruction + " " + answerPlan?.instruction.orEmpty() else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
-                    maxOutputToken = if (studyTask) studyOutputTokens?.coerceIn(128, 3072) else effectiveEffort.outputTokens,
+                    maxOutputToken = if (studyTask) studyOutputTokens?.coerceIn(128, 3072) else answerPlan?.outputTokens,
                     thinkingConfig = thinkingBudget?.let { ThinkingConfig(enableThinking = it > 0, thinkingTokenBudget = it) }
                 )
             )
@@ -263,11 +272,10 @@ object LocalGenerativeEngine {
             var outputChars = 0L
             var success = false
             try {
-                val stream = if (image == null) conversation.sendMessageAsync(groundedPrompt)
-                    else conversation.sendMessageAsync(Contents.of(Content.ImageBytes(image), Content.Text(groundedPrompt)))
-                stream.collect { message ->
+                val contents = if (image == null) Contents.of(groundedPrompt)
+                    else Contents.of(Content.ImageBytes(image), Content.Text(groundedPrompt))
+                orderedText(conversation, contents).collect { part ->
                     currentCoroutineContext().ensureActive()
-                    val part = message.toString()
                     if (part.isNotEmpty()) {
                         if (firstChunkAt == null) firstChunkAt = android.os.SystemClock.elapsedRealtime()
                         chunks++
@@ -276,24 +284,36 @@ object LocalGenerativeEngine {
                     onText(part)
                 }
                 success = true
-            } catch (cancelled: CancellationException) {
+            } catch (failure: Exception) {
                 runCatching { conversation.cancelProcess() }
-                throw cancelled
+                throw failure
             } finally {
                 try { conversation.close() } finally {
                     if (au.datacube.app.BuildConfig.DEBUG) {
                         android.util.Log.d("AuInferenceTiming", "model=$modelId cold=$coldLoad success=$success " +
                             "dispatcherMs=${queuedAt - submittedAt} mutexMs=${acquiredAt - queuedAt} loadMs=${loadedAt - acquiredAt} " +
                             "firstChunkMs=${firstChunkAt?.minus(startedAt) ?: -1} totalMs=${android.os.SystemClock.elapsedRealtime() - startedAt} " +
-                            "effort=${effectiveEffort.name} thinkBudget=$thinkingBudget outputBudget=${if (studyTask) studyOutputTokens else effectiveEffort.outputTokens} " +
+                            "effort=${effectiveEffort.name} thinkBudget=$thinkingBudget outputBudget=${if (studyTask) studyOutputTokens else answerPlan?.outputTokens} " +
                             "inputChars=${groundedPrompt.length} outputChars=$outputChars chunks=$chunks")
                     }
                 }
+            }
+            } finally {
+                runCatching { android.os.Process.setThreadPriority(priorPriority) }
             }
         }
     }
 
     }
+
+    private fun orderedText(conversation: Conversation, contents: Contents) =
+        OrderedNativeTextStream.read { emitText, complete, fail ->
+            conversation.sendMessageAsync(contents, object : MessageCallback {
+                override fun onMessage(message: Message) = emitText(message.toString())
+                override fun onDone() = complete()
+                override fun onError(throwable: Throwable) = fail(throwable)
+            })
+        }
 
     private suspend fun sha256(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
