@@ -50,7 +50,20 @@ internal object AuVisualData {
 internal enum class AuSimulationKind(val key: String, val title: String, val description: String) {
     QUADRATIC("quadratic","Quadratic function","Explore how coefficients change a parabola. The curve is calculated directly from y = ax² + bx + c."),
     PENDULUM("pendulum","Simple pendulum","An ideal small-angle pendulum: period depends on length and gravitational acceleration, neglecting friction.");
-    companion object { fun fromKey(key: String) = entries.firstOrNull { it.key == key.trim() } }
+    companion object {
+        fun fromKey(key: String) = entries.firstOrNull { it.key == key.trim() }
+        fun select(question: String?): AuSimulationKind? {
+            val q=question.orEmpty()
+            if (AuTeachingPolicy.plan(q).visual == AuTeachingPolicy.Visual.TEXT_ONLY) return null
+            if (Regex("""\b(?:compare|versus|quiz|exam|concept map|mind map|flowchart|data map|scatter plot|bar chart|pie chart)\b""",RegexOption.IGNORE_CASE).containsMatchIn(q)) return null
+            // Fixed numerical requests must use their actual values, not default controls.
+            if (q.any(Char::isDigit) || '=' in q) return null
+            if (!Regex("""\b(?:explain|describe|teach|simulate|simulation|interactive|show|visuali[sz]e|how does|what is|draw)\b""",RegexOption.IGNORE_CASE).containsMatchIn(q)) return null
+            val quadratic=Regex("""\b(?:quadratic functions?|quadratic graph|parabolas?)\b""",RegexOption.IGNORE_CASE).containsMatchIn(q)
+            val pendulum=Regex("""\b(?:simple pendulum|pendulum motion|pendulum period|pendulum simulation)\b""",RegexOption.IGNORE_CASE).containsMatchIn(q)
+            return when { quadratic && !pendulum -> QUADRATIC; pendulum && !quadratic -> PENDULUM; else -> null }
+        }
+    }
 }
 
 internal data class AuQuadratic(val a: Double = 1.0, val b: Double = 0.0, val c: Double = 0.0) {
