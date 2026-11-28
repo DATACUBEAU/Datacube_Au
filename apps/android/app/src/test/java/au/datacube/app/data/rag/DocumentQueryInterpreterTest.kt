@@ -6,6 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DocumentQueryInterpreterTest {
+    @Test fun spellingHintsDoNotTruncateCurrentQuestion() {
+        val question = "Explain the neutorn " + "with context ".repeat(40) + "and show the final example."
+        val result = DocumentQueryInterpreter.understand(question, "A neutron is a neutral particle.")
+        assertTrue(result.contextualQuestion?.contains(question) == true)
+        assertEquals("neutron", result.correctedTerms["neutorn"])
+    }
+
     @Test fun naturalOverviewQuestionDoesNotRunKeywordMatchingForGenericWords() {
         val result = DocumentQueryInterpreter.understand(
             "What is in this documnt?", "The book explains physics and motion."
