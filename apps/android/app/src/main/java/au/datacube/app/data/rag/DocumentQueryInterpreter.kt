@@ -38,6 +38,7 @@ object DocumentQueryInterpreter {
         documentText: String,
         previousQuestion: String? = null
     ): DocumentQueryPlan {
+        AuChatInputLimits.requireQuestion(query)
         val queryTokens = tokens(query)
         if (queryTokens.isEmpty()) {
             return DocumentQueryPlan(query.trim(), false, emptyMap(),
@@ -50,7 +51,7 @@ object DocumentQueryInterpreter {
                 clarification = "Which topic or part of the document do you mean?")
         }
         val contextualQuestion = if (referential && previous != null)
-            "Earlier question: ${previous.take(220)}. Follow-up: ${query.trim().take(350)}"
+            "Earlier question: ${previous.take(220)}. Follow-up: ${query.trim()}"
         else null
         val searchTerms = if (contextualQuestion != null) {
             queryTokens + tokens(previous.orEmpty())
@@ -86,7 +87,7 @@ object DocumentQueryInterpreter {
         val vocabulary = frequency.keys.take(2_400)
         val corrected = mutableMapOf<String, String>()
         val suggestions = mutableListOf<String>()
-        searchTerms.filter { it.length >= 4 && it !in ignore && it !in frequency }
+        searchTerms.filter { it.length in 4..48 && it !in ignore && it !in frequency }
             .distinct().take(12).forEach { term ->
                 val maxDistance = if (term.length >= 5) 2 else 1
                 val nearMatches = vocabulary.asSequence()
@@ -116,7 +117,7 @@ object DocumentQueryInterpreter {
                 else appendLine("Original question: ${query.trim().take(350)}")
                 if (corrected.isNotEmpty()) {
                     appendLine("Possible source-supported spelling (original question still applies): " +
-                        queryTokens.joinToString(" ") { corrected[it] ?: it })
+                        corrected.entries.joinToString("; ") { (original, correctedTerm) -> "$original → $correctedTerm" })
                 }
                 append("Use source evidence; prefer the original meaning where supported. Ask only if a different interpretation materially changes the answer.")
             }
