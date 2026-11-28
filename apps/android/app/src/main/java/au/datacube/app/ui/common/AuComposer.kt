@@ -55,14 +55,15 @@ fun AuComposer(
     leadingActions: @Composable RowScope.() -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
     attachmentContent: @Composable ColumnScope.() -> Unit = {},
-    voiceNote: VoiceNoteConfig? = null
+    voiceNote: VoiceNoteConfig? = null,
+    maxMessageChars: Int? = null
 ) {
     var expanded by rememberSaveable { mutableStateOf(false) }
     var inputWidth by remember { mutableIntStateOf(0) }
     val measurer = rememberTextMeasurer()
     val style = MaterialTheme.typography.bodyLarge
     val canExpand = remember(value, inputWidth, style, measurer) {
-        inputWidth > 0 && value.isNotBlank() && measurer.measure(value, style = style, maxLines = 4,
+        inputWidth > 0 && value.isNotBlank() && measurer.measure(value.take(4000), style = style, maxLines = 4,
             constraints = Constraints(maxWidth = inputWidth)).hasVisualOverflow
     }
     LaunchedEffect(canExpand) { if (!canExpand) expanded = false }
@@ -107,6 +108,11 @@ fun AuComposer(
                     }
                 }
             )
+            if (maxMessageChars != null && value.length > maxMessageChars) {
+                Text("Message is too long (${value.length}/$maxMessageChars). Shorten or split it; your draft is unchanged.",
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier.testTag("au-message-too-long"))
+            }
             Row(
                 Modifier.fillMaxWidth().height(48.dp).testTag("au-composer-actions"),
                 verticalAlignment = Alignment.CenterVertically
@@ -124,7 +130,7 @@ fun AuComposer(
                 Spacer(Modifier.width(4.dp))
                 FilledIconButton(
                     onClick = onStop ?: onSend,
-                    enabled = onStop != null || sendEnabled,
+                    enabled = onStop != null || (sendEnabled && (maxMessageChars == null || value.length <= maxMessageChars)),
                     modifier = Modifier.size(44.dp),
                     shape = CircleShape
                 ) {
