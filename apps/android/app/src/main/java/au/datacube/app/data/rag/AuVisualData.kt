@@ -3,6 +3,8 @@ package au.datacube.app.data.rag
 internal data class AuMapNode(val id: String, val label: String)
 internal data class AuMapEdge(val from: String, val to: String, val label: String)
 internal data class AuMapData(val title: String, val nodes: List<AuMapNode>, val edges: List<AuMapEdge>)
+internal data class AuTimelineEvent(val time: String, val event: String)
+internal data class AuTimelineData(val title: String, val events: List<AuTimelineEvent>)
 internal data class AuPlotPoint(val x: Double, val y: Double)
 internal data class AuPlotData(val title: String, val xLabel: String, val yLabel: String, val series: List<AuPlotPoint>, val scatter: Boolean)
 
@@ -30,6 +32,16 @@ internal object AuVisualData {
         }
         if (nodes.size < 2 || edges.isEmpty() || nodes.keys.any { id -> edges.none { it.from == id || it.to == id } }) return null
         return AuMapData(title,nodes.values.toList(),edges.toList())
+    }
+    fun timeline(title: String, rows: List<String>): AuTimelineData? {
+        if (!text(title,100) || rows.size !in 2..10) return null
+        val events=rows.map { row ->
+            val p=row.split('|').map(String::trim)
+            if(p.size!=2 || !text(p[0],50) || !text(p[1],180)) return null
+            AuTimelineEvent(p[0],p[1])
+        }
+        if(events.distinct().size!=events.size) return null
+        return AuTimelineData(title,events)
     }
     fun plot(title: String, rows: List<String>, scatter: Boolean): AuPlotData? {
         if (!text(title,100) || rows.size !in 3..33) return null
