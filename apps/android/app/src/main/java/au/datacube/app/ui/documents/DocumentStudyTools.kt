@@ -474,7 +474,7 @@ fun DocumentChatWorkspace(
                         (if (selected.truncated) "Explain that this is only the beginning of the attachment. " else "") +
                         "Cite [1] for supported claims.\nQuestion: " + question + "\n[1] ATTACHMENT:\n" + selected.excerpt
                 }
-                LocalGenerativeEngine.generate(context, input, image = (selected as? GistAttachment.Photo)?.bytes, effort = mode,
+                LocalGenerativeEngine.generate(context, input, image = (selected as? GistAttachment.Photo)?.bytes, effort = mode, question = question,
                     visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
                 }
@@ -560,7 +560,7 @@ fun DocumentChatWorkspace(
                                                     cleanPrompt.take(100) +
                                                     ". Do not claim that the greeting is in a document.",
                                                 allowGeneral = true,
-                                                generalOnly = true
+                                                generalOnly = true, effort = requestEffort, question = cleanPrompt
                                             ) { part ->
                                                 answer.append(part)
                                             }
@@ -719,7 +719,7 @@ fun DocumentChatWorkspace(
                                                  "The retrieved document passages did not establish the answer. Answer this question from general knowledge only. " +
                                                     "Do not claim to have found it in any textbook. State uncertainty if needed. Question: " +
                                                     followUp.query.take(700),
-                                                allowGeneral = true, generalOnly = true, effort = requestEffort,
+                                                allowGeneral = true, generalOnly = true, effort = requestEffort, question = cleanPrompt,
                                                  visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 raw.append(part)
                                             }
@@ -755,7 +755,7 @@ fun DocumentChatWorkspace(
                                         val generated = session.streamingAnswer(resultIndex, matches.size)
                                         try {
                                             session.searchingStage = "AU is thinking"
-                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.contextFor(cleanPrompt, requestEffort).orEmpty(), effort = requestEffort,
+                                            LocalGenerativeEngine.generate(context, grounded.value + personalization?.contextFor(cleanPrompt, requestEffort).orEmpty(), effort = requestEffort, question = cleanPrompt,
                                                  visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 generated.append(part)
                                             }
