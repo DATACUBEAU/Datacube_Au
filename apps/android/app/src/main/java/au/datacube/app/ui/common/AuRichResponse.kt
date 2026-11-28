@@ -25,6 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 internal sealed interface AuResponseBlock {
+    data class RelationshipMap(val data: au.datacube.app.data.rag.AuMapData) : AuResponseBlock
+    data class NumericPlot(val data: au.datacube.app.data.rag.AuPlotData) : AuResponseBlock
+    data class Simulation(val kind: au.datacube.app.data.rag.AuSimulationKind) : AuResponseBlock
     data class Science(val template: au.datacube.app.data.rag.AuScienceTemplate) : AuResponseBlock
     data class Prose(val text: String, val heading: Int = 0, val prefix: String = "") : AuResponseBlock
     data class Table(val headers: List<String>, val rows: List<List<String>>) : AuResponseBlock
@@ -59,6 +62,26 @@ internal object AuResponseParser {
         while (i < lines.size) {
             val line = lines[i].trim()
             if (line.isBlank()) { i++; continue }
+            if (line.startsWith("[SIM]")) {
+                val kind = au.datacube.app.data.rag.AuSimulationKind.fromKey(line.removePrefix("[SIM]").trim())
+                result += if (kind == null) AuResponseBlock.Prose("This simulation is unavailable.") else AuResponseBlock.Simulation(kind)
+                i++
+                continue
+            }
+            val dataTag = listOf("MAP", "PLOT", "SCATTER").firstOrNull { line.startsWith("[" + it + "] ") }
+            if (dataTag != null) {
+                val end = (i + 1 until minOf(lines.size, i + 36)).firstOrNull { lines[it].trim() == "[/" + dataTag + "]" }
+                if (end != null) {
+                    val title = line.substringAfter(']').trim()
+                    val rows = lines.subList(i + 1,end)
+                    val block = if (dataTag == "MAP")
+                        au.datacube.app.data.rag.AuVisualData.map(title,rows)?.let { AuResponseBlock.RelationshipMap(it) }
+                    else au.datacube.app.data.rag.AuVisualData.plot(title,rows,dataTag == "SCATTER")?.let { AuResponseBlock.NumericPlot(it) }
+                    result += block ?: AuResponseBlock.Prose("This visual could not be rendered. Try regenerating.")
+                    i=end+1
+                    continue
+                }
+            }
             if (line.startsWith("[SCIENCE]")) {
                 val template = au.datacube.app.data.rag.AuScienceTemplate.fromKey(line.removePrefix("[SCIENCE]").trim())
                 if (template != null) result += AuResponseBlock.Science(template)
@@ -67,7 +90,7 @@ internal object AuResponseParser {
                 continue
             }
             // Unambiguous orphan drawing commands are never rendered as prose.
-            if (line.matches(Regex("""^(?:ALT|LINE|ARROW|CIRCLE|RECT|ELLIPSE|CURVE|LABEL)\s*\|.*$""")) ||
+            if (line.matches(Regex("""^(?:ALT|LINE|ARROW|CIRCLE|RECT|ELLIPSE|CURVE|LABEL|NODE|EDGE|AXES)\s*\|.*$""")) ||
                 line == "[/SCIENCE]") { i++; continue }
             if (line.startsWith("\u0060\u0060\u0060")) {
                 val code = mutableListOf<String>()
@@ -249,7 +272,7 @@ internal object AuResponseParser {
             }
             // A malformed declarative block is not plain text. Skip its commands
             // and retain the rest of the response, rather than exposing internals.
-            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS)](?:.*)$""")
+            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER)](?:.*)$""")
                 .matchEntire(line)?.groupValues?.get(1)
             if (invalidVisual != null) {
                 val close = (i + 1 until lines.size).firstOrNull { lines[it].trim() == "[/" + invalidVisual + "]" }
@@ -272,7 +295,7 @@ internal object AuResponseParser {
                 i = close + 1
                 continue
             }
-            if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|STEP)](?:.*)$"))) {
+            if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER|STEP)](?:.*)$"))) {
                 i++
                 continue
             }
@@ -514,6 +537,9 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                         }
                     }
                 }
+                is AuResponseBlock.RelationshipMap -> AuDiagramInspector(block.data.title) { AuRelationshipMap(block.data) }
+                is AuResponseBlock.NumericPlot -> AuDiagramInspector(block.data.title) { AuNumericPlot(block.data) }
+                is AuResponseBlock.Simulation -> AuLearningSimulation(block.kind)
                 is AuResponseBlock.Science -> AuScienceVisual(block.template)
                 AuResponseBlock.ProjectileIllustration -> AuDiagramInspector("Motion illustration") { AuProjectileIllustration() }
                 is AuResponseBlock.Sketch -> AuDiagramInspector(block.scene.title) { AuSketchIllustration(block.scene) }
