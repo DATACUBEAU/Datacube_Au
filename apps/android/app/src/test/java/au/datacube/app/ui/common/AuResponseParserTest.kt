@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AuResponseParserTest {
+    @Test fun generalizedVisualsRenderOnlyWhenComplete() {
+        val raw = "Explanation.\n[MAP] Relationships\nNODE | a | Source\nNODE | b | Target\nEDGE | a | b | sends\n[/MAP]"
+        val cleaned=au.datacube.app.data.rag.ModelOutputCleaner
+        assertFalse(cleaned.streamingVisible(raw.substringBefore("[/MAP]"),0).contains("NODE"))
+        assertTrue(AuResponseParser.parse(cleaned.streamingVisible(raw,0,final=true)).last() is AuResponseBlock.RelationshipMap)
+        assertTrue(AuSpokenResponse.format(raw).contains("sends"))
+        val plot="[PLOT] Position\nAXES | Time | Position\n0 | -3\n1 | 2\n[/PLOT]"
+        assertTrue(AuResponseParser.parse(plot).single() is AuResponseBlock.NumericPlot)
+        assertTrue(AuResponseParser.parse("[SIM] quadratic").single() is AuResponseBlock.Simulation)
+        assertFalse(cleaned.streamingVisible("[SIM] quad",0).contains("quad"))
+        assertFalse(AuResponseParser.parse("NODE | a | Source").any { it is AuResponseBlock.Prose })
+    }
+
     @Test fun scienceDirectiveIsRenderedAndNotExposedAsText() {
         val raw = "Explanation.\n[SCIENCE] plant-cell"
         val rendered = AuResponseParser.parse(raw)
