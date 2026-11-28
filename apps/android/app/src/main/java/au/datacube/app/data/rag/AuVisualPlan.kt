@@ -31,6 +31,20 @@ internal object AuVisualPlan {
         sketch.containsMatchIn(question) -> Kind.SKETCH
         else -> Kind.AUTO
     }
+    /** Conservative optional visuals for explanatory questions without explicit diagram requests. */
+    fun optionalInstruction(question: String?): String? {
+        val q = question.orEmpty()
+        if (AuTeachingPolicy.plan(q).visual != AuTeachingPolicy.Visual.AUTO) return null
+        if (!Regex("""\b(?:explain|describe|teach|how does|how do|how is|how are)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q)) return null
+        val contract = when {
+            Regex("""\b(?:process|stages|steps|cycle|sequence)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q) -> FLOW
+            Regex("""\b(?:classification|categories|types of|parts of|structure of)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q) -> TREE
+            Regex("""\b(?:equation|formula)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q) -> FORMULA
+            else -> return null
+        }
+        return "If a visual materially clarifies the explanation, include one complete native block after the key idea. Avoid decoration and invented source facts. " + contract
+    }
+
     fun instruction(question: String?): String {
         AuScienceTemplate.select(question)?.let { template ->
             return BASE + " For this topic use the built-in general educational illustration. On its own line emit exactly [SCIENCE] " + template.key + ". Do not draw raw commands or invent labels; explain how the illustration relates to the question. In document chat distinguish general illustrations from retrieved evidence."
