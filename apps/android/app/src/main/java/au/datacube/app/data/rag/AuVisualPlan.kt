@@ -31,7 +31,7 @@ internal object AuVisualPlan {
         sketch.containsMatchIn(question) -> Kind.SKETCH
         else -> Kind.AUTO
     }
-    fun instruction(question: String?, studyTask: Boolean): String {
+    fun instruction(question: String?): String {
         if (question.isNullOrBlank()) return AuTeachingPolicy.VISUALS + " " + TREE
         return BASE + " " + when (kind(question)) {
             Kind.TREE -> TREE
