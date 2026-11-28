@@ -57,6 +57,15 @@ internal object AuSpokenResponse {
                         add(plain(block.title))
                         block.steps.forEachIndexed { index, step -> add("Step ${index + 1}. " + plain(step)) }
                     }
+                    is AuResponseBlock.Tree -> {
+                        add(plain(block.scene.title))
+                        val byId = block.scene.nodes.associateBy { it.id }
+                        block.scene.nodes.forEach { node ->
+                            val parent = byId[node.parent]
+                            add(if (parent == null) plain(node.title)
+                                else plain(parent.title) + " — " + plain(node.relation) + " — " + plain(node.title))
+                        }
+                    }
                     is AuResponseBlock.Workflow -> {
                         add(plain(block.title))
                         block.stages.forEachIndexed { index, stage ->
