@@ -32,6 +32,9 @@ internal object AuVisualPlan {
         else -> Kind.AUTO
     }
     fun instruction(question: String?): String {
+        AuScienceTemplate.select(question)?.let { template ->
+            return BASE + " For this topic use the built-in general educational illustration. On its own line emit exactly [SCIENCE] " + template.key + ". Do not draw raw commands or invent labels; explain how the illustration relates to the question. In document chat distinguish general illustrations from retrieved evidence."
+        }
         if (question.isNullOrBlank()) return AuTeachingPolicy.VISUALS + " " + TREE
         return BASE + " " + when (kind(question)) {
             Kind.TREE -> TREE
