@@ -389,7 +389,7 @@ fun DiscsScreen(
                         val raw = session.streamingAnswer(answerIndex, matches.size)
                         try {
                             LocalGenerativeEngine.generate(context, input + personalization.contextFor(question, requestEffort), allowGeneral = !searchDocuments,
-                                generalOnly = !searchDocuments, effort = generationEffort,
+                                generalOnly = !searchDocuments, effort = generationEffort, question = question,
                                 visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { text ->
                                 raw.append(text)
                             }
@@ -473,7 +473,7 @@ fun DiscsScreen(
                         "Cite [1] for supported claims.\n[1] ATTACHED FILE EXCERPT:\n" + selected.excerpt
                 }
                 LocalGenerativeEngine.generate(context, input,
-                    image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort,
+                    image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort, question = question,
                     visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
                 }
