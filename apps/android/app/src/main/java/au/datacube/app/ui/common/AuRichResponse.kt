@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 internal sealed interface AuResponseBlock {
+    data class Science(val template: au.datacube.app.data.rag.AuScienceTemplate) : AuResponseBlock
     data class Prose(val text: String, val heading: Int = 0, val prefix: String = "") : AuResponseBlock
     data class Table(val headers: List<String>, val rows: List<List<String>>) : AuResponseBlock
     data class Code(val text: String) : AuResponseBlock
@@ -58,6 +59,16 @@ internal object AuResponseParser {
         while (i < lines.size) {
             val line = lines[i].trim()
             if (line.isBlank()) { i++; continue }
+            if (line.startsWith("[SCIENCE]")) {
+                val template = au.datacube.app.data.rag.AuScienceTemplate.fromKey(line.removePrefix("[SCIENCE]").trim())
+                if (template != null) result += AuResponseBlock.Science(template)
+                else result += AuResponseBlock.Prose("This illustration is unavailable. Try another visual.")
+                i++
+                continue
+            }
+            // Unambiguous orphan drawing commands are never rendered as prose.
+            if (line.matches(Regex("""^(?:ALT|LINE|ARROW|CIRCLE|RECT|ELLIPSE|CURVE|LABEL)\s*\|.*$""")) ||
+                line == "[/SCIENCE]") { i++; continue }
             if (line.startsWith("\u0060\u0060\u0060")) {
                 val code = mutableListOf<String>()
                 i++
@@ -503,6 +514,7 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                         }
                     }
                 }
+                is AuResponseBlock.Science -> AuScienceVisual(block.template)
                 AuResponseBlock.ProjectileIllustration -> AuProjectileIllustration()
                 is AuResponseBlock.Sketch -> AuSketchIllustration(block.scene)
                 is AuResponseBlock.Steps -> AuStepDeck(block)
