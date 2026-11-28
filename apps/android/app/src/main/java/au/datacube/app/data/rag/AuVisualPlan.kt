@@ -5,7 +5,7 @@ internal object AuVisualPlan {
     enum class Kind { AUTO, TREE, FLOW, WORKFLOW, SKETCH, BAR, PIE, FORMULA, STEPS, MAP, PLOT, SCATTER }
     private val map = Regex("""\b(?:data map(?:ping)?|relationship map|network diagram|entity relationship|entity-relationship|dependency graph|knowledge graph|network graph|data flow diagram|schema diagram)\b""", RegexOption.IGNORE_CASE)
     private val scatter = Regex("""\b(?:scatter plot|scatter chart|scatter graph)\b""", RegexOption.IGNORE_CASE)
-    private val plot = Regex("""\b(?:line chart|line graph|coordinate graph|function plot|plot(?: the)? (?:function|equation|data|points)|graph(?: the)? (?:function|equation))\b""", RegexOption.IGNORE_CASE)
+    private val plot = Regex("""\b(?:line chart|line graph|coordinate graph|function plot|plot(?: the)? (?:function|equation|data|points)|graph(?: the)? (?:function|equation)|(?:plot|graph)\s+y\s*=)\b""", RegexOption.IGNORE_CASE)
     private val tree = Regex("""\b(?:concept map|mind map|concept tree|hierarchy|hierarchical|tree diagram|family tree|organi[sz]ation chart)\b""", RegexOption.IGNORE_CASE)
     private val workflow = Regex("""\b(?:workflow|pipeline|system architecture)\b""", RegexOption.IGNORE_CASE)
     private val flow = Regex("""\b(?:flowchart|flow chart|process diagram|cycle diagram)\b""", RegexOption.IGNORE_CASE)
