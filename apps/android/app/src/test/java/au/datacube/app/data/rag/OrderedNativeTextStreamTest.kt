@@ -44,7 +44,9 @@ class OrderedNativeTextStreamTest {
                 done()
             }.toList()
         }.exceptionOrNull()
-        assertSame(original, failure)
+        // Coroutine stack-trace recovery may copy the exception at a suspension boundary.
+        assertTrue(failure is IllegalArgumentException)
+        assertEquals(original.message, failure?.message)
     }
 
     @Test fun emptyEventsDoNotUseBudgetAndEventLimitIsExplicit() = runBlocking {
