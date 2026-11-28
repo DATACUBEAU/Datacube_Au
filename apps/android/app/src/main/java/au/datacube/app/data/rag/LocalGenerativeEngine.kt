@@ -294,7 +294,7 @@ object LocalGenerativeEngine {
             var chunks = 0
             var outputChars = 0L
             var success = false
-            val templateAnswer = if (generalOnly && autoTemplate != null) StringBuilder() else null
+            val templateAnswer = if (generalOnly && (autoTemplate != null || simulation != null)) StringBuilder() else null
             try {
                 val contents = if (image == null) Contents.of(groundedPrompt)
                     else Contents.of(Content.ImageBytes(image), Content.Text(groundedPrompt))
@@ -308,7 +308,12 @@ object LocalGenerativeEngine {
                     if (templateAnswer != null && templateAnswer.length <= 12_000) templateAnswer.append(part)
                     onText(part)
                 }
-                if (templateAnswer != null) autoTemplate?.missingIllustration(templateAnswer.toString())?.let { onText(it) }
+                if (templateAnswer != null) {
+                    val completed = templateAnswer.toString()
+                    val missing = if (simulation != null) AuVisualProtocol.missingDirective(completed,"SIM",simulation.key)
+                        else autoTemplate?.missingIllustration(completed)
+                    missing?.let { onText(it) }
+                }
                 success = true
                 if (!studyTask) LocalComputeGate.retainRecentChat()
             } catch (failure: Exception) {
