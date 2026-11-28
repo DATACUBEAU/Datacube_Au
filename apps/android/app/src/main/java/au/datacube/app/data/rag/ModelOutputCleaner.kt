@@ -23,8 +23,8 @@ object ModelOutputCleaner {
         return displayed
     }
 
-    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "STEPS")
-    private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|STEPS)](?:\s.*)?$""")
+    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS")
+    private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS)](?:\s.*)?$""")
     private val partialCitation = Regex("""\[\d{0,3}$""")
     /** Hold incomplete native visual blocks and unfinished formatting markers.
      * Complete code fences are handled separately; never hide literal code. */

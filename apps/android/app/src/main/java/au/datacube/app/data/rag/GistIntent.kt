@@ -57,22 +57,31 @@ object GistRequestRouter {
 object GistPrompt {
     /** Recent pairs supply context to follow-ups; they are not evidence of facts. */
     fun build(question: String, previous: List<Pair<String, String>>, compact: Boolean = false, effort: AuEffort = AuEffort.BALANCED): String {
-        require(question.isNotBlank())
+        AuChatInputLimits.requireQuestion(question)
         val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) minOf(3, effort.historyLimit) else effort.historyLimit)
         val fast = effort == AuEffort.FAST
         return buildString {
             appendLine("Answer directly from general knowledge without searching imported documents. No internet access.")
             appendLine(AuTeachingPolicy.plan(question).instruction())
             appendLine("Do not invent facts, citations or access to files.")
-            if (history.isNotEmpty()) {
+            val available = (10_000 - length - question.length - 100).coerceAtLeast(0)
+            val rows = history.map { (user, answer) ->
+                "User: " + AuChatInputLimits.boundedExcerpt(user, if (fast || compact) 180 else 300) +
+                    "\nAU: " + AuChatInputLimits.boundedExcerpt(answer, if (fast || compact) 260 else 520) + "\n"
+            }
+            val selected = mutableListOf<String>()
+            var used = 0
+            for (row in rows.asReversed()) {
+                if (used + row.length > available) break
+                selected.add(0, row)
+                used += row.length
+            }
+            if (selected.isNotEmpty()) {
                 appendLine("RECENT CHAT (context, not external evidence):")
-                history.forEach { (user, answer) ->
-                    appendLine("User: " + user.take(if (fast) 180 else if (compact) 180 else 300))
-                    appendLine("AU: " + answer.take(if (fast) 260 else if (compact) 260 else 520))
-                }
+                selected.forEach { append(it) }
             }
             appendLine("CURRENT USER MESSAGE:")
-            appendLine(question.trim().take(900))
-        }.take(7_500)
+            appendLine(question.trim())
+        }.also { check(it.length <= 10_000) { "Chat context exceeds the prompt budget." } }
     }
 }

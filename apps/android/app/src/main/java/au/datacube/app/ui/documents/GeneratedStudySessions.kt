@@ -201,11 +201,14 @@ class GeneratedStudySession {
                 val answer = StringBuilder()
                 var last = 0L
                 LocalGenerativeEngine.generate(app, prepared.text, studyTask = true, studyVisuals = mode != GeneratedStudyMode.PRACTICE,
-                    studyOutputTokens = if (sequential != null) 1800 else null) { chunk ->
+                    studyOutputTokens = if (sequential != null) 1800 else null,
+                    question = if (mode == GeneratedStudyMode.NOTES) "concept map" else null) { chunk ->
                     answer.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - last >= 120) {
-                        val shown = ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size).take(16_000)
+                        val shown = if (mode == GeneratedStudyMode.NOTES)
+                            ModelOutputCleaner.streamingVisible(answer.toString(), prepared.evidence.size)
+                        else ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size)
                         withContext(Dispatchers.Main) {
                             response = shown
                             stage = if (shown.isBlank()) "AI is preparing your response"
@@ -214,7 +217,9 @@ class GeneratedStudySession {
                         last = now
                     }
                 }
-                val complete = ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size).trim()
+                val complete = (if (mode == GeneratedStudyMode.NOTES)
+                    ModelOutputCleaner.streamingVisible(answer.toString(), prepared.evidence.size, final = true)
+                else ModelOutputCleaner.visible(answer.toString(), prepared.evidence.size)).trim()
                 check(complete.isNotBlank()) { "AU did not produce readable study content." }
                 if (mode == GeneratedStudyMode.PRACTICE) {
                     check(GeneratedPracticeParser.parse(complete, sources).isNotEmpty()) {

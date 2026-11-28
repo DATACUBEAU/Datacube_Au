@@ -41,6 +41,17 @@ object LocalGenerativeEngine {
     private val mutex = LocalComputeGate.mutex
     private var engine: Engine? = null
     private var loadedPath: String? = null
+    private var loadedBytes = -1L
+    private var loadedModified = -1L
+
+    private fun matchesLoadedFile(file: File): Boolean = loadedPath == file.absolutePath &&
+        loadedBytes == file.length() && loadedModified == file.lastModified()
+
+    private fun rememberLoadedFile(file: File) {
+        loadedPath = file.absolutePath
+        loadedBytes = file.length()
+        loadedModified = file.lastModified()
+    }
     private var loadedWithAudio = false
     private var loadedWithVision = false
 
@@ -88,7 +99,7 @@ object LocalGenerativeEngine {
                     (context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager)?.getMemoryInfo(it)
                 }
                 check(!memory.lowMemory) { "Device memory is critically low. Retry when memory is available." }
-                if (engine == null || loadedPath != source.absolutePath || !loadedWithAudio) {
+                if (engine == null || !matchesLoadedFile(source) || !loadedWithAudio) {
                     engine?.close()
                     engine = null
                     loadedPath = null
@@ -105,7 +116,7 @@ object LocalGenerativeEngine {
                     ))
                     candidate.initialize()
                     engine = candidate
-                    loadedPath = source.absolutePath
+                    rememberLoadedFile(source)
                     loadedWithAudio = true
                 }
                 currentCoroutineContext().ensureActive()
@@ -135,6 +146,7 @@ object LocalGenerativeEngine {
                     require(text.isNotBlank() && text != "EMPTY") {
                         "No clear speech could be understood. Try recording your note again."
                     }
+                    LocalComputeGate.retainRecentChat()
                     text
                 } catch (failure: Exception) {
                     runCatching { conversation.cancelProcess() }
@@ -184,7 +196,7 @@ object LocalGenerativeEngine {
             val lowRam = manager?.isLowRamDevice == true || (memory.totalMem in 1L..(6L * 1024 * 1024 * 1024)) ||
                 (memory.availMem in 1L..(1024L * 1024 * 1024))
             check(!memory.lowMemory) { "Device memory is critically low. Close other apps or select a smaller local model before retrying." }
-            val coldLoad = loadedPath != file.absolutePath || engine == null || (image != null && !loadedWithVision)
+            val coldLoad = !matchesLoadedFile(file) || engine == null || (image != null && !loadedWithVision)
             if (coldLoad) {
                 engine?.close()
                 engine = null
@@ -203,13 +215,18 @@ object LocalGenerativeEngine {
                 // initialize may throw; do not close a failed/uninitialized engine.
                 candidate.initialize()
                 engine = candidate
-                loadedPath = file.absolutePath
+                rememberLoadedFile(file)
                 loadedWithAudio = false
                 loadedWithVision = image != null
             }
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
-            val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam)
+            manager?.getMemoryInfo(memory)
+            if (memory.lowMemory) {
+                releaseAdmitted()
+                throw DeviceComputePressure("Not enough memory remains after loading the model. Select a smaller model.")
+            }
+            val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam || memory.lowMemory)
             val answerPlan = if (studyTask) null else AuAnswerPlan.build(question, effectiveEffort, modelId,
                 lowRam, visualRequested, image != null)
             val thinkingBudget = answerPlan?.thinkingTokens
@@ -258,7 +275,7 @@ object LocalGenerativeEngine {
                                 ""
                         } + " " + AuTeachingPolicy.LANGUAGE +
                             (if (studyVisuals || (!studyTask && visualRequested))
-                                " " + AuTeachingPolicy.VISUALS else "") +
+                                " " + AuVisualPlan.instruction(question) else "") +
                             (if (!studyTask) " " + effectiveEffort.instruction + " " + answerPlan?.instruction.orEmpty() else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
@@ -284,6 +301,7 @@ object LocalGenerativeEngine {
                     onText(part)
                 }
                 success = true
+                if (!studyTask) LocalComputeGate.retainRecentChat()
             } catch (failure: Exception) {
                 runCatching { conversation.cancelProcess() }
                 throw failure
@@ -337,6 +355,8 @@ object LocalGenerativeEngine {
         engine?.close()
         engine = null
         loadedPath = null
+        loadedBytes = -1L
+        loadedModified = -1L
         loadedWithAudio = false
         loadedWithVision = false
     }

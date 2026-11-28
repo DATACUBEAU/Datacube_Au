@@ -94,7 +94,9 @@ class AuPersonalizationStore(context: Context, private val accountId: String) {
      */
     suspend fun contextFor(question: String, effort: AuEffort): String {
         val value = read()
-        if (!value.enabled || effort.sourceLimit < 6 || question.isBlank() ||
+        // Semantic memory is optional: on constrained devices it can evict the
+        // chat engine for a few small notes and trigger an expensive cold reload.
+        if (!value.enabled || effort.forDevice(app).sourceLimit < 6 || question.isBlank() ||
             value.notes.isEmpty() || !LocalEmbeddingRuntime.available(app) ||
             AuMemoryCommand.relevantNotes(value.notes, question).isNotEmpty()) return AuMemoryCommand.context(value,question)
         val semantic = try {

@@ -248,6 +248,7 @@ fun DiscsScreen(
         audioPath: String? = null,
         alreadyAdded: Boolean = false
     ) {
+        if (!au.datacube.app.data.rag.AuChatInputLimits.allowed(question)) return
         if (audioPath == null && !alreadyAdded && AuScheduleIntent.matches(question)) {
             scheduleTitle = question
             scheduleOpen = true
@@ -314,7 +315,7 @@ fun DiscsScreen(
                         !ScopedChatRouting.isSocialGreeting(question)
                     } else intent == GistIntent.DOCUMENT_SEARCH || groundedFollowUp
                     val retrievalQuestion = if (groundedFollowUp && previousGrounded != null)
-                        followUp.query.take(700) + " " + previousGrounded.question.take(350)
+                        followUp.query + " " + previousGrounded.question.take(350)
                     else followUp.query
                     session.searchingStage = if (searchDocuments) "Searching your documents" else "Preparing a reply"
                     val sourceResults = if (searchDocuments) {
@@ -325,7 +326,7 @@ fun DiscsScreen(
                     } else {
                         events += "Prepared a general AU conversation without document search"
                     }
-                    val matches = sourceResults.map {
+                    var matches = sourceResults.map {
                         SourceSnippet(it.text, it.page, it.documentId, it.documentName)
                     }
                     if (searchDocuments) events += "Selected ${matches.size} supporting passage(s)"
@@ -352,34 +353,19 @@ fun DiscsScreen(
                         )
                     } else {
                         session.searchingStage = "AU is thinking"
-                        val evidenceText = if (matches.isEmpty()) {
-                            "No relevant passages were retrieved from the imported documents."
-                        } else matches.mapIndexed { i, source ->
-                            "[${i + 1}] Document: ${source.documentName ?: "Unknown"}" +
-                                (source.page?.let { " · Page $it" } ?: "") +
-                                "\n${source.text}"
-                        }.joinToString("\n\n")
-                        val lastAnswers = turns.take(answerIndex).filter { !it.isUser && it.answer.isNotBlank() }
-                            .takeLast(2).joinToString("\n") { "Previous reply: ${it.answer.take(240)}" }
+                        val contextPairs = turns.take(answerIndex)
+                            .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
+                            .takeLast(20).map { it.question to it.answer }
                         val input = if (searchDocuments) {
-                            """
-                            QUESTION: ${followUp.query.take(700)}
-                            ${if (groundedFollowUp) "Earlier document question: " + previousGrounded?.question.orEmpty().take(350) else ""}
-                            PREVIOUS CHAT (not source evidence):
-                            $lastAnswers
-                            DOCUMENT SEARCH RESULTS:
-                            $evidenceText
-
-                            ${au.datacube.app.data.rag.AuTeachingPolicy.plan(followUp.query, matches.firstOrNull()?.documentName.orEmpty()).instruction()}
-                            Answer clearly using the numbered document passages.
-                            Cite only passages that support the claim. If passages
-                            are inconclusive, ask which document or term was intended.
-                            Do not invent sources or add unsupported document facts.
-                            """.trimIndent().take(13_000)
+                            val grounded = au.datacube.app.data.rag.GroundedRagPlanner.build(
+                                retrievalQuestion, contextPairs.map { au.datacube.app.data.rag.RagTurn(it.first, it.second) },
+                                matches.map { au.datacube.app.data.rag.RagEvidence(it.text,it.page,it.documentId,it.documentName) },
+                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
+                                effort = requestEffort)
+                            matches = grounded.evidence.map { SourceSnippet(it.text,it.page,it.documentId,it.documentName) }
+                            turns[answerIndex] = turns[answerIndex].copy(matches = matches)
+                            grounded.value
                         } else {
-                            val contextPairs = turns.take(answerIndex)
-                                .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
-                                .takeLast(20).map { it.question to it.answer }
                             GistPrompt.build(followUp.query, contextPairs,
                                 compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
                                 effort = au.datacube.app.data.rag.AuInteractiveLatency.generalEffort(followUp.query, requestEffort))
@@ -409,7 +395,7 @@ fun DiscsScreen(
                             throw cancelled
                         } catch (error: Exception) {
                             turns[answerIndex] = turns[answerIndex].copy(
-                                generating = false,
+                                answer = raw.partial(), generating = false,
                                 generationError = error.message ?: "AU could not finish the reply."
                             )
                         }
@@ -447,6 +433,7 @@ fun DiscsScreen(
         val question = prompt.trim().ifBlank {
             if (selected is GistAttachment.Photo) "Explain this image." else "Explain this file."
         }
+        if (!au.datacube.app.data.rag.AuChatInputLimits.allowed(question)) return
         val requestEffort = effort.forDevice(context)
         val label = selected.label
         val sources = if (selected is GistAttachment.Document)
@@ -713,7 +700,8 @@ fun DiscsScreen(
             modifier = if(collectionId==null) Modifier.auTourTarget(TourTarget.GIST_INPUT) else Modifier,
             attachmentContent = { attachment?.let { GistAttachmentPreview(it, { attachment = null; attachmentError = null }, !session.searching) } },
             value = prompt,
-            onValueChange = { prompt = it.take(700) },
+            onValueChange = { prompt = it },
+            maxMessageChars = au.datacube.app.data.rag.AuChatInputLimits.MAX_MESSAGE_CHARS,
             onSend = { if (attachment != null) sendAttachment() else send() },
             placeholder = if (collectionId == null) "Ask Gist anything…"
                 else "Ask AU about this collection…",

@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.delay
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Process-wide admission control for heavyweight native model execution.
@@ -17,6 +18,29 @@ import java.util.concurrent.atomic.AtomicInteger
 internal object LocalComputeGate {
     val mutex = Mutex()
     private val foreground = AtomicInteger(0)
+    private val retainChatUntilNanos = AtomicLong(0)
+
+    /** Keep a recently used chat engine warm for follow-ups. Explicit foreground
+     * requests are never delayed; background work resumes after a short grace period. */
+    fun retainRecentChat() {
+        retainChatUntilNanos.set(System.nanoTime() + 12_000_000_000L)
+    }
+
+    private fun graceRemainingMs(): Long {
+        val deadline = retainChatUntilNanos.get()
+        if (deadline == 0L) return 0L
+        return ((deadline - System.nanoTime()) / 1_000_000L).coerceIn(0L, 12_000L)
+    }
+
+    suspend fun trimIdleModels() {
+        if (foreground.get() != 0 || !mutex.tryLock()) return
+        try {
+            if (foreground.get() != 0) return
+            retainChatUntilNanos.set(0L)
+            LocalGenerativeEngine.releaseAdmitted()
+            LocalEmbeddingRuntime.closeAdmitted()
+        } finally { mutex.unlock() }
+    }
 
     /** Reserve interactive demand across retrieval, transcription and generation.
      * This is not a lock: nested interactive native admissions remain legal. */
@@ -35,9 +59,9 @@ internal object LocalComputeGate {
         while (true) {
             mutex.lock()
             try {
-                if (foreground.get() == 0) return operation()
+                if (foreground.get() == 0 && graceRemainingMs() == 0L) return operation()
             } finally { mutex.unlock() }
-            delay(40)
+            delay(maxOf(40L, minOf(250L, graceRemainingMs())))
         }
     }
 

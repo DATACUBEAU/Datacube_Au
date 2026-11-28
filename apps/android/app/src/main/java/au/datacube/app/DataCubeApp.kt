@@ -42,7 +42,15 @@ class DataCubeApp : Application(), Configuration.Provider {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {
-            voiceScope.launch { SmoothOfflineNarration.releaseIdle() }
+            voiceScope.launch {
+                SmoothOfflineNarration.releaseIdle()
+                // Never cancel or evict a running conversation on a trim callback.
+                if (level != android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
+                    try { au.datacube.app.data.rag.LocalComputeGate.trimIdleModels() }
+                    catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (failure: Exception) { android.util.Log.w("AuMemory", "Idle model trim failed", failure) }
+                }
+            }
         }
     }
 

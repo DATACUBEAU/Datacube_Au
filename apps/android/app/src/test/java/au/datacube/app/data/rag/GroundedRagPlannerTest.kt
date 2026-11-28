@@ -7,6 +7,16 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class GroundedRagPlannerTest {
+    @Test fun longQuestionRetainsFinalInstructionAndEvidenceIdentity() {
+        val question = "Explain " + "important context ".repeat(95) + "FINISH WITH TWO EXAMPLES"
+        val result = GroundedRagPlanner.build(question, emptyList(),
+            listOf(RagEvidence("Verified evidence.", 7, "doc", "Physics.pdf")))
+        assertTrue(result.value.contains(question))
+        assertTrue(result.value.contains("FINISH WITH TWO EXAMPLES"))
+        assertEquals("Verified evidence.", result.evidence.single().text)
+        assertTrue(result.value.contains("[1] Physics.pdf · Page 7:"))
+    }
+
     @Test fun fusionCombinesRankingsAndAvoidsDuplicateSource() {
         val gravity = RagEvidence("Gravity attracts masses.", 1)
         val circuit = RagEvidence("A circuit carries current.", 2)
@@ -74,7 +84,8 @@ class GroundedRagPlannerTest {
         }
         val history = (1..9).map { RagTurn("Question $it " + "q".repeat(5000), "a".repeat(5000)) }
         val result = GroundedRagPlanner.build("Question " + "q".repeat(5000), history, evidence)
-        assertTrue(result.value.length <= 12600)
+        assertTrue(result.value.length <= 12500)
+        assertTrue(result.value.contains("Question " + "q".repeat(5000)))
         assertEquals(5, result.evidence.size)
         assertTrue(result.evidence.all { it.text.length <= 1300 && result.value.contains(it.text) })
         assertFalse(result.value.contains("OMITTED_TAIL"))
