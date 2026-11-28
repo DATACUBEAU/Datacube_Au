@@ -450,6 +450,7 @@ fun DocumentChatWorkspace(
         val question = prompt.trim().ifBlank {
             if (selected is GistAttachment.Photo) "Explain this image." else "Explain this attachment."
         }
+        if (!au.datacube.app.data.rag.AuChatInputLimits.allowed(question)) return
         val mode = effort.forDevice(context)
         // An attachment is independent evidence, never silently imported into the open document.
         val sources = if (selected is GistAttachment.Document)
@@ -500,6 +501,7 @@ fun DocumentChatWorkspace(
         audioPath: String? = null,
         alreadyAdded: Boolean = false
     ) {
+        if (!au.datacube.app.data.rag.AuChatInputLimits.allowed(cleanPrompt)) return
         if (audioPath == null && !alreadyAdded && onScheduleRequest != null &&
             au.datacube.app.schedule.AuScheduleIntent.matches(cleanPrompt)) {
             onScheduleRequest(cleanPrompt)
@@ -718,7 +720,7 @@ fun DocumentChatWorkspace(
                                             LocalGenerativeEngine.generate(context,
                                                  "The retrieved document passages did not establish the answer. Answer this question from general knowledge only. " +
                                                     "Do not claim to have found it in any textbook. State uncertainty if needed. Question: " +
-                                                    followUp.query.take(700),
+                                                    followUp.query,
                                                 allowGeneral = true, generalOnly = true, effort = requestEffort, question = cleanPrompt,
                                                  visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(cleanPrompt).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                                                 raw.append(part)
@@ -760,9 +762,9 @@ fun DocumentChatWorkspace(
                                                 generated.append(part)
                                             }
                                             val completed = generated.finish()
+                                            // Never replace text the user has already read with a second ungrounded generation.
                                             if (completed.startsWith("I could not verify that in the available document passages", ignoreCase = true)) {
-                                                generalExplanation()
-                                                return@launch
+                                                events += "Available evidence did not establish the answer"
                                             }
                                             events += "AU generated an answer using the selected evidence"
                                             messages[resultIndex] = messages[resultIndex].copy(
@@ -1134,7 +1136,8 @@ fun DocumentChatWorkspace(
         AuComposer(
             attachmentContent = { attached?.let { au.datacube.app.ui.chat.GistAttachmentPreview(it, { attached = null; attachmentError = null }, !session.searching) } },
             value = prompt,
-            onValueChange = { prompt = it.take(500) },
+            onValueChange = { prompt = it },
+            maxMessageChars = au.datacube.app.data.rag.AuChatInputLimits.MAX_MESSAGE_CHARS,
             onSend = { if (attached != null) sendAttached() else submitQuestion(prompt.trim()) },
             placeholder = "Ask AU about this document…",
             enabled = !session.searching && (onScheduleRequest != null || (historyReady && threadIndex != null && llmInstalled)),
