@@ -3,6 +3,9 @@ package au.datacube.app.ui.common
 import android.graphics.Paint
 import android.graphics.Typeface
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -139,6 +142,34 @@ internal fun AuRelationshipMap(data: AuMapData) {
         Text("Relationships",style=MaterialTheme.typography.labelMedium)
         val names=data.nodes.associate { it.id to it.label }
         data.edges.forEachIndexed { index,e -> Text("${index+1}. ${names[e.from]} → ${names[e.to]}: ${e.label}",style=MaterialTheme.typography.bodySmall) }
+    }
+}
+
+@Composable
+internal fun AuTimeline(data: AuTimelineData) {
+    val accent=MaterialTheme.colorScheme.primary
+    Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+        Text(data.title,style=MaterialTheme.typography.titleMedium)
+        data.events.forEachIndexed { index, event ->
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+                Canvas(Modifier.width(24.dp).fillMaxHeight()) {
+                    val x=size.width/2
+                    val y=minOf(22.dp.toPx(),size.height/2)
+                    if(index>0) drawLine(accent,Offset(x,0f),Offset(x,y),2.dp.toPx())
+                    if(index<data.events.lastIndex) drawLine(accent,Offset(x,y),Offset(x,size.height),2.dp.toPx())
+                    drawCircle(accent,5.dp.toPx(),Offset(x,y))
+                }
+                Surface(Modifier.weight(1f),shape=RoundedCornerShape(12.dp),
+                    border=BorderStroke(1.dp,MaterialTheme.colorScheme.outlineVariant),
+                    color=MaterialTheme.colorScheme.surfaceVariant.copy(alpha=.45f)) {
+                    Column(Modifier.padding(10.dp),verticalArrangement=Arrangement.spacedBy(4.dp)) {
+                        Text(event.time,color=accent,style=MaterialTheme.typography.labelMedium)
+                        Text(event.event,style=MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+        Text("Ordered events · spacing is not proportional to time",style=MaterialTheme.typography.labelSmall)
     }
 }
 
