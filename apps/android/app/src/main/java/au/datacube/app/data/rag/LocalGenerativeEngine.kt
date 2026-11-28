@@ -293,6 +293,7 @@ object LocalGenerativeEngine {
             var chunks = 0
             var outputChars = 0L
             var success = false
+            val templateAnswer = if (generalOnly && autoTemplate != null) StringBuilder() else null
             try {
                 val contents = if (image == null) Contents.of(groundedPrompt)
                     else Contents.of(Content.ImageBytes(image), Content.Text(groundedPrompt))
@@ -303,8 +304,10 @@ object LocalGenerativeEngine {
                         chunks++
                         outputChars += part.length
                     }
+                    if (templateAnswer != null && templateAnswer.length <= 12_000) templateAnswer.append(part)
                     onText(part)
                 }
+                if (templateAnswer != null) autoTemplate?.missingIllustration(templateAnswer.toString())?.let { onText(it) }
                 success = true
                 if (!studyTask) LocalComputeGate.retainRecentChat()
             } catch (failure: Exception) {
