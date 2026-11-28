@@ -23,8 +23,8 @@ object ModelOutputCleaner {
         return displayed
     }
 
-    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS", "SCIENCE")
-    private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS)](?:\s.*)?$""")
+    private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS", "MAP", "PLOT", "SCATTER", "SCIENCE", "SIM")
+    private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER)](?:\s.*)?$""")
     /** Models occasionally wrap their declarative output in a Markdown fence.
      * Unwrap only a recognized visual block in an untyped/visual fence; preserve actual code. */
     private fun normalizeVisualFences(text: String, final: Boolean): String {
@@ -83,6 +83,13 @@ object ModelOutputCleaner {
                 continue
             }
             if (code) { output += line; continue }
+            if (stack.isEmpty() && trimmed.startsWith("[SIM]")) {
+                if (final || index < lines.lastIndex) {
+                    val simulation = AuSimulationKind.fromKey(trimmed.removePrefix("[SIM]").trim())
+                    output += if (simulation == null) "This simulation is unavailable." else "[SIM] " + simulation.key
+                }
+                continue
+            }
             if (stack.isEmpty() && trimmed.startsWith("[SCIENCE]")) {
                 if (final || index < lines.lastIndex) {
                     val template = AuScienceTemplate.fromKey(trimmed.removePrefix("[SCIENCE]").trim())
