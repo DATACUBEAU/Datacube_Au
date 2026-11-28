@@ -23,7 +23,8 @@ data class SavedDocumentTurn(
     val interrupted: Boolean = false,
     val audioPath: String? = null,
     val createdAtEpochMs: Long? = null,
-    val workDurationMs: Long? = null
+    val workDurationMs: Long? = null,
+    val firstVisibleMs: Long? = null
 )
 
 /** Local conversation history, scoped to a document ID. No network writes or cloud sync. */
@@ -72,7 +73,8 @@ class LocalDocumentChatHistory(filesDir: File) {
                         audioPath = if (!entry.has("audioPath") || entry.isNull("audioPath")) null
                             else entry.optString("audioPath").takeIf { it.isNotBlank() }?.take(280),
                         createdAtEpochMs = entry.optLong("createdAtEpochMs", 0L).takeIf { it > 0L },
-                        workDurationMs = entry.optLong("workDurationMs", -1L).takeIf { it >= 0L }
+                        workDurationMs = entry.optLong("workDurationMs", -1L).takeIf { it >= 0L },
+                        firstVisibleMs = entry.optLong("firstVisibleMs", -1L).takeIf { it >= 0L }
                     )
                 }
             }.getOrDefault(emptyList())
@@ -97,6 +99,7 @@ class LocalDocumentChatHistory(filesDir: File) {
                     .put("audioPath", turn.audioPath ?: JSONObject.NULL)
                     .put("createdAtEpochMs", turn.createdAtEpochMs ?: JSONObject.NULL)
                     .put("workDurationMs", turn.workDurationMs ?: JSONObject.NULL)
+                    .put("firstVisibleMs", turn.firstVisibleMs ?: JSONObject.NULL)
                 val matches = JSONArray()
                 turn.matches.take(MAX_SOURCES).forEach { src ->
                     matches.put(JSONObject().put("text", src.text.take(1500))

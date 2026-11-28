@@ -26,6 +26,7 @@ import au.datacube.app.work.AuBackgroundWork
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -72,7 +73,7 @@ import au.datacube.app.ui.documents.ChatMessage
 import au.datacube.app.ui.documents.DocumentChatSessions
 import au.datacube.app.ui.documents.SourceSnippet
 import au.datacube.app.ui.theme.dataCubeBackdrop
-import au.datacube.app.ui.voice.VoiceNoteInputButton
+import au.datacube.app.ui.voice.VoiceNoteConfig
 import au.datacube.app.ui.voice.VoiceNotePlayback
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.isActive
@@ -117,8 +118,17 @@ fun DiscsScreen(
     val ready = session.historyReady && index != null
     val userTurns = turns.count { it.isUser }
     val chatListState = key(ownerId, threadId) { rememberLazyListState() }
+    var followLatest by remember(ownerId, threadId) { mutableStateOf(true) }
+    val dragging by chatListState.interactionSource.collectIsDraggedAsState()
+    LaunchedEffect(dragging) {
+        if (dragging) followLatest = false
+    }
     LaunchedEffect(ready, threadId, userTurns) {
+        followLatest = true
         if (ready && turns.isNotEmpty()) chatListState.scrollToItem(0)
+    }
+    LaunchedEffect(ready, threadId, turns.size) {
+        if (ready && followLatest && turns.isNotEmpty()) chatListState.scrollToItem(0)
     }
     val modelReady = LocalGenerativeEngine.installed(context)
     val needsCollectionModel = collectionId != null && !modelReady
@@ -245,15 +255,16 @@ fun DiscsScreen(
         }
         if (!ready || needsCollectionModel || session.searching || question.isBlank() ||
             (!alreadyAdded && userTurns >= ConversationWindow.MAX_USER_TURNS)) return
-        if (audioPath == null) prompt = ""
+        if (audioPath == null && !alreadyAdded) prompt = ""
         if (!alreadyAdded) turns.add(ChatMessage(label, emptyList(), true, audioPath = audioPath))
         val requestEffort = effort.forDevice(context)
         session.searching = true
         session.activitySteps.clear()
         session.searchingStage = "Understanding your question"
         val firstResponseIndex = turns.size
-        val workStartedAt = SystemClock.elapsedRealtime()
-        session.activeRequest = session.scope.launch {
+        val workStartedAt = if (alreadyAdded && audioPath != null && session.requestStartedAt > 0L)
+            session.requestStartedAt else session.startRequestClock()
+        session.launchRequest launch@{
             val events = session.activitySteps
             try {
                 threads.nameFromQuestion(ownerId, threadId, question)
@@ -370,35 +381,30 @@ fun DiscsScreen(
                                 .filter { !it.isUser && it.answer.isNotBlank() && !it.generating && it.generationError == null && au.datacube.app.data.rag.AuMemoryCommand.parse(it.question) == null }
                                 .takeLast(20).map { it.question to it.answer }
                             GistPrompt.build(followUp.query, contextPairs,
-                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()), effort = requestEffort)
+                                compact = AuConversationContext.compactModel(ActiveLocalChatModel(context).selected()),
+                                effort = au.datacube.app.data.rag.AuInteractiveLatency.generalEffort(followUp.query, requestEffort))
                         }
-                        val raw = StringBuilder()
-                        var lastUpdate = 0L
+                        val generationEffort = if (searchDocuments) requestEffort else
+                            au.datacube.app.data.rag.AuInteractiveLatency.generalEffort(followUp.query, requestEffort)
+                        val raw = session.streamingAnswer(answerIndex, matches.size)
                         try {
                             LocalGenerativeEngine.generate(context, input + personalization.contextFor(question, requestEffort), allowGeneral = !searchDocuments,
-                                generalOnly = !searchDocuments, effort = requestEffort,
+                                generalOnly = !searchDocuments, effort = generationEffort,
                                 visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { text ->
                                 raw.append(text)
-                                val now = SystemClock.elapsedRealtime()
-                                if (now - lastUpdate > 120L) {
-                                    val visible = ModelOutputCleaner.visible(raw.toString(), matches.size)
-                                    withContext(Dispatchers.Main) {
-                                        turns[answerIndex] = turns[answerIndex].copy(answer = visible)
-                                    }
-                                    lastUpdate = now
-                                }
                             }
                             events += if (searchDocuments)
                                 "AU generated a document-grounded response"
                             else "AU generated a general-knowledge response"
+                            val completedAnswer = raw.finish()
                             turns[answerIndex] = turns[answerIndex].copy(
-                                answer = ModelOutputCleaner.visible(raw.toString(), matches.size).trim(),
+                                answer = completedAnswer,
                                 generating = false,
                                 steps = events.toList()
                             )
                         } catch (cancelled: CancellationException) {
                             turns[answerIndex] = turns[answerIndex].copy(
-                                answer = ModelOutputCleaner.visible(raw.toString(), matches.size).trim()
+                                answer = raw.partial()
                             )
                             throw cancelled
                         } catch (error: Exception) {
@@ -422,14 +428,9 @@ fun DiscsScreen(
                 turns.add(ChatMessage(question, emptyList(), false,
                     generationError = "AU could not finish this request."))
             } finally {
-                session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                session.finishRequest(firstResponseIndex, workStartedAt, kotlinx.coroutines.currentCoroutineContext().isActive) {
                     au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
-                session.searching = false
-                session.searchingStage = ""
-                session.activitySteps.clear()
-                session.activeRequest = null
             }
         }
         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing chat response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
@@ -460,9 +461,9 @@ fun DiscsScreen(
         val answerIndex = turns.size
         turns.add(ChatMessage(question, sources, false, generating = true))
         val firstResponseIndex = answerIndex
-        val workStartedAt = SystemClock.elapsedRealtime()
-        session.activeRequest = session.scope.launch {
-            val raw = StringBuilder()
+        val workStartedAt = session.startRequestClock()
+        session.launchRequest launch@{
+            val raw = session.streamingAnswer(answerIndex, sources.size)
             try {
                 val input = when (selected) {
                     is GistAttachment.Photo -> question
@@ -471,39 +472,26 @@ fun DiscsScreen(
                         (if (selected.truncated) "Only the beginning of the file is available; say so. " else "") +
                         "Cite [1] for supported claims.\n[1] ATTACHED FILE EXCERPT:\n" + selected.excerpt
                 }
-                var lastUpdate = 0L
                 LocalGenerativeEngine.generate(context, input,
                     image = (selected as? GistAttachment.Photo)?.bytes, effort = requestEffort,
                     visualRequested = au.datacube.app.data.rag.AuTeachingPolicy.plan(question).visual == au.datacube.app.data.rag.AuTeachingPolicy.Visual.REQUESTED) { part ->
                     raw.append(part)
-                    val now = SystemClock.elapsedRealtime()
-                    if (now - lastUpdate >= 120) {
-                        withContext(Dispatchers.Main) {
-                            turns[answerIndex] = turns[answerIndex].copy(
-                                answer = ModelOutputCleaner.visible(raw.toString(), sources.size))
-                        }
-                        lastUpdate = now
-                    }
                 }
+                val completedAnswer = raw.finish()
                 turns[answerIndex] = turns[answerIndex].copy(
-                    answer = ModelOutputCleaner.visible(raw.toString(), sources.size).trim(), generating = false)
+                    answer = completedAnswer, generating = false)
             } catch (cancelled: CancellationException) {
                 turns[answerIndex] = turns[answerIndex].copy(
-                    answer = ModelOutputCleaner.visible(raw.toString(), sources.size).trim(),
+                    answer = raw.partial(),
                     generating = false, generationError = "Reply stopped.")
                 throw cancelled
             } catch (_: Exception) {
                 turns[answerIndex] = turns[answerIndex].copy(generating = false,
                     generationError = "AU could not understand this attachment.")
             } finally {
-                session.recordWorkDuration(firstResponseIndex, workStartedAt)
-                if (kotlinx.coroutines.currentCoroutineContext().isActive && turns.drop(firstResponseIndex).any { !it.isUser && !it.generating && it.generationError == null && "Answered a simple greeting locally" !in it.steps && (it.answer.isNotBlank() || it.matches.isNotEmpty()) }) {
+                session.finishRequest(firstResponseIndex, workStartedAt, kotlinx.coroutines.currentCoroutineContext().isActive) {
                     au.datacube.app.notifications.LocalNotificationService(context.applicationContext).showAiReady("chat-answer-" + SystemClock.elapsedRealtime(), "AU response is ready", au.datacube.app.notifications.TaskDestination.gist(collectionId))
                 }
-                session.searching = false
-                session.searchingStage = ""
-                session.activeRequest = null
-                session.activitySteps.clear()
             }
         }
         session.activeRequest?.let { AuBackgroundWork.track(context, it, "Preparing attachment response", au.datacube.app.notifications.TaskDestination.gist(collectionId)) }
@@ -573,12 +561,13 @@ fun DiscsScreen(
             LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = chatListState, reverseLayout = true,
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                itemsIndexed(turns.asReversed()) { reversedIndex, message ->
+                itemsIndexed(turns.asReversed(), key = { i, _ -> turns.lastIndex - i }) { reversedIndex, message ->
                     val messageIndex = turns.lastIndex - reversedIndex
                     if (message.isUser) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                             Surface(color = MaterialTheme.colorScheme.primaryContainer,
-                                shape = RoundedCornerShape(20.dp, 20.dp, 5.dp, 20.dp)) {
+                                shape = RoundedCornerShape(20.dp, 20.dp, 5.dp, 20.dp),
+                                modifier = Modifier.widthIn(max = 340.dp)) {
                                 if (message.audioPath != null) {
                                     VoiceNotePlayback(message.audioPath, message.question)
                                 } else {
@@ -593,9 +582,9 @@ fun DiscsScreen(
                                 if ("Memory saved" in message.steps) Text("Memory saved", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelMedium)
                                 if (message.generating) {
                                     AuWorkingStatus(session.searchingStage, { session.activeRequest?.cancel() },
-                                        steps = session.activitySteps.toList())
-                                } else AuCompletedActivity(message.steps, message.workDurationMs)
-                                if (message.answer.isNotBlank()) AuRichResponse(message.answer)
+                                        steps = session.activitySteps.toList(), startedAt = session.requestStartedAt, firstVisibleMs = message.firstVisibleMs, hasAnswer = message.answer.isNotBlank())
+                                } else AuCompletedActivity(message.steps, message.workDurationMs, message.firstVisibleMs, message.generationError != null)
+                                if (message.answer.isNotBlank()) AuRichResponse(message.answer, streaming = message.generating)
                                 if (!message.generating && message.answer.isNotBlank() && message.generationError == null) {
                                     AuMessageActions(message.answer, speech, messageIndex) {
                                         AuResponseFeedback(accountId, "$ownerId:$threadId", messageIndex, message.createdAtEpochMs, "android_gist")
@@ -604,8 +593,29 @@ fun DiscsScreen(
                                 message.generationError?.let { Text(it,
                                     color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall) }
+                                val retryQuestion = session.regenerationQuestion(messageIndex)
+                                if (retryQuestion != null && (modelReady && !historyBusy && !preparingAttachment)) {
+                                    TextButton(onClick = {
+                                        val question = session.beginRegeneration(messageIndex) ?: return@TextButton
+                                        speech.stop()
+                                        expandedSources = expandedSources - messageIndex
+                                        followLatest = true
+                                        send(question, alreadyAdded = true)
+                                    }) {
+                                        Icon(Icons.Outlined.Refresh, null, Modifier.size(17.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(if (message.generationError != null) "Retry response" else "Regenerate")
+                                    }
+                                }
+                                if (session.hasAlternate(messageIndex)) {
+                                    TextButton(onClick = {
+                                        speech.stop()
+                                        expandedSources = expandedSources - messageIndex
+                                        session.swapAlternate(messageIndex)
+                                    }) { Text("Switch response version") }
+                                }
                                 val i = messageIndex
-                                if (message.matches.isNotEmpty()) {
+                                if (!message.generating && message.matches.isNotEmpty()) {
                                     if (i !in expandedSources) {
                                         Row(Modifier.horizontalScroll(rememberScrollState()),
                                             horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -618,6 +628,7 @@ fun DiscsScreen(
                                                         Text("[${sourceIndex + 1}] ${source.documentName ?: "Document"}",
                                                             style = MaterialTheme.typography.labelMedium,
                                                             maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        source.page?.let { Text("Page $it", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                                                         Text(source.text.take(160), maxLines = 3,
                                                             overflow = TextOverflow.Ellipsis,
                                                             style = MaterialTheme.typography.bodySmall)
@@ -666,13 +677,13 @@ fun DiscsScreen(
 
         if (turns.isNotEmpty() && chatListState.canScrollBackward) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                FilledTonalIconButton(onClick = { uiScope.launch { chatListState.scrollToItem(0) } }) {
+                FilledTonalIconButton(onClick = { followLatest = true; uiScope.launch { chatListState.scrollToItem(0) } }) {
                     Icon(Icons.Outlined.ArrowDownward, "Jump to latest message")
                 }
             }
         }
         if (session.searching && !turns.any { it.generating }) {
-            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() })
+            AuWorkingStatus(stage = session.searchingStage, onStop = { session.activeRequest?.cancel() }, startedAt = session.requestStartedAt, steps = session.activitySteps.toList())
         }
         ConversationWindow.warning(userTurns)?.let {
             Text(it, Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
@@ -726,39 +737,18 @@ fun DiscsScreen(
                     )
                 }
             },
-            actions = {
-                VoiceNoteInputButton(
+            voiceNote = VoiceNoteConfig(
                     ownerId = ownerId,
+                    sessionId = threadId,
                     enabled = ready && !needsCollectionModel && !historyBusy && !session.searching && !preparingAttachment && attachment == null &&
                         userTurns < ConversationWindow.MAX_USER_TURNS,
                     supportsAudio = LocalGenerativeEngine.supportsVoiceNotes(context),
                     onReady = { note ->
-                        val label = "Voice note · " + note.durationSeconds + "s"
-                        turns.add(ChatMessage(label, emptyList(), true,
-                            audioPath = note.file.absolutePath))
-                        session.searching = true
-                        session.searchingStage = "AU is listening"
-                        session.activeRequest = session.scope.launch {
-                            try {
-                                val question = LocalGenerativeEngine.understandVoiceNote(
-                                    context, note.file)
-                                session.searching = false
-                                session.searchingStage = ""
-                                send(question, label, note.file.absolutePath, alreadyAdded = true)
-                            } catch (cancelled: CancellationException) {
-                                session.searching = false
-                                session.searchingStage = ""
-                                throw cancelled
-                            } catch (error: Exception) {
-                                session.searching = false
-                                session.searchingStage = ""
-                                turns.add(ChatMessage(label, emptyList(), false,
-                                    generationError = error.message ?: "AU could not understand this audio."))
-                            }
+                        session.submitVoiceNote(context, note) { words, label, path ->
+                            send(words, label, path, alreadyAdded = true)
                         }
                     }
                 )
-            }
         )
     }
 }

@@ -7,12 +7,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import au.datacube.app.data.rag.LocalDocumentChatHistory
+import au.datacube.app.data.rag.LocalGenerativeEngine
+import au.datacube.app.ui.voice.RecordedVoiceNote
 import au.datacube.app.data.rag.LocalConversationThreads
 import au.datacube.app.data.rag.SavedDocumentTurn
 import au.datacube.app.data.rag.SavedSource
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -37,7 +40,117 @@ internal class DocumentChatSession(private val historyKey: String) {
     val activitySteps = mutableStateListOf<String>()
     var searching by mutableStateOf(false)
     var searchingStage by mutableStateOf("")
+    var requestStartedAt by mutableStateOf(0L)
+        private set
+
+    // Keep at most one alternate for the latest exchange in process memory.
+    // The selected response, not the alternate, is saved by the history writer.
+    private var alternate by mutableStateOf<ChatMessage?>(null)
+    private var alternateIndex by mutableStateOf(-1)
+
+    fun startRequestClock(): Long {
+        if (messages.size != alternateIndex) {
+            alternate = null
+            alternateIndex = -1
+        }
+        return android.os.SystemClock.elapsedRealtime().also { requestStartedAt = it }
+    }
+
+    fun beginRegeneration(index: Int): String? {
+        val question = regenerationQuestion(index) ?: return null
+        val previous = messages[index]
+        if (previous.answer.isNotBlank() && previous.generationError == null) {
+            alternate = previous
+            alternateIndex = index
+        }
+        messages.removeAt(index)
+        return question
+    }
+
+    fun hasAlternate(index: Int): Boolean =
+        !searching && index == messages.lastIndex && index == alternateIndex && alternate != null
+
+    fun swapAlternate(index: Int) {
+        if (!hasAlternate(index)) return
+        val prior = alternate ?: return
+        alternate = messages[index]
+        messages[index] = prior
+    }
+
+    fun publishAnswer(index: Int, answer: String) {
+        val turn = messages.getOrNull(index) ?: return
+        if (turn.answer == answer || !turn.generating) return
+        val first = turn.firstVisibleMs ?: if (answer.isNotBlank() && requestStartedAt > 0L)
+            (android.os.SystemClock.elapsedRealtime() - requestStartedAt).coerceAtLeast(0L) else null
+        messages[index] = turn.copy(answer = answer, firstVisibleMs = first)
+    }
+
+    /** Audio transcription hands off to the same scoped chat request. Keep the
+     * original start time and the audio bubble; never leak an unfinished job. */
+    fun submitVoiceNote(context: Context, note: RecordedVoiceNote, onTranscribed: (String, String, String) -> Unit) {
+        if (!historyReady || searching) {
+            note.file.delete()
+            return
+        }
+        val label = "Voice note · " + note.durationSeconds + "s"
+        messages.add(ChatMessage(label, emptyList(), true, audioPath = note.file.absolutePath))
+        val firstIndex = messages.size
+        val startedAt = startRequestClock()
+        searching = true
+        searchingStage = "AU is listening"
+        activitySteps.clear()
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+            var handedOff = false
+            try {
+                val words = LocalGenerativeEngine.understandVoiceNote(context.applicationContext, note.file)
+                searching = false
+                searchingStage = ""
+                activeRequest = null
+                onTranscribed(words, label, note.file.absolutePath)
+                handedOff = searching || messages.size > firstIndex
+                if (!handedOff) {
+                    messages.add(ChatMessage(label, emptyList(), false,
+                        generationError = "Chat could not start the voice reply. Try again."))
+                }
+            } catch (cancelled: CancellationException) {
+                messages.add(ChatMessage(label, emptyList(), false, generationError = "Voice request stopped."))
+                throw cancelled
+            } catch (error: Exception) {
+                messages.add(ChatMessage(label, emptyList(), false,
+                    generationError = error.message ?: "AU could not understand this audio."))
+            } finally {
+                if (!handedOff) finishRequest(firstIndex, startedAt, false) {}
+            }
+        }
+        activeRequest = job
+        job.start()
+    }
+
+    /** Only the latest ordinary text exchange can be regenerated without
+     * replaying a voice note, memory command, scheduling action or attachment. */
+    fun regenerationQuestion(index: Int): String? {
+        if (!historyReady || searching || index != messages.lastIndex || index < 1) return null
+        val answer = messages[index]
+        val user = messages[index - 1]
+        if (answer.isUser || answer.generating || !user.isUser || user.audioPath != null ||
+            user.question.isBlank() || user.question.contains("\nAttachment:") ||
+            au.datacube.app.data.rag.AuMemoryCommand.parse(user.question) != null ||
+            au.datacube.app.schedule.AuScheduleIntent.matches(user.question)) return null
+        return user.question
+    }
+
+    fun streamingAnswer(index: Int, sourceCount: Int): AuStreamingAnswer =
+        AuStreamingAnswer(sourceCount) { visible ->
+            withContext(Dispatchers.Main.immediate) { publishAnswer(index, visible) }
+        }
     var activeRequest: Job? = null
+
+    /** Assign before running: even an immediate local reply must clear the correct job. */
+    fun launchRequest(block: suspend CoroutineScope.() -> Unit) {
+        val job = scope.launch(start = CoroutineStart.LAZY, block = block)
+        activeRequest = job
+        job.start()
+    }
     var historyReady by mutableStateOf(false)
         private set
     private var initialized = false
@@ -67,7 +180,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                         generationError = if (turn.interrupted) "Previous response stopped before completion." else null,
                         audioPath = turn.audioPath,
                         createdAtEpochMs = turn.createdAtEpochMs,
-                        workDurationMs = turn.workDurationMs
+                        workDurationMs = turn.workDurationMs,
+                        firstVisibleMs = turn.firstVisibleMs
                     )
                 })
             } catch (cancelled: CancellationException) {
@@ -95,7 +209,8 @@ internal class DocumentChatSession(private val historyKey: String) {
                             interrupted = item.generating || item.generationError != null,
                             audioPath = item.audioPath,
                             createdAtEpochMs = item.createdAtEpochMs,
-                            workDurationMs = item.workDurationMs
+                            workDurationMs = item.workDurationMs,
+                            firstVisibleMs = item.firstVisibleMs
                         )
                     })
                 } catch (cancelled: CancellationException) {
@@ -119,6 +234,8 @@ internal class DocumentChatSession(private val historyKey: String) {
             val audioPaths = messages.mapNotNull { it.audioPath }.distinct()
             LocalDocumentChatHistory(context).clear(historyKey)
             messages.clear()
+            alternate = null
+            alternateIndex = -1
             activitySteps.clear()
             return withContext(Dispatchers.IO) {
                 val base = File(context.filesDir, "voice-notes/$ownerId").canonicalFile
@@ -141,11 +258,38 @@ internal class DocumentChatSession(private val historyKey: String) {
         }
     }
 
+    /** One cleanup path for text, attachment and grounded requests. Notifications
+     * are best effort; a notification failure must never lock the composer. */
+    fun finishRequest(firstIndex: Int, startedAt: Long, successful: Boolean, notify: () -> Unit) {
+        try {
+            for (index in firstIndex.coerceAtLeast(0) until messages.size) {
+                val turn = messages[index]
+                if (!turn.isUser && turn.generating) messages[index] = turn.copy(
+                    generating = false, generationError = if (successful) "Response could not finish." else "Reply stopped.")
+            }
+            recordWorkDuration(firstIndex, startedAt)
+            if (successful && messages.drop(firstIndex).any {
+                !it.isUser && !it.generating && it.generationError == null &&
+                    "Answered a simple greeting locally" !in it.steps &&
+                    (it.answer.isNotBlank() || it.matches.isNotEmpty())
+            }) runCatching { notify() }.onFailure {
+                android.util.Log.w("AuChat", "Response notification could not be delivered", it)
+            }
+        } finally {
+            searching = false
+            searchingStage = ""
+            activitySteps.clear()
+            activeRequest = null
+            requestStartedAt = 0L
+        }
+    }
+
     fun recordWorkDuration(firstIndex: Int, startedAt: Long) {
         val duration = (android.os.SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(0L)
         for (index in firstIndex.coerceAtLeast(0) until messages.size) {
             val turn = messages[index]
-            if (!turn.isUser && !turn.generating) messages[index] = turn.copy(workDurationMs = duration)
+            if (!turn.isUser && !turn.generating) messages[index] = turn.copy(workDurationMs = duration,
+                firstVisibleMs = turn.firstVisibleMs)
         }
     }
 

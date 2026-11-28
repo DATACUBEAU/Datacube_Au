@@ -65,7 +65,7 @@ class SemanticIndexWorker(context: Context, params: WorkerParameters) : Coroutin
                 for ((nextRowId, chunk) in batch) {
                     currentCoroutineContext().ensureActive()
                     check(chunk.ordinal == done + vectors.size) { "Source index sequence changed." }
-                    val vector = LocalEmbeddingRuntime.embed(applicationContext, chunk.text)
+                    val vector = LocalEmbeddingRuntime.embed(applicationContext, chunk.text, background = true)
                     if (dimension == null) dimension = vector.size
                     check(vector.size == dimension) { "Embedding dimensions changed." }
                     vectors += SemanticVectorChunk(id, staging, chunk.ordinal, chunk.page, chunk.text,

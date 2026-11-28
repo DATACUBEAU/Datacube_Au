@@ -5,6 +5,9 @@ import android.content.Context
 import android.os.Build
 import android.os.PowerManager
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Process-wide admission control for heavyweight native model execution.
@@ -13,6 +16,24 @@ import kotlinx.coroutines.sync.Mutex
  */
 internal object LocalComputeGate {
     val mutex = Mutex()
+    private val foreground = AtomicInteger(0)
+
+    /** Interactive requests take precedence at native operation boundaries.
+     * An already running operation is never interrupted or run concurrently. */
+    suspend fun <T> admit(interactive: Boolean, operation: suspend () -> T): T {
+        if (interactive) {
+            foreground.incrementAndGet()
+            try { return mutex.withLock { operation() } }
+            finally { foreground.decrementAndGet() }
+        }
+        while (true) {
+            mutex.lock()
+            try {
+                if (foreground.get() == 0) return operation()
+            } finally { mutex.unlock() }
+            delay(40)
+        }
+    }
 
     enum class Engine { CHAT, EMBEDDING, SPEECH }
 
