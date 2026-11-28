@@ -1229,7 +1229,8 @@ fun SmartNoteWorkspace(
     var conceptTree by remember(documentId) { mutableStateOf(false) }
     val ready = LocalGenerativeEngine.installed(context)
     val conceptBlock = remember(session.response) {
-        Regex("""(?s)\[WORKFLOW] [^\n]+\n.*?\[/WORKFLOW]""").find(session.response)?.value
+        Regex("""(?s)\[TREE] [^\n]+\n.*?\[/TREE]""").find(session.response)?.value
+            ?: Regex("""(?s)\[WORKFLOW] [^\n]+\n.*?\[/WORKFLOW]""").find(session.response)?.value
     }
     val notesText = remember(session.response, conceptBlock) {
         conceptBlock?.let { session.response.replace(it, "").trim() } ?: session.response
