@@ -25,11 +25,40 @@ object ModelOutputCleaner {
 
     private val visualTags = listOf("DIAGRAM", "SKETCH", "WORKFLOW", "FLOW", "BOX", "BAR", "PIE", "FORMULA", "TREE", "STEPS", "SCIENCE")
     private val openVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS)](?:\s.*)?$""")
+    /** Models occasionally wrap their declarative output in a Markdown fence.
+     * Unwrap only a recognized visual block in an untyped/visual fence; preserve actual code. */
+    private fun normalizeVisualFences(text: String, final: Boolean): String {
+        val rows = text.lines()
+        val result = mutableListOf<String>()
+        val fence = "\u0060\u0060\u0060"
+        var i = 0
+        while (i < rows.size) {
+            val line = rows[i].trim()
+            if (line in setOf(fence, fence + "diagram", fence + "visual")) {
+                val first = (i + 1 until rows.size).firstOrNull { rows[it].isNotBlank() }
+                val next = first?.let { rows[it].trim() }.orEmpty()
+                val native = next.isNotEmpty() && visualTags.any { tag ->
+                    val marker = "[" + tag + "]"
+                    next.startsWith(marker) || marker.startsWith(next)
+                }
+                if (native && first != null) {
+                    val close = (first + 1 until rows.size).firstOrNull { rows[it].trim() == fence }
+                    if (close == null && !final) break
+                    result += rows.subList(first, close ?: rows.size)
+                    i = if (close == null) rows.size else close + 1
+                    continue
+                }
+            }
+            result += rows[i++]
+        }
+        return result.joinToString("\n")
+    }
+
     private val partialCitation = Regex("""\[\d{0,3}$""")
     /** Hold incomplete native visual blocks and unfinished formatting markers.
      * Complete code fences are handled separately; never hide literal code. */
     fun streamingVisible(raw: String, sourceCount: Int, final: Boolean = false): String {
-        val cleaned = clean(raw, sourceCount)
+        val cleaned = normalizeVisualFences(clean(raw, sourceCount), final)
         check(cleaned.length <= 12_000) { "Response exceeds the saved-answer limit. Ask for a shorter response." }
         val lines = cleaned.split('\n')
         val output = mutableListOf<String>()
