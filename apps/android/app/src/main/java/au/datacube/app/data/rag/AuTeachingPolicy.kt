@@ -44,7 +44,7 @@ internal object AuTeachingPolicy {
         }
     }
     fun plan(question:String,title:String=""):Plan {
-        val q=question.take(1200)
+        val q=question.take(AuChatInputLimits.MAX_CONTEXTUAL_QUESTION_CHARS)
         val level=when { brief.containsMatchIn(q)->Level.BRIEF; simple.containsMatchIn(q)->Level.SIMPLE; advanced.containsMatchIn(q)->Level.ADVANCED;else->Level.AUTO }
         fun detect(s:String):Subject {
             val ranked=subjectWords.map { (subject,regex)->subject to regex.findAll(s).map { it.value.lowercase() }.distinct().count() }.sortedByDescending { it.second }
