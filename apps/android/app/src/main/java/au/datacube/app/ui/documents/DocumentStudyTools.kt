@@ -729,10 +729,11 @@ fun DocumentChatWorkspace(
                                             messages[resultIndex] = messages[resultIndex].copy(answer = completedAnswer,
                                                 generating = false)
                                         } catch (cancelled: CancellationException) {
+                                            messages[resultIndex] = messages[resultIndex].copy(answer = raw.partial())
                                             throw cancelled
-                                        } catch (_: Exception) {
-                                            messages[resultIndex] = messages[resultIndex].copy(generating = false,
-                                                generationError = "Could not finish the general explanation.")
+                                        } catch (failure: Exception) {
+                                            messages[resultIndex] = messages[resultIndex].copy(answer = raw.partial(), generating = false,
+                                                generationError = failure.message ?: "Could not finish the general explanation.")
                                         }
                                     }
                                     if (llmInstalled && matches.isEmpty()) {
@@ -765,8 +766,7 @@ fun DocumentChatWorkspace(
                                             // Never replace text the user has already read with a second ungrounded generation.
                                             if (completed.startsWith("I could not verify that in the available document passages", ignoreCase = true)) {
                                                 events += "Available evidence did not establish the answer"
-                                            }
-                                            events += "AU generated an answer using the selected evidence"
+                                            } else events += "AU generated an answer using the selected evidence"
                                             messages[resultIndex] = messages[resultIndex].copy(
                                                 answer = completed,
                                                 generating = false,
