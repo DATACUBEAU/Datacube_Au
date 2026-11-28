@@ -38,7 +38,7 @@ object DocumentQueryInterpreter {
         documentText: String,
         previousQuestion: String? = null
     ): DocumentQueryPlan {
-        AuChatInputLimits.requireQuestion(query)
+        if (query.isNotBlank()) AuChatInputLimits.requireQuestion(query)
         val queryTokens = tokens(query)
         if (queryTokens.isEmpty()) {
             return DocumentQueryPlan(query.trim(), false, emptyMap(),
