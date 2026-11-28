@@ -1228,12 +1228,20 @@ fun SmartNoteWorkspace(
     }
     var conceptTree by remember(documentId) { mutableStateOf(false) }
     val ready = LocalGenerativeEngine.installed(context)
-    val conceptBlock = remember(session.response) {
+    val candidateConceptBlock = remember(session.response) {
         Regex("""(?s)\[TREE] [^\n]+\n.*?\[/TREE]""").find(session.response)?.value
             ?: Regex("""(?s)\[WORKFLOW] [^\n]+\n.*?\[/WORKFLOW]""").find(session.response)?.value
     }
-    val notesText = remember(session.response, conceptBlock) {
-        conceptBlock?.let { session.response.replace(it, "").trim() } ?: session.response
+    val conceptBlock = remember(candidateConceptBlock) {
+        candidateConceptBlock?.takeIf { raw ->
+            au.datacube.app.ui.common.AuResponseParser.parse(raw).any {
+                it is au.datacube.app.ui.common.AuResponseBlock.Tree ||
+                    it is au.datacube.app.ui.common.AuResponseBlock.Workflow
+            }
+        }
+    }
+    val notesText = remember(session.response, candidateConceptBlock) {
+        candidateConceptBlock?.let { session.response.replace(it, "").trim() } ?: session.response
     }
     val sections = remember(notesText) { GeneratedStudySectionParser.parse(notesText) }
     val notesSpeech = rememberAuReadAloud("smart-notes:$documentId")
