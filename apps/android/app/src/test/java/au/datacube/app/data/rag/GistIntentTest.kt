@@ -6,6 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GistIntentTest {
+    @Test fun longMessageNeverSilentlyLosesItsTail() {
+        val question = "Explain " + "background context ".repeat(90) + "USE TWO EXAMPLES"
+        val prompt = GistPrompt.build(question, listOf("Before" to "Earlier answer"))
+        assertTrue(prompt.contains(question))
+        assertTrue(prompt.trimEnd().endsWith("USE TWO EXAMPLES"))
+        assertFalse(AuChatInputLimits.allowed("x".repeat(AuChatInputLimits.MAX_MESSAGE_CHARS + 1)))
+        assertTrue(AuChatInputLimits.allowed(question))
+    }
+
     @Test fun fastPromptKeepsCurrentQuestionAndBoundsOlderResponse() {
         val history = listOf("Earlier topic" to "A".repeat(500))
         val fast = GistPrompt.build("Explain that again", history, effort = AuEffort.FAST)
