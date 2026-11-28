@@ -230,6 +230,8 @@ object LocalGenerativeEngine {
             val autoTemplate = if (!studyTask && image == null) AuScienceTemplate.select(question) else null
             val textOnly = question != null && AuTeachingPolicy.plan(question).visual == AuTeachingPolicy.Visual.TEXT_ONLY
             val useVisual = !textOnly && (visualRequested || autoTemplate != null)
+            val optionalVisual = if (!studyTask && image == null && !textOnly && !useVisual)
+                AuVisualPlan.optionalInstruction(question) else null
             val answerPlan = if (studyTask) null else AuAnswerPlan.build(question, effectiveEffort, modelId,
                 lowRam, useVisual, image != null)
             val thinkingBudget = answerPlan?.thinkingTokens
@@ -278,7 +280,7 @@ object LocalGenerativeEngine {
                                 ""
                         } + " " + AuTeachingPolicy.LANGUAGE +
                             (if (studyVisuals || (!studyTask && useVisual))
-                                " " + AuVisualPlan.instruction(question) else "") +
+                                " " + AuVisualPlan.instruction(question) else optionalVisual?.let { " " + it }.orEmpty()) +
                             (if (!studyTask) " " + effectiveEffort.instruction + " " + answerPlan?.instruction.orEmpty() else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
