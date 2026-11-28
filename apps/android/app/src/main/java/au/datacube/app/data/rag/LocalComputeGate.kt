@@ -26,8 +26,21 @@ internal object LocalComputeGate {
         retainChatUntilNanos.set(System.nanoTime() + 12_000_000_000L)
     }
 
-    private fun graceRemainingMs(): Long =
-        ((retainChatUntilNanos.get() - System.nanoTime()) / 1_000_000L).coerceIn(0L, 12_000L)
+    private fun graceRemainingMs(): Long {
+        val deadline = retainChatUntilNanos.get()
+        if (deadline == 0L) return 0L
+        return ((deadline - System.nanoTime()) / 1_000_000L).coerceIn(0L, 12_000L)
+    }
+
+    suspend fun trimIdleModels() {
+        if (foreground.get() != 0 || !mutex.tryLock()) return
+        try {
+            if (foreground.get() != 0) return
+            retainChatUntilNanos.set(0L)
+            LocalGenerativeEngine.releaseAdmitted()
+            LocalEmbeddingRuntime.closeAdmitted()
+        } finally { mutex.unlock() }
+    }
 
     /** Reserve interactive demand across retrieval, transcription and generation.
      * This is not a lock: nested interactive native admissions remain legal. */
