@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 internal sealed interface AuResponseBlock {
+    data class Timeline(val data: au.datacube.app.data.rag.AuTimelineData) : AuResponseBlock
     data class RelationshipMap(val data: au.datacube.app.data.rag.AuMapData) : AuResponseBlock
     data class NumericPlot(val data: au.datacube.app.data.rag.AuPlotData) : AuResponseBlock
     data class Simulation(val kind: au.datacube.app.data.rag.AuSimulationKind) : AuResponseBlock
@@ -68,13 +69,15 @@ internal object AuResponseParser {
                 i++
                 continue
             }
-            val dataTag = listOf("MAP", "PLOT", "SCATTER").firstOrNull { line.startsWith("[" + it + "] ") }
+            val dataTag = listOf("MAP", "PLOT", "SCATTER", "TIMELINE").firstOrNull { line.startsWith("[" + it + "] ") }
             if (dataTag != null) {
                 val end = (i + 1 until minOf(lines.size, i + 36)).firstOrNull { lines[it].trim() == "[/" + dataTag + "]" }
                 if (end != null) {
                     val title = line.substringAfter(']').trim()
                     val rows = lines.subList(i + 1,end)
-                    val block = if (dataTag == "MAP")
+                    val block = if (dataTag == "TIMELINE")
+                        au.datacube.app.data.rag.AuVisualData.timeline(title,rows)?.let { AuResponseBlock.Timeline(it) }
+                    else if (dataTag == "MAP")
                         au.datacube.app.data.rag.AuVisualData.map(title,rows)?.let { AuResponseBlock.RelationshipMap(it) }
                     else au.datacube.app.data.rag.AuVisualData.plot(title,rows,dataTag == "SCATTER")?.let { AuResponseBlock.NumericPlot(it) }
                     result += block ?: AuResponseBlock.Prose("This visual could not be rendered. Try regenerating.")
@@ -272,7 +275,7 @@ internal object AuResponseParser {
             }
             // A malformed declarative block is not plain text. Skip its commands
             // and retain the rest of the response, rather than exposing internals.
-            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER)](?:.*)$""")
+            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER|TIMELINE)](?:.*)$""")
                 .matchEntire(line)?.groupValues?.get(1)
             if (invalidVisual != null) {
                 val close = (i + 1 until lines.size).firstOrNull { lines[it].trim() == "[/" + invalidVisual + "]" }
@@ -295,7 +298,7 @@ internal object AuResponseParser {
                 i = close + 1
                 continue
             }
-            if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER|STEP)](?:.*)$"))) {
+            if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER|TIMELINE|STEP)](?:.*)$"))) {
                 i++
                 continue
             }
@@ -545,6 +548,7 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                     }
                 }
                 }
+                is AuResponseBlock.Timeline -> AuDiagramInspector(block.data.title) { AuTimeline(block.data) }
                 is AuResponseBlock.RelationshipMap -> AuDiagramInspector(block.data.title) { AuRelationshipMap(block.data) }
                 is AuResponseBlock.NumericPlot -> AuDiagramInspector(block.data.title) { AuNumericPlot(block.data) }
                 is AuResponseBlock.Simulation -> AuLearningSimulation(block.kind)
