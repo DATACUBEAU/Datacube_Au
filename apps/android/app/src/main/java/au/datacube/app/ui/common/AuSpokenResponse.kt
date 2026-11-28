@@ -98,6 +98,17 @@ internal object AuSpokenResponse {
                         add(plain(block.scene.title))
                         add(plain(block.scene.description))
                     }
+                    is AuResponseBlock.RelationshipMap -> {
+                        add(plain(block.data.title))
+                        val nodes=block.data.nodes.associate { it.id to it.label }
+                        block.data.edges.forEach { e -> add(plain(nodes.getValue(e.from)) + " — " + plain(e.label) + " — " + plain(nodes.getValue(e.to))) }
+                    }
+                    is AuResponseBlock.NumericPlot -> {
+                        add(plain(block.data.title))
+                        add("Horizontal axis: " + plain(block.data.xLabel) + ". Vertical axis: " + plain(block.data.yLabel))
+                        block.data.series.forEach { p -> add("x " + p.x + ", y " + p.y) }
+                    }
+                    is AuResponseBlock.Simulation -> add(plain(block.kind.description))
                     is AuResponseBlock.Science -> add(plain(block.template.description))
                     AuResponseBlock.ProjectileIllustration -> add("Illustration: a person tosses a ball. It rises, reaches its highest point, and falls under gravity. The path is schematic and not to scale.")
                     is AuResponseBlock.Code -> add("A code example is available. Look at the code block in the written response.")
