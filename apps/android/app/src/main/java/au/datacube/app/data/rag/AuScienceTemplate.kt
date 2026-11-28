@@ -10,6 +10,15 @@ internal enum class AuScienceTemplate(val key: String, val title: String, val de
     PARALLEL_LINES("parallel-lines", "Parallel lines", "Two distinct coplanar lines have the same direction and do not intersect."),
     SINE_WAVE("sine-wave", "Sine wave", "The graph shows sinusoidal displacement over time. Amplitude changes peak height; frequency changes cycles per second.");
 
+    /** Only for completed general chat, not source-grounded or interrupted answers. */
+    fun missingIllustration(answer: String): String? {
+        val visible = ModelOutputCleaner.visible(answer, 0).trim()
+        if (visible.length < 20 || answer.length > 11_800 ||
+            Regex("""(?im)^\s*(?:\[(?:SCIENCE|SKETCH|DIAGRAM|TREE|FLOW|WORKFLOW|BAR|PIE|FORMULA|STEPS)]|\x60\x60\x60)""").containsMatchIn(visible) ||
+            Regex("""(?i)\b(?:cannot help|can't help|unable to answer|could not answer|cannot answer)\b""").containsMatchIn(visible)) return null
+        return "\n\n[SCIENCE] " + key
+    }
+
     companion object {
         fun fromKey(key: String) = entries.firstOrNull { it.key == key.trim() }
         private val teach = Regex("""\b(?:explain|describe|teach|show|illustrate|draw|visuali[sz]e|how|what is|what are|diagram|visual|simulation|simulate|graph)\b""", RegexOption.IGNORE_CASE)
