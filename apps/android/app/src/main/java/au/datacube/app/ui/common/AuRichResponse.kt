@@ -426,7 +426,8 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                     }
                 }
                 is AuResponseBlock.Status -> StatusText(block.kind, block.text)
-                is AuResponseBlock.Flow -> Surface(
+                is AuResponseBlock.Flow -> AuDiagramInspector(block.title) {
+                    Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surface,
@@ -453,8 +454,10 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                         }
                     }
                 }
+                }
                 is AuResponseBlock.Tree -> AuDiagramInspector(block.scene.title) { AuConceptTree(block.scene) }
-                is AuResponseBlock.Workflow -> Column(
+                is AuResponseBlock.Workflow -> AuDiagramInspector(block.title) {
+                    Column(
                     Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -490,7 +493,9 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                         }
                     }
                 }
-                is AuResponseBlock.BarChart -> Surface(
+                }
+                is AuResponseBlock.BarChart -> AuDiagramInspector(block.title) {
+                    Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surface,
@@ -513,7 +518,9 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                         }
                     }
                 }
-                is AuResponseBlock.PieChart -> {
+                }
+                is AuResponseBlock.PieChart -> AuDiagramInspector(block.title) {
+                    {
                     val colors = listOf(Color(0xFF2563EB), Color(0xFF0891B2), Color(0xFF64748B),
                         Color(0xFF0F766E), Color(0xFF93C5FD), Color(0xFF475569), Color(0xFF60A5FA), Color(0xFF334155))
                     val total = block.rows.sumOf { it.second }
@@ -536,6 +543,7 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                             }
                         }
                     }
+                }
                 }
                 is AuResponseBlock.RelationshipMap -> AuDiagramInspector(block.data.title) { AuRelationshipMap(block.data) }
                 is AuResponseBlock.NumericPlot -> AuDiagramInspector(block.data.title) { AuNumericPlot(block.data) }
