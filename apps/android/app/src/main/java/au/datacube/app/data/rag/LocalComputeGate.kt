@@ -18,13 +18,19 @@ internal object LocalComputeGate {
     val mutex = Mutex()
     private val foreground = AtomicInteger(0)
 
+    /** Reserve interactive demand across retrieval, transcription and generation.
+     * This is not a lock: nested interactive native admissions remain legal. */
+    suspend fun <T> interactiveRequest(operation: suspend () -> T): T {
+        foreground.incrementAndGet()
+        try { return operation() }
+        finally { foreground.decrementAndGet() }
+    }
+
     /** Interactive requests take precedence at native operation boundaries.
      * An already running operation is never interrupted or run concurrently. */
     suspend fun <T> admit(interactive: Boolean, operation: suspend () -> T): T {
         if (interactive) {
-            foreground.incrementAndGet()
-            try { return mutex.withLock { operation() } }
-            finally { foreground.decrementAndGet() }
+            return interactiveRequest { mutex.withLock { operation() } }
         }
         while (true) {
             mutex.lock()

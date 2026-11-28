@@ -41,6 +41,11 @@ val authWebsiteUrl = configuredValue("AUTH_WEBSITE_URL") ?: "https://datacube.fa
 // Select at build time, never infer the ad provider from installer metadata.
 // Unconfigured builds are ad-free. The channel alone does not enable an SDK.
 val distributionChannel = providers.gradleProperty("datacubeDistribution").orNull ?: "development"
+if (distributionChannel == "website") {
+    require(!providers.environmentVariable("ANDROID_PERSONAL_DEBUG_KEYSTORE_PATH").orNull.isNullOrBlank()) {
+        "Website APK requires the original registered Android signing key. Refusing a temporary debug signer."
+    }
+}
 require(distributionChannel in setOf("development", "website", "oppo")) {
     "Unsupported DataCube AU distribution channel."
 }

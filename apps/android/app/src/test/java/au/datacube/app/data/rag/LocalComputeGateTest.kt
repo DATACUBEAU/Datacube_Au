@@ -13,6 +13,41 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class LocalComputeGateTest {
+    @Test fun backgroundCannotEnterBetweenInteractiveRetrievalAndGeneration() = runBlocking {
+        val retrievalDone = CompletableDeferred<Unit>()
+        val continueRequest = CompletableDeferred<Unit>()
+        val order = mutableListOf<String>()
+        val request = launch(start = CoroutineStart.UNDISPATCHED) {
+            LocalComputeGate.interactiveRequest {
+                LocalComputeGate.admit(interactive = true) { order += "retrieval" }
+                retrievalDone.complete(Unit)
+                continueRequest.await()
+                LocalComputeGate.admit(interactive = true) { order += "generation" }
+            }
+        }
+        retrievalDone.await()
+        val background = launch(start = CoroutineStart.UNDISPATCHED) {
+            LocalComputeGate.admit(interactive = false) { order += "background" }
+        }
+        assertEquals(listOf("retrieval"), order)
+        continueRequest.complete(Unit)
+        request.join()
+        background.join()
+        assertEquals(listOf("retrieval", "generation", "background"), order)
+    }
+
+    @Test fun cancelledInteractiveReservationDoesNotBlockBackground() = runBlocking {
+        val request = launch(start = CoroutineStart.UNDISPATCHED) {
+            LocalComputeGate.interactiveRequest { kotlinx.coroutines.awaitCancellation() }
+        }
+        request.cancel()
+        request.join()
+        val result = kotlinx.coroutines.withTimeout(1000) {
+            LocalComputeGate.admit(interactive = false) { "available" }
+        }
+        assertEquals("available", result)
+    }
+
     @Test fun queuedInteractiveRequestPrecedesWaitingBackgroundWork() = runBlocking {
         val entered = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()

@@ -6,6 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GistIntentTest {
+    @Test fun fastPromptKeepsCurrentQuestionAndBoundsOlderResponse() {
+        val history = listOf("Earlier topic" to "A".repeat(500))
+        val fast = GistPrompt.build("Explain that again", history, effort = AuEffort.FAST)
+        val balanced = GistPrompt.build("Explain that again", history, effort = AuEffort.BALANCED)
+        assertTrue(fast.contains("Explain that again"))
+        assertTrue(fast.contains("Earlier topic"))
+        assertTrue(fast.length < balanced.length)
+    }
+
     @Test fun ordinaryKnowledgeQuestionsNeedNoDocuments() {
         assertEquals(GistIntent.GENERAL, GistRequestRouter.classify("What is matter?"))
         assertEquals(GistIntent.GENERAL, GistRequestRouter.classify("How does a meter work?"))

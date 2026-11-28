@@ -154,7 +154,9 @@ object LocalGenerativeEngine {
         visualRequested: Boolean = false,
         studyOutputTokens: Int? = null,
         onText: suspend (String) -> Unit
-    ) = withContext(dispatcher) {
+    ) {
+        val submittedAt = android.os.SystemClock.elapsedRealtime()
+        withContext(dispatcher) {
         val queuedAt = android.os.SystemClock.elapsedRealtime()
         require(groundedPrompt.isNotBlank() && groundedPrompt.length <= 18_000) {
             "The document context is empty or too long."
@@ -281,13 +283,16 @@ object LocalGenerativeEngine {
                 try { conversation.close() } finally {
                     if (au.datacube.app.BuildConfig.DEBUG) {
                         android.util.Log.d("AuInferenceTiming", "model=$modelId cold=$coldLoad success=$success " +
-                            "mutexMs=${acquiredAt - queuedAt} loadMs=${loadedAt - acquiredAt} " +
+                            "dispatcherMs=${queuedAt - submittedAt} mutexMs=${acquiredAt - queuedAt} loadMs=${loadedAt - acquiredAt} " +
                             "firstChunkMs=${firstChunkAt?.minus(startedAt) ?: -1} totalMs=${android.os.SystemClock.elapsedRealtime() - startedAt} " +
+                            "effort=${effectiveEffort.name} thinkBudget=$thinkingBudget outputBudget=${if (studyTask) studyOutputTokens else effectiveEffort.outputTokens} " +
                             "inputChars=${groundedPrompt.length} outputChars=$outputChars chunks=$chunks")
                     }
                 }
             }
         }
+    }
+
     }
 
     private suspend fun sha256(file: File): String {
