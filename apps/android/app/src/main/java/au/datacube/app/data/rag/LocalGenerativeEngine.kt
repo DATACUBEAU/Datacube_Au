@@ -221,7 +221,12 @@ object LocalGenerativeEngine {
             }
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
-            val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam)
+            manager?.getMemoryInfo(memory)
+            if (memory.lowMemory) {
+                releaseAdmitted()
+                throw DeviceComputePressure("Not enough memory remains after loading the model. Select a smaller model.")
+            }
+            val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam || memory.lowMemory)
             val answerPlan = if (studyTask) null else AuAnswerPlan.build(question, effectiveEffort, modelId,
                 lowRam, visualRequested, image != null)
             val thinkingBudget = answerPlan?.thinkingTokens
