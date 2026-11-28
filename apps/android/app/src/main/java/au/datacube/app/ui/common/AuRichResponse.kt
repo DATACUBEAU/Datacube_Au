@@ -275,8 +275,7 @@ internal object AuResponseParser {
             }
             // A malformed declarative block is not plain text. Skip its commands
             // and retain the rest of the response, rather than exposing internals.
-            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|MAP|PLOT|SCATTER|TIMELINE)](?:.*)$""")
-                .matchEntire(line)?.groupValues?.get(1)
+            val invalidVisual = au.datacube.app.data.rag.AuVisualProtocol.blockMarker.matchEntire(line)?.groupValues?.get(1)
             if (invalidVisual != null) {
                 val close = (i + 1 until lines.size).firstOrNull { lines[it].trim() == "[/" + invalidVisual + "]" }
                 // A callout contains prose, not drawing instructions. On a
