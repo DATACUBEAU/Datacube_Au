@@ -14,7 +14,7 @@ internal enum class AuScienceTemplate(val key: String, val title: String, val de
     fun missingIllustration(answer: String): String? {
         val visible = ModelOutputCleaner.visible(answer, 0).trim()
         if (visible.length < 20 || answer.length > 11_800 ||
-            Regex("""(?im)^\s*(?:\[(?:SCIENCE|SKETCH|DIAGRAM|TREE|FLOW|WORKFLOW|BAR|PIE|FORMULA|STEPS|MAP|PLOT|SCATTER|SIM)]|\x60\x60\x60)""").containsMatchIn(visible) ||
+            Regex("""(?im)^\s*(?:\[(?:SCIENCE|SKETCH|DIAGRAM|TREE|FLOW|WORKFLOW|BAR|PIE|FORMULA|STEPS|MAP|PLOT|SCATTER|TIMELINE|SIM)]|\x60\x60\x60)""").containsMatchIn(visible) ||
             Regex("""(?i)\b(?:cannot help|can't help|unable to answer|could not answer|cannot answer)\b""").containsMatchIn(visible)) return null
         return "\n\n[SCIENCE] " + key
     }
@@ -22,7 +22,7 @@ internal enum class AuScienceTemplate(val key: String, val title: String, val de
     companion object {
         fun fromKey(key: String) = entries.firstOrNull { it.key == key.trim() }
         private val teach = Regex("""\b(?:explain|describe|teach|show|illustrate|draw|visuali[sz]e|how|what is|what are|diagram|visual|simulation|simulate|graph)\b""", RegexOption.IGNORE_CASE)
-        private val incompatible = Regex("""\b(?:animal cell|compare|versus|vs|difference|history|quiz|exam questions?|concept map|mind map|flowchart|workflow|bar chart|pie chart|formula breakdown|data map(?:ping)?|relationship map|network diagram|scatter plot|line chart|function plot)\b""", RegexOption.IGNORE_CASE)
+        private val incompatible = Regex("""\b(?:animal cell|compare|versus|vs|difference|history|quiz|exam questions?|concept map|mind map|flowchart|workflow|bar chart|pie chart|formula breakdown|data map(?:ping)?|relationship map|network diagram|scatter plot|line chart|function plot|timeline|chronology)\b""", RegexOption.IGNORE_CASE)
         private val topics = listOf(
             PLANT_CELL to Regex("""\bplant cells?\b""", RegexOption.IGNORE_CASE),
             WATER_CYCLE to Regex("""\b(?:water cycle|hydrologic(?:al)? cycle)\b""", RegexOption.IGNORE_CASE),
