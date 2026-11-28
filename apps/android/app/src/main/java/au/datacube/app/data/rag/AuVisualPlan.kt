@@ -6,7 +6,7 @@ internal object AuVisualPlan {
     private val tree = Regex("""\b(?:concept map|mind map|concept tree|hierarchy|hierarchical|tree diagram|family tree|organi[sz]ation chart)\b""", RegexOption.IGNORE_CASE)
     private val workflow = Regex("""\b(?:workflow|pipeline|system architecture)\b""", RegexOption.IGNORE_CASE)
     private val flow = Regex("""\b(?:flowchart|flow chart|process diagram|cycle diagram)\b""", RegexOption.IGNORE_CASE)
-    private val bar = Regex("""\b(?:bar chart|bar graph|histogram)\b""", RegexOption.IGNORE_CASE)
+    private val bar = Regex("""\b(?:bar chart|bar graph)\b""", RegexOption.IGNORE_CASE)
     private val pie = Regex("""\b(?:pie chart|pie graph)\b""", RegexOption.IGNORE_CASE)
     private val formula = Regex("""\b(?:formula breakdown|equation breakdown|label(?:led)? formula)\b""", RegexOption.IGNORE_CASE)
     private val steps = Regex("""\b(?:step cards|step deck|guided visual tutorial)\b""", RegexOption.IGNORE_CASE)
@@ -32,7 +32,7 @@ internal object AuVisualPlan {
         else -> Kind.AUTO
     }
     fun instruction(question: String?, studyTask: Boolean): String {
-        if (studyTask || question.isNullOrBlank()) return AuTeachingPolicy.VISUALS + " " + TREE
+        if (question.isNullOrBlank()) return AuTeachingPolicy.VISUALS + " " + TREE
         return BASE + " " + when (kind(question)) {
             Kind.TREE -> TREE
             Kind.FLOW -> FLOW
