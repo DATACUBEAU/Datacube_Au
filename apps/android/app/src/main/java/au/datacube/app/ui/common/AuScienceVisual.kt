@@ -53,6 +53,7 @@ internal object AuScienceRenderer {
     fun draw(canvas: NativeCanvas, width: Float, height: Float, template: AuScienceTemplate, wave: AuWaveParameters) {
         if (width <= 0f || height <= 0f) return
         val save = canvas.save()
+        canvas.clipRect(0f,0f,width,height)
         canvas.drawColor(paper)
         val scale = minOf(width / W, height / H)
         canvas.translate((width - W * scale) / 2, (height - H * scale) / 2)
