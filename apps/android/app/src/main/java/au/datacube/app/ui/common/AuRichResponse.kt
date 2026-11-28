@@ -430,7 +430,7 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                         }
                     }
                 }
-                is AuResponseBlock.Tree -> AuConceptTree(block.scene)
+                is AuResponseBlock.Tree -> AuDiagramInspector(block.scene.title) { AuConceptTree(block.scene) }
                 is AuResponseBlock.Workflow -> Column(
                     Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -515,8 +515,8 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                     }
                 }
                 is AuResponseBlock.Science -> AuScienceVisual(block.template)
-                AuResponseBlock.ProjectileIllustration -> AuProjectileIllustration()
-                is AuResponseBlock.Sketch -> AuSketchIllustration(block.scene)
+                AuResponseBlock.ProjectileIllustration -> AuDiagramInspector("Motion illustration") { AuProjectileIllustration() }
+                is AuResponseBlock.Sketch -> AuDiagramInspector(block.scene.title) { AuSketchIllustration(block.scene) }
                 is AuResponseBlock.Steps -> AuStepDeck(block)
                 is AuResponseBlock.Formula -> Surface(
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
