@@ -2,7 +2,8 @@ package au.datacube.app.data.rag
 
 /** Select a visual contract, not facts or geometry. The app owns the layout. */
 internal object AuVisualPlan {
-    enum class Kind { AUTO, TREE, FLOW, WORKFLOW, SKETCH, BAR, PIE, FORMULA, STEPS, MAP, PLOT, SCATTER }
+    enum class Kind { AUTO, TREE, FLOW, WORKFLOW, SKETCH, BAR, PIE, FORMULA, STEPS, MAP, PLOT, SCATTER, TIMELINE }
+    private val timeline=Regex("""\b(?:timeline|chronology|chronological diagram|historical timeline)\b""",RegexOption.IGNORE_CASE)
     private val map = Regex("""\b(?:data map(?:ping)?|relationship map|network diagram|entity relationship|entity-relationship|dependency graph|knowledge graph|network graph|data flow diagram|schema diagram)\b""", RegexOption.IGNORE_CASE)
     private val scatter = Regex("""\b(?:scatter plot|scatter chart|scatter graph)\b""", RegexOption.IGNORE_CASE)
     private val plot = Regex("""\b(?:line chart|line graph|coordinate graph|function plot|plot(?: the)? (?:function|equation|data|points)|graph(?: the)? (?:function|equation)|(?:plot|graph)\s+y\s*=)\b""", RegexOption.IGNORE_CASE)
@@ -22,11 +23,13 @@ internal object AuVisualPlan {
     private const val BAR = "Use [BAR] Title (units), then 2 to 8 label | nonnegative number rows, then [/BAR]. Use actual values from the question or evidence. Never invent data."
     private const val PIE = "Use [PIE] Title, then 2 to 8 label | nonnegative number rows that share a meaningful whole, then [/PIE]. Never invent data."
     private const val FORMULA = "Use [FORMULA] Title, equation on one line, then 1 to 6 symbol | meaning rows, then [/FORMULA]."
+    private const val TIMELINE = "Use [TIMELINE] Title, then 2 to 10 date or period | event rows in actual chronological order, then [/TIMELINE]. Preserve dates from evidence; never invent dates. If timing is approximate, say so. Equal display spacing does not mean equal elapsed time."
     private const val MAP = "Use [MAP] Title, then 2 to 8 NODE | id | label rows, followed by 1 to 12 EDGE | fromId | toId | relationship rows. IDs are short unique ASCII identifiers. Declare all nodes before edges. All nodes must connect; no self edges. Keep labels short. Edges are directed and must reflect actual relationships; cycles are allowed. Close [/MAP]."
     private const val PLOT = "Use [PLOT] Title, AXES | horizontal axis and units | vertical axis and units, then 2 to 32 x | y rows in strictly increasing x order, then [/PLOT]. Signed finite values permitted. Use actual supplied or correctly derived values; do not invent observations. Explain if values are illustrative."
     private const val SCATTER = "Use [SCATTER] Title, AXES | horizontal axis and units | vertical axis and units, then 2 to 32 x | y rows, then [/SCATTER]. Signed finite values permitted. Use actual supplied values; do not invent observations or infer causation from correlation."
     private const val STEPS = "Use [STEPS] Title, 2 to 6 [STEP] Title lines each followed by a short explanation, then [/STEPS]. No nested step decks."
     fun kind(question: String): Kind = when {
+        timeline.containsMatchIn(question) -> Kind.TIMELINE
         map.containsMatchIn(question) -> Kind.MAP
         scatter.containsMatchIn(question) -> Kind.SCATTER
         plot.containsMatchIn(question) -> Kind.PLOT
@@ -46,6 +49,7 @@ internal object AuVisualPlan {
         if (AuTeachingPolicy.plan(q).visual != AuTeachingPolicy.Visual.AUTO) return null
         if (!Regex("""\b(?:explain|describe|teach|how does|how do|how is|how are)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q)) return null
         val contract = when {
+            Regex("""\b(?:relationship between|dependencies|interactions between|connections between)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q) -> MAP
             Regex("""\b(?:process|stages|steps|cycle|sequence)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q) -> FLOW
             Regex("""\b(?:classification|categories|types of|parts of|structure of)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q) -> TREE
             Regex("""\b(?:equation|formula)\b""", RegexOption.IGNORE_CASE).containsMatchIn(q) -> FORMULA
@@ -61,7 +65,7 @@ internal object AuVisualPlan {
         AuScienceTemplate.select(question)?.let { template ->
             return BASE + " For this topic use the built-in general educational illustration. On its own line emit exactly [SCIENCE] " + template.key + ". Do not draw raw commands or invent labels; explain how the illustration relates to the question. In document chat distinguish general illustrations from retrieved evidence."
         }
-        if (question.isNullOrBlank()) return AuTeachingPolicy.VISUALS + " " + TREE + " " + MAP + " " + PLOT + " " + SCATTER
+        if (question.isNullOrBlank()) return AuTeachingPolicy.VISUALS + " " + TREE + " " + MAP + " " + PLOT + " " + SCATTER + " " + TIMELINE
         return BASE + " " + when (kind(question)) {
             Kind.TREE -> TREE
             Kind.FLOW -> FLOW
@@ -71,10 +75,11 @@ internal object AuVisualPlan {
             Kind.PIE -> PIE
             Kind.FORMULA -> FORMULA
             Kind.STEPS -> STEPS
+            Kind.TIMELINE -> TIMELINE
             Kind.MAP -> MAP
             Kind.PLOT -> PLOT
             Kind.SCATTER -> SCATTER
-            Kind.AUTO -> AuTeachingPolicy.VISUALS + " " + TREE + " " + MAP + " " + PLOT + " " + SCATTER
+            Kind.AUTO -> AuTeachingPolicy.VISUALS + " " + TREE + " " + MAP + " " + PLOT + " " + SCATTER + " " + TIMELINE
         }
     }
 }
