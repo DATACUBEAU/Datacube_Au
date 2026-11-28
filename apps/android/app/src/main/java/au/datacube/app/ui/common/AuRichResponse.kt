@@ -37,6 +37,7 @@ internal sealed interface AuResponseBlock {
     data class PieChart(val title: String, val rows: List<Pair<String, Double>>) : AuResponseBlock
     data object ProjectileIllustration : AuResponseBlock
     data class Sketch(val scene: AuSketchScene) : AuResponseBlock
+    data class Tree(val scene: AuTreeScene) : AuResponseBlock
     data class Formula(val title: String, val equation: String, val symbols: List<Pair<String,String>>) : AuResponseBlock
     data class StepCard(val title:String,val body:String)
     data class Steps(val title:String,val pages:List<StepCard>) : AuResponseBlock
@@ -113,6 +114,17 @@ internal object AuResponseParser {
                             it.none { part -> part.contains('[') || part.contains(']') } } &&
                         rows.map { it[0] }.distinct().size == rows.size) {
                         result += AuResponseBlock.Formula(title,equation,rows.map { it[0] to it[1] })
+                        i = end + 1
+                        continue
+                    }
+                }
+            }
+            if (line.startsWith("[TREE] ")) {
+                val end = (i + 1 until minOf(lines.size, i + 12)).firstOrNull { lines[it].trim() == "[/TREE]" }
+                if (end != null) {
+                    val scene = AuTreeParser.parse(line.removePrefix("[TREE] "), lines.subList(i + 1, end))
+                    if (scene != null) {
+                        result += AuResponseBlock.Tree(scene)
                         i = end + 1
                         continue
                     }
@@ -226,7 +238,7 @@ internal object AuResponseParser {
             }
             // A malformed declarative block is not plain text. Skip its commands
             // and retain the rest of the response, rather than exposing internals.
-            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|STEPS)](?:.*)$""")
+            val invalidVisual = Regex("""^\[(DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS)](?:.*)$""")
                 .matchEntire(line)?.groupValues?.get(1)
             if (invalidVisual != null) {
                 val close = (i + 1 until lines.size).firstOrNull { lines[it].trim() == "[/" + invalidVisual + "]" }
@@ -249,7 +261,7 @@ internal object AuResponseParser {
                 i = close + 1
                 continue
             }
-            if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|STEPS|STEP)](?:.*)$"))) {
+            if (line.matches(Regex("^\\[/?(?:DIAGRAM|SKETCH|WORKFLOW|FLOW|BOX|BAR|PIE|FORMULA|TREE|STEPS|STEP)](?:.*)$"))) {
                 i++
                 continue
             }
@@ -407,6 +419,7 @@ internal fun AuRichResponse(answer: String, streaming: Boolean = false, onTextCl
                         }
                     }
                 }
+                is AuResponseBlock.Tree -> AuConceptTree(block.scene)
                 is AuResponseBlock.Workflow -> Column(
                     Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
