@@ -21,6 +21,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
@@ -153,6 +154,7 @@ object LocalGenerativeEngine {
         effort: AuEffort = AuEffort.BALANCED,
         visualRequested: Boolean = false,
         studyOutputTokens: Int? = null,
+        question: String? = null,
         onText: suspend (String) -> Unit
     ) {
         val submittedAt = android.os.SystemClock.elapsedRealtime()
@@ -162,6 +164,9 @@ object LocalGenerativeEngine {
             "The document context is empty or too long."
         }
         LocalComputeGate.admit(interactive = !studyTask) {
+            val priorPriority = android.os.Process.getThreadPriority(android.os.Process.myTid())
+            try {
+            runCatching { android.os.Process.setThreadPriority(if (studyTask) android.os.Process.THREAD_PRIORITY_BACKGROUND else android.os.Process.THREAD_PRIORITY_DEFAULT) }
             LocalComputeGate.prepare(context, LocalComputeGate.Engine.CHAT)
             val acquiredAt = android.os.SystemClock.elapsedRealtime()
             val modelId = requireNotNull(ActiveLocalChatModel(context).selected()) {
@@ -203,7 +208,9 @@ object LocalGenerativeEngine {
             val loadedAt = android.os.SystemClock.elapsedRealtime()
             currentCoroutineContext().ensureActive()
             val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam)
-            val thinkingBudget = if (studyTask) null else effectiveEffort.thinkingBudget(modelId, lowRam)
+            val answerPlan = if (studyTask) null else AuAnswerPlan.build(question, effectiveEffort, modelId,
+                lowRam, visualRequested, image != null)
+            val thinkingBudget = answerPlan?.thinkingTokens
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of(
@@ -250,10 +257,10 @@ object LocalGenerativeEngine {
                         } + " " + AuTeachingPolicy.LANGUAGE +
                             (if (studyVisuals || (!studyTask && visualRequested))
                                 " " + AuTeachingPolicy.VISUALS else "") +
-                            (if (!studyTask) " " + effectiveEffort.instruction else "")
+                            (if (!studyTask) " " + effectiveEffort.instruction + " " + answerPlan?.instruction.orEmpty() else "")
                     ),
                     samplerConfig = SamplerConfig(topK = 20, topP = 0.9, temperature = 0.35),
-                    maxOutputToken = if (studyTask) studyOutputTokens?.coerceIn(128, 3072) else effectiveEffort.outputTokens,
+                    maxOutputToken = if (studyTask) studyOutputTokens?.coerceIn(128, 3072) else answerPlan?.outputTokens,
                     thinkingConfig = thinkingBudget?.let { ThinkingConfig(enableThinking = it > 0, thinkingTokenBudget = it) }
                 )
             )
@@ -265,7 +272,8 @@ object LocalGenerativeEngine {
             try {
                 val stream = if (image == null) conversation.sendMessageAsync(groundedPrompt)
                     else conversation.sendMessageAsync(Contents.of(Content.ImageBytes(image), Content.Text(groundedPrompt)))
-                stream.collect { message ->
+                // Bounded FIFO: preserve every native chunk, apply backpressure instead of dropping text.
+                stream.buffer(capacity = 16).collect { message ->
                     currentCoroutineContext().ensureActive()
                     val part = message.toString()
                     if (part.isNotEmpty()) {
@@ -285,10 +293,13 @@ object LocalGenerativeEngine {
                         android.util.Log.d("AuInferenceTiming", "model=$modelId cold=$coldLoad success=$success " +
                             "dispatcherMs=${queuedAt - submittedAt} mutexMs=${acquiredAt - queuedAt} loadMs=${loadedAt - acquiredAt} " +
                             "firstChunkMs=${firstChunkAt?.minus(startedAt) ?: -1} totalMs=${android.os.SystemClock.elapsedRealtime() - startedAt} " +
-                            "effort=${effectiveEffort.name} thinkBudget=$thinkingBudget outputBudget=${if (studyTask) studyOutputTokens else effectiveEffort.outputTokens} " +
+                            "effort=${effectiveEffort.name} thinkBudget=$thinkingBudget outputBudget=${if (studyTask) studyOutputTokens else answerPlan?.outputTokens} " +
                             "inputChars=${groundedPrompt.length} outputChars=$outputChars chunks=$chunks")
                     }
                 }
+            }
+            } finally {
+                runCatching { android.os.Process.setThreadPriority(priorPriority) }
             }
         }
     }
