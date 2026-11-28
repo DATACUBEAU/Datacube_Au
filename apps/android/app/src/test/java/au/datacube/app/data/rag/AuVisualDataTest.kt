@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AuVisualDataTest {
+    @Test fun timelinePreservesActualEventOrderAndRejectsMalformedRows() {
+        val rows=listOf("Phase 1 | Define the problem","Phase 2 | Evaluate evidence","Phase 3 | Present findings")
+        val data=AuVisualData.timeline("Research process",rows)!!
+        assertEquals(listOf("Phase 1","Phase 2","Phase 3"),data.events.map { it.time })
+        assertNull(AuVisualData.timeline("Bad",rows+"Unknown"))
+        assertNull(AuVisualData.timeline("Bad",rows+rows.first()))
+        assertEquals(AuVisualPlan.Kind.TIMELINE,AuVisualPlan.kind("Create a historical timeline"))
+        assertTrue(AuTeachingPolicy.plan("Create a historical timeline").visual==AuTeachingPolicy.Visual.REQUESTED)
+    }
+
     @Test fun mapsSupportSharedTargetsAndCyclesWithoutInventedEdges() {
         val rows=listOf("NODE | a | Client","NODE | b | Service","NODE | c | Database",
             "EDGE | a | b | requests","EDGE | b | c | reads","EDGE | c | b | returns")
