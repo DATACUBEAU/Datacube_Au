@@ -227,8 +227,11 @@ object LocalGenerativeEngine {
                 throw DeviceComputePressure("Not enough memory remains after loading the model. Select a smaller model.")
             }
             val effectiveEffort = effort.forMemory(memory.totalMem, memory.availMem, lowRam || memory.lowMemory)
+            val autoTemplate = if (!studyTask && image == null) AuScienceTemplate.select(question) else null
+            val textOnly = question != null && AuTeachingPolicy.plan(question).visual == AuTeachingPolicy.Visual.TEXT_ONLY
+            val useVisual = !textOnly && (visualRequested || autoTemplate != null)
             val answerPlan = if (studyTask) null else AuAnswerPlan.build(question, effectiveEffort, modelId,
-                lowRam, visualRequested, image != null)
+                lowRam, useVisual, image != null)
             val thinkingBudget = answerPlan?.thinkingTokens
             val conversation = checkNotNull(engine).createConversation(
                 ConversationConfig(
@@ -274,7 +277,7 @@ object LocalGenerativeEngine {
                                 "Use [OK], [WARN], [ERROR] only for supported factual statuses. " +
                                 ""
                         } + " " + AuTeachingPolicy.LANGUAGE +
-                            (if (studyVisuals || (!studyTask && visualRequested))
+                            (if (studyVisuals || (!studyTask && useVisual))
                                 " " + AuVisualPlan.instruction(question) else "") +
                             (if (!studyTask) " " + effectiveEffort.instruction + " " + answerPlan?.instruction.orEmpty() else "")
                     ),
