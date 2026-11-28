@@ -10,7 +10,7 @@ class AuTeachingPolicyTest {
         assertEquals(AuVisualPlan.Kind.SKETCH, AuVisualPlan.kind("Draw a wave diagram"))
         assertEquals(AuTeachingPolicy.Visual.REQUESTED, AuTeachingPolicy.plan("Create a concept map").visual)
         assertEquals(AuTeachingPolicy.Visual.TEXT_ONLY, AuTeachingPolicy.plan("Explain without any concept maps").visual)
-        val contract = AuVisualPlan.instruction("Create a concept map", false)
+        val contract = AuVisualPlan.instruction("Create a concept map")
         assertTrue(contract.contains("[TREE]"))
         assertFalse(contract.contains("[SKETCH]"))
         assertTrue(contract.length < AuTeachingPolicy.VISUALS.length)
