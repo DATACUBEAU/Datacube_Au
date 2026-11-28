@@ -76,7 +76,7 @@ jobs:
           gradle-version: wrapper
 
       # Use the existing registered debug certificate when the secret is present.
-      - name: Restore verified personal test signer if configured
+      - name: Restore original registered personal signer (required)
         shell: bash
         env:
           PERSONAL_KEYSTORE: ${{ secrets.ANDROID_PERSONAL_DEBUG_KEYSTORE_BASE64 }}
@@ -126,13 +126,22 @@ jobs:
             echo "::error::Expected only ARM64 native libraries. Found: ${abis[*]:-none}"
             exit 1
           fi
-          if [[ -n "${ANDROID_PERSONAL_DEBUG_KEYSTORE_PATH:-}" ]]; then
-            certs=$("$signer" verify --print-certs "$apk")
-            echo "$certs" | grep -iq 'DF81CB825B6FA1C414A74AAFC4199E0C9BB704FC' || {
-              echo "::error::Built APK signer did not match the expected registered certificate."
-              exit 1
-            }
+          test -n "${ANDROID_PERSONAL_DEBUG_KEYSTORE_PATH:-}"
+          certs=$("$signer" verify --verbose --print-certs "$apk")
+          actual_sha1=$(sed -nE '/^Signer #[0-9]+ certificate SHA-1 digest:/s/^.*digest:[[:space:]]*([[:xdigit:]:]+)[[:space:]]*$/\1/p' <<< "$certs" | tr '[:lower:]' '[:upper:]' | tr -d ':')
+          actual_sha256=$(sed -nE '/^Signer #[0-9]+ certificate SHA-256 digest:/s/^.*digest:[[:space:]]*([[:xdigit:]:]+)[[:space:]]*$/\1/p' <<< "$certs" | tr '[:lower:]' '[:upper:]' | tr -d ':')
+          if [[ "$actual_sha1" != "DF81CB825B6FA1C414A74AAFC4199E0C9BB704FC" ||
+                "$actual_sha256" != "1E2A1F7FB9B83C7FF55D264C795ABB69645DF4250501E7F31D8A712C0BCB5AB9" ]]; then
+            echo "::error::Built APK is not signed by the original registered certificate."
+            exit 1
           fi
+          badging=$("$(dirname "$signer")/aapt" dump badging "$apk")
+          grep -q "^package: name='au.datacube.app' versionCode='$DATACUBE_VERSION_CODE' " <<< "$badging" || {
+            echo "::error::Package identity or release version did not match."
+            exit 1
+          }
+          jq -e --arg signer "$actual_sha256" 'any(.[]; .target.package_name == "au.datacube.app" and any(.target.sha256_cert_fingerprints[]; gsub(":"; "") == $signer))' ../../public/.well-known/assetlinks.json >/dev/null
+          echo "Verified original certificate SHA-256, package and version." >> "$GITHUB_STEP_SUMMARY"
           bytes=$(stat -c%s "$apk")
           size_mib=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / (1024 * 1024) }')
           echo "APK size: ${size_mib} MiB (${bytes} bytes)" >> "$GITHUB_STEP_SUMMARY"
@@ -164,6 +173,10 @@ jobs:
           with open(os.environ["MANIFEST_OUTPUT"], "w", encoding="utf-8") as target:
               json.dump(manifest, target, separators=(",", ":"))
           PY
+
+      - name: Remove signing material before publishing
+        if: always()
+        run: rm -f "$RUNNER_TEMP/datacube-personal-debug.keystore"
 
       - name: Publish direct APK as clearly labeled prerelease
         shell: bash
