@@ -98,6 +98,10 @@ internal object AuSpokenResponse {
                         add(plain(block.scene.title))
                         add(plain(block.scene.description))
                     }
+                    is AuResponseBlock.Timeline -> {
+                        add(plain(block.data.title))
+                        block.data.events.forEach { event -> add(plain(event.time) + ": " + plain(event.event)) }
+                    }
                     is AuResponseBlock.RelationshipMap -> {
                         add(plain(block.data.title))
                         val nodes=block.data.nodes.associate { it.id to it.label }
