@@ -6,6 +6,28 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AuResponseParserTest {
+    @Test fun treeUsesExplicitParentsAndNarratesRelationships() {
+        val raw = "[TREE] Motion\n1 | 0 | Motion |\n2 | 1 | Velocity | described by\n3 | 1 | Acceleration | changes with\n4 | 2 | Speed | magnitude of\n[/TREE]"
+        val tree = (AuResponseParser.parse(raw).single() as AuResponseBlock.Tree).scene
+        assertEquals(listOf(0, 1, 1, 2), tree.nodes.map { it.parent })
+        assertEquals(listOf(0, 1, 1, 2), tree.nodes.map { it.depth })
+        assertTrue(AuSpokenResponse.format(raw).contains("described by"))
+        assertTrue(AuSpokenResponse.format(raw).contains("Speed"))
+        assertFalse(au.datacube.app.data.rag.ModelOutputCleaner.streamingVisible(raw.substringBefore("[/TREE]"), 0).contains("Velocity"))
+        assertTrue(AuResponseParser.parse(raw.substringBefore("[/TREE]")).none { it is AuResponseBlock.Tree })
+    }
+
+    @Test fun treeRejectsMissingParentsDuplicatesAndExcessiveDepth() {
+        val root = "1 | 0 | Root |"
+        assertEquals(null, AuTreeParser.parse("Tree", listOf(root, "2 | 9 | Child | includes")))
+        assertEquals(null, AuTreeParser.parse("Tree", listOf(root, "1 | 1 | Child | includes")))
+        assertEquals(null, AuTreeParser.parse("Tree", listOf(root, "2 | 1 | Root | includes")))
+        assertEquals(null, AuTreeParser.parse("Tree", listOf(root, "2 | 1 | A | includes", "3 | 2 | B | includes", "4 | 3 | C | includes", "5 | 4 | D | includes")))
+        val malformed = AuResponseParser.parse("[TREE] Test\n" + root + "\n2 | 9 | Child | includes\n[/TREE]\nAfter")
+        assertTrue(malformed.none { it is AuResponseBlock.Tree })
+        assertTrue(malformed.any { it is AuResponseBlock.Prose && it.text == "After" })
+    }
+
     @Test fun incrementalParsingMatchesFullParserAcrossProseVisualAndFallback() {
         val parser = AuIncrementalResponseParser()
         val snapshots = listOf(
