@@ -219,17 +219,33 @@ object AndroidUpdateManager {
 
     @Suppress("DEPRECATION")
     private fun verifyPackage(context: Context, apk: File, requestedVersion: Int) {
-        val info = context.packageManager.getPackageArchiveInfo(
-            apk.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES
-        ) ?: error("Downloaded update is not a valid Android package.")
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES
+            else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
+        val info = context.packageManager.getPackageArchiveInfo(apk.absolutePath, flags) ?: error("Downloaded update is not a valid Android package.")
         require(info.packageName == context.packageName) { "Update is for a different app." }
         val code = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode
             else info.versionCode.toLong()
         require(code == requestedVersion.toLong() && code > BuildConfig.VERSION_CODE) {
             "Update version did not match the published release."
         }
-        // The platform installer is the final authority for signature compatibility.
-        // It never silently overwrites a package signed with a different key.
+        // Require exactly the currently installed signer set. No rotation is
+        // supported by this direct-distribution channel. Android still verifies
+        // the cryptographic APK signature at installation.
+        val installed = context.packageManager.getPackageInfo(context.packageName, flags)
+        @Suppress("DEPRECATION")
+        fun certificates(pkg: android.content.pm.PackageInfo): Set<String> {
+            val signatures = if (Build.VERSION.SDK_INT >= 28)
+                pkg.signingInfo?.apkContentsSigners else pkg.signatures
+            return signatures.orEmpty().map { signature ->
+                MessageDigest.getInstance("SHA-256").digest(signature.toByteArray())
+                    .joinToString("") { "%02x".format(it) }
+            }.toSet()
+        }
+        val current = certificates(installed)
+        val incoming = certificates(info)
+        require(current.isNotEmpty() && incoming == current) {
+            "Update signer does not match the installed app. Keep your current installation."
+        }
     }
 
     fun launchInstaller(context: Context, release: AndroidUpdateRelease): InstallStatus {
@@ -237,6 +253,7 @@ object AndroidUpdateManager {
         check(file.isFile && file.length() == release.sizeBytes) {
             "The update has not been downloaded yet."
         }
+        verifyPackage(context, file, release.versionCode)
         if (Build.VERSION.SDK_INT >= 26 && !context.packageManager.canRequestPackageInstalls()) {
             return InstallStatus.PERMISSION_REQUIRED
         }
