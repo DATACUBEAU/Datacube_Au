@@ -114,7 +114,7 @@ object DocumentQueryInterpreter {
         val clarifiedQuestion = if (contextualQuestion == null && corrected.isEmpty()) null
             else buildString {
                 if (contextualQuestion != null) appendLine(contextualQuestion)
-                else appendLine("Original question: ${query.trim().take(350)}")
+                else appendLine("Original question: ${query.trim()}")
                 if (corrected.isNotEmpty()) {
                     appendLine("Possible source-supported spelling (original question still applies): " +
                         corrected.entries.joinToString("; ") { (original, correctedTerm) -> "$original → $correctedTerm" })
