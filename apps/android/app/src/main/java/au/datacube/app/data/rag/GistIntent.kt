@@ -59,15 +59,16 @@ object GistPrompt {
     fun build(question: String, previous: List<Pair<String, String>>, compact: Boolean = false, effort: AuEffort = AuEffort.BALANCED): String {
         require(question.isNotBlank())
         val history = AuConversationContext.select(question, previous.map { RagTurn(it.first, it.second) }, if (compact) minOf(3, effort.historyLimit) else effort.historyLimit)
+        val fast = effort == AuEffort.FAST
         return buildString {
-            appendLine("Answer directly using general knowledge, without searching imported documents. No internet access. Interpret obvious typos.")
+            appendLine("Answer directly from general knowledge. No document or internet access.")
             appendLine(AuTeachingPolicy.plan(question).instruction())
             appendLine("Do not invent facts, citations or access to files.")
             if (history.isNotEmpty()) {
                 appendLine("RECENT CHAT (context, not external evidence):")
                 history.forEach { (user, answer) ->
-                    appendLine("User: " + user.take(if (compact) 180 else 300))
-                    appendLine("AU: " + answer.take(if (compact) 260 else 520))
+                    appendLine("User: " + user.take(if (fast) 180 else if (compact) 180 else 300))
+                    appendLine("AU: " + answer.take(if (fast) 260 else if (compact) 260 else 520))
                 }
             }
             appendLine("CURRENT USER MESSAGE:")
