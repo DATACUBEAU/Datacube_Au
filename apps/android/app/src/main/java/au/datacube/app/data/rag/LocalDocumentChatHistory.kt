@@ -60,7 +60,7 @@ class LocalDocumentChatHistory(filesDir: File) {
                     val map = linkedMapOf<String, String>()
                     corrections.keys().forEach { key -> if (map.size < 10) map[key] = corrections.optString(key) }
                     SavedDocumentTurn(
-                        question = entry.optString("question").take(700),
+                        question = entry.optString("question").take(AuChatInputLimits.MAX_CONTEXTUAL_QUESTION_CHARS),
                         answer = entry.optString("answer").take(12_000),
                         isUser = entry.optBoolean("user"),
                         matches = sources,
@@ -90,7 +90,7 @@ class LocalDocumentChatHistory(filesDir: File) {
             val arr = JSONArray()
             turns.takeLast(MAX_TURNS).forEach { turn ->
                 val value = JSONObject()
-                    .put("question", turn.question.take(700))
+                    .put("question", turn.question.take(AuChatInputLimits.MAX_CONTEXTUAL_QUESTION_CHARS))
                     .put("answer", turn.answer.take(12_000))
                     .put("user", turn.isUser)
                     .put("semantic", turn.semantic)
@@ -148,6 +148,7 @@ class LocalDocumentChatHistory(filesDir: File) {
         const val MAX_TURNS = 40
         private const val MAX_SOURCES = 8
         private val lock = Mutex()
-        private const val MAX_BYTES = 900_000L
+        // Bounded UTF-8 history supports full accepted questions and multibyte answers.
+        private const val MAX_BYTES = 4_000_000L
     }
 }
