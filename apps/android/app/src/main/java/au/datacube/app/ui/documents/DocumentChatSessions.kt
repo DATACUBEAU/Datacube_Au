@@ -84,6 +84,9 @@ internal class DocumentChatSession(private val historyKey: String) {
         val first = turn.firstVisibleMs ?: if (answer.isNotBlank() && requestStartedAt > 0L)
             (android.os.SystemClock.elapsedRealtime() - requestStartedAt).coerceAtLeast(0L) else null
         messages[index] = turn.copy(answer = answer, firstVisibleMs = first)
+        if (first != null && turn.firstVisibleMs == null && au.datacube.app.BuildConfig.DEBUG) {
+            android.util.Log.d("AuInferenceTiming", "firstVisibleMs=$first sourceCount=${turn.matches.size}")
+        }
     }
 
     /** Audio transcription hands off to the same scoped chat request. Keep the
