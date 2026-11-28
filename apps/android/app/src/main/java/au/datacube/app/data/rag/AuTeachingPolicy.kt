@@ -10,7 +10,7 @@ internal object AuTeachingPolicy {
     private val advanced = Regex("""\b(?:advanced|technical detail|expert level|rigorous|derive formally|university level)\b""",RegexOption.IGNORE_CASE)
     private val brief = Regex("""\b(?:briefly|quick answer|one sentence|short answer|keep it short)\b""",RegexOption.IGNORE_CASE)
     private val textOnly = Regex("""\b(?:no (?:visuals?|diagrams?|illustrations?|concept maps?|mind maps?|concept trees?|flowcharts?|flow charts?|workflows?|bar charts?|pie charts?|charts?|graphs?)|(?:without|don't use|do not use) (?:any )?(?:visuals?|diagrams?|illustrations?|concept maps?|mind maps?|concept trees?|flowcharts?|flow charts?|workflows?|bar charts?|pie charts?|charts?|graphs?)|text only)\b""",RegexOption.IGNORE_CASE)
-    private val visual = Regex("""\b(?:draw|illustrate|sketch|visuali[sz]e|visuals?|diagrams?|concept maps?|mind maps?|concept trees?|flowcharts?|flow charts?|workflows?|bar charts?|pie charts?|tree diagrams?|formula breakdown|equation breakdown|step cards|step deck|guided visual tutorial|(?:show|use|include|give|make|create|with) (?:me )?(?:a |an )?(?:visual|diagram|illustration|graph|chart))\b""",RegexOption.IGNORE_CASE)
+    private val visual = Regex("""\b(?:draw|illustrate|sketch|visuali[sz]e|visuals?|diagrams?|concept maps?|mind maps?|concept trees?|flowcharts?|flow charts?|workflows?|bar charts?|pie charts?|tree diagrams?|simulations?|formula breakdown|equation breakdown|step cards|step deck|guided visual tutorial|(?:show|use|include|give|make|create|with) (?:me )?(?:a |an )?(?:visual|diagram|illustration|graph|chart))\b""",RegexOption.IGNORE_CASE)
     private val subjectWords = linkedMapOf(
         Subject.MATHEMATICS to Regex("""\b(?:math(?:ematics)?|algebra|calculus|integral|derivative|geometry|quadratic|trigonometry|matrix|equation|statistics)\b""",RegexOption.IGNORE_CASE),
         Subject.PHYSICS to Regex("""\b(?:physics|velocity|acceleration|projectile|force|momentum|gravity|optics|kinematics|thermodynamics)\b""",RegexOption.IGNORE_CASE),
@@ -37,7 +37,7 @@ internal object AuTeachingPolicy {
             })
             append(" ")
             append(when(visual) {
-                Visual.AUTO -> "Use ordinary prose unless a visual is explicitly requested."
+                Visual.AUTO -> "Prefer concise prose. Include a relevant visual when the app supplies an appropriate visual contract; avoid decorative diagrams."
                 Visual.REQUESTED -> "Render a native visual using the supported block syntax. A diagram is not image generation; never claim you cannot draw when native blocks are available. Answer directly and include the block, not a textual substitute."
                 Visual.TEXT_ONLY -> "Use text only; omit visual blocks."
             })

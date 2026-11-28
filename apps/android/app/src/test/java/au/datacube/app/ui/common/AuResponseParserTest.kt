@@ -6,6 +6,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AuResponseParserTest {
+    @Test fun scienceDirectiveIsRenderedAndNotExposedAsText() {
+        val raw = "Explanation.\n[SCIENCE] plant-cell"
+        val rendered = AuResponseParser.parse(raw)
+        assertTrue(rendered.last() is AuResponseBlock.Science)
+        assertTrue(AuSpokenResponse.format(raw).contains("chloroplasts"))
+        assertFalse(AuSpokenResponse.format(raw).contains("[SCIENCE]"))
+        assertTrue(AuResponseParser.parse("[SCIENCE] unknown").none { it is AuResponseBlock.Science })
+        assertFalse(au.datacube.app.data.rag.ModelOutputCleaner.streamingVisible("Explanation.\n[SCIENCE] plant",0).contains("plant"))
+        assertTrue(au.datacube.app.data.rag.ModelOutputCleaner.streamingVisible(raw,0,final=true).contains("[SCIENCE] plant-cell"))
+    }
+
+    @Test fun visualFencesDoNotExposeCommandsAndLiteralCodeRemainsCode() {
+        val fence = "\u0060\u0060\u0060"
+        val raw = "Explanation.\n" + fence + "diagram\n[SKETCH] Circle\nALT | A circle\nCIRCLE | 50 | 50 | 20\n[/SKETCH]"
+        val cleaner = au.datacube.app.data.rag.ModelOutputCleaner
+        assertFalse(cleaner.streamingVisible(raw,0).contains("CIRCLE"))
+        val blocks=AuResponseParser.parse(cleaner.streamingVisible(raw+"\n"+fence,0,final=true))
+        assertTrue(blocks.last() is AuResponseBlock.Sketch)
+        val literal=fence+"kotlin\nval example = \"[SCIENCE] plant-cell\"\n"+fence
+        assertEquals(literal,cleaner.streamingVisible(literal,0,final=true))
+        assertTrue(AuResponseParser.parse("Text\nCIRCLE | 50 | 50 | 20\nAfter").none { it is AuResponseBlock.Prose && it.text.contains("CIRCLE") })
+    }
+
     @Test fun treeUsesExplicitParentsAndNarratesRelationships() {
         val raw = "[TREE] Motion\n1 | 0 | Motion |\n2 | 1 | Velocity | described by\n3 | 1 | Acceleration | changes with\n4 | 2 | Speed | magnitude of\n[/TREE]"
         val tree = (AuResponseParser.parse(raw).single() as AuResponseBlock.Tree).scene
