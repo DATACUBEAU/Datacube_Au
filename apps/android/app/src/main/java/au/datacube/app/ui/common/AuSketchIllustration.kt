@@ -55,7 +55,7 @@ internal fun AuSketchIllustration(scene:AuSketchScene) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     Column(Modifier.fillMaxWidth(),verticalArrangement=Arrangement.spacedBy(6.dp)) {
         Text(scene.title,style=MaterialTheme.typography.titleMedium)
-        Canvas(Modifier.fillMaxWidth().height(220.dp).semantics { contentDescription=scene.description }) {
+        Canvas(Modifier.fillMaxWidth().aspectRatio(1.5f).semantics { contentDescription=scene.description }) {
             val margin=12.dp.toPx()
             val width=(size.width-2*margin).coerceAtLeast(1f)
             val height=(size.height-2*margin).coerceAtLeast(1f)
@@ -84,11 +84,20 @@ internal fun AuSketchIllustration(scene:AuSketchScene) {
                             }
                         }
                     }
-                    "CIRCLE" -> drawCircle(accent,minOf(width,height)*c[2]/100f,a,style=Stroke(stroke))
+                    "CIRCLE" -> {
+                        val radius=minOf(width,height)*c[2]/100f
+                        drawCircle(accent.copy(alpha=.10f),radius,a)
+                        drawCircle(accent,radius,a,style=Stroke(stroke))
+                    }
                     "RECT","ELLIPSE" -> {
                         val z=point(c[2],c[3]); val bounds=Size(z.x-a.x,z.y-a.y)
-                        if(command.kind=="RECT") drawRect(accent,a,bounds,style=Stroke(stroke))
-                        else drawOval(accent,a,bounds,style=Stroke(stroke))
+                        if(command.kind=="RECT") {
+                            drawRect(accent.copy(alpha=.08f),a,bounds)
+                            drawRect(accent,a,bounds,style=Stroke(stroke))
+                        } else {
+                            drawOval(accent.copy(alpha=.08f),a,bounds)
+                            drawOval(accent,a,bounds,style=Stroke(stroke))
+                        }
                     }
                     "CURVE" -> {
                         val control=point(c[2],c[3]);val z=point(c[4],c[5])
